@@ -634,6 +634,21 @@ per distinct values, so a call that compiles also exports.
 without raising. A control system without controllers checks nothing
 more.
 
+A controller that plays nothing while one of its classical calls is out
+declares ``Controller(blocks_on_calls=True)``. Each call then holds every
+line from its submission until its answer is due: the scheduler sends it
+once the lines before it are done and starts nothing after it before then,
+in every schedule, and a program played on such a controller is checked
+for it, naming each pulse that plays while a call is out. A call in a
+kernel with its own ``schedule=``, which is placed whole, does not compile
+for it. The export lists ``blocks_on_calls`` among the limits only when it
+is set. In a control system of several controllers, a call holds each
+controller that blocks on calls and issues it (whose instance of a
+per-controller link runs it, else those that send its measurements, else,
+over a shared link, every controller that plays), reads a measurement the
+call sends or plays a pulse that uses its answer (branches on it, or
+computes with it); the lines of the others play on while it is out.
+
 A minimal backend
 -----------------
 

@@ -62,7 +62,7 @@ import math
 import os
 import sys
 import types
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from enum import StrEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol
@@ -82,6 +82,7 @@ if TYPE_CHECKING:
     import numpy as np
 
     from . import _clocks
+    from ._classical_report import ClassicalCall
     from ._controller_cost import ControllerUsage as ControllerUsage
     from ._controller_cost import FunctionCost as FunctionCost
     from ._controller_cost import FunctionResources as FunctionResources
@@ -1837,7 +1838,11 @@ def _memory(limits: Controller) -> tuple[int, int, bool, bool, list[str], bool]:
 
 def _checks_natively(limits: Controller, clocks: _clocks.ClockPlan | None) -> bool:
     """Whether the native check counts every limit of *limits* on *clocks*."""
-    return _one_clock(clocks) and not (limits.max_pulses is not None and limits._runs_loops)
+    return (
+        _one_clock(clocks)
+        and not (limits.max_pulses is not None and limits._runs_loops)
+        and not limits.blocks_on_calls
+    )
 
 
 def _native_check(
@@ -1923,7 +1928,8 @@ def _limit_violations(
             unresolved is None,
             _native_clock(clocks),
             False,
-            summary=(repeats, periods),
+            # Held lines are checked call by call, every iteration walked.
+            summary=None if limits.blocks_on_calls else (repeats, periods),
         )
         if not repeats:
             break
@@ -1978,6 +1984,8 @@ def _violations(
     waveforms: bool = True,
     unresolved: list[str] | None = None,
     natives: Sequence[int] | None = None,
+    *,
+    held: bool = True,
 ) -> list[str]:
     """The limits *events* exceed. With *clocks*, the events are in the
     controller's own cycles: the native walk's, with *off* its line events
@@ -1988,7 +1996,9 @@ def _violations(
     whose value is not known yet counts only if the limit is exceeded
     whatever its value; a limit that only some values exceed is appended to
     *unresolved* instead, to be checked with them. *natives* has, by event
-    index, the qudit argument whose native frequency the event plays, or -1."""
+    index, the qudit argument whose native frequency the event plays, or -1.
+    *held* false leaves the lines held by calls to the caller, which knows
+    the controller each call holds."""
     if clocks is None:
         found = []
     else:
@@ -2117,7 +2127,65 @@ def _violations(
                     "the controller cannot stop waiting for an answer, so take it with "
                     "result() (no timeout)"
                 )
+    if held and limits.blocks_on_calls:
+        found.extend(_held(lowered))
     return found
+
+
+def _held(lowered: Lowered) -> list[str]:
+    """The drives and readouts of *lowered* that play while one of its
+    calls is out, from its submission until its answer is due, for a
+    controller that blocks on calls; in program cycles."""
+    if not lowered.classical or not lowered.scheduled:
+        return []
+    events = _walk(lowered, values=False)[1]
+    return [
+        _held_text(submit, call, event)
+        for submit, call, event in _played_while_out(events, lowered.classical_report())
+    ]
+
+
+def _played_while_out(
+    events: Sequence[Mapping[str, Any]],
+    calls: Sequence[ClassicalCall],
+    holds: Callable[[int, Mapping[str, Any]], bool] | None = None,
+) -> list[tuple[Mapping[str, Any], ClassicalCall, Mapping[str, Any]]]:
+    """Each drive or readout of *events* (in program cycles) that plays
+    while one of *calls* is out, from its submission until its answer is
+    due, with the call's submit event and the call; with *holds*, only
+    those ``holds(i, event)`` gives for the call that is submit *i*."""
+    import bisect
+
+    played = sorted(
+        (e for e in events if e["kind"] in _PLAYED and e["end_cycles"] is not None),
+        key=lambda e: e["start_cycles"],
+    )
+    if not played:
+        return []
+    starts = [e["start_cycles"] for e in played]
+    longest = max(e["end_cycles"] - e["start_cycles"] for e in played)
+    submits = [e for e in events if e["kind"] == "submit"]
+    found = []
+    for index, (submit, call) in enumerate(zip(submits, calls, strict=True)):
+        sent, due = submit["start_cycles"], call.due_cycles
+        for k in range(bisect.bisect_left(starts, sent - longest), bisect.bisect_left(starts, due)):
+            event = played[k]
+            if (
+                event["end_cycles"] > sent
+                and not _exclusive(submit, event)
+                and (holds is None or holds(index, event))
+            ):
+                found.append((submit, call, event))
+    return found
+
+
+def _held_text(submit: Mapping[str, Any], call: ClassicalCall, event: Mapping[str, Any]) -> str:
+    return (
+        f"line {event['line']}: the {event['kind']} at {event['start_cycles']} "
+        f"plays while the call to {submit['function']} sent at {submit['start_cycles']} is out, "
+        f"until its answer is due at {call.due_cycles}; the controller blocks on calls "
+        "(Controller.blocks_on_calls)"
+    )
 
 
 def _over_amplitude(
@@ -2314,12 +2382,15 @@ def _compile_check(
             lowered, limits, maybe if lowered.parameters else None
         ):
             return [], not maybe
-    repeats: list[tuple[int, ...]] | None = []
+    # Held lines are checked call by call, every iteration walked.
+    repeats: list[tuple[int, ...]] | None = (
+        None if limits is not None and limits.blocks_on_calls else []
+    )
     # Loops of lines of different periods summarized too, then not, then none.
     passes: tuple[bool | None, ...] = (True, False, None)
     if system is not None:
         passes = (False, None)
-        if not system._lines_up or slots and not system._plays_everything:
+        if repeats is None or not system._lines_up or slots and not system._plays_everything:
             repeats = None
         elif clocks is not None and clocks.owners is not None:
             # A controller counting cycles of its own is walked in full.
@@ -2387,7 +2458,7 @@ def _call_violations(lowered: Lowered) -> Sequence[str]:
         return [*found, *extra] if extra else found
     if system is not None:
         repeats: list[tuple[int, ...]] | None = []
-        if not system._lines_up:
+        if not system._lines_up or system._blocking:
             repeats = None
         elif clocks is not None and clocks.owners is not None:
             # A controller counting cycles of its own is walked in full.

@@ -641,3 +641,272 @@ def test_a_future_taken_with_a_timeout_in_a_block_budgets_the_timeout(callee, po
     (call,) = pulse.compile(k, schedule=policy).lower(Q[0]).classical_report()
     assert call.due_cycles == READOUT + 1 + math.ceil(400 * CLOCK)
     assert call.taken_cycles >= call.due_cycles and call.first_use_cycles >= call.due_cycles
+
+
+# ── A controller that blocks on calls ────────────────────────────────────────
+
+_BLOCKING = ControlSystem(controllers=[pulse.Controller(blocks_on_calls=True)])
+
+
+@pulse.kernel
+def _blocked_shots(q):
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    flip = False
+    for shot in range(3):
+        drive(d, square(ARM, 0.25))
+        sync(d, r)
+        m = readout(r, square(READOUT, 0.05))
+        if shot:
+            if flip:
+                drive(d, square(ARM, 0.5))
+        flip = decode.submit([m]).result()[0]
+
+
+def _held(low):
+    """The drives and readouts that play while a call is out."""
+    played = [e for e in low.schedule if e.kind in ("drive", "readout")]
+    return [
+        (e.kind, e.start_cycles)
+        for call in low.classical_report()
+        for e in played
+        if e.start_cycles < call.due_cycles and e.end > call.submit_cycles
+    ]
+
+
+@pytest.mark.parametrize("policy", POLICIES)
+def test_a_controller_that_blocks_on_calls_plays_nothing_while_one_is_out(policy):
+    plain = pulse.compile(_blocked_shots, schedule=policy).lower(Q[0])
+    assert _held(plain)
+    low = pulse.compile(_blocked_shots, schedule=policy, control_system=_BLOCKING).lower(Q[0])
+    assert _held(low) == []
+    played = [e for e in low.schedule if e.kind in ("drive", "readout")]
+    for call in low.classical_report():
+        # Every line is done before a call goes out.
+        assert all(e.end <= call.submit_cycles for e in played if e.start < call.submit_cycles)
+    # As one Controller alone.
+    alone = pulse.compile(_blocked_shots, schedule=policy, control_system=_BLOCKING.controllers[0])
+    assert alone.lower(Q[0]).schedule == low.schedule
+
+
+def test_a_program_scheduled_for_another_controller_fails_the_check():
+    from cudaq_pulse import controller
+
+    blocking = pulse.Controller(blocks_on_calls=True)
+    plain = pulse.compile(_blocked_shots, schedule="asap").lower(Q[0])
+    found = controller.check(plain, blocking)
+    first = plain.classical_report()[0]
+    assert found[0] == (
+        f"line 1: the readout at {first.submit_cycles} plays while the call to decode__1 sent at "
+        f"{first.submit_cycles} is out, until its answer is due at {first.due_cycles}; the "
+        "controller blocks on calls (Controller.blocks_on_calls)"
+    )
+    blocked = pulse.compile(_blocked_shots, schedule="asap", control_system=_BLOCKING).lower(Q[0])
+    assert controller.check(blocked, blocking) == []
+
+
+@pulse.kernel
+def _rolled(q):
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    for _ in range(40):
+        drive(d, square(ARM, 0.1))
+        sync(d, r)
+        m = readout(r, square(READOUT, 0.05))
+        decode.submit([m]).result()
+
+
+@pytest.mark.parametrize("policy", POLICIES)
+def test_a_rolled_loop_of_calls_holds_the_lines_every_iteration(policy):
+    rolled = pulse.compile(_rolled, schedule=policy, control_system=_BLOCKING, unroll_threshold=0)
+    unrolled = pulse.compile(_rolled, schedule=policy, control_system=_BLOCKING)
+    low = rolled.lower(Q[0])
+    assert low.schedule == unrolled.lower(Q[0]).schedule
+    assert _held(low) == [] and len(low.classical_report()) == 40
+
+
+@pulse.kernel
+def _armed(q):
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    m = readout(r, square(READOUT, 0.05))
+    if m:
+        drive(d, square(ARM, 0.1))
+        decode.submit([m]).result()
+        drive(d, square(ARM, 0.2))
+    else:
+        drive(d, square(ARM, 0.3))
+    drive(d, square(ARM, 0.4))
+
+
+@pytest.mark.parametrize("policy", POLICIES)
+def test_a_call_in_one_arm_holds_the_lines_in_it_and_after_it(policy):
+    low = pulse.compile(_armed, schedule=policy, control_system=_BLOCKING).lower(Q[0])
+    (call,) = low.classical_report()
+    drives = [e for e in low.schedule if e.kind == "drive"]
+    before, after, other, last = drives
+    assert before.end <= call.submit_cycles and after.start >= call.due_cycles
+    assert last.start >= call.due_cycles
+
+
+def test_a_call_in_a_kernel_with_its_own_schedule_does_not_compile():
+    @pulse.kernel(schedule="asap")
+    def inner(r):
+        decode.submit([readout(r, square(READOUT, 0.05))]).result()
+
+    @pulse.kernel
+    def outer(q):
+        inner(get_readout_line(q))
+
+    with pytest.raises(RuntimeError, match="the controller blocks on calls"):
+        pulse.compile(outer, control_system=_BLOCKING).lower(Q[0])
+    pulse.compile(outer, control_system=_BLOCKING, flatten_schedules=True).lower(Q[0])
+
+
+def test_blocking_on_calls_is_exported_and_kept_in_system_files():
+    blocking = pulse.Controller(blocks_on_calls=True)
+    assert blocking.as_dict()["blocks_on_calls"] is True
+    assert "blocks_on_calls" not in pulse.Controller().as_dict()
+    assert pulse.Controller(**blocking.as_dict()) == blocking
+    low = pulse.compile(_blocked_shots, control_system=blocking).lower(Q[0])
+    assert low.export_controller()["limits"]["blocks_on_calls"] is True
+    assert low.export_controller(version=2)["controller"]["blocks_on_calls"] is True
+    with pytest.raises(pulse.InvalidValueError, match="blocks_on_calls must be a bool"):
+        pulse.Controller(blocks_on_calls=1)  # type: ignore[arg-type]
+
+
+def _one_each(*blocking):
+    """A controller per qudit 0, 1 and 2; those in *blocking* block on calls."""
+    return ControlSystem(
+        controllers=[
+            pulse.Controller(drive_lines=[q], readout_lines=[q], blocks_on_calls=q in blocking)
+            for q in range(3)
+        ]
+    )
+
+
+_LONG = 3 * BUDGET
+
+
+@pulse.kernel
+def _across(q0, q1, q2):
+    # Qudit 0's controller reads the measurement the call sends and qudit
+    # 1's branches on its answer; qudit 2's takes no part in it.
+    d0 = get_drive_line(q0)
+    r0 = get_readout_line(q0)
+    d1 = get_drive_line(q1)
+    d2 = get_drive_line(q2)
+    drive(d1, square(_LONG, 0.1))
+    drive(d2, square(_LONG, 0.1))
+    m = readout(r0, square(READOUT, 0.05))
+    flip = decode.submit([m]).result()[0]
+    drive(d0, square(_LONG, 0.2))
+    if flip:
+        drive(d1, square(ARM, 0.5))
+
+
+def _playing(low):
+    """The qudits whose drives or readouts play while a call is out."""
+    return {
+        e.qubit
+        for call in low.classical_report()
+        for e in low.schedule
+        if e.kind in ("drive", "readout")
+        and e.start_cycles < call.due_cycles
+        and e.end > call.submit_cycles
+    }
+
+
+def _across_on(policy, *blocking):
+    system = _one_each(*blocking)
+    return pulse.compile(_across, schedule=policy, control_system=system).lower(Q[0], Q[1], Q[2])
+
+
+@pytest.mark.parametrize("policy", POLICIES)
+def test_a_call_holds_the_blocking_controller_that_reads_its_measurement(policy):
+    assert _playing(_across_on(policy)) == {0, 1, 2}
+    playing = _playing(_across_on(policy, 0))
+    assert 0 not in playing
+    if policy in ("asap", "rcp"):
+        assert playing == {1, 2}
+
+
+@pytest.mark.parametrize("policy", POLICIES)
+def test_a_call_holds_the_blocking_controller_that_takes_its_answer(policy):
+    low = _across_on(policy, 1)
+    (call,) = low.classical_report()
+    # The call waits for qudit 1's drive before it.
+    assert call.submit_cycles >= _LONG
+    playing = _playing(low)
+    assert 1 not in playing
+    if policy in ("alap", "alap_rcp"):
+        assert playing == {0, 2}
+
+
+@pytest.mark.parametrize("policy", POLICIES)
+def test_a_call_holds_both_the_controller_it_reads_and_the_one_it_answers(policy):
+    assert _playing(_across_on(policy, 0, 1)) & {0, 1} == set()
+    # A controller that blocks on calls but takes no part in one plays on.
+    assert _playing(_across_on(policy, 2)) == _playing(_across_on(policy))
+
+
+@pulse.kernel
+def _issued(q0, q1, q2):
+    # The call sends no measurement and its answer goes unused: it holds
+    # only the controllers that issue it, every one that plays, over a
+    # shared link.
+    d1 = get_drive_line(q1)
+    d2 = get_drive_line(q2)
+    drive(d1, square(_LONG, 0.1))
+    drive(d2, square(_LONG, 0.1))
+    tune.submit(0.5).result()
+    drive(d2, square(_LONG, 0.2))
+
+
+@pytest.mark.parametrize("policy", POLICIES)
+def test_a_call_holds_the_blocking_controller_that_issues_it(policy):
+    from cudaq_pulse.controller import _compile_check
+
+    args = (Q[0], Q[1], Q[2])
+    plain = pulse.compile(_issued, schedule=policy, control_system=_one_each()).lower(*args)
+    assert 2 in _playing(plain)
+    found, _ = _compile_check(plain, None, _one_each(2))
+    assert found and {v.split(":")[0] for v in found} == {"controllers[2]"}
+    held = pulse.compile(_issued, schedule=policy, control_system=_one_each(2)).lower(*args)
+    assert 2 not in _playing(held)
+
+
+@pulse.kernel
+def _rolled_across(q0, q1, q2):
+    d1 = get_drive_line(q1)
+    r0 = get_readout_line(q0)
+    for _ in range(5):
+        drive(d1, square(_LONG, 0.1))
+        if decode.submit([readout(r0, square(READOUT, 0.05))]).result()[0]:
+            drive(d1, square(ARM, 0.5))
+
+
+@pytest.mark.parametrize("policy", POLICIES)
+def test_the_check_names_each_controller_a_call_holds(policy):
+    from cudaq_pulse.controller import _compile_check
+
+    plain = _across_on(policy)
+    (call,) = plain.classical_report()
+    found, _ = _compile_check(plain, None, _one_each(0, 1))
+    assert {v.split(":")[0] for v in found} == {"controllers[0]", "controllers[1]"}
+    assert all(
+        f"plays while the call to decode__1 sent at {call.submit_cycles} is out" in v for v in found
+    )
+    assert _compile_check(plain, None, _one_each(2))[0] == []
+    # Every iteration of a rolled loop, rolled as unrolled.
+    args = (Q[0], Q[1], Q[2])
+    rolled = pulse.compile(
+        _rolled_across, schedule=policy, control_system=_one_each(), unroll_threshold=0
+    )
+    assert len(_compile_check(rolled.lower(*args), None, _one_each(1))[0]) == 5
+    held = pulse.compile(
+        _rolled_across, schedule=policy, control_system=_one_each(1), unroll_threshold=0
+    ).lower(*args)
+    unrolled = pulse.compile(_rolled_across, schedule=policy, control_system=_one_each(1))
+    assert held.schedule == unrolled.lower(*args).schedule
+    assert 1 not in _playing(held)

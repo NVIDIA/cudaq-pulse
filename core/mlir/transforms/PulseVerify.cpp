@@ -670,6 +670,15 @@ struct PulseVerifyPass
         hadError = true;
       }
     });
+    // A call of a controller that blocks on calls holds every line, which a
+    // schedule block, placed whole, cannot.
+    if (module->hasAttr(classical::kBlocksOnCallsAttr))
+      module.walk([&](classical::SubmitOp op) {
+        if (op->getParentOfType<pulse::ScheduleBlockOp>()) {
+          op.emitError(classical::kBlockingCallInBlock);
+          hadError = true;
+        }
+      });
 
     hadError |= waveforms.hadError;
     // A wait whose length is not a constant is scheduled at a placeholder

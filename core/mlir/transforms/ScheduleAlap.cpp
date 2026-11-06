@@ -350,6 +350,9 @@ public:
   /// calls and schedule blocks of the function, or remove it if there is
   /// one. Returns whether the calls' attributes changed.
   bool run(Timelines &result) {
+    // Every call of a controller that blocks on calls holds every line.
+    everyLine = function->getParentOfType<mlir::ModuleOp>()->hasAttr(
+        classical::kBlocksOnCallsAttr);
     // Without a run-time wait there is one timeline: skip the analysis.
     bool numbered = false;
     auto scan = function.walk([&](mlir::Operation *op) {
@@ -1154,6 +1157,10 @@ public:
         lanesPer(timelines && timelines->count > 1 ? timelines : nullptr),
         grid(grid),
         controllers(resources.enabled ? controllers : pulse::Controllers()) {
+    auto module = region.getParentOp()->getParentOfType<mlir::ModuleOp>();
+    if (mlir::Attribute held =
+            module ? module->getAttr(classical::kBlocksOnCallsAttr) : nullptr)
+      holdControllers(held, controllers);
     auto count = static_cast<size_t>(isolated() ? lanesPer->count : 1);
     floors.assign(count, 0);
     ends.assign(count, 0);
@@ -1244,6 +1251,17 @@ public:
     }
     return false;
   }
+
+  /// Whether every call holds every line from its submission until its
+  /// answer is due (`pulse.blocks_on_calls`): lines are done before it, and
+  /// none starts again before then.
+  bool blocksOnCalls = false;
+
+  /// On several controllers, some of which block on calls: per controller,
+  /// whether it does, when its lines end and may start again (forward), and
+  /// when they must be done by (backward). Empty otherwise.
+  llvm::SmallVector<bool, 4> blocking;
+  llvm::SmallVector<int64_t, 4> heldEnds, heldFloors, heldCeilings;
 
   /// Whether a loop whose iterations repeat only every few of them stops
   /// the pass, to be run that many iterations at a time (`regroup`).
@@ -1363,6 +1381,152 @@ private:
     if (owner == kNoOwner || (owner >= 0 && owner == controller))
       return 0;
     return controllers.spread(owner, controller);
+  }
+
+  // ── Calls that hold controllers ───────────────────────────────────────
+
+  /// From `pulse.blocks_on_calls`: every call holds every line, or, on
+  /// several controllers whose lines are traced, the lines of those it
+  /// lists that the call involves (`heldBy`).
+  void holdControllers(mlir::Attribute held, const pulse::Controllers &all) {
+    auto listed = mlir::dyn_cast<mlir::DenseI64ArrayAttr>(held);
+    if (!Gridded || !listed || !all.enabled()) {
+      blocksOnCalls = true;
+      return;
+    }
+    owners = all;
+    auto count = static_cast<size_t>(all.count());
+    blocking.assign(count, false);
+    for (int64_t c : listed.asArrayRef())
+      if (c >= 0 && c < all.count())
+        blocking[c] = true;
+    heldEnds.assign(count, 0);
+    heldFloors.assign(count, 0);
+    heldCeilings.assign(count, kNever);
+  }
+
+  bool holding() const { return !blocking.empty(); }
+
+  /// The controller of the line timed op `op` is on, or -1, whatever the
+  /// policy.
+  int64_t heldOwnerOf(mlir::Operation *op) {
+    if constexpr (Gridded)
+      return owners.of(op->getOperand(0), lines);
+    else
+      return kAnyOwner;
+  }
+
+  /// No op of a held controller starts before the answers it waits for
+  /// are due; a line of no known controller waits for every one.
+  int64_t heldFloorOf(mlir::Operation *op) {
+    int64_t c = heldOwnerOf(op);
+    return c >= 0 ? heldFloors[c] : *llvm::max_element(heldFloors);
+  }
+
+  int64_t heldCeilingOf(mlir::Operation *op) {
+    int64_t c = heldOwnerOf(op);
+    return c >= 0 ? heldCeilings[c] : *llvm::min_element(heldCeilings);
+  }
+
+  /// Move the times an iteration changed by `distance`, for the iterations
+  /// not simulated.
+  static void moveChanged(llvm::MutableArrayRef<int64_t> times,
+                          llvm::ArrayRef<int64_t> before, int64_t distance) {
+    for (auto [now, was] : llvm::zip(times, before))
+      if (now != was)
+        now += distance;
+  }
+
+  void noteHeldEnd(mlir::Operation *op, int64_t end) {
+    int64_t c = heldOwnerOf(op);
+    if (c >= 0) {
+      heldEnds[c] = std::max(heldEnds[c], end);
+      return;
+    }
+    for (int64_t &at : heldEnds)
+      at = std::max(at, end);
+  }
+
+  /// The controllers that block on calls which `submit` holds: the one
+  /// that issues it (whose instance of a per-controller link runs it, else
+  /// those that read the measurements it sends, else any), and those that
+  /// play an op that uses its answer, computes with it or branches on it. A
+  /// line of no known controller, or an answer used in a way not followed
+  /// here, holds them all.
+  llvm::ArrayRef<int64_t> heldBy(classical::SubmitOp submit) {
+    auto [it, inserted] = heldCalls.try_emplace(submit);
+    if (!inserted)
+      return it->second;
+    llvm::SmallVector<bool, 4> held(blocking.size(), false);
+    auto hold = [&](int64_t c) {
+      if (c >= 0)
+        held[c] = true;
+      else
+        std::fill(held.begin(), held.end(), true);
+    };
+    auto played = [](mlir::Operation *op) {
+      return mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(op);
+    };
+    int64_t instance = classical::intAttr(submit, classical::kInstanceAttr, -1);
+    llvm::SmallVector<mlir::Value> sent = valueMeasurements(submit);
+    if (instance >= 0 && instance < static_cast<int64_t>(held.size()))
+      held[instance] = true;
+    else if (sent.empty())
+      hold(kAnyOwner);
+    for (mlir::Value measurement : sent) {
+      auto readout = measurement.getDefiningOp<pulse::ReadoutOp>();
+      hold(readout ? heldOwnerOf(readout) : kAnyOwner);
+    }
+    llvm::SmallVector<mlir::Value> answers;
+    for (mlir::Operation *user : submit.getFuture().getUsers()) {
+      if (auto wait = mlir::dyn_cast<classical::WaitOp>(user))
+        llvm::append_range(answers, wait.getValues());
+      else
+        hold(kAnyOwner);
+    }
+    llvm::DenseSet<mlir::Value> seen;
+    while (!answers.empty()) {
+      mlir::Value value = answers.pop_back_val();
+      if (!seen.insert(value).second)
+        continue;
+      for (mlir::OpOperand &use : value.getUses()) {
+        mlir::Operation *user = use.getOwner();
+        unsigned index = use.getOperandNumber();
+        if (played(user)) {
+          hold(heldOwnerOf(user));
+        } else if (mlir::isa<classical::SubmitOp>(user)) {
+          // An answer sent on to another call is that call's.
+        } else if (mlir::isa<mlir::scf::YieldOp>(user)) {
+          mlir::Operation *parent = user->getParentOp();
+          if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(parent)) {
+            answers.push_back(loop.getRegionIterArgs()[index]);
+            answers.push_back(loop->getResult(index));
+          } else if (mlir::isa<mlir::scf::IfOp>(parent)) {
+            answers.push_back(parent->getResult(index));
+          } else {
+            hold(kAnyOwner);
+          }
+        } else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(user);
+                   loop && index >= loop.getNumControlOperands()) {
+          index -= loop.getNumControlOperands();
+          answers.push_back(loop.getRegionIterArgs()[index]);
+          answers.push_back(loop->getResult(index));
+        } else {
+          // A branch on it, a loop over it or a block given it holds what
+          // it plays.
+          if (user->getNumRegions())
+            user->walk([&](mlir::Operation *inner) {
+              if (played(inner))
+                hold(heldOwnerOf(inner));
+            });
+          llvm::append_range(answers, user->getResults());
+        }
+      }
+    }
+    for (auto [c, is] : llvm::enumerate(held))
+      if (is && blocking[c])
+        it->second.push_back(static_cast<int64_t>(c));
+    return it->second;
   }
 
   /// The measurements a value is computed from, not through other timed
@@ -1636,7 +1800,8 @@ private:
   /// LoopGroups): without timelines, whose state the groups share, or
   /// resources on several controllers.
   bool groupsApply() const {
-    return !lanesBound && !isolated() && !(resources.enabled && several());
+    return !lanesBound && !isolated() && !(resources.enabled && several()) &&
+           !holding();
   }
 
   const LoopGroups *groupsOf(mlir::scf::ForOp loop) {
@@ -2346,6 +2511,14 @@ private:
     int64_t link = own ? linkReady[linkOf(op)] : ready(submit.getLink());
     int64_t start =
         std::max({link, floorOf(t), operandsReady(op), armFloorOf(kAnyOwner)});
+    if (blocksOnCalls)
+      start = std::max(start, endOf(t));
+    llvm::ArrayRef<int64_t> held;
+    if (holding()) {
+      held = heldBy(submit);
+      for (int64_t c : held)
+        start = std::max(start, heldEnds[c]);
+    }
     int64_t duration = durationOf(op), budget = budgetOf(op);
     start = takeSlot(op, start, duration + budget);
     record(op, start);
@@ -2353,6 +2526,10 @@ private:
     if (own)
       linkReady[linkOf(op)] = start + duration;
     readyAt[submit.getFuture()] = start + duration + budget;
+    if (blocksOnCalls)
+      floors[t] = std::max(floors[t], start + duration + budget);
+    for (int64_t c : held)
+      heldFloors[c] = std::max(heldFloors[c], start + duration + budget);
     noteEnd(start + duration, t);
   }
 
@@ -2386,6 +2563,8 @@ private:
     readyAt[op->getResult(0)] = lineEnd;
     if (mlir::Value tone = toneResult(op))
       readyAt[tone] = end;
+    if (holding())
+      noteHeldEnd(op, lineEnd);
     noteEnd(lineEnd, t);
   }
 
@@ -2423,6 +2602,8 @@ private:
       int64_t owner = several() ? controllerOf(op) : kAnyOwner;
       if (!armFloors.empty())
         start = std::max(start, armFloorOf(owner));
+      if (holding())
+        start = std::max(start, heldFloorOf(op));
       if (mlir::Value tone = toneOperand(op))
         start = std::max(start, ready(tone));
       if (classical) {
@@ -2530,6 +2711,9 @@ private:
     for (auto [input, offset] : llvm::zip(inputs, shape.in))
       if (offset >= 0)
         start = std::max(start, ready(input) - offset);
+    // A block placed whole is held on every controller.
+    if (holding())
+      start = std::max(start, *llvm::max_element(heldFloors));
     if constexpr (Gridded)
       start = pulse::LineGrid::roundUp(start, grid.lcm());
     if (classical)
@@ -2538,6 +2722,8 @@ private:
     for (auto [result, offset, source] :
          llvm::zip(block.getOutputs(), shape.out, shape.source))
       readyAt[result] = offset >= 0 ? start + offset : ready(inputs[source]);
+    for (int64_t &at : heldEnds)
+      at = std::max(at, start + shape.length);
     noteEnd(start + shape.length, t);
   }
 
@@ -2596,6 +2782,7 @@ private:
       auto savedEnds = iterationEnds;
       std::fill(iterationEnds.begin(), iterationEnds.end(), -1);
       auto floorsBefore = floors;
+      auto heldFloorsBefore = heldFloors, heldEndsBefore = heldEnds;
       auto linksBefore = linkReady;
       // Only an iteration moving as the one before can be steady.
       LaneState lanesBefore;
@@ -2723,6 +2910,8 @@ private:
         for (auto [now, before] : llvm::zip(floors, floorsBefore))
           if (now != before)
             now += distance;
+        moveChanged(heldFloors, heldFloorsBefore, distance);
+        moveChanged(heldEnds, heldEndsBefore, distance);
         if (resources.enabled)
           moveLanes(lanesBefore, distance);
         extrapolations.push_back({loop, shift, nullptr});
@@ -2957,7 +3146,15 @@ private:
     int64_t t = timelineOf(op);
     int64_t duration = durationOf(op), budget = budgetOf(op);
     int64_t start;
-    if (op->hasAttr("classical.eager")) {
+    // A call that holds every line keeps its forward time, as a blocking
+    // wait does: what follows starts after its answer is due.
+    bool kept = blocksOnCalls || op->hasAttr("classical.eager");
+    llvm::ArrayRef<int64_t> held;
+    if (holding()) {
+      held = heldBy(submit);
+      kept = kept || !held.empty();
+    }
+    if (kept) {
       start = forwardStartOf(op);
       pinned.insert(op);
     } else {
@@ -2972,12 +3169,15 @@ private:
         end = std::min(end, needed - budget);
       start = end - duration;
     }
-    start = takeSlotBackward(op, start, duration + budget,
-                             op->hasAttr("classical.eager"));
+    start = takeSlotBackward(op, start, duration + budget, kept);
     record(op, start);
     armStart = std::min(armStart, start);
     for (mlir::Value operand : op->getOperands())
       bound(operand, start);
+    if (blocksOnCalls)
+      ceilings[t] = std::min(ceilings[t], start);
+    for (int64_t c : held)
+      heldCeilings[c] = std::min(heldCeilings[c], start);
     if (ownOrder(op)) {
       auto [it, inserted] = linkLate.try_emplace(linkOf(op), start);
       if (!inserted)
@@ -3056,6 +3256,8 @@ private:
       int64_t end = late(op->getResult(0));
       if (classical)
         end = std::min(end, ceilings[t]);
+      if (holding())
+        end = std::min(end, heldCeilingOf(op));
       bool isReadout = mlir::isa<pulse::ReadoutOp>(op);
       int64_t owner = several() ? controllerOf(op) : kAnyOwner;
       if (isReadout) {
@@ -3168,6 +3370,8 @@ private:
     int64_t start = endOf(t) - shape.length;
     if (classical)
       start = std::min(start, ceilings[t] - shape.length);
+    if (holding())
+      start = std::min(start, *llvm::min_element(heldCeilings) - shape.length);
     for (auto [result, offset, source] :
          llvm::zip(block.getOutputs(), shape.out, shape.source)) {
       int64_t needed = late(result);
@@ -3247,6 +3451,7 @@ private:
       for (auto [value, time] : llvm::zip(yield.getOperands(), carried))
         bound(value, time);
       auto ceilingsBefore = ceilings;
+      auto heldCeilingsBefore = heldCeilings;
       auto linksBefore = linkLate;
       // Only an iteration moving as the one before can be steady.
       LaneState lanesBefore;
@@ -3413,6 +3618,7 @@ private:
         for (auto [now, before] : llvm::zip(ceilings, ceilingsBefore))
           if (now != before)
             now += distance;
+        moveChanged(heldCeilings, heldCeilingsBefore, distance);
         for (auto &[key, time] : linkLate) {
           auto before = linksBefore.find(key);
           if (before == linksBefore.end() || before->second != time)
@@ -3607,6 +3813,10 @@ private:
   /// Under rcp on several controllers: which plays each line, and what
   /// crossing between two costs.
   pulse::Controllers controllers;
+  /// When calls hold controllers (`holding`), which plays each line under
+  /// any policy, and the controllers each call holds.
+  pulse::Controllers owners;
+  llvm::DenseMap<mlir::Operation *, llvm::SmallVector<int64_t, 2>> heldCalls;
   /// In a branch on readouts, per controller: when their outcomes reach it
   /// (forward; empty outside one).
   llvm::SmallVector<int64_t, 4> armFloors;
@@ -4506,6 +4716,13 @@ scheduleRounds(mlir::Region &region, mlir::Operation *root, Resources resources,
   return mlir::success();
 }
 
+/// Whether the module of `op` lists the controllers that block on calls.
+static bool holdsControllers(mlir::Operation *op) {
+  auto module = op->getParentOfType<mlir::ModuleOp>();
+  return module && mlir::isa_and_present<mlir::DenseI64ArrayAttr>(
+                       module->getAttr(classical::kBlocksOnCallsAttr));
+}
+
 static mlir::LogicalResult
 scheduleRegion(mlir::Region &region, mlir::Operation *root, Resources resources,
                bool isAlap, bool classical, const Timelines &timelines,
@@ -4523,7 +4740,11 @@ scheduleRegion(mlir::Region &region, mlir::Operation *root, Resources resources,
     if (mlir::failed(checkBlockBudget(block)))
       return mlir::failure();
   }
-  bool traced = grid.enabled() || (resources.enabled && controllers.enabled());
+  // Calls that hold some of several controllers trace lines under any
+  // policy.
+  bool traced =
+      grid.enabled() ||
+      (controllers.enabled() && (resources.enabled || holdsControllers(root)));
   if (mlir::failed(
           traced
               ? scheduleRounds<true>(region, root, resources, isAlap, classical,
@@ -4555,9 +4776,11 @@ static mlir::LogicalResult schedule(mlir::func::FuncOp function,
   if (mlir::failed(annotated))
     return mlir::failure();
   bool classical = *annotated;
+  bool blocksOnCalls = function->getParentOfType<mlir::ModuleOp>()->hasAttr(
+      classical::kBlocksOnCallsAttr);
   if (classical)
     for (pulse::ScheduleBlockOp block : outermostBlocks(function.getBody())) {
-      mlir::WalkResult found = block.walk([](mlir::Operation *op) {
+      mlir::WalkResult found = block.walk([blocksOnCalls](mlir::Operation *op) {
         if (op->hasAttr("classical.variable")) {
           op->emitError(classical::kVariableWaitInBlock);
           return mlir::WalkResult::interrupt();
@@ -4565,6 +4788,10 @@ static mlir::LogicalResult schedule(mlir::func::FuncOp function,
         if (mlir::isa<classical::WaitOp>(op) &&
             op->hasAttr("classical.blocking")) {
           op->emitError(classical::kBlockingWaitInBlock);
+          return mlir::WalkResult::interrupt();
+        }
+        if (blocksOnCalls && mlir::isa<classical::SubmitOp>(op)) {
+          op->emitError(classical::kBlockingCallInBlock);
           return mlir::WalkResult::interrupt();
         }
         return mlir::WalkResult::advance();

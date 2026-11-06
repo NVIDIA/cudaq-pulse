@@ -609,6 +609,12 @@ behavior may change in any 0.x release.
   `Controller(persistent_frames=True)` declares a controller whose
   frames persist from shot to shot: such changes then have no event, and
   the export's `frame_state` gives the frame each tone ends the shot in.
+  `Controller(blocks_on_calls=True)` declares one that plays nothing while
+  a classical call is out: each call holds every line from its submission
+  until its answer is due, in every schedule, and its exports list the
+  limit. In a control system of several controllers, a call holds those
+  that block and issue it, read a measurement it sends or play with its
+  answer.
   Programs without such changes export as before.
 - **Timing budgets.** `@pulse.kernel(max_duration_cycles=n)` fails
   compilation when an execution of the kernel can take more than `n`

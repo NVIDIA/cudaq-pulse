@@ -372,6 +372,15 @@ class Controller:
     from the reset frame, and the export gives a frame change no later
     operation uses on some path as a frame update of its own; with, it
     exports instead the frame each tone ends the shot in (``frame_state``).
+    ``blocks_on_calls``: whether the controller plays nothing while one of
+    its classical calls is out: each call holds every line from its
+    submission until its answer is due, after the lines before it are done.
+    The scheduler places calls so, and a program played on such a
+    controller is checked for it; a call in a kernel with its own
+    ``schedule=`` then does not compile. Exports list it among the limits
+    only when it is set. In a control system of several controllers, a
+    call holds the lines of each such controller that issues it, reads a
+    measurement it sends or plays a pulse that uses its answer.
 
     ``drive_lines`` and ``readout_lines`` are the carriers whose drive and
     readout lines it plays (carrier indices of the quantum system); the only
@@ -408,6 +417,7 @@ class Controller:
     max_program_duration: float | Time | None = None
     waveform_memory: WaveformMemoryScope | str = "per_line"
     persistent_frames: bool = False
+    blocks_on_calls: bool = False
     drive_lines: Sequence[int] = ()
     readout_lines: Sequence[int] = ()
     peer_latency_cycles: int | Mapping[int, int] = 0
@@ -419,10 +429,11 @@ class Controller:
     processors: Sequence[Processor] = ()
 
     def __post_init__(self) -> None:
-        if not isinstance(self.persistent_frames, bool):
-            raise InvalidValueError(
-                f"Controller.persistent_frames must be a bool, got {self.persistent_frames!r}"
-            )
+        for name in ("persistent_frames", "blocks_on_calls"):
+            if not isinstance(getattr(self, name), bool):
+                raise InvalidValueError(
+                    f"Controller.{name} must be a bool, got {getattr(self, name)!r}"
+                )
         if self.clock_ghz is not None and not self.clock_ghz > 0:
             raise InvalidValueError(f"Controller.clock_ghz must be positive, got {self.clock_ghz}")
         from .controller import WaveformMemoryScope
@@ -579,6 +590,8 @@ class Controller:
             data["waveform_memory"] = str(self.waveform_memory)
         if not self.persistent_frames:
             del data["persistent_frames"]
+        if not self.blocks_on_calls:
+            del data["blocks_on_calls"]
         data["drive_lines"] = list(self.drive_lines)
         data["readout_lines"] = list(self.readout_lines)
         peers = self.peer_latency_cycles
@@ -752,6 +765,8 @@ class ControlSystem:
         # may take a rolled loop's copies for its first (``_summarized``) when
         # they count program cycles.
         _lines_up: bool = field(init=False)
+        # The indices of the controllers that block on calls.
+        _blocking: tuple[int, ...] = field(init=False)
 
     def __post_init__(self) -> None:
         from .compiler import _NO_DELAYS, _MachineModel
@@ -843,6 +858,11 @@ class ControlSystem:
                 and not self.line_delays_ns
                 and not any(c.clock_skew_cycles for c in controllers)
             ),
+        )
+        object.__setattr__(
+            self,
+            "_blocking",
+            tuple(index for index, c in enumerate(controllers) if c.blocks_on_calls),
         )
         links: dict[int | str, Link] = {name: link for name, link in self.links.items()}
         one = controllers[0] if len(controllers) == 1 else None
@@ -1034,7 +1054,8 @@ class ControlSystem:
         """The module attribute ``pulse.controllers`` of a program at
         *program_ghz* on *n_qudits* qudits: the controller of each line, the
         outcome latencies between controllers, how far apart their starts may
-        be (in program cycles) and each one's start uncertainty in ns."""
+        be (in program cycles) and each one's start uncertainty in ns; with
+        ``pulse.blocks_on_calls``, those that block on calls."""
         from fractions import Fraction
 
         clocks = self._clock_plan(program_ghz)
@@ -1060,7 +1081,10 @@ class ControlSystem:
         fields.append(f"outcome_latency = {array('i64', latency)}")
         fields.append(f"spread = {array('i64', spread)}")
         fields.append(f"uncertainty_ns = {array('f64', ns)}")
-        return "{pulse.controllers = {" + ", ".join(fields) + "}}"
+        text = "{pulse.controllers = {" + ", ".join(fields) + "}"
+        if self._blocking:
+            text += f", pulse.blocks_on_calls = {array('i64', self._blocking)}"
+        return text + "}"
 
     def _links_attribute(
         self, machine: _MachineModel, used: Sequence[int], program_ghz: float
@@ -1327,6 +1351,8 @@ class ControlSystem:
             needs = self._needs(lowered, events, owners, unresolved)
             needs.extend(self._forwarding(events, owners, clocks))
             needs.extend(self._alignment(lines, events, owners, clocks, lowered.target.clock_ghz))
+            if self._blocking:
+                needs.extend(self._held(lowered, events, owners))
             if clocks is not None and clocks.owners is not None:
                 # Each event in its controller's cycles, once for them all.
                 found.extend(
@@ -1356,6 +1382,7 @@ class ControlSystem:
                         waveforms,
                         unresolved,
                         natives,
+                        held=False,
                     )
                 )
             found.extend(needs)
@@ -1368,6 +1395,46 @@ class ControlSystem:
                 # When calls are due can depend on a call's values.
                 unresolved.append("processors")
         return found
+
+    def _held(
+        self,
+        lowered: Lowered,
+        events: Sequence[Mapping[str, Any]],
+        owners: Sequence[int | None],
+    ) -> list[str]:
+        """The pulses a controller that blocks on calls plays while a call
+        that holds it is out (*events* in program cycles): a call holds each
+        that issues it (``_callers``), reads a measurement it sends or plays a
+        line event that uses its answer."""
+        from .controller import _held_text, _played_while_out
+
+        if not lowered.classical or not lowered.scheduled:
+            return []
+        blocking = set(self._blocking)
+        takers = _takers(events, owners)
+        answers: dict[tuple[Any, ...], list[int]] = {}
+        for event in events:
+            if event["kind"] == "answer":
+                taken = (event["link"], event["function"], tuple(event["iteration"]))
+                answers.setdefault((*taken, event["start_cycles"]), []).append(event["index"])
+        submits = [e for e in events if e["kind"] == "submit"]
+        calls = lowered.classical_report()
+        used = _known(owners)
+        holders = []
+        for submit, call in zip(submits, calls, strict=True):
+            held: set[int | None] = set(self._callers(submit, events, owners, used, takers))
+            held.update(owners[events[ref]["line"]] for ref in submit["measurements"])
+            key = (call.link, call.compiled_name, tuple(call.iteration), call.taken_cycles)
+            for answer in answers.get(key, ()):
+                held.update(takers.get(answer, ()))
+            holders.append(held & blocking)
+        return [
+            f"{_label(owner, self.controllers[owner])}: {_held_text(submit, call, event)}"
+            for submit, call, event in _played_while_out(
+                events, calls, lambda index, event: owners[event["line"]] in holders[index]
+            )
+            if (owner := owners[event["line"]]) is not None
+        ]
 
     def _summarized(
         self,
