@@ -89,6 +89,30 @@ def test_feedback_latency_of_the_link_adds_to_the_budget(feedback_ns):
     assert _makespan(low) == READOUT + 1 + BUDGET + math.ceil(feedback_ns * CLOCK) + ARM
 
 
+@pulse.kernel
+def answered_before_a_loop(q):
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    n = decode.submit([readout(r, square(100, 0.05))]).result()[0]
+    for _ in range(4):
+        if readout(r, square(100, 0.05)):
+            drive(d, square(40, 0.1))
+        if n:
+            drive(d, square(30, 0.1))
+        wait(d, 200)
+
+
+@pytest.mark.parametrize("schedule", POLICIES)
+def test_an_answer_taken_before_a_loop_is_taken_before_its_first_iteration_tests_it(schedule):
+    lowered = pulse.compile(answered_before_a_loop, schedule=schedule).lower(Q[0])
+    events = lowered.export_controller()["events"]
+    # Every iteration branches on the answer, the first at its due time.
+    [answer] = [e for e in events if e["kind"] == "answer"]
+    tested = [e for e in events if any(c["answers"] for c in e["conditions"])]
+    assert len(tested) == 4
+    assert min(e["start_cycles"] for e in tested) >= answer["end_cycles"]
+
+
 def _late_consumer(fn):
     @pulse.kernel
     def k(q, p):
