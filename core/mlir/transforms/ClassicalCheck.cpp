@@ -17,7 +17,10 @@
 //   `reaction_deadline_ns` of the end of the readouts its request carries;
 // - at no time does a link hold more requests than `max_in_flight` (S8);
 // - the submissions on one link go out one after another, in program order
-//   (S9).
+//   (S9), also inside branches (S11);
+// - a call starts after the readouts and answers it sends end (S10), and no
+//   op in a branch on an answer starts before it is taken (S12): the
+//   scheduler bounds such a branch by the answer alone.
 //
 // Where lines wait independently (`classical.timeline`), a link's slots and
 // order are per timeline: each holds no more requests than its share and
@@ -79,71 +82,290 @@ struct Run {
 /// timeline's share of that (-1: all of it).
 using LinkKey = std::tuple<int64_t, int64_t, int64_t>;
 
+/// The readouts and answers whose values reach `values` through ops without
+/// regions and the results of branches; not through a loop's values.
+static void sentValues(mlir::ValueRange values,
+                       llvm::SmallVectorImpl<mlir::Operation *> &found) {
+  llvm::SmallVector<mlir::Value, 8> work;
+  for (mlir::Value value : values) {
+    // Most are a readout's or an answer's own.
+    mlir::Operation *def = value.getDefiningOp();
+    if (mlir::isa_and_nonnull<pulse::ReadoutOp, classical::WaitOp>(def))
+      found.push_back(def);
+    else
+      work.push_back(value);
+  }
+  if (work.empty())
+    return;
+  llvm::SmallDenseSet<mlir::Value, 8> seen;
+  while (!work.empty()) {
+    mlir::Value value = work.pop_back_val();
+    if (mlir::isa<classical::LinkType>(value.getType()) ||
+        !seen.insert(value).second)
+      continue;
+    mlir::Operation *def = value.getDefiningOp();
+    if (!def)
+      continue;
+    if (mlir::isa<pulse::ReadoutOp, classical::WaitOp>(def)) {
+      found.push_back(def);
+      continue;
+    }
+    if (auto branch = mlir::dyn_cast<mlir::scf::IfOp>(def)) {
+      unsigned index = mlir::cast<mlir::OpResult>(value).getResultNumber();
+      work.push_back(branch.thenYield().getOperand(index));
+      if (!branch.getElseRegion().empty())
+        work.push_back(branch.elseYield().getOperand(index));
+      work.push_back(branch.getCondition());
+      continue;
+    }
+    if (def->getNumRegions() == 0)
+      work.append(def->getOperands().begin(), def->getOperands().end());
+  }
+}
+
 /// Every execution of every submission, per link, in program order. Both
 /// arms of a branch are listed, so capacity is checked for the worst case.
 /// The first loop around a submission with at least `summarizeFrom` trips
 /// (none when 0) is kept as runs; every other loop is walked iteration by
 /// iteration.
+///
+/// With `Ordering` (a function with a branch), the walk also checks the
+/// order of the calls a branch on an answer relies on: the scheduler bounds
+/// such a branch by the answer alone, not by the measurements the call, or
+/// an earlier call on its link, sent. That holds when
+///
+/// - S10: a call starts after every readout and every answer it sends ends;
+/// - S11: a call starts after the one before it on its link (in program
+///   order, on its path) ends;
+/// - S12: no op in a branch on an answer starts before the answer is taken.
+///
+/// S9 checks S11 outside branches. Starts are affine in the iteration, so
+/// these are checked at each loop's first two iterations and its last, as
+/// pulse-verify checks lines: a loop kept as runs is walked again at the
+/// other two, recording nothing.
 struct Submissions {
   explicit Submissions(int64_t summarizeFrom) : summarizeFrom(summarizeFrom) {}
 
   int64_t summarizeFrom;
   std::map<LinkKey, std::vector<Run>> perLink, ordered;
+  bool failed = false;
 
+  /// Collect the submissions of `block`, checking their order with
+  /// `Ordering` (a function with a branch).
+  template <bool Ordering>
   void collect(mlir::Block &block, llvm::SmallVectorImpl<int64_t> &iteration,
                bool inBranch) {
     for (mlir::Operation &op : block) {
-      if (mlir::isa<classical::SubmitOp>(op)) {
+      if (auto submit = mlir::dyn_cast<classical::SubmitOp>(op)) {
         auto start = pulse::scheduledStart(&op, iteration);
         if (!start)
           continue;
-        int64_t period = 0;
-        if (level) {
-          iteration[*level] = 1;
-          period = *pulse::scheduledStart(&op, iteration) - *start;
-          iteration[*level] = 0;
-        }
         LinkKey device{classical::intAttr(&op, "classical.device"),
                        classical::intAttr(&op, classical::kInstanceAttr, -1),
                        classical::intAttr(&op, classical::kTimelineAttr, -1)};
         int64_t duration = pulse::scheduledDuration(&op).value_or(1);
-        int64_t budget = classical::intAttr(&op, "classical.budget_cycles");
-        Run run{*start, period, level ? trips : 1, duration, duration + budget,
-                group,  &op};
-        perLink[device].push_back(run);
-        if (!inBranch)
-          ordered[device].push_back(run);
+        if (!Ordering || recording) {
+          int64_t period = 0;
+          if (level) {
+            iteration[*level] = 1;
+            period = *pulse::scheduledStart(&op, iteration) - *start;
+            iteration[*level] = 0;
+          }
+          int64_t budget = classical::intAttr(&op, "classical.budget_cycles");
+          Run run{
+              *start, period, level ? trips : 1, duration, duration + budget,
+              group,  &op};
+          perLink[device].push_back(run);
+          if (!inBranch)
+            ordered[device].push_back(run);
+        }
+        if (Ordering && !skipped)
+          orderSubmit(submit, *start, duration, device, inBranch, iteration);
       } else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
         int64_t count = pulse::constantTripCount(loop).value_or(0);
         iteration.push_back(0);
-        if (!level && summarizeFrom > 0 && count >= summarizeFrom) {
+        if ((!Ordering || recording) && !level && summarizeFrom > 0 &&
+            count >= summarizeFrom) {
           level = iteration.size() - 1;
           group = groups++;
           trips = count;
-          collect(*loop.getBody(), iteration, inBranch);
+          collect<Ordering>(*loop.getBody(), iteration, inBranch);
           level.reset();
           group = -1;
-        } else {
+          if (Ordering && !skipped) {
+            recording = false;
+            for (int64_t k : {int64_t{1}, count - 1}) {
+              iteration.back() = k;
+              collect<Ordering>(*loop.getBody(), iteration, inBranch);
+            }
+            recording = true;
+          }
+        } else if (!Ordering) {
           for (int64_t k = 0; k < count; ++k) {
             iteration.back() = k;
-            collect(*loop.getBody(), iteration, inBranch);
+            collect<Ordering>(*loop.getBody(), iteration, inBranch);
+          }
+        } else {
+          for (int64_t k = 0; k < count; ++k) {
+            if (!recording && k == 2 && count > 3)
+              k = count - 1;
+            iteration.back() = k;
+            bool skip = k >= 2 && k != count - 1;
+            skipped += skip;
+            collect<Ordering>(*loop.getBody(), iteration, inBranch);
+            skipped -= skip;
           }
         }
         iteration.pop_back();
-      } else {
+      } else if constexpr (!Ordering) {
         bool branch = inBranch || mlir::isa<mlir::scf::IfOp>(op);
         for (mlir::Region &region : op.getRegions())
           for (mlir::Block &nested : region)
-            collect(nested, iteration, branch);
+            collect<Ordering>(nested, iteration, branch);
+      } else if (auto branch = mlir::dyn_cast<mlir::scf::IfOp>(op)) {
+        if (!skipped) {
+          orderIf(branch, iteration);
+        } else {
+          for (mlir::Region &region : op.getRegions())
+            for (mlir::Block &nested : region)
+              collect<Ordering>(nested, iteration, true);
+        }
+      } else if (mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp,
+                           classical::WaitOp>(op)) {
+        if (answered != kNone && !skipped)
+          if (auto start = startIn(&op, iteration))
+            afterAnswer(&op, *start);
+      } else {
+        for (mlir::Region &region : op.getRegions())
+          for (mlir::Block &nested : region)
+            collect<Ordering>(nested, iteration, inBranch);
       }
     }
   }
 
 private:
+  void error(mlir::Operation *op, const llvm::Twine &message) {
+    if (reported.insert(op).second)
+      op->emitError(message);
+    failed = true;
+  }
+
+  /// S12.
+  void afterAnswer(mlir::Operation *op, int64_t start) {
+    if (start < answered)
+      error(op, "an operation in a branch on an answer starts at " +
+                    llvm::Twine(start) + ", before the answer is taken at " +
+                    llvm::Twine(answered));
+  }
+
+  /// pulse::scheduledStart, which an op outside loops needs no periods for.
+  static std::optional<int64_t> startIn(mlir::Operation *op,
+                                        llvm::ArrayRef<int64_t> iteration) {
+    if (!iteration.empty())
+      return pulse::scheduledStart(op, iteration);
+    if (auto start = op->getAttrOfType<mlir::IntegerAttr>("start_cycles"))
+      return start.getInt();
+    return std::nullopt;
+  }
+
+  /// When `op`, a readout or an answer the op walked depends on, ends in the
+  /// iteration walked: the loops around it are among those around the op.
+  static std::optional<int64_t> endOf(mlir::Operation *op,
+                                      llvm::ArrayRef<int64_t> iteration) {
+    size_t depth = 0;
+    for (mlir::Operation *parent = op->getParentOp(); parent;
+         parent = parent->getParentOp())
+      depth += mlir::isa<mlir::scf::ForOp>(parent);
+    if (depth > iteration.size())
+      return std::nullopt;
+    std::optional<int64_t> start = startIn(op, iteration.take_front(depth));
+    if (!start)
+      return std::nullopt;
+    return *start + pulse::scheduledDuration(op).value_or(0);
+  }
+
+  void orderSubmit(classical::SubmitOp submit, int64_t start, int64_t duration,
+                   const LinkKey &key, bool inBranch,
+                   llvm::ArrayRef<int64_t> iteration) {
+    mlir::Operation *op = submit;
+    afterAnswer(op, start);
+    // S10.
+    llvm::SmallVector<mlir::Operation *, 4> sent;
+    sentValues(submit.getArgs(), sent);
+    for (mlir::Operation *from : sent) {
+      std::optional<int64_t> end = endOf(from, iteration);
+      if (end && start < *end) {
+        bool readout = mlir::isa<pulse::ReadoutOp>(from);
+        error(op, "the call of '" + submit.getCallee() + "' starts at " +
+                      llvm::Twine(start) + ", before the " +
+                      (readout ? "readout" : "answer") + " it sends ends at " +
+                      llvm::Twine(*end));
+        break;
+      }
+    }
+    // S11, inside branches.
+    int64_t *previous = nullptr;
+    for (auto &[link, end] : linkEnds)
+      if (link == key)
+        previous = &end;
+    if (!previous) {
+      linkEnds.push_back({key, start});
+      previous = &linkEnds.back().second;
+    } else if (start < *previous && inBranch) {
+      error(op, "submission on link " + llvm::Twine(std::get<0>(key)) +
+                    " starts at " + llvm::Twine(start) +
+                    ", before the one before it on its path ends at " +
+                    llvm::Twine(*previous));
+    }
+    *previous = std::max(*previous, start + duration);
+  }
+
+  void orderIf(mlir::scf::IfOp branch,
+               llvm::SmallVectorImpl<int64_t> &iteration) {
+    int64_t saved = answered;
+    llvm::SmallVector<mlir::Operation *, 4> sent;
+    sentValues(branch.getCondition(), sent);
+    for (mlir::Operation *from : sent)
+      if (mlir::isa<classical::WaitOp>(from))
+        if (std::optional<int64_t> taken = endOf(from, iteration))
+          answered = std::max(answered, *taken);
+    auto before = linkEnds;
+    collect<true>(*branch.thenBlock(), iteration, true);
+    if (!branch.getElseRegion().empty()) {
+      auto afterThen = std::move(linkEnds);
+      linkEnds = std::move(before);
+      collect<true>(*branch.elseBlock(), iteration, true);
+      for (auto &[key, end] : afterThen) {
+        bool merged = false;
+        for (auto &[link, mine] : linkEnds)
+          if (link == key) {
+            mine = std::max(mine, end);
+            merged = true;
+          }
+        if (!merged)
+          linkEnds.push_back({key, end});
+      }
+    }
+    answered = saved;
+  }
+
+  static constexpr int64_t kNone = std::numeric_limits<int64_t>::min();
+
+  /// Whether runs are recorded: not when a loop kept as runs is walked
+  /// again for the order.
+  bool recording = true;
+  /// How many loops around the op walked are at an iteration the order is
+  /// not checked at.
+  int skipped = 0;
   /// The level of `iteration` of the loop being kept as runs, its trips and
   /// its runs' group.
   std::optional<size_t> level;
   int64_t trips = 0, group = -1, groups = 0;
+  /// The end of the latest submission on each link, on the path walked.
+  llvm::SmallVector<std::pair<LinkKey, int64_t>, 4> linkEnds;
+  /// The latest answer a branch around the op walked is on.
+  int64_t answered = kNone;
+  llvm::DenseSet<mlir::Operation *> reported;
 };
 
 static int64_t floorDiv(int64_t a, int64_t b) {
@@ -656,8 +878,17 @@ static mlir::LogicalResult checkClassicalCalls(mlir::ModuleOp module,
     }
     // S7: each answer is taken no earlier than it is due. Start times are
     // affine in the iteration, so checking the corners of the iteration
-    // box covers every iteration.
-    function.walk([&](classical::WaitOp wait) {
+    // box covers every iteration. The walk also finds whether the function
+    // has a branch.
+    bool branches = false;
+    function.walk([&](mlir::Operation *op) {
+      if (mlir::isa<mlir::scf::IfOp>(op)) {
+        branches = true;
+        return;
+      }
+      auto wait = mlir::dyn_cast<classical::WaitOp>(op);
+      if (!wait)
+        return;
       mlir::Value future = wait.getFuture();
       auto submit = future.getDefiningOp<classical::SubmitOp>();
       if (!submit) {
@@ -710,7 +941,12 @@ static mlir::LogicalResult checkClassicalCalls(mlir::ModuleOp module,
 
     Submissions submissions{summarizeFrom};
     llvm::SmallVector<int64_t> iteration;
-    submissions.collect(function.getBody().front(), iteration, false);
+    mlir::Block &body = function.getBody().front();
+    if (branches)
+      submissions.collect<true>(body, iteration, false);
+    else
+      submissions.collect<false>(body, iteration, false);
+    failed |= submissions.failed;
     // S8: requests in flight at once.
     for (auto &[key, runs] : submissions.perLink) {
       auto [device, instance, timeline] = key;

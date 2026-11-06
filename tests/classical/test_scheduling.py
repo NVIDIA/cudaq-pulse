@@ -393,6 +393,45 @@ def test_very_many_calls_schedule_in_linear_time(links):
     assert timings[2000] < 8 * timings[500], timings
 
 
+@pulse.classical(max_latency_ns=60, link="decoder", submit="lazy")
+def record_syndrome(bits: pulse.Bits) -> pulse.Bits:
+    return bits
+
+
+@pulse.classical(max_latency_ns=120, link="decoder")
+def decode_syndromes() -> pulse.Bits:
+    return [0]
+
+
+@pulse.kernel
+def decoded(q, r):
+    # The decoder keeps every round's syndrome: decode_syndromes() takes
+    # none, and its answer depends on those of the calls before it on the
+    # link alone.
+    d = get_drive_line(q)
+    ro = get_readout_line(r)
+    for k in range(6):
+        record_syndrome.submit([readout(ro, square(80, 0.05))])
+        if k % 3 == 2 and decode_syndromes.submit().result()[0]:
+            drive(d, square(16, 0.3))
+
+
+@pytest.mark.parametrize("schedule", POLICIES)
+def test_a_correction_from_decoder_state_waits_for_every_syndrome_it_holds(schedule):
+    machine = MachineModel(links={"decoder": Link(fixed_ns=10)})
+    lowered = pulse.compile(decoded, schedule=schedule, machine=machine).lower(Q[0], Q[1])
+    events = lowered.export_controller()["events"]
+    corrections = [e for e in events if e["kind"] == "drive" and e["conditions"]]
+    assert len(corrections) == 2
+    for drive in corrections:
+        [condition] = drive["conditions"]
+        [answer] = condition["answers"]
+        submit = max(e["index"] for e in events if e["kind"] == "submit" and e["index"] < answer)
+        syndromes = [e for e in events if e["kind"] == "readout" and e["index"] < submit]
+        assert syndromes
+        assert drive["start_cycles"] >= max(e["end_cycles"] for e in syndromes)
+
+
 # ── Properties ───────────────────────────────────────────────────────────────
 
 _STEP = st.tuples(

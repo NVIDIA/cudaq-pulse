@@ -300,8 +300,8 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
 // -----
 
 // S8 in the middle of a long loop: a short request in a branch after the
-// loop, out of program order but not sent in it, is in flight from 20025 to
-// 20056, while only iterations 499 and 500 are; the loop's next request
+// loop, out of program order (which S11 reports too), is in flight from 20025
+// to 20056, while only iterations 499 and 500 are; the loop's next request
 // makes four.
 module attributes {pulse.clock_ghz = 1.0 : f64,
                    classical.links = {"0" = {max_in_flight = 3 : i64}}} {
@@ -324,10 +324,135 @@ module attributes {pulse.clock_ghz = 1.0 : f64,
       scf.yield %l1 : !classical.link
     }
     %lm = scf.if %c -> (!classical.link) {
+      // expected-error @+1 {{submission on link 0 starts at 20025, before the one before it on its path ends at 39962}}
       %l2, %g = classical.submit %ln, @g() {start_cycles = 20025 : i64, duration_cycles = 1 : i64} : () -> (!classical.link, !classical.future)
       scf.yield %l2 : !classical.link
     } else {
       scf.yield %ln : !classical.link
+    }
+    return
+  }
+}
+
+// -----
+
+// S10: a call starts before the readout it sends ends, in a function with a
+// branch (a function without one relies on S10 nowhere).
+module attributes {pulse.clock_ghz = 1.0 : f64} {
+  classical.callable @f {function_id = 3809224601 : i64, device = 0 : i64,
+      args = ["bits:1"], results = ["bits:1"], latency_min_ns = 0.0,
+      latency_nominal_ns = 100.0, latency_max_ns = 100.0, mode = "bounded",
+      submit = "eager"}
+  func.func @early(%c: i1, %r0: !pulse.readout_line, %rt0: !pulse.tone, %ro: !pulse.waveform) {
+    %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, "iq" {start_cycles = 0 : i64, duration_cycles = 100 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %l = classical.get_link {device = 0 : i64} : !classical.link
+    // expected-error @+1 {{the call of 'f' starts at 90, before the readout it sends ends at 100}}
+    %l1, %h = classical.submit %l, @f(%m) {start_cycles = 90 : i64, duration_cycles = 1 : i64} : (!pulse.measurement) -> (!classical.link, !classical.future)
+    scf.if %c {
+    }
+    return
+  }
+}
+
+// -----
+
+// S10: a call starts before the answer it sends is taken at 150 (it is due
+// at 0 + 1 + 100), in a function with a branch.
+module attributes {pulse.clock_ghz = 1.0 : f64} {
+  classical.callable @f {function_id = 3809224601 : i64, device = 0 : i64,
+      args = ["f64"], results = ["f64"], latency_min_ns = 0.0,
+      latency_nominal_ns = 100.0, latency_max_ns = 100.0, mode = "bounded",
+      submit = "eager"}
+  func.func @chained(%c: i1, %x: f64) {
+    %l = classical.get_link {device = 0 : i64} : !classical.link
+    %l1, %h = classical.submit %l, @f(%x) {start_cycles = 0 : i64, duration_cycles = 1 : i64, classical.budget_cycles = 100 : i64} : (f64) -> (!classical.link, !classical.future)
+    %v = classical.wait %h, @f {start_cycles = 150 : i64, duration_cycles = 0 : i64} : f64
+    // expected-error @+1 {{the call of 'f' starts at 120, before the answer it sends ends at 150}}
+    %l2, %h2 = classical.submit %l1, @f(%v) {start_cycles = 120 : i64, duration_cycles = 1 : i64, classical.budget_cycles = 100 : i64} : (f64) -> (!classical.link, !classical.future)
+    scf.if %c {
+    }
+    return
+  }
+}
+
+// -----
+
+// S11: in a branch, a call starts before the one before it on its link ends.
+module attributes {pulse.clock_ghz = 1.0 : f64} {
+  classical.callable @f {function_id = 3809224601 : i64, device = 0 : i64,
+      args = [], results = [], latency_min_ns = 0.0,
+      latency_nominal_ns = 50.0, latency_max_ns = 100.0, mode = "bounded",
+      submit = "eager"}
+  func.func @reordered(%c: i1) {
+    %l0 = classical.get_link {device = 0 : i64} : !classical.link
+    %l1, %a = classical.submit %l0, @f() {start_cycles = 20 : i64, duration_cycles = 24 : i64} : () -> (!classical.link, !classical.future)
+    %l3 = scf.if %c -> (!classical.link) {
+      // expected-error @+1 {{submission on link 0 starts at 0, before the one before it on its path ends at 44}}
+      %l2, %b = classical.submit %l1, @f() {start_cycles = 0 : i64, duration_cycles = 24 : i64} : () -> (!classical.link, !classical.future)
+      scf.yield %l2 : !classical.link
+    } else {
+      scf.yield %l1 : !classical.link
+    }
+    return
+  }
+}
+
+// -----
+
+// S12: a drive in a branch on an answer starts before it is taken at 150 (it
+// is due at 0 + 1 + 100).
+module attributes {pulse.clock_ghz = 1.0 : f64} {
+  classical.callable @f {function_id = 3809224601 : i64, device = 0 : i64,
+      args = [], results = ["f64"], latency_min_ns = 0.0,
+      latency_nominal_ns = 100.0, latency_max_ns = 100.0, mode = "bounded",
+      submit = "eager"}
+  func.func @unanswered(%d0: !pulse.drive_line, %t0: !pulse.tone, %w: !pulse.waveform) {
+    %l = classical.get_link {device = 0 : i64} : !classical.link
+    %l1, %h = classical.submit %l, @f() {start_cycles = 0 : i64, duration_cycles = 1 : i64, classical.budget_cycles = 100 : i64} : () -> (!classical.link, !classical.future)
+    %v = classical.wait %h, @f {start_cycles = 150 : i64, duration_cycles = 0 : i64} : f64
+    %half = arith.constant 0.5 : f64
+    %c = arith.cmpf ogt, %v, %half : f64
+    %d1, %t1 = scf.if %c -> (!pulse.drive_line, !pulse.tone) {
+      // expected-error @+1 {{an operation in a branch on an answer starts at 120, before the answer is taken at 150}}
+      %d2, %t2 = pulse.drive %d0, %w, %t0 {start_cycles = 120 : i64, duration_cycles = 16 : i64} : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+      scf.yield %d2, %t2 : !pulse.drive_line, !pulse.tone
+    } else {
+      scf.yield %d0, %t0 : !pulse.drive_line, !pulse.tone
+    }
+    return
+  }
+}
+
+// -----
+
+// S12 in a long loop: each answer is taken at 100 + 10 k and the drive in the
+// branch on it starts at 150 + 9 k, before it from iteration 51 on. The
+// diagnostic names the last iteration.
+module attributes {pulse.clock_ghz = 1.0 : f64} {
+  classical.callable @f {function_id = 3809224601 : i64, device = 0 : i64,
+      args = [], results = ["f64"], latency_min_ns = 0.0,
+      latency_nominal_ns = 50.0, latency_max_ns = 50.0, mode = "bounded",
+      submit = "eager"}
+  func.func @drifting(%d0: !pulse.drive_line, %t0: !pulse.tone, %w: !pulse.waveform) {
+    %l0 = classical.get_link {device = 0 : i64} : !classical.link
+    %half = arith.constant 0.5 : f64
+    %lb = arith.constant 0 : index
+    %ub = arith.constant 64 : index
+    %step = arith.constant 1 : index
+    %dn, %tn, %ln = scf.for %i = %lb to %ub step %step
+        iter_args(%d = %d0, %t = %t0, %l = %l0)
+        -> (!pulse.drive_line, !pulse.tone, !classical.link) {
+      %l1, %h = classical.submit %l, @f() {start_cycles = 0 : i64, period_cycles = array<i64: 10>, duration_cycles = 1 : i64, classical.budget_cycles = 50 : i64} : () -> (!classical.link, !classical.future)
+      %v = classical.wait %h, @f {start_cycles = 100 : i64, period_cycles = array<i64: 10>, duration_cycles = 0 : i64} : f64
+      %c = arith.cmpf ogt, %v, %half : f64
+      %d1, %t1 = scf.if %c -> (!pulse.drive_line, !pulse.tone) {
+        // expected-error @+1 {{an operation in a branch on an answer starts at 717, before the answer is taken at 730}}
+        %d2, %t2 = pulse.drive %d, %w, %t {start_cycles = 150 : i64, period_cycles = array<i64: 9>, duration_cycles = 4 : i64} : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+        scf.yield %d2, %t2 : !pulse.drive_line, !pulse.tone
+      } else {
+        scf.yield %d, %t : !pulse.drive_line, !pulse.tone
+      }
+      scf.yield %d1, %t1, %l1 : !pulse.drive_line, !pulse.tone, !classical.link
     }
     return
   }

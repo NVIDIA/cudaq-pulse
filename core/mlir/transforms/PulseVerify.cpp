@@ -51,7 +51,8 @@ static bool isTimedOp(mlir::Operation *op) {
   return mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(op);
 }
 
-/// The measurement results a branch condition is computed from.
+/// The measurement results a branch condition is computed from, not
+/// through a link (see the scheduler's conditionMeasurements).
 static void conditionMeasurements(mlir::Value value,
                                   llvm::SmallVectorImpl<mlir::Value> &found,
                                   llvm::DenseSet<mlir::Value> &seen) {

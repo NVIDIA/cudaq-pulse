@@ -276,7 +276,11 @@ static mlir::Value toneResult(mlir::Operation *op) {
   return {};
 }
 
-/// The measurement results a branch condition is computed from.
+/// The measurement results a branch condition is computed from. A link is
+/// not followed: the calls before a call on its link end before it starts,
+/// and each starts after the measurements it sends, as
+/// pulse-classical-check checks (S10, S11), so theirs are ready before
+/// its own.
 static void conditionMeasurements(mlir::Value value,
                                   llvm::SmallVectorImpl<mlir::Value> &found,
                                   llvm::DenseSet<mlir::Value> &seen) {
