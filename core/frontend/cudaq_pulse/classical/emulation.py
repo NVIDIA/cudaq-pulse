@@ -189,7 +189,8 @@ def serve_udp(
 ) -> tuple[threading.Thread, tuple[str, int], Callable[[], None]]:
     """Serve *handlers* over UDP: one datagram per request and per answer, in
     the wire format. Returns the server thread, its address and a stop
-    function. The service's own time is appended to each answer as 8 bytes.
+    function. Each answer is followed by the service's own time: the 4-byte
+    tag ``'CUQT'`` and the time in ns as 8 bytes, which ``UdpChannel`` reads.
     A request goes to the function at its dispatch key (*dispatch_keys* by
     compiled name, else the hash of the name). Built-in functions that share
     a key, such as QEC decoders, are told apart by their payload: its length,
@@ -216,7 +217,7 @@ def serve_udp(
             request_id, timestamp, args = wire.decode_request(fn, data, key)
             handler = handlers.get(fn.name) or handlers[fn.base_name]
             reply, service_ns = _reply(fn, handler, args, request_id, timestamp)
-            sock.sendto(reply + struct.pack("<Q", service_ns), peer)
+            sock.sendto(reply + _TIMING.pack(_TIMING_TAG, service_ns), peer)
 
     thread = threading.Thread(target=loop, daemon=True)
     thread.start()
@@ -291,8 +292,19 @@ def device_call_text(lowered: Any) -> str:
     )
 
 
+# What serve_udp sends after an answer: the tag 'CUQT' and the service's time in ns.
+_TIMING = struct.Struct("<IQ")
+_TIMING_TAG = 0x43555154
+
+
 class UdpChannel:
-    """A channel to a service reached over UDP (``serve_udp``)."""
+    """A channel to a service reached over UDP: ``serve_udp``, or any server
+    that answers in the wire format, such as a CUDA-QX decoding server.
+
+    An answer ends where its header's result length says; whatever follows,
+    such as the padding of a server that sends whole slots, is not part of
+    it. The service's time is the one ``serve_udp`` sends after the answer,
+    or, from a server that sends none, the round trip measured here."""
 
     def __init__(self, address: tuple[str, int], slot_bytes: int = 65536, timeout_s: float = 2.0):
         self._address = address
@@ -303,9 +315,11 @@ class UdpChannel:
         self._sock.settimeout(timeout_s)
 
     def call(self, function: ClassicalFunction[..., Any], request: bytes) -> tuple[bytes, float]:
+        t0 = time.perf_counter_ns()
         self._sock.sendto(request, self._address)
         try:
             data, _ = self._sock.recvfrom(self._slot_bytes)
+            round_trip_ns = time.perf_counter_ns() - t0
         except TimeoutError as error:
             host, port = self._address
             raise _CallTimeoutError(
@@ -313,8 +327,14 @@ class UdpChannel:
                 f"{self._sock.gettimeout()} s; check that serve_udp is running there, or raise "
                 "UdpChannel(timeout_s=...)"
             ) from error
-        service_ns = struct.unpack_from("<Q", data, len(data) - 8)[0]
-        return data[:-8], float(service_ns)
+        if len(data) < wire.HEADER_BYTES:
+            return data, float(round_trip_ns)
+        end = wire.HEADER_BYTES + struct.unpack_from("<I", data, 8)[0]
+        if len(data) >= end + _TIMING.size:
+            tag, service_ns = _TIMING.unpack_from(data, end)
+            if tag == _TIMING_TAG:
+                return data[:end], float(service_ns)
+        return data[:end], float(round_trip_ns)
 
     def close(self) -> None:
         self._sock.close()

@@ -14,6 +14,7 @@ import json
 import math
 import re
 import struct
+import time
 
 import cudaq_pulse as pulse
 import pytest
@@ -211,6 +212,88 @@ def test_udp_gives_the_same_answers_as_in_process():
         [c.answer for c in s] for s in local.calls
     ]
     assert udp.ends_ns == local.ends_ns
+
+
+def _slot_server(function, handler, slot_bytes=256, service_ns=None):
+    """A server that answers *function* as a CUDA-QX decoding server does:
+    each answer a whole zero-padded slot. With *service_ns*, the answer is
+    followed by serve_udp's tag and that time instead."""
+    import socket
+    import threading
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(("127.0.0.1", 0))
+    sock.settimeout(0.05)
+    running = threading.Event()
+    running.set()
+
+    def loop():
+        while running.is_set():
+            try:
+                data, peer = sock.recvfrom(slot_bytes)
+            except TimeoutError:
+                continue
+            request_id, timestamp, args = wire.decode_request(function, data)
+            reply = wire.encode_answer(function, handler(*args), request_id, timestamp)
+            if service_ns is None:
+                reply += bytes(slot_bytes - len(reply))
+            else:
+                reply += struct.pack("<IQ", 0x43555154, service_ns)
+            sock.sendto(reply, peer)
+
+    thread = threading.Thread(target=loop, daemon=True)
+    thread.start()
+
+    def stop():
+        running.clear()
+        thread.join(timeout=1.0)
+        sock.close()
+
+    return sock.getsockname(), stop
+
+
+def test_udp_reads_a_server_that_sends_no_time():
+    low = pulse.compile(adaptive).lower(Q[0])
+    (fn,) = low.classical
+    request = wire.encode_request(fn, [[1]], 7)
+    exact = wire.encode_answer(fn, 400.0, 7)
+    for service_ns in (None, 12345):
+        address, stop = _slot_server(fn, fn.implementation, service_ns=service_ns)
+        channel = emulation.UdpChannel(address)
+        try:
+            answer, service = channel.call(fn, request)
+            # From a server that sends no time, the round trip measured here.
+            assert answer == exact
+            assert service == 12345 if service_ns else service > 0
+            udp = emulation.emulate(low, shots=10, seed=3, channel=channel)
+        finally:
+            channel.close()
+            stop()
+        local = emulation.emulate(low, shots=10, seed=3)
+        assert [[c.answer for c in s] for s in udp.calls] == [
+            [c.answer for c in s] for s in local.calls
+        ]
+
+
+def test_udp_takes_the_time_serve_udp_sends():
+    low = pulse.compile(adaptive).lower(Q[0])
+    (fn,) = low.classical
+
+    def slow(bits):
+        time.sleep(0.002)
+        return 400.0 * bits[0]
+
+    _, address, stop = emulation.serve_udp(low.classical, {fn.name: slow})
+    channel = emulation.UdpChannel(address)
+    try:
+        t0 = time.perf_counter_ns()
+        answer, service = channel.call(fn, wire.encode_request(fn, [[1]], 3))
+        round_trip = time.perf_counter_ns() - t0
+    finally:
+        channel.close()
+        stop()
+    assert answer == wire.encode_answer(fn, 400.0, 3)
+    assert 2e6 <= service < round_trip
 
 
 def test_an_answer_of_the_wrong_length_is_an_error():
