@@ -226,12 +226,63 @@ private:
   /// Each value's is found once: changes are placed in program order and a
   /// tone is free at what comes before it, so it does not change after.
   /// Else each change after a run of branches would look through them all.
+  /// The values findFree reads are found first, from a stack: a run of
+  /// branches as long as the program is no deeper than one.
   std::optional<Time> freeAt(mlir::Value tone) {
     if (auto found = free.find(tone); found != free.end())
       return found->second;
-    std::optional<Time> time = findFree(tone);
-    free.try_emplace(tone, time);
-    return time;
+    llvm::SmallVector<mlir::Value, 8> work{tone};
+    llvm::SmallVector<mlir::Value, 2> reads;
+    while (!work.empty()) {
+      mlir::Value value = work.back();
+      if (free.contains(value)) {
+        work.pop_back();
+        continue;
+      }
+      reads.clear();
+      readsOf(value, reads);
+      bool ready = true;
+      for (mlir::Value read : reads)
+        if (!free.contains(read)) {
+          work.push_back(read);
+          ready = false;
+        }
+      if (!ready)
+        continue;
+      work.pop_back();
+      std::optional<Time> time = findFree(value);
+      free.try_emplace(value, std::move(time));
+    }
+    return free.find(tone)->second;
+  }
+
+  /// The values findFree(`tone`) asks freeAt for.
+  static void readsOf(mlir::Value tone,
+                      llvm::SmallVectorImpl<mlir::Value> &reads) {
+    if (auto argument = mlir::dyn_cast<mlir::BlockArgument>(tone)) {
+      auto loop = mlir::dyn_cast_or_null<mlir::scf::ForOp>(
+          argument.getOwner()->getParentOp());
+      if (!loop || argument.getArgNumber() == 0)
+        return;
+      unsigned index = argument.getArgNumber() - 1;
+      if (passesThrough(loop, index))
+        reads.push_back(loop.getInitArgs()[index]);
+      return;
+    }
+    mlir::Operation *def = tone.getDefiningOp();
+    unsigned index = mlir::cast<mlir::OpResult>(tone).getResultNumber();
+    if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(def)) {
+      if (pulse::constantTripCount(loop).value_or(0) == 0 ||
+          passesThrough(loop, index))
+        reads.push_back(loop.getInitArgs()[index]);
+      else
+        reads.push_back(loop.getBody()->getTerminator()->getOperand(index));
+    } else if (auto branch = mlir::dyn_cast<mlir::scf::IfOp>(def)) {
+      if (branch.getElseRegion().empty())
+        return;
+      reads.push_back(branch.thenYield().getOperand(index));
+      reads.push_back(branch.elseYield().getOperand(index));
+    }
   }
 
   std::optional<Time> findFree(mlir::Value tone) {

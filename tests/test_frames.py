@@ -13,7 +13,10 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
+import subprocess
+import sys
 import types
 import warnings
 
@@ -24,6 +27,7 @@ from cudaq_pulse.compiler import DEFAULT_PASSES, MachineModel, Pass
 from cudaq_pulse.controller import ControllerLimits, unroll
 from cudaq_pulse.targets import Qubit, TargetDescription
 
+from tests import _child
 from tests._work import python_work
 
 _FREQUENCY_HZ = 5.0e9
@@ -596,3 +600,37 @@ def test_a_run_of_branches_places_its_frame_changes_in_linear_time():
     # 4x the branches in well under 16x the time (quadratic would be 16x).
     assert all(work[4000][count] <= 4 * work[1000][count] for count in work[1000]), work
     assert timings[4000] < 8 * timings[1000], timings
+
+
+_LONG_RUN = """
+import cudaq_pulse as pulse
+from tests._handles import Q
+
+@pulse.kernel(unroll_threshold=10**9)
+def chain(q):
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    m = readout(r, square(40, 0.05))
+    sync(d, r)
+    for _ in range(100_000):
+        if m:
+            drive(d, square(8, 0.1))
+    shift_frequency(d.tone, 1.0e6)
+    drive(d, square(8, 0.1))
+
+print(pulse.compile(chain).lower(Q[0]).metrics.op_count)
+"""
+
+
+@pytest.mark.slow
+def test_a_frame_change_after_a_run_of_branches_as_long_as_the_program_is_placed():
+    # Finding where the tone is free goes back through every branch, which
+    # a recursive walk did one stack frame each: it overflowed the stack.
+    code = _child.limits(60, 3000) + _LONG_RUN
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join(p for p in sys.path if p))
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, cwd=root, env=env, timeout=240
+    )
+    assert out.returncode == 0, f"the child exited {out.returncode}: {out.stderr[-2000:]}"
+    assert int(out.stdout.split()[-1]) > 100_000
