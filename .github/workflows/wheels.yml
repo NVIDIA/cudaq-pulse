@@ -11,8 +11,9 @@ name: wheels
 # each pyproject.toml), then installed together from the built wheels and
 # tested again on clean systems without a CUDA toolkit.
 # A v* tag publishes a GitHub release with the wheels and the sdist, after
-# release-meta checks the tag and gpu-gate confirms GPU verification; PyPI
-# uploads are disabled for now (see the end of this file).
+# release-meta checks the tag and gpu-gate confirms GPU verification, and
+# then, once enabled, uploads the wheels to TestPyPI (pre-releases) or PyPI
+# (see the end of this file).
 #
 # GPU gate: with the GPU_RUNNERS repository variable set, a tag runs
 # gpu-install-test on the GPU runners and publishes only if it passes. Without
@@ -355,18 +356,111 @@ jobs:
           gh release upload "$TAG" dist/*.tar.gz dist/cudaq_pulse-*.whl
           gh release edit "$TAG" --draft=false
 
-  # PyPI and TestPyPI uploads are disabled while releases are GitHub-only.
-  # The design for re-enabling them: trusted publishing (no API tokens), one
-  # job per index, each in its own protected environment (`pypi`,
-  # `testpypi`) with `permissions: id-token: write` only, that `needs:`
-  # release-meta and github-release, routes on
-  # `needs.release-meta.outputs.prerelease` (true -> TestPyPI, false ->
-  # PyPI), downloads the `wheels-*` artifacts (and the sdist once it is meant
-  # for PyPI), and runs pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
-  # (with `repository-url: https://test.pypi.org/legacy/` for TestPyPI) after
-  # the trusted publisher is registered on the index for this repository,
-  # workflow and environment. Each job publishes both distributions, the
-  # cudaq_pulse_tools-* wheels in a first publish step and the cudaq_pulse-*
-  # files in a second, so that cudaq-pulse is never on the index without the
-  # cudaq-pulse-tools it pins; both project names need a trusted publisher, and
-  # cudaq-pulse-tools has no sdist.
+  # Once the GitHub release is published, its wheels go to a package index by
+  # trusted publishing, with no API token: a pre-release (vX.Y.Z{a,b,rc}N) to
+  # TestPyPI, any other release to PyPI. Each index trusts this workflow only
+  # in its own environment, `testpypi` or `pypi`, whose protection rules
+  # gate the upload, and both project names need a trusted publisher. GitHub
+  # creates a missing environment without protection, so both jobs also stay
+  # off until the PYPI_PUBLISHING repository variable is `true`, set once
+  # the publishers and environments exist. They run only for a v* tag of
+  # this repository; pushes to branches and manual runs on a branch never
+  # reach them. The cudaq-pulse-tools wheels are uploaded first, so that
+  # cudaq-pulse is never on the index without the cudaq-pulse-tools it pins;
+  # a re-run skips the files already there. The files are the ones
+  # github-release checked; the sdist stays on the GitHub release.
+  testpypi:
+    needs: [release-meta, github-release]
+    if: >-
+      !cancelled() && vars.PYPI_PUBLISHING == 'true' &&
+      github.repository == 'NVIDIA/cudaq-pulse' && startsWith(github.ref, 'refs/tags/v') &&
+      needs.github-release.result == 'success' &&
+      needs.release-meta.outputs.prerelease == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/cudaq-pulse/${{ needs.release-meta.outputs.version }}/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+      - name: Put the cudaq-pulse-tools wheels apart
+        env:
+          VERSION: ${{ needs.release-meta.outputs.version }}
+        run: |
+          shopt -s nullglob
+          tools=(dist/cudaq_pulse_tools-"$VERSION"-*.whl)
+          (( ${#tools[@]} )) || { echo "::error::no cudaq-pulse-tools wheels"; exit 1; }
+          mkdir tools-dist
+          mv "${tools[@]}" tools-dist/
+          files=(dist/*)
+          (( ${#files[@]} )) || { echo "::error::no cudaq-pulse wheels"; exit 1; }
+          for file in "${files[@]}"; do
+            [[ "$file" == dist/cudaq_pulse-"$VERSION"-*.whl ]] ||
+              { echo "::error::$file is not a cudaq-pulse $VERSION wheel"; exit 1; }
+          done
+          ls -l tools-dist dist
+      - name: Publish cudaq-pulse-tools to TestPyPI
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          packages-dir: tools-dist/
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+      - name: Publish cudaq-pulse to TestPyPI
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          packages-dir: dist/
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+
+  pypi:
+    needs: [release-meta, github-release]
+    if: >-
+      !cancelled() && vars.PYPI_PUBLISHING == 'true' &&
+      github.repository == 'NVIDIA/cudaq-pulse' && startsWith(github.ref, 'refs/tags/v') &&
+      needs.github-release.result == 'success' &&
+      needs.release-meta.outputs.prerelease == 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment:
+      name: pypi
+      url: https://pypi.org/project/cudaq-pulse/${{ needs.release-meta.outputs.version }}/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+      - name: Put the cudaq-pulse-tools wheels apart
+        env:
+          VERSION: ${{ needs.release-meta.outputs.version }}
+        run: |
+          shopt -s nullglob
+          tools=(dist/cudaq_pulse_tools-"$VERSION"-*.whl)
+          (( ${#tools[@]} )) || { echo "::error::no cudaq-pulse-tools wheels"; exit 1; }
+          mkdir tools-dist
+          mv "${tools[@]}" tools-dist/
+          files=(dist/*)
+          (( ${#files[@]} )) || { echo "::error::no cudaq-pulse wheels"; exit 1; }
+          for file in "${files[@]}"; do
+            [[ "$file" == dist/cudaq_pulse-"$VERSION"-*.whl ]] ||
+              { echo "::error::$file is not a cudaq-pulse $VERSION wheel"; exit 1; }
+          done
+          ls -l tools-dist dist
+      - name: Publish cudaq-pulse-tools to PyPI
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          packages-dir: tools-dist/
+          skip-existing: true
+      - name: Publish cudaq-pulse to PyPI
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          packages-dir: dist/
+          skip-existing: true

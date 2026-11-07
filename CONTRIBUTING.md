@@ -565,7 +565,7 @@ broken release is withdrawn, not replaced:
 3. Release the fix as a new version: `X.Y.(Z+1)` for a code fix, or
    `X.Y.Z.postN` for a packaging-only fix, with a `CHANGELOG.md` entry that
    names the withdrawn release.
-4. Once releases are on PyPI, also yank the broken version there
+4. Also yank the broken version on PyPI
    ([PEP 592](https://peps.python.org/pep-0592/)) with the issue link as
    the reason. Yanking hides it from new resolutions but keeps exact pins
    working; never delete files from PyPI.
@@ -576,20 +576,24 @@ withdrawal follows the coordinated disclosure.
 ## Releases
 
 Work lands on `staging`, where every workflow runs but nothing is published.
-Releases are GitHub releases only for now: nothing is uploaded to PyPI or
-TestPyPI. A release has two distributions, each with a wheel per platform:
+A release has two distributions, each with a wheel per platform:
 `cudaq-pulse-tools`, with the MLIR driver, uploaded first, and `cudaq-pulse`,
 which requires it at the same version, with the sdist. An index needs both, in
-that order.
+that order. A release is published as a GitHub release first. Once index
+publishing is enabled (below), its wheels then go to TestPyPI for a
+pre-release (`vX.Y.Z{a,b,rc}N`) or to PyPI for a final release; until then,
+releases are on GitHub only. The sdist is only on the GitHub release.
 
 1. Tag a release candidate, for example `v0.1.0rc1`. `wheels.yml` builds and
-   tests the wheels and the sdist and publishes them as a GitHub pre-release.
+   tests the wheels and the sdist, publishes them as a GitHub pre-release and,
+   with index publishing enabled, uploads the wheels to TestPyPI.
 2. Squash `staging` into one commit on `main`, with the `staging` workflow
    triggers removed and the toolchain checksums in the lock file.
 3. Date the version's section in `CHANGELOG.md` (`## [0.1.0] - YYYY-MM-DD`).
    The next release's section, `## [X.Y.Z] - Unreleased`, starts with the
    first change after the tag.
-4. Tag `v0.1.0` on `main`.
+4. Tag `v0.1.0` on `main`; with index publishing enabled, its wheels go to
+   PyPI.
 
 Release notes come from `CHANGELOG.md`, not from the commit history:
 `tools/release-notes.py` prints the section for the version, and a
@@ -607,8 +611,21 @@ draft, every built file's version is checked against the tag and gets a
 signed build-provenance attestation (check one with
 `gh attestation verify <file> --repo NVIDIA/cudaq-pulse`), the assets are
 uploaded once (never replaced), and only then is the release published. The
-MLIR toolchain assets are write-once too. The end of `wheels.yml` records how
-PyPI and TestPyPI uploads will be re-enabled with trusted publishing.
+MLIR toolchain assets are write-once too.
+
+The `testpypi` and `pypi` jobs upload the same checked wheels with trusted
+publishing: the index accepts a short-lived token that GitHub issues to this
+repository's `wheels.yml` running in the `testpypi` or `pypi` environment,
+so the repository holds no index API token. Each of the two project names
+needs a trusted publisher on each index for that workflow and environment,
+and the environments' required reviewers approve every upload. GitHub
+creates an environment that does not exist yet without any protection, so
+the two jobs also need the repository variable `PYPI_PUBLISHING` set to
+`true`, which is set only after the trusted publishers and the protected
+environments exist; without it, a release is GitHub-only. The jobs run only
+for a `v*` tag of NVIDIA/cudaq-pulse, after `github-release` has published
+it: pushes to `staging` and manual runs on a branch never reach them. A
+re-run of a failed upload skips the files already on the index.
 
 ### GPU verification
 
