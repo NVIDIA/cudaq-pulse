@@ -60,6 +60,8 @@ if TYPE_CHECKING:
     from . import _clocks
     from ._capability import Capability
     from ._device import Device
+    from ._op_classes import OpClass
+    from ._op_tables import OpCycles
     from .compiler import Lowered, _MachineModel
     from .controller import WaveformMemoryScope
     from .targets.base import TargetDescription
@@ -115,24 +117,48 @@ _PROCESSOR_LIMITS = (
 )
 
 
-def _processor_ops() -> tuple[str, ...]:
-    """What a processor's cycles_per_op and unsupported name: the classes of
-    operations, and "loop", a rolled loop's counter and jump per iteration."""
-    from .controller import OP_CLASSES
+def _one_cycle() -> OpCycles:
+    from ._op_tables import _ONE_CYCLE
 
-    return (*OP_CLASSES, "loop")
+    return _ONE_CYCLE
 
 
-def _op_name(given: Any, field_name: str) -> str:
-    ops = _processor_ops()
-    if given in ops:
-        return str(given)
-    hint = _closest(str(given), ops)
+def _op_class(given: Any) -> Any:
+    """*given*, an operation ``Processor.unsupported`` names, as an ``OpClass``."""
+    from ._op_tables import _PROCESSOR_OPS
+
+    if isinstance(given, str) and given in _PROCESSOR_OPS:
+        if given.__class__ is str:
+            from ._op_classes import OpClass
+
+            return OpClass(given)
+        return given
+    hint = _closest(str(given), _PROCESSOR_OPS)
     raise InvalidValueError(
-        f"Processor.{field_name} names an unknown operation {given!r}"
+        f"Processor.unsupported names an unknown operation {given!r}"
         + (f" (did you mean {hint!r}?)" if hint else "")
-        + f"; the operations are {', '.join(ops)}"
+        + f"; the operations are {', '.join(_PROCESSOR_OPS)}"
     )
+
+
+def _processor_of(data: Mapping[str, Any]) -> Processor:
+    """The processor a description or a system file states as *data*, its
+    ``cycles_per_op`` a table of cycles by class name."""
+    from ._op_tables import _PROCESSOR_OPS, OpCycles
+
+    given = dict(data)
+    table = given.get("cycles_per_op")
+    if isinstance(table, Mapping):
+        for name in table:
+            if name not in _PROCESSOR_OPS:
+                hint = _closest(str(name), _PROCESSOR_OPS)
+                raise InvalidValueError(
+                    f"Processor.cycles_per_op names an unknown operation {name!r}"
+                    + (f" (did you mean {hint!r}?)" if hint else "")
+                    + f"; the operations are {', '.join(_PROCESSOR_OPS)}"
+                )
+        given["cycles_per_op"] = OpCycles(**table)
+    return Processor(**given)
 
 
 def _dispatch_keys(given: Any, owner: str) -> Mapping[str, int]:
@@ -167,12 +193,13 @@ class Processor:
     checked.
 
     ``clock_ghz``: its clock (``None``: the controller's, else the
-    program's). ``cycles_per_op``: the cycles of one operation of each class
-    of ``OP_CLASSES``, and of ``"loop"``, a rolled loop's counter and jump
-    per iteration; one cycle when not given. ``branch`` is an ``if`` or
-    ``else``. ``unsupported``: the operations it cannot run; a function that
-    uses one does not compile, except ``"loop"``: a processor without it
-    runs each loop unrolled, so its code is counted unrolled.
+    program's). ``cycles_per_op``: an ``OpCycles``, the cycles of one
+    operation of each class, and of ``loop``, a rolled loop's counter and
+    jump per iteration; one cycle when not given. ``branch`` is an ``if`` or
+    ``else``. ``unsupported``: the classes it cannot run (``OpClass``); a
+    function that uses one does not compile, except ``OpClass.LOOP``: a
+    processor without it runs each loop unrolled, so its code is counted
+    unrolled.
     ``max_concurrent_calls``: the calls it computes at once, from submission
     to the time the answer is due.
     ``max_ops_per_function`` and ``max_ops_total``: the operations one
@@ -189,8 +216,8 @@ class Processor:
 
     links: Sequence[int | str] = ("controller",)
     clock_ghz: float | None = None
-    cycles_per_op: Mapping[str, int] = field(default_factory=dict)
-    unsupported: Sequence[str] = ()
+    cycles_per_op: OpCycles = field(default_factory=_one_cycle)
+    unsupported: Sequence[OpClass] = ()
     max_concurrent_calls: int = 1
     max_ops_per_function: int | None = None
     max_ops_total: int | None = None
@@ -228,26 +255,20 @@ class Processor:
             raise InvalidValueError(
                 f"Processor.clock_ghz must be a positive number or None, got {clock!r}"
             )
-        if not isinstance(self.cycles_per_op, Mapping):
+        from ._op_tables import OpCycles
+
+        costs = self.cycles_per_op
+        if costs.__class__ is not OpCycles:
             raise InvalidTypeError(
-                f"Processor.cycles_per_op maps operations to cycles, got {self.cycles_per_op!r}"
+                "Processor.cycles_per_op is an OpCycles, as OpCycles(div=20); got "
+                f"{type(costs).__name__}"
             )
-        costs = {}
-        for op, cycles in self.cycles_per_op.items():
-            name = _op_name(op, "cycles_per_op")
-            if isinstance(cycles, bool) or not isinstance(cycles, int) or cycles < 0:
-                raise InvalidValueError(
-                    f"Processor.cycles_per_op[{name!r}] is a whole number of cycles >= 0, "
-                    f"got {cycles!r}"
-                )
-            costs[name] = cycles
-        object.__setattr__(self, "cycles_per_op", MappingProxyType(costs))
         if isinstance(self.unsupported, (str, bytes)) or not isinstance(self.unsupported, Iterable):
             raise InvalidTypeError(
                 f"Processor.unsupported is a list of operations, got {self.unsupported!r}"
             )
-        unsupported = tuple(dict.fromkeys(_op_name(op, "unsupported") for op in self.unsupported))
-        both = [op for op in unsupported if op in costs]
+        unsupported = tuple(dict.fromkeys(map(_op_class, self.unsupported)))
+        both = [str(op) for op in unsupported if costs[op] != 1]
         if both:
             raise InvalidValueError(
                 f"Processor.unsupported lists {both[0]!r}, which cycles_per_op gives a cost; "
@@ -293,12 +314,12 @@ class Processor:
         return "loop" not in self.unsupported
 
     def as_dict(self) -> dict[str, Any]:
-        """The processor as JSON-serializable data, which ``Processor(**data)``
-        reads back."""
+        """The processor as JSON-serializable data, as a system file holds it:
+        its ``cycles_per_op`` a table of the classes not 1 cycle."""
         data = {f.name: getattr(self, f.name) for f in fields(self)}
         data["links"] = list(self.links)
-        data["cycles_per_op"] = dict(self.cycles_per_op)
-        data["unsupported"] = list(self.unsupported)
+        data["cycles_per_op"] = self.cycles_per_op._given()
+        data["unsupported"] = [str(op) for op in self.unsupported]
         data["dispatch_keys"] = dict(self.dispatch_keys)
         return data
 
@@ -551,7 +572,7 @@ class Controller:
             if isinstance(item, Mapping):
                 # As a description or a system file states it.
                 try:
-                    item = Processor(**item)
+                    item = _processor_of(item)
                 except TypeError as error:
                     raise InvalidValueError(f"Controller.processors[{index}]: {error}") from None
             elif not isinstance(item, Processor):

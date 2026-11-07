@@ -137,14 +137,18 @@ behavior may change in any 0.x release.
   of a system (of each controller, for a per-controller link). Compiling checks each function there: an operation in its
   `unsupported` list (named with its line), `max_ops_per_function`,
   `max_state_bytes_per_function`, `fixed_cost_only`, and its compute time at
-  the processor's `cycles_per_op` and `clock_ghz` against its
+  the processor's `cycles_per_op` (`pulse.controller.OpCycles(div=20)`, one
+  cycle per class not given) and `clock_ghz` against its
   `max_latency_ns`. It checks each processor's `max_ops_total`,
   `max_state_bytes_total`, `max_calls_per_shot`, `max_bytes_per_shot` and
-  `max_concurrent_calls` (default 1) across its functions. `"loop"` is a
-  processor operation too: its cost is a rolled loop's counter and jump per
-  iteration, and a processor without it runs loops unrolled, so their size
-  counts unrolled. `dispatch_keys={"name": key}` gives the functions a
-  processor runs fixed dispatch keys. `lowered.controller_usage` reports
+  `max_concurrent_calls` (default 1) across its functions. Operations come
+  in the classes of `pulse.controller.OpClass`; `OpClass.LOOP` is a rolled
+  loop's counter and jump per iteration, and a processor with it
+  `unsupported` runs loops unrolled, so their size counts unrolled.
+  `FunctionCost.ops` is an `OpCounts`, and a built-in's `controller_cost`
+  hook returns one. `pulse.controller.ExpressionTerm` names the terms of an
+  exported run-time expression. `dispatch_keys={"name": key}` gives the
+  functions a processor runs fixed dispatch keys. `lowered.controller_usage` reports
   each processor's functions and totals against its limits
   (`.within_limits`; `print` it for a table). A program over them does not
   compile: its `ControllerLimitError` carries the report as `usage`, every

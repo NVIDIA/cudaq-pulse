@@ -38,7 +38,9 @@ Export and limits
 
 .. autofunction:: cudaq_pulse.controller.evaluate_expression
 
-.. autodata:: cudaq_pulse.controller.EXPRESSION_TERMS
+.. autoclass:: cudaq_pulse.controller.ExpressionTerm
+   :members:
+   :undoc-members:
 
 .. autofunction:: cudaq_pulse.controller.shape_key
 
@@ -60,7 +62,15 @@ What classical functions cost
 .. autoclass:: cudaq_pulse.controller.FunctionCost
    :members:
 
-.. autodata:: cudaq_pulse.controller.OP_CLASSES
+.. autoclass:: cudaq_pulse.controller.OpClass
+   :members:
+   :undoc-members:
+
+.. autoclass:: cudaq_pulse.controller.OpCounts
+   :members: total, replace
+
+.. autoclass:: cudaq_pulse.controller.OpCycles
+   :members: replace
 
 What a program uses of each processor
 -------------------------------------

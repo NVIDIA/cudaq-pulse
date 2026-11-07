@@ -222,7 +222,7 @@ vocabulary of terms, whatever operations the compiler computes it with:
     its operands, ``"int"``, ``"float"`` or ``"bool"``. A ``const`` in a
     float term is that float, so ``{"const": 3}`` there is 3.0.
 
-``cudaq_pulse.controller.EXPRESSION_TERMS`` holds every term. A value
+``cudaq_pulse.controller.ExpressionTerm`` names every term. A value
 computed any other way is an ``UnsupportedError`` when the program is
 exported, never a term a backend has to guess at;
 ``cudaq_pulse.controller.evaluate_expression(expression, readouts,

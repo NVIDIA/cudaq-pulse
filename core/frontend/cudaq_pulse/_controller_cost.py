@@ -18,7 +18,7 @@ known when the program compiles (``range`` of a constant, or a fixed-size
 argument), no ``while``, recursion, allocation, exceptions, closures over
 mutable state or calls it cannot follow. A helper with a
 ``controller_cost`` attribute (a function of its arguments' lengths giving
-operations by class) is an intrinsic, counted by it instead of its body.
+its ``OpCounts``) is an intrinsic, counted by it instead of its body.
 Converting a time argument to ns (``as_nanoseconds``) costs nothing. See
 ``cudaq_pulse.controller``.
 
@@ -49,9 +49,13 @@ import cudaq_pulse.controller  # noqa: F401
 from ._errors import InvalidTypeError
 from ._units import as_nanoseconds
 
+# The typed tables load where a function is first costed: a report on a
+# program without classical functions never builds one.
 if TYPE_CHECKING:
     from dataclasses import dataclass as _dataclass_when_used
 
+    from ._op_classes import OpClass
+    from ._op_tables import OpCounts, OpCycles
     from ._system import Controller, Processor
     from .compiler import Lowered
 else:
@@ -108,7 +112,7 @@ class FunctionCost:
     """The static cost of one classical function's body.
 
     ``ops`` counts the operations of the longest path through the body by
-    class (what one call executes at most); ``size`` counts every operation
+    class (``OpCounts``: what one call executes at most); ``size`` counts every operation
     of the body, both arms of each branch (what the controller stores).
     ``locals`` is how many scalars the body and its helpers hold at once at
     most, beyond the arguments and results. ``violations`` lists what keeps
@@ -118,12 +122,12 @@ class FunctionCost:
     For a ``Processor``: ``iterations`` counts the loop iterations on the
     longest path (each also counted in ``ops`` as an ``add`` and a
     ``branch``, the loop's counter and jump); ``unrolled_size`` is ``size``
-    with every loop unrolled; ``uses`` gives, by operation class (and
-    ``"loop"``), where the body or a helper first uses it.
+    with every loop unrolled; ``uses`` gives, by ``OpClass`` (``LOOP`` too),
+    where the body or a helper first uses it.
     """
 
     name: str
-    ops: Mapping[str, int]
+    ops: OpCounts
     size: int
     locals: int
     loops: int
@@ -131,29 +135,41 @@ class FunctionCost:
     violations: tuple[str, ...]
     iterations: int = 0
     unrolled_size: int = 0
-    uses: Mapping[str, str] = field(default_factory=dict)
+    # Where each class is first used, by class name; ``uses`` by OpClass.
+    _used: Mapping[str, str] = field(default_factory=dict)
+
+    @property
+    def uses(self) -> dict[OpClass, str]:
+        """Where the body or a helper first uses each class of operation."""
+        from ._op_classes import OpClass
+
+        return {OpClass(kind): where for kind, where in self._used.items()}
 
     @property
     def total(self) -> int:
         """Operations on the longest path."""
-        return sum(self.ops.values())
+        return self.ops.total
 
     @property
     def in_controller_form(self) -> bool:
         return not self.violations
 
-    def processor_cycles(self, cycles_per_op: Mapping[str, int], loops: bool) -> int:
+    def processor_cycles(self, cycles_per_op: OpCycles, loops: bool) -> int:
         """Clock cycles of the longest path on a processor: ``cycles_per_op``
-        by class (absent: 1), and a loop's counter and jump as one ``"loop"``
-        per iteration if the processor *loops*, else nothing (unrolled)."""
+        by class, and a loop's counter and jump as one ``loop`` per
+        iteration if the processor *loops*, else nothing (unrolled)."""
+        from ._op_tables import _COUNTED
+
         overhead = self.iterations
+        ops = self.ops
         total = 0
-        for kind, n in self.ops.items():
+        for kind in _COUNTED:
+            n = getattr(ops, kind)
             if kind == "add" or kind == "branch":
                 n -= overhead
-            total += n * int(cycles_per_op.get(kind, 1))
+            total += n * getattr(cycles_per_op, kind)
         if loops:
-            total += overhead * int(cycles_per_op.get("loop", 1))
+            total += overhead * cycles_per_op.loop
         return total
 
 
@@ -585,7 +601,15 @@ class _Walker:
             if any(n is None for n in lengths):
                 self.flag(node, f"{name} of a sequence of unknown size")
                 return cost
-            for kind, n in intrinsic(*lengths).items():
+            counts = intrinsic(*lengths)
+            from ._op_tables import OpCounts
+
+            if counts.__class__ is not OpCounts:
+                raise InvalidTypeError(
+                    f"{name}.controller_cost must return an OpCounts, as OpCounts(add=4); "
+                    f"got {type(counts).__name__}"
+                )
+            for kind, n in counts._given().items():
                 cost.add(kind, n)
             return cost
         if getattr(target, "__module__", None) == "math" or (
@@ -646,12 +670,12 @@ class _Walker:
         self.violations.extend(helper.violations)
         self.loops += helper.loops
         self.extra_locals = max(self.extra_locals, helper.locals + len(parameters))
-        for kind, where in helper.uses.items():
+        for kind, where in helper._used.items():
             self.uses.setdefault(kind, where)
         cost.placed["branch"] += 1  # the call, inlined
         cost.size += 1
         cost.unrolled += 1
-        for kind, n in helper.ops.items():
+        for kind, n in helper.ops._given().items():
             cost.placed[kind] += n
         cost.size += helper.size
         cost.unrolled += helper.unrolled_size
@@ -697,12 +721,14 @@ def analyze_callable(
         kept = _cache.get(fn, {}).get(key)
     if kept is not None:
         return kept
+    from ._op_tables import OpCounts
+
     name = getattr(fn, "__qualname__", getattr(fn, "__name__", "function"))
     try:
         tree = _source_tree(fn)
     except (OSError, TypeError, SyntaxError, _NotAnalyzableError) as error:
         return FunctionCost(
-            name, {}, 0, 0, 0, (), (f"{name}: its source is unavailable ({error})",)
+            name, OpCounts(), 0, 0, 0, (), (f"{name}: its source is unavailable ({error})",)
         )
     walker = _Walker(fn, sizes, stack)
     arguments = tree.args
@@ -717,7 +743,7 @@ def analyze_callable(
         ops[kind] += n
     result = FunctionCost(
         name,
-        dict(sorted(ops.items())),
+        OpCounts(**ops),
         cost.size,
         local_count,
         walker.loops,
@@ -851,21 +877,29 @@ def _function_resources(
 ) -> FunctionResources:
     """*function*'s cost, computed *on* a processor at a clock in GHz if
     given."""
+    from ._op_tables import OpCounts
+
     if function.implementation is None:
         cost = FunctionCost(
-            function.name, {}, 0, 0, 0, (), (f"{function.name}: external, with no body to read",)
+            function.name,
+            OpCounts(),
+            0,
+            0,
+            0,
+            (),
+            (f"{function.name}: external, with no body to read",),
         )
     elif function.uniform is not None:
         cost = FunctionCost(
             function.name,
-            {"load": 1},
+            OpCounts(load=1),
             1,
             0,
             0,
             (),
             (),
             unrolled_size=1,
-            uses={"load": function.name},
+            _used={"load": function.name},
         )
     else:
         cost = analyze_callable(function.implementation, _value_lengths(function))
@@ -1020,7 +1054,7 @@ def format_report(report: ResourceReport) -> str:
             f"{row.state_bytes:>7} {compute:>9} {row.max_latency_ns:>5.0f} ns "
             f"{row.calls_per_shot:>5}  {form}"
         )
-        ops = ", ".join(f"{k} {n}" for k, n in row.cost.ops.items() if n)
+        ops = ", ".join(f"{k} {n}" for k, n in row.cost.ops._given().items())
         if ops:
             lines.append(f"      {ops}")
     if report.links:
@@ -1265,8 +1299,8 @@ def _function_usage(
     )
     name = fn.name
     for op in processor.unsupported:
-        if op != "loop" and op in cost.uses:
-            found.append(f"{name} uses {op} ({cost.uses[op]}), which {label} does not support")
+        if op != "loop" and op in cost._used:
+            found.append(f"{name} uses {op} ({cost._used[op]}), which {label} does not support")
     if processor.fixed_cost_only and cost.violations:
         more = len(cost.violations) - 4
         found.append(

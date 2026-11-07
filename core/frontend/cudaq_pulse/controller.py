@@ -96,6 +96,10 @@ if TYPE_CHECKING:
     from ._controller_cost import format_report as format_report
     from ._controller_cost import resources as resources
     from ._controller_cost import usage as usage
+    from ._op_classes import ExpressionTerm as ExpressionTerm
+    from ._op_classes import OpClass as OpClass
+    from ._op_tables import OpCounts as OpCounts
+    from ._op_tables import OpCycles as OpCycles
     from ._system import Controller, ControlSystem
     from .compiler import Lowered
 
@@ -103,17 +107,19 @@ if TYPE_CHECKING:
     _Samples = tuple[list[float], list[float]]
 
 __all__ = [
-    "EXPRESSION_TERMS",
     "FORMAT",
-    "OP_CLASSES",
     "ControllerLimitError",
     "ControllerUsage",
     "Event",
+    "ExpressionTerm",
     "FunctionCost",
     "FunctionResources",
     "FunctionUsage",
     "LimitExceeded",
     "LinkUsage",
+    "OpClass",
+    "OpCounts",
+    "OpCycles",
     "ProcessorUsage",
     "ResourceReport",
     "UsageReport",
@@ -180,21 +186,6 @@ _KINDS: Mapping[str, str] = MappingProxyType(
 )
 _FLAT_KINDS: Mapping[str, str] = MappingProxyType({v: k for k, v in _KINDS.items()})
 
-# The classes operations are counted in.
-OP_CLASSES: tuple[str, ...] = (
-    "add",
-    "mul",
-    "div",
-    "compare",
-    "branch",
-    "load",
-    "convert",
-    "popcount",
-    "sqrt",
-    "exp",
-    "log",
-    "trig",
-)
 
 # The parameter names of each waveform op, in operand order.
 _PARAMETERS: Mapping[str, tuple[str, ...]] = MappingProxyType(
@@ -404,8 +395,8 @@ _COMPARISONS: Mapping[str, Any] = {
 }
 _INTEGER = frozenset({"floor_div", "rem"})
 _CONVERSIONS = frozenset({"to_float", "to_int", "controller_cycles"})
-#: Every ``op`` an exported expression of a run-time value may have.
-EXPRESSION_TERMS = frozenset({*_ARITHMETIC, *_COMPARISONS, *_INTEGER, *_CONVERSIONS, "select"})
+# Every op an exported expression of a run-time value may have (ExpressionTerm).
+_EXPRESSION_TERMS = frozenset({*_ARITHMETIC, *_COMPARISONS, *_INTEGER, *_CONVERSIONS, "select"})
 _TYPES = {"int": int, "float": float, "bool": bool}
 _INT_MIN = -(1 << 63)
 
@@ -423,8 +414,8 @@ def evaluate_expression(
     event index the expression names. A frame change's value may be a
     number, which is its value. Raises ``ExecutionError`` where the
     controller must fail the run (a division by zero, say), and
-    ``InvalidValueError`` for an input not given or a term not in
-    ``EXPRESSION_TERMS``.
+    ``InvalidValueError`` for an input not given or a term not of
+    ``ExpressionTerm``.
     """
     value: float | int | bool = _evaluate(expression, readouts or {}, answers or {})
     return value
@@ -452,7 +443,7 @@ def _evaluate(
             raise InvalidValueError(f"no result {result} given for answer event {index}")
         return answers[index][result]
     op = expression.get("op")
-    if op not in EXPRESSION_TERMS:
+    if op not in _EXPRESSION_TERMS:
         raise InvalidValueError(f"{op!r} is not a term of the expression vocabulary")
     kind = _TYPES[expression["type"]]
     values = [_evaluate(x, readouts, answers) for x in expression["of"]]
@@ -2557,9 +2548,7 @@ class ControllerNames(Protocol):
     """The names this module exports, as attributes: what a module
     satisfies of ``ControllerModule``, which it can't be called as."""
 
-    EXPRESSION_TERMS: frozenset[str]
     FORMAT: str
-    OP_CLASSES: tuple[str, ...]
     ControllerLimitError: type[ControllerLimitError]
     Event: type[Event]
     FunctionCost: type[FunctionCost]
@@ -2572,6 +2561,11 @@ class ControllerNames(Protocol):
     ProcessorUsage: type[ProcessorUsage]
     UsageReport: type[UsageReport]
     WaveformMemoryScope: type[WaveformMemoryScope]
+    if TYPE_CHECKING:
+        ExpressionTerm: type[ExpressionTerm]
+        OpClass: type[OpClass]
+        OpCounts: type[OpCounts]
+        OpCycles: type[OpCycles]
 
     def analyze(self, function: Any) -> _Resources: ...
     def check(self, lowered: Lowered, limits: _Limits | None = None) -> Sequence[str]: ...
@@ -2613,18 +2607,34 @@ class ControllerModule(ControllerNames, Protocol):
 
 
 class _Loaded(str):
-    """The name of a ``_controller_cost`` attribute, imported on first use and
-    then kept in this module's namespace, where later reads find it as a plain
-    attribute. Being its own name, it is built without a call into Python."""
+    """The name of a ``_controller_cost`` attribute (or of another module's,
+    by ``_ELSEWHERE``), imported on first use and then kept in this module's
+    namespace, where later reads find it as a plain attribute. Being its own
+    name, it is built without a call into Python."""
 
     def __get__(self, instance: types.ModuleType | None, owner: type) -> Any:
         if instance is None:
             return self
-        import cudaq_pulse._controller_cost as reports
-
         name = str(self)
+        module = _ELSEWHERE.get(name)
+        if module is None:
+            import cudaq_pulse._controller_cost as reports
+        else:
+            import importlib
+
+            reports = importlib.import_module(module)
         value = instance.__dict__[name] = getattr(reports, name)
         return value
+
+
+# The names _Loaded imports from elsewhere than _controller_cost: building
+# an enum costs more than the rest of an export.
+_ELSEWHERE = {
+    "ExpressionTerm": "cudaq_pulse._op_classes",
+    "OpClass": "cudaq_pulse._op_classes",
+    "OpCounts": "cudaq_pulse._op_tables",
+    "OpCycles": "cudaq_pulse._op_tables",
+}
 
 
 class _ControllerModule(types.ModuleType):
@@ -2659,6 +2669,10 @@ class _ControllerModule(types.ModuleType):
         format_report: Any
         resources: Any
         usage: Any
+        ExpressionTerm: Any
+        OpClass: Any
+        OpCounts: Any
+        OpCycles: Any
 
     FunctionCost = _Loaded("FunctionCost")
     ControllerUsage = _Loaded("ControllerUsage")
@@ -2673,6 +2687,10 @@ class _ControllerModule(types.ModuleType):
     format_report = _Loaded("format_report")
     resources = _Loaded("resources")
     usage = _Loaded("usage")
+    ExpressionTerm = _Loaded("ExpressionTerm")
+    OpClass = _Loaded("OpClass")
+    OpCounts = _Loaded("OpCounts")
+    OpCycles = _Loaded("OpCycles")
 
 
 sys.modules[__name__].__class__ = _ControllerModule

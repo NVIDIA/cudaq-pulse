@@ -17,7 +17,14 @@ import pytest
 from cudaq_pulse import Controller, ControlSystem, Processor, _controller_cost
 from cudaq_pulse.classical import Link
 from cudaq_pulse.classical import calibration as cal
-from cudaq_pulse.controller import OP_CLASSES, ControllerLimitError, analyze, resources
+from cudaq_pulse.controller import (
+    ControllerLimitError,
+    OpClass,
+    OpCounts,
+    OpCycles,
+    analyze,
+    resources,
+)
 
 from tests._handles import Q
 
@@ -69,14 +76,14 @@ def _counted(bits: pulse.Length[pulse.Bits, 50]) -> float:
 
 def test_operations_are_counted_by_class():
     cost = analyze(_arithmetic).cost
-    assert dict(cost.ops) == {"add": 2, "div": 1, "mul": 1, "sqrt": 1}
+    assert cost.ops == OpCounts(add=2, div=1, mul=1, sqrt=1)
     assert cost.in_controller_form and cost.size == cost.total == 5
 
 
 def test_constants_fold_and_dividing_by_a_constant_is_a_multiply():
     cost = analyze(_by_constants).cost
     # 2 pi 1e-9 folds; dividing by it or by _SCALE multiplies by a reciprocal.
-    assert dict(cost.ops) == {"add": 2, "mul": 2, "div": 1}
+    assert cost.ops == OpCounts(add=2, mul=2, div=1)
 
 
 def test_a_loop_multiplies_its_body_by_its_trip_count():
@@ -90,7 +97,7 @@ def test_a_loop_multiplies_its_body_by_its_trip_count():
 
 def test_a_branch_costs_its_longer_arm_and_holds_both():
     cost = analyze(_branched).cost
-    assert cost.ops == {"branch": 1, "compare": 1, "exp": 1, "mul": 1}
+    assert cost.ops == OpCounts(branch=1, compare=1, exp=1, mul=1)
     assert cost.size == cost.total
 
 
@@ -224,20 +231,20 @@ def test_compute_time_follows_the_cycle_costs():
     row = analyze(_arithmetic)
     # On no processor; mul 1 + add 2 at one cycle, div 8, sqrt 8: 19 cycles.
     assert row.compute_cycles is None and row.compute_ns is None and row.margin_ns is None
-    assert row.cost.processor_cycles(_CYCLES, True) == 19
+    assert row.cost.processor_cycles(OpCycles(**_CYCLES), True) == 19
     assert row.state_bytes == 3 * 8 + 8  # three arguments, one result
     assert row.request_bytes == 24 + 24 and row.answer_bytes == 24 + 8
 
 
 def test_unknown_operation_classes_are_rejected():
-    with pytest.raises(ValueError, match="unknown operation 'fma'"):
-        Processor(cycles_per_op={"fma": 1})
-    assert set(OP_CLASSES) >= set(_CYCLES)
-    a = Processor(cycles_per_op={"div": 8})
-    assert a == Processor(cycles_per_op={"div": 8}) and hash(a) == hash(
-        Processor(cycles_per_op={"div": 8})
+    with pytest.raises(TypeError, match="fma"):
+        OpCycles(fma=1)  # type: ignore[call-arg]
+    assert set(OpClass) >= set(_CYCLES)
+    a = Processor(cycles_per_op=OpCycles(div=8))
+    assert a == Processor(cycles_per_op=OpCycles(div=8)) and hash(a) == hash(
+        Processor(cycles_per_op=OpCycles(div=8))
     )
-    assert a != Processor(cycles_per_op={"div": 9})
+    assert a != Processor(cycles_per_op=OpCycles(div=9))
     assert a.as_dict()["cycles_per_op"] == {"div": 8}
 
 
@@ -284,8 +291,8 @@ def _lower(machine, n=3):
 def test_a_function_that_computes_past_its_budget_fails_to_compile():
     # exp at 12 cycles, a multiply, a load and an add, at 4 ns per cycle.
     with pytest.raises(ControllerLimitError, match="_update__1 computes for about 60 ns"):
-        _lower(_machine({"cycles_per_op": _CYCLES, "clock_ghz": 0.25}))
-    _lower(_machine({"cycles_per_op": _CYCLES, "clock_ghz": 1.0}))
+        _lower(_machine({"cycles_per_op": OpCycles(**_CYCLES), "clock_ghz": 0.25}))
+    _lower(_machine({"cycles_per_op": OpCycles(**_CYCLES), "clock_ghz": 1.0}))
 
 
 def test_only_functions_on_a_processor_are_checked():
@@ -318,7 +325,7 @@ def test_per_shot_limits_count_calls_and_bytes():
 
 
 def test_the_report_is_a_table_of_functions_and_links():
-    report = resources(_lower(_machine({"cycles_per_op": _CYCLES, "clock_ghz": 1.0})))
+    report = resources(_lower(_machine({"cycles_per_op": OpCycles(**_CYCLES), "clock_ghz": 1.0})))
     text = str(report)
     assert "_update" in text and "_remote" in text and "controller" in text
     assert "Links, per shot" in text and "Per shot: 6 calls" in text

@@ -626,7 +626,7 @@ from the ``Processor`` of a controller that runs the functions on its
 
    processor = pulse.Processor(
        links=["controller"],
-       cycles_per_op={"div": 8, "sqrt": 8, "exp": 12, "log": 12, "trig": 12},
+       cycles_per_op=controller.OpCycles(div=8, sqrt=8, exp=12, log=12, trig=12),
        clock_ghz=0.25,       # 4 ns per cycle
        fixed_cost_only=True,
        max_ops_per_function=256,

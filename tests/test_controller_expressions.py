@@ -6,7 +6,7 @@
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
 """The values a controller program computes at run time are exported as
-expressions in one vocabulary of terms, ``EXPRESSION_TERMS``, whatever
+expressions in one vocabulary of terms, ``ExpressionTerm``, whatever
 operations the compiler computes them with."""
 
 from __future__ import annotations
@@ -24,8 +24,8 @@ from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline
 from cudaq_pulse.controller import (
     _AMPLITUDES,
     _PARAMETERS,
-    EXPRESSION_TERMS,
     FORMAT,
+    ExpressionTerm,
     evaluate_expression,
     unroll,
 )
@@ -195,7 +195,7 @@ def test_every_term_is_exercised():
     for body in (*_PHASES.values(), *_WAITS.values()):
         exported |= _ops(_value(pulse.compile(_kernel(body)).lower(Q[0]).export_controller()))
     # The controller's cycles come from a controller clock, tested above.
-    assert exported | {"controller_cycles"} == EXPRESSION_TERMS
+    assert exported | {"controller_cycles"} == set(ExpressionTerm)
 
 
 # ── Forms that mean the same ─────────────────────────────────────────────────

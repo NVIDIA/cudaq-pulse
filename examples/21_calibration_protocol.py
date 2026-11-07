@@ -108,7 +108,7 @@ wait_range_cycles = (
 # with these cycles per operation, up to one call per slot of its link at once.
 processor = pulse.Processor(
     links=["controller"],
-    cycles_per_op={"div": 8, "sqrt": 8, "exp": 12, "log": 12, "trig": 12, "popcount": 1},
+    cycles_per_op=controller.OpCycles(div=8, sqrt=8, exp=12, log=12, trig=12, popcount=1),
     clock_ghz=0.25,
     max_concurrent_calls=4,
     fixed_cost_only=True,
@@ -560,7 +560,7 @@ if __name__ == "__main__":
     lowered = compiled.lower(q, 20_000.0 * clock_ghz)
     report = controller.resources(lowered)
     print(report)
-    slow = dataclasses.replace(processor, cycles_per_op={**processor.cycles_per_op, "exp": 400})
+    slow = dataclasses.replace(processor, cycles_per_op=processor.cycles_per_op.replace(exp=400))
     slow_system = pulse.ControlSystem(
         controllers=[pulse.Controller(processors=[slow])], links=links
     )

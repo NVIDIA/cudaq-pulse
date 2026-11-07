@@ -22,7 +22,12 @@ import numpy as np
 from cudaq_pulse import Controller
 from cudaq_pulse.classical import Bits, ClassicalFunction, Pending
 from cudaq_pulse.compiler import CompileMetrics, ScheduledEvent
-from cudaq_pulse.controller import ControllerModule, ControllerNames, WaveformMemoryScope
+from cudaq_pulse.controller import (
+    ControllerModule,
+    ControllerNames,
+    ExpressionTerm,
+    WaveformMemoryScope,
+)
 from cudaq_pulse.ops import Waveform
 from cudaq_pulse.targets import (
     Coupling,
@@ -173,7 +178,7 @@ box = pulse.controller("reference.controller", drive_lines=[0, 1])
 assert_type(box, pulse.Controller)
 assert_type(pulse.Controller(instruction_cycles=2), Controller)
 assert_type(pulse.controller.FORMAT, str)
-assert_type(pulse.controller.EXPRESSION_TERMS, frozenset[str])
+assert_type(ExpressionTerm("select"), ExpressionTerm)
 assert_type(pulse.controller.evaluate_expression({"const": 1.0}), float | int | bool)
 assert_type(pulse.controller.unroll({"format": "cudaq-pulse.controller/2"}), dict[str, Any])
 assert_type(pulse.controller.sample_waveform({}, 40, samples_per_cycle=2.5), np.ndarray)
@@ -189,7 +194,15 @@ assert_type(control.controllers, Sequence[pulse.Controller])
 pulse.ControlSystem(line_delays_ns={("drive", 0): 2 * pulse.ns, ("readout", 0): 1.5})
 pulse.Link(fixed_ns=100 * pulse.ns, feedback_ns=20.0, per_controller=True)
 assert_type(box.supports_capability(pulse.Capability.BRANCH), bool)
-cores = pulse.Processor(links=("feedback",), cycles_per_op={"div": 20}, unsupported=["trig"])
+cores = pulse.Processor(
+    links=("feedback",),
+    cycles_per_op=pulse.controller.OpCycles(div=20),
+    unsupported=[pulse.controller.OpClass.TRIG],
+)
+assert_type(cores.cycles_per_op.div, int)
+pulse.Processor(cycles_per_op={"div": 20})  # type: ignore[arg-type]
+pulse.controller.OpCycles(dvi=20)  # type: ignore[call-arg]
+assert_type(pulse.controller.OpCounts(add=2).total, int)
 assert_type(cores.max_ops_total, int | None)
 assert_type(cores.dispatch_keys, Mapping[str, int])
 assert_type(pulse.Controller(processors=[cores]).processors, Sequence[pulse.Processor])

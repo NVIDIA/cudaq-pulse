@@ -145,7 +145,7 @@ def test_the_chain_fits_the_declared_controller():
 def test_a_slower_controller_rejects_the_chain_at_compile_time():
     _, dev, q = _chain()
     processor = P["processor"]
-    slow = dataclasses.replace(processor, cycles_per_op={**processor.cycles_per_op, "exp": 400})
+    slow = dataclasses.replace(processor, cycles_per_op=processor.cycles_per_op.replace(exp=400))
     system = pulse.ControlSystem(
         controllers=[pulse.Controller(processors=[slow])], links=P["control_system"].links
     )
