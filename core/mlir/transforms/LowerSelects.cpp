@@ -30,6 +30,14 @@
 // starts every op once all its operands are available, so an op that reads a
 // selected value, kept or copied into the arms, waits for the condition's
 // measurement either way.
+//
+// A select of an i1 is a condition on measurement results a kernel kept in a
+// value: an if on it becomes ifs on the measurements, in the order the
+// condition reads them. Each copy of the if folds the condition with the
+// arm's value, and takes its arm where that decides it, so a measurement is
+// tested only where the condition still depends on it: the ifs a kernel
+// that writes the condition in the if itself gets. Those selects alone do
+// not mark the function.
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"
@@ -39,8 +47,10 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Transforms/FoldUtils.h"
 
 #include "cudaq-pulse/Transforms/Passes.h"
 
@@ -116,11 +126,25 @@ public:
   }
 
   mlir::LogicalResult run() {
-    bool selects = false;
-    function.walk([&](mlir::arith::SelectOp) {
-      selects = true;
-      return mlir::WalkResult::interrupt();
+    bool selects = false, conditions = false;
+    function.walk([&](mlir::arith::SelectOp select) {
+      if (!select.getType().isInteger(1)) {
+        selects = true;
+        return mlir::WalkResult::interrupt();
+      }
+      conditions = true;
+      return mlir::WalkResult::advance();
     });
+    if (conditions) {
+      // The true and false a condition is built from, as constants that
+      // fold with it in each copy.
+      mlir::OperationFolder folder(function.getContext());
+      function.walk([&](mlir::arith::CmpIOp compare) {
+        if (mlir::matchPattern(compare.getLhs(), mlir::m_Constant()) &&
+            mlir::matchPattern(compare.getRhs(), mlir::m_Constant()))
+          (void)folder.tryToFold(compare);
+      });
+    }
     if (selects)
       function->setAttr(kSelectedValues,
                         mlir::UnitAttr::get(function.getContext()));
@@ -257,6 +281,12 @@ private:
       collectBetween(anchor, select, between);
 
     mlir::OpBuilder builder(anchor);
+    // A condition's measurement is tested where its if is, as an if on it
+    // tests it.
+    if (auto isSet = condition.getDefiningOp<pulse::IsSetOp>();
+        isSet && select.getType().isInteger(1))
+      condition = pulse::IsSetOp::create(
+          builder, isSet.getLoc(), builder.getI1Type(), isSet.getMeasurement());
     auto branch = mlir::scf::IfOp::create(builder, anchor->getLoc(),
                                           anchor->getResultTypes(), condition,
                                           /*withElseRegion=*/true);
@@ -279,6 +309,8 @@ private:
         copied.getDefiningOp()->erase();
       }
       mlir::scf::YieldOp::create(inArm, anchor->getLoc(), copy->getResults());
+      if (select.getType().isInteger(1))
+        decide(arm);
     }
     anchor->replaceAllUsesWith(branch.getResults());
     for (mlir::Operation *op : between)
@@ -290,6 +322,34 @@ private:
     dead.remove_if([&](mlir::Operation *op) { return anchor->isAncestor(op); });
     anchor->erase();
     return mlir::success();
+  }
+
+  /// Fold the pure ops of `arm`, a copy for one value of a condition's
+  /// select, and replace an if they decide with the arm it takes.
+  void decide(mlir::Block *arm) {
+    mlir::OperationFolder folder(function.getContext());
+    for (mlir::Operation &op : llvm::make_early_inc_range(*arm))
+      if (isArithmetic(&op))
+        (void)folder.tryToFold(&op);
+    for (mlir::Operation &op : llvm::make_early_inc_range(*arm)) {
+      auto branch = mlir::dyn_cast<mlir::scf::IfOp>(op);
+      llvm::APInt taken;
+      if (!branch || !mlir::matchPattern(branch.getCondition(),
+                                         mlir::m_ConstantInt(&taken)))
+        continue;
+      mlir::Block *body =
+          taken.isZero() ? branch.elseBlock() : branch.thenBlock();
+      if (!body) {
+        branch.erase();
+        continue;
+      }
+      auto yield = mlir::cast<mlir::scf::YieldOp>(body->getTerminator());
+      branch->replaceAllUsesWith(yield.getOperands());
+      arm->getOperations().splice(mlir::Block::iterator(branch),
+                                  body->getOperations(), body->begin(),
+                                  mlir::Block::iterator(yield));
+      branch.erase();
+    }
   }
 
   /// The pure ops outside `anchor` that compute what it reads from
