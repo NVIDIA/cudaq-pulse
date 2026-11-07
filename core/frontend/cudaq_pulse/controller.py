@@ -710,18 +710,16 @@ def _walk(
     problems: list[str] = []
     if summary is not None:
         repeats, periods = summary
-        epochs = lowered._event_epochs(syncs=True)
         with lowered._lock:
             if own is None:
                 lines, events = module.controller_events(
-                    _PARAMETERS, _AMPLITUDES, epochs, slots, repeats, periods
+                    _PARAMETERS, _AMPLITUDES, slots, repeats, periods
                 )
             else:
                 ratio = own.ratio
                 lines, events, off_grid, ends = module.controller_events_on(
                     _PARAMETERS,
                     _AMPLITUDES,
-                    epochs,
                     ratio.numerator,
                     ratio.denominator,
                     own.grid,

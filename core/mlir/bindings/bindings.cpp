@@ -468,6 +468,99 @@ static int64_t nativeOffset(mlir::Operation *line) {
   });
 }
 
+/// The epochs of a scheduled program, in program order. A variable wait or a
+/// blocking wait ends the current epoch of its timeline (the lines it holds
+/// back) and opens the next one, which starts after it: epoch k > 0 is
+/// opened by the k-th such wait, and follows `after`, the epoch its timeline
+/// was in. Without timelines every epoch follows the one before.
+struct EpochWalk {
+  /// (kind, line or link, start, lowest, highest, after) per boundary: see
+  /// PulseModule::epoch_boundaries().
+  using Boundary =
+      std::tuple<std::string, int64_t, int64_t, int64_t, int64_t, int64_t>;
+
+  explicit EpochWalk(mlir::ModuleOp module) {
+    module.walk([&](mlir::Operation *op) {
+      if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
+        lineIndex.try_emplace(op, static_cast<int64_t>(lineIndex.size()));
+    });
+  }
+
+  llvm::DenseMap<mlir::Operation *, int64_t> lineIndex;
+  pulse::AllocationTracer trace;
+  std::map<int64_t, int64_t> current;
+  std::vector<Boundary> boundaries;
+
+  int64_t timelineOf(mlir::Operation *op) {
+    if (op->hasAttr(classical::kTimelineAttr))
+      return classical::intAttr(op, classical::kTimelineAttr);
+    for (mlir::Value operand : op->getOperands())
+      if (mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType,
+                    pulse::ToneType>(operand.getType())) {
+        mlir::Operation *allocation = trace(operand);
+        return allocation
+                   ? classical::intAttr(allocation, classical::kTimelineAttr)
+                   : 0;
+      }
+    return 0;
+  }
+
+  /// The epoch `op` runs in, in iteration `iteration`; a boundary opens the
+  /// next. A variable wait runs in the epoch it ends, a blocking wait's
+  /// answer is taken in the one it opens.
+  int64_t visit(mlir::Operation *op, llvm::ArrayRef<int64_t> iteration) {
+    int64_t &epoch = current[timelineOf(op)];
+    if (!op->hasAttr("classical.variable") &&
+        !op->hasAttr("classical.blocking"))
+      return epoch;
+    auto start = pulse::scheduledStart(op, iteration);
+    if (!start)
+      return epoch;
+    int64_t after = epoch;
+    if (mlir::isa<pulse::WaitOp>(op)) {
+      mlir::Operation *allocation = trace(op->getOperand(0));
+      boundaries.emplace_back(
+          "wait", allocation ? lineIndex.lookup(allocation) : -1, *start,
+          classical::intAttr(op, "pulse.min_cycles"),
+          classical::intAttr(op, "pulse.max_cycles", -1), after);
+    } else {
+      boundaries.emplace_back("answer",
+                              classical::intAttr(op, "classical.device"),
+                              *start, 0, -1, after);
+    }
+    epoch = static_cast<int64_t>(boundaries.size());
+    return mlir::isa<pulse::WaitOp>(op) ? after : epoch;
+  }
+
+  /// Visit every op of `block` once per loop iteration, both arms of each
+  /// branch, as the event listings do; `fn(op, epoch)` for each timed op,
+  /// call and sync.
+  template <typename Fn>
+  void run(mlir::Block &block, Fn &&fn) {
+    for (mlir::Operation &op : block) {
+      if (mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp,
+                    pulse::SyncOp, classical::SubmitOp, classical::WaitOp>(
+              op)) {
+        fn(&op, visit(&op, iteration));
+      } else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
+        int64_t trips = pulse::constantTripCount(loop).value_or(0);
+        iteration.push_back(0);
+        for (int64_t k = 0; k < trips; ++k) {
+          iteration.back() = k;
+          run(*loop.getBody(), fn);
+        }
+        iteration.pop_back();
+      } else {
+        for (mlir::Region &region : op.getRegions())
+          for (mlir::Block &nested : region)
+            run(nested, fn);
+      }
+    }
+  }
+
+  llvm::SmallVector<int64_t, 2> iteration;
+};
+
 #include "ControllerExpressions.h"
 
 /// The walk behind PulseModule::controller_events(), a check's walk of a
@@ -990,6 +1083,7 @@ struct ControllerEventWalk : ControllerExpressions {
     if constexpr (RunTime)
       if (detail)
         runTime(op, nodes);
+    epochOf(op);
     result.emplace_back(
         op->getName().stripDialect().str(), lineOf(allocation), qubit, start,
         duration, std::vector<int64_t>(iteration.begin(), iteration.end()),
@@ -1080,6 +1174,7 @@ struct ControllerEventWalk : ControllerExpressions {
       dependencies.emplace_back();
       natives.push_back(-1);
     }
+    epochOf(op);
     result.emplace_back(
         "sync", -1, -1, time,
         time ? std::optional<int64_t>(0) : std::optional<int64_t>(),
@@ -1120,6 +1215,7 @@ struct ControllerEventWalk : ControllerExpressions {
     }
     // A call has no qudit: its slot holds the controller whose instance of
     // a per-controller link runs it (-1: none).
+    epochOf(op);
     result.emplace_back(
         submit ? "submit" : "answer",
         classical::intAttr(op, "classical.device"),
@@ -1178,7 +1274,7 @@ struct ControllerEventWalk : ControllerExpressions {
       int64_t trips = pulse::constantTripCount(loop).value_or(0);
       iteration.push_back(0);
       if constexpr (!RunTime)
-        if (summarize && trips > kSummarizeAfter) {
+        if (summarize && trips > kSummarizeAfter && !holdsBoundary(loop)) {
           summarizeLoop(*loop.getBody(), trips);
           iteration.pop_back();
           return;
@@ -1265,6 +1361,33 @@ struct ControllerEventWalk : ControllerExpressions {
         frame.timeNs = std::max(frame.timeNs, theirs.timeNs);
     }
   }
+
+  /// With `epochWalk` (a module with classical calls): the epoch of each
+  /// event, parallel to `result`.
+  std::optional<EpochWalk> epochWalk;
+  std::vector<int64_t> epochs;
+
+  void epochOf(mlir::Operation *op) {
+    if (epochWalk)
+      epochs.push_back(epochWalk->visit(op, iteration));
+  }
+
+  /// Whether `loop` holds a variable or blocking wait, which ends an epoch
+  /// in every iteration: a summarizing walk plays such a loop out, so that
+  /// it visits every boundary, as ControllerWalk does.
+  bool holdsBoundary(mlir::scf::ForOp loop) {
+    if (!epochWalk)
+      return false;
+    auto [it, inserted] = boundaries.try_emplace(loop, false);
+    if (inserted)
+      loop->walk([&](mlir::Operation *op) {
+        if (op->hasAttr("classical.variable") ||
+            op->hasAttr("classical.blocking"))
+          it->second = true;
+      });
+    return it->second;
+  }
+  llvm::DenseMap<mlir::Operation *, bool> boundaries;
 
   /// With `summarize` (for a check of a module that computes nothing at run
   /// time): a rolled loop of more than kSummarizeAfter iterations whose third
@@ -1653,19 +1776,20 @@ public:
     return out;
   }
 
-  nb::list events(const ControllerEventWalk &walk, nb::list epochs) {
+  nb::list events(const ControllerEventWalk &walk) {
     // Nothing built here is garbage until it is returned: a collection now
     // would only walk the heap.
     CollectorPause pause;
     this->walk = &walk;
-    size_t epochCount = nb::len(epochs);
+    const std::vector<int64_t> *epochs =
+        walk.epochWalk ? &walk.epochs : nullptr;
     nb::list out = list(walk.result.size());
     auto known = walk.known.begin();
     for (size_t i = 0; i < walk.result.size(); ++i) {
       const ControllerEventWalk::Known *extra = nullptr;
       if (known != walk.known.end() && known->event == static_cast<int64_t>(i))
         extra = &*known++;
-      set(out, i, event(i, walk.result[i], extra, epochs, epochCount));
+      set(out, i, event(i, walk.result[i], extra, epochs));
     }
     return out;
   }
@@ -1976,8 +2100,8 @@ private:
   }
 
   nb::object event(size_t index, const ControllerEventWalk::Event &item,
-                   const ControllerEventWalk::Known *extra, nb::handle epochs,
-                   size_t epochCount) {
+                   const ControllerEventWalk::Known *extra,
+                   const std::vector<int64_t> *epochs) {
     const auto &[kind, line, qudit, start, duration, iteration, nodes,
                  frequency, phase, branches, joined, refs, callee, mode,
                  timeout] = item;
@@ -1993,21 +2117,7 @@ private:
     put(event, keys.end,
         start && duration ? integer(*start + *duration) : nb::none());
     put(event, keys.iteration, integers(iteration));
-    if (epochCount && start) {
-      // `epochs` is the caller's: no item is borrowed without the GIL.
-#ifdef Py_GIL_DISABLED
-      nb::object epoch = nb::steal(
-          PyList_GetItemRef(epochs.ptr(), static_cast<Py_ssize_t>(index)));
-#else
-      nb::handle epoch =
-          PyList_GetItem(epochs.ptr(), static_cast<Py_ssize_t>(index));
-#endif
-      if (!epoch)
-        throw nb::python_error();
-      put(event, keys.epoch, epoch);
-    } else {
-      put(event, keys.epoch, integer(0));
-    }
+    put(event, keys.epoch, integer(epochs && start ? (*epochs)[index] : 0));
     put(event, keys.conditions, conditions(branches, false));
     if (kind == "drive" || kind == "readout") {
       llvm::ArrayRef<std::tuple<int64_t, int64_t, int32_t>> runtime;
@@ -2069,99 +2179,6 @@ private:
     }
     return event;
   }
-};
-
-/// The epochs of a scheduled program, in program order. A variable wait or a
-/// blocking wait ends the current epoch of its timeline (the lines it holds
-/// back) and opens the next one, which starts after it: epoch k > 0 is
-/// opened by the k-th such wait, and follows `after`, the epoch its timeline
-/// was in. Without timelines every epoch follows the one before.
-struct EpochWalk {
-  /// (kind, line or link, start, lowest, highest, after) per boundary: see
-  /// PulseModule::epoch_boundaries().
-  using Boundary =
-      std::tuple<std::string, int64_t, int64_t, int64_t, int64_t, int64_t>;
-
-  explicit EpochWalk(mlir::ModuleOp module) {
-    module.walk([&](mlir::Operation *op) {
-      if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
-        lineIndex.try_emplace(op, static_cast<int64_t>(lineIndex.size()));
-    });
-  }
-
-  llvm::DenseMap<mlir::Operation *, int64_t> lineIndex;
-  pulse::AllocationTracer trace;
-  std::map<int64_t, int64_t> current;
-  std::vector<Boundary> boundaries;
-
-  int64_t timelineOf(mlir::Operation *op) {
-    if (op->hasAttr(classical::kTimelineAttr))
-      return classical::intAttr(op, classical::kTimelineAttr);
-    for (mlir::Value operand : op->getOperands())
-      if (mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType,
-                    pulse::ToneType>(operand.getType())) {
-        mlir::Operation *allocation = trace(operand);
-        return allocation
-                   ? classical::intAttr(allocation, classical::kTimelineAttr)
-                   : 0;
-      }
-    return 0;
-  }
-
-  /// The epoch `op` runs in, in iteration `iteration`; a boundary opens the
-  /// next. A variable wait runs in the epoch it ends, a blocking wait's
-  /// answer is taken in the one it opens.
-  int64_t visit(mlir::Operation *op, llvm::ArrayRef<int64_t> iteration) {
-    int64_t &epoch = current[timelineOf(op)];
-    if (!op->hasAttr("classical.variable") &&
-        !op->hasAttr("classical.blocking"))
-      return epoch;
-    auto start = pulse::scheduledStart(op, iteration);
-    if (!start)
-      return epoch;
-    int64_t after = epoch;
-    if (mlir::isa<pulse::WaitOp>(op)) {
-      mlir::Operation *allocation = trace(op->getOperand(0));
-      boundaries.emplace_back(
-          "wait", allocation ? lineIndex.lookup(allocation) : -1, *start,
-          classical::intAttr(op, "pulse.min_cycles"),
-          classical::intAttr(op, "pulse.max_cycles", -1), after);
-    } else {
-      boundaries.emplace_back("answer",
-                              classical::intAttr(op, "classical.device"),
-                              *start, 0, -1, after);
-    }
-    epoch = static_cast<int64_t>(boundaries.size());
-    return mlir::isa<pulse::WaitOp>(op) ? after : epoch;
-  }
-
-  /// Visit every op of `block` once per loop iteration, both arms of each
-  /// branch, as the event listings do; `fn(op, epoch)` for each timed op,
-  /// call and sync.
-  template <typename Fn>
-  void run(mlir::Block &block, Fn &&fn) {
-    for (mlir::Operation &op : block) {
-      if (mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp,
-                    pulse::SyncOp, classical::SubmitOp, classical::WaitOp>(
-              op)) {
-        fn(&op, visit(&op, iteration));
-      } else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
-        int64_t trips = pulse::constantTripCount(loop).value_or(0);
-        iteration.push_back(0);
-        for (int64_t k = 0; k < trips; ++k) {
-          iteration.back() = k;
-          run(*loop.getBody(), fn);
-        }
-        iteration.pop_back();
-      } else {
-        for (mlir::Region &region : op.getRegions())
-          for (mlir::Block &nested : region)
-            run(nested, fn);
-      }
-    }
-  }
-
-  llvm::SmallVector<int64_t, 2> iteration;
 };
 
 /// The carrier of each runtime-qudit slot of a specialization, and the
@@ -2511,24 +2528,23 @@ public:
   /// and its bounds; a submission has the expression of each argument.
   ///
   /// Returned as controller.export() gives them: (lines, events), lists of
-  /// dicts, with `parameters` the parameter names of each waveform shape,
-  /// `amplitudes` the shapes with an overall amplitude and `epochs` each
-  /// event's epoch (empty: all 0). A list `slots` gets each line's
+  /// dicts, with `parameters` the parameter names of each waveform shape and
+  /// `amplitudes` the shapes with an overall amplitude; each event has its
+  /// epoch (all 0 without classical calls). A list `slots` gets each line's
   /// runtime-qudit slot (-1 for none). With a list `repeats`, for a check, a
-  /// long rolled loop whose iterations repeat has its events once, no event
-  /// has a tone id or frame changes, and `repeats` gets each such loop's
-  /// ControllerEventWalk::Repeat; with a list `periods` too, its lines may
-  /// repeat at periods of their own, and `periods` gets them
-  /// (ControllerEventWalk::linePeriods).
+  /// long rolled loop whose iterations repeat (and that holds no epoch
+  /// boundary) has its events once, no event has a tone id or frame
+  /// changes, and `repeats` gets each such loop's ControllerEventWalk::Repeat;
+  /// with a list `periods` too, its lines may repeat at periods of their
+  /// own, and `periods` gets them (ControllerEventWalk::linePeriods).
   nb::tuple controller_events(nb::handle parameters, nb::handle amplitudes,
-                              nb::list epochs, nb::object slots,
-                              nb::object repeats, nb::object periods) {
+                              nb::object slots, nb::object repeats,
+                              nb::object periods) {
     ControllerObjects objects(parameters, amplitudes);
     std::unique_ptr<ControllerEventWalk> walk;
     std::vector<ControllerLine> lines;
     std::vector<int64_t> found;
-    // Epochs number the events every iteration plays.
-    bool once = !repeats.is_none() && nb::len(epochs) == 0;
+    bool once = !repeats.is_none();
     {
       nb::gil_scoped_release release;
       walk = controllerWalk(lines, slots.is_none() ? nullptr : &found, once,
@@ -2536,7 +2552,7 @@ public:
     }
     lineSlots(found, slots);
     appendRepeats(*walk, repeats, periods);
-    return nb::make_tuple(objects.lines(lines), objects.events(*walk, epochs));
+    return nb::make_tuple(objects.lines(lines), objects.events(*walk));
   }
 
   /// `walk`'s repeats into the list `repeats` and its line periods into the
@@ -2591,6 +2607,8 @@ public:
     walk->summarize = summarize;
     walk->unsynced = unsynced;
     walk->trackFrames = trackFrames;
+    if (classical::declaresClassicalCalls(*module_))
+      walk->epochWalk.emplace(*module_);
     if (runTime_)
       controllerEvents<true>(*walk, lines, slots);
     else
@@ -2855,9 +2873,9 @@ public:
   /// steps of its grid, so that each copy is on or off it as the first is;
   /// with a loop of another period, every iteration is played.
   nb::tuple controller_events_on(nb::handle parameters, nb::handle amplitudes,
-                                 nb::list epochs, int64_t num, int64_t den,
-                                 int64_t grid, nb::object slots,
-                                 nb::object repeats, nb::object periods) {
+                                 int64_t num, int64_t den, int64_t grid,
+                                 nb::object slots, nb::object repeats,
+                                 nb::object periods) {
     if (num < 1 || den < 1 || grid < 1)
       throw std::invalid_argument("controller_events_on: the ratio and grid "
                                   "must be positive");
@@ -2867,7 +2885,7 @@ public:
     std::vector<int64_t> found;
     std::vector<OffGridEvent> offGrid;
     std::vector<std::tuple<int64_t, int64_t>> ends;
-    bool once = !repeats.is_none() && nb::len(epochs) == 0;
+    bool once = !repeats.is_none();
     {
       nb::gil_scoped_release release;
       walk = controllerWalk(lines, slots.is_none() ? nullptr : &found, once,
@@ -2882,7 +2900,7 @@ public:
     }
     lineSlots(found, slots);
     appendRepeats(*walk, repeats, periods);
-    return nb::make_tuple(objects.lines(lines), objects.events(*walk, epochs),
+    return nb::make_tuple(objects.lines(lines), objects.events(*walk),
                           nb::cast(offGrid), nb::cast(ends));
   }
 
@@ -6204,7 +6222,7 @@ NB_MODULE(_cudaq_pulse_native, m) {
            "For each event of controller_program() rolled: its kind, its "
            "trips for a loop (else -1), and what it depends on")
       .def("controller_events", &PulseModule::controller_events,
-           nb::arg("parameters"), nb::arg("amplitudes"), nb::arg("epochs"),
+           nb::arg("parameters"), nb::arg("amplitudes"),
            nb::arg("slots").none() = nb::none(),
            nb::arg("repeats").none() = nb::none(),
            nb::arg("periods").none() = nb::none(),
@@ -6212,8 +6230,8 @@ NB_MODULE(_cudaq_pulse_native, m) {
            "controller.export() gives them; a list `slots` gets each line's "
            "runtime-qudit slot")
       .def("controller_events_on", &PulseModule::controller_events_on,
-           nb::arg("parameters"), nb::arg("amplitudes"), nb::arg("epochs"),
-           nb::arg("num"), nb::arg("den"), nb::arg("grid"),
+           nb::arg("parameters"), nb::arg("amplitudes"), nb::arg("num"),
+           nb::arg("den"), nb::arg("grid"),
            nb::arg("slots").none() = nb::none(),
            nb::arg("repeats").none() = nb::none(),
            nb::arg("periods").none() = nb::none(),

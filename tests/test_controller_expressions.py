@@ -655,9 +655,7 @@ def _computed(events):
 def test_the_check_walk_computes_at_run_time_as_the_export(body):
     lowered = pulse.compile(_kernel(body)).lower(Q[0])
     module = lowered._concrete()
-    _, checked = module.controller_events(
-        _PARAMETERS, _AMPLITUDES, lowered._event_epochs(syncs=True), None, None, None
-    )
+    _, checked = module.controller_events(_PARAMETERS, _AMPLITUDES)
     _, exported, _ = module.controller_program(
         _PARAMETERS, _AMPLITUDES, lowered.classical != (), exportable=False
     )

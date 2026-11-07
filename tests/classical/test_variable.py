@@ -228,6 +228,19 @@ def test_epoch_invariants(steps, policy):
                 assert e.start_cycles >= end
 
 
+@settings(max_examples=examples(40), deadline=None)
+@given(steps=st.lists(_STEP, min_size=1, max_size=20), policy=st.sampled_from(POLICIES))
+def test_the_check_walk_counts_the_epochs_of_the_export(steps, policy):
+    from cudaq_pulse.controller import _AMPLITUDES, _PARAMETERS
+
+    module = pulse.compile(_program(steps), schedule=policy).lower(Q[0], Q[1], Q[2])._concrete()
+    _, checked = module.controller_events(_PARAMETERS, _AMPLITUDES)
+    _, exported, _ = module.controller_program(_PARAMETERS, _AMPLITUDES, True, exportable=False)
+    assert [e["epoch"] for e in checked] == [
+        e["epoch"] for e in exported if e["kind"] != "frame_update"
+    ]
+
+
 def test_a_wait_from_a_float_parameter_beside_calls_is_no_barrier():
     @pulse.kernel
     def k(q, p, tau: float):
