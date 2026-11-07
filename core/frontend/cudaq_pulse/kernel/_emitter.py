@@ -29,6 +29,7 @@ vector, ...) run as Python runs them, one traced iteration per element.
 from __future__ import annotations
 
 import builtins as _builtins_mod
+import collections
 import dis
 import functools
 import inspect
@@ -118,6 +119,11 @@ MAX_INLINE_DEPTH = 64
 _VARIADIC = inspect.CO_VARARGS | inspect.CO_VARKEYWORDS
 # Methods of these containers change them unless listed in _READ_METHODS.
 _CONTAINERS = frozenset({list, dict, set})
+# The containers a trace can change in place, with their subclasses: the
+# arms of a branch and the iterations of a rolled loop must leave them as
+# they found them. Concrete types, which isinstance tests without running
+# Python (an ABC's isinstance runs its __instancecheck__).
+_MUTABLE = (list, dict, set, collections.deque, bytearray)
 _READ_METHODS = frozenset({"copy", "count", "index", "get", "keys", "values", "items"})
 # List methods after which the list slots holding lines and tones are found again.
 _MOVES_SLOTS = frozenset({"append", "extend", "insert", "pop", "remove", "reverse", "sort"})
@@ -2199,6 +2205,11 @@ class PulseIREmitter:
                 elif op is bc.REGION_END:
                     return _REGION_DONE
 
+                elif op is bc.NOTE_INPLACE:
+                    # The augmented assignment next may change its left
+                    # operand, under the right one, in place.
+                    self._note_mutation(stack[-2])
+
                 else:  # pragma: no cover - decode only produces the ops above
                     raise CompilationError(f"unknown canonical instruction {op}")
         except _NotRollableError:
@@ -2940,8 +2951,11 @@ class PulseIREmitter:
     def _note_mutation(self, obj: Any) -> None:
         """Remember what *obj* held before a rolled body or branch arm changed it."""
         mutated = self._mutated
-        if mutated is not None and obj.__class__ in _CONTAINERS and id(obj) not in mutated:
-            mutated[id(obj)] = (obj, obj.copy())
+        if mutated is not None and id(obj) not in mutated:
+            if obj.__class__ in _CONTAINERS:
+                mutated[id(obj)] = (obj, obj.copy())
+            elif isinstance(obj, _MUTABLE):
+                mutated[id(obj)] = (obj, _contents(obj))
 
     def _note_fresh(self, obj: Any) -> None:
         """Mark a container built by the body or arm being traced as free to change."""
@@ -3219,6 +3233,10 @@ class PulseIREmitter:
             owner = getattr(callable_val, "__self__", None)
             if self._mutated is not None:
                 if owner.__class__ in _CONTAINERS:
+                    if fname not in _READ_METHODS:
+                        self._note_mutation(owner)
+                elif isinstance(owner, _MUTABLE):
+                    # A method of another container changes that container only.
                     if fname not in _READ_METHODS:
                         self._note_mutation(owner)
                 else:
@@ -3855,7 +3873,7 @@ class PulseIREmitter:
                 slots[id(res)] = (slot[0], slot[1], res)
 
     def _restore_container(self, obj: Any, copy: Any) -> None:
-        """Undo a traced arm or loop body's changes to a list or dict.
+        """Undo a traced arm or loop body's changes to a container.
 
         Restored lists hold values whose slots the undone code consumed, so
         their slots are tracked again.
@@ -3866,9 +3884,12 @@ class PulseIREmitter:
         elif isinstance(obj, list):
             obj[:] = copy
             self._track_slots(obj, 0)
-        else:
+        elif isinstance(obj, (dict, set)):
             obj.clear()
             obj.update(copy)
+        else:
+            obj.clear()
+            obj.extend(copy)
 
     def _track_slots(self, items: list[Any], start: int) -> None:
         """Remember the list slots from *start* on that hold lines or tones."""
@@ -4069,14 +4090,31 @@ def _only_containers(
     return all(copy is None or key in known for key, (_, copy) in mutated.items())
 
 
-def _container_unchanged(obj: list[Any] | dict[Any, Any] | set[Any], copy: Any) -> bool:
+def _contents(obj: Any) -> Any:
+    """A copy of what the mutable container *obj* holds, in its order."""
+    if isinstance(obj, dict):
+        return dict(obj)
+    if isinstance(obj, set):
+        return set(obj)
+    return list(obj)
+
+
+def _container_unchanged(obj: Any, copy: Any) -> bool:
+    """Whether the container *obj* holds what its *copy* does: the same
+    objects, in the same order but for a set; the numbers a bytearray makes
+    on each read compare equal."""
     if len(obj) != len(copy):
         return False
     if isinstance(obj, list):
         return all(a is b for a, b in zip(obj, copy, strict=False))
     if isinstance(obj, set):
         return all(k in copy for k in obj)
-    return all(k in copy and obj[k] is copy[k] for k in obj)
+    if isinstance(obj, dict):
+        return all(k is j and obj[k] is copy[j] for k, j in zip(obj, copy, strict=False))
+    return all(
+        a is b or (a.__class__ in _NUMBERS and a.__class__ is b.__class__ and a == b)
+        for a, b in zip(obj, copy, strict=False)
+    )
 
 
 _SIGNATURES = {}

@@ -128,7 +128,8 @@ if TYPE_CHECKING:
     MAKE_GENEXPR,
     SET_FUNCATTR,
     GEN_YIELD,
-) = range(58)
+    NOTE_INPLACE,
+) = range(59)
 
 OP_NAMES = tuple(
     (
@@ -141,7 +142,7 @@ OP_NAMES = tuple(
         "FOR_ITER RETURN IMPORT_NAME IMPORT_FROM CONVERT FORMAT RAISE UNSUPPORTED "
         "REGION_END CALL_EX DICT_MERGE DELETE_SUBSCR LOAD_FAST_AND_CLEAR "
         "STORE_FAST_MAYBE BUILD_SET SET_ADD SET_UPDATE MAP_ADD UNPACK_EX "
-        "MAKE_GENEXPR SET_FUNCATTR GEN_YIELD"
+        "MAKE_GENEXPR SET_FUNCATTR GEN_YIELD NOTE_INPLACE"
     ).split()
 )
 
@@ -723,10 +724,24 @@ def _decode(code: CodeType) -> DecodedCode:
             continue
 
         if name == "BINARY_OP":
-            if iarg == _NB_SUBSCR:
+            # Sub-codes 0 to 12 are the binary operators, 13 to 25 their
+            # in-place forms.
+            if iarg < 13:
+                out.append([BINARY, _NB_OPS[iarg]])
+            elif iarg == _NB_SUBSCR:
                 out.append([SUBSCR, None])
             else:
-                out.append([BINARY, _NB_OPS[iarg]])
+                # An augmented assignment changes a mutable left operand in
+                # place; the tracer notes it first. One on a name (x += 1) is
+                # not noted unless its operator is a set's or dict's: a
+                # container a name holds is compared after a branch arm.
+                fn = _NB_OPS[iarg]
+                if (
+                    fn in (_op.iand, _op.ior, _op.ixor)
+                    or raw[raw.index(ins) + 1].opname != "STORE_FAST"
+                ):
+                    out.append([NOTE_INPLACE, None])
+                out.append([BINARY, fn])
         elif name == "BINARY_SLICE":
             out.append([BUILD_SLICE, 2])
             out.append([SUBSCR, None])

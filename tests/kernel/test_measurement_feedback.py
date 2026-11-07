@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import collections
 import random
 
 import cudaq_pulse as pulse
@@ -344,6 +345,10 @@ def test_nested_feedback_ending_an_unrolled_loop_body():
     assert [e.kind for e in events] == ["readout", "drive", "drive"]
 
 
+class _Outcomes(list):
+    pass
+
+
 def _rounds(n):
     @pulse.kernel(unroll_threshold=10**9)
     def rounds(q):
@@ -365,6 +370,56 @@ def test_branches_beside_a_growing_list_of_outcomes_trace_in_linear_work():
     # An arm that leaves a list as it was costs nothing for its length.
     work = {n: python_work(lambda n=n: pulse.compile(_rounds(n)).lower(Q[0])) for n in (50, 200)}
     assert all(work[200][count] <= 4 * work[50][count] for count in work[50]), work
+
+
+# A container of each kind, and a change of it that keeps its length or
+# adds to it in place.
+_CHANGED = {
+    "deque": ("collections.deque([1, 2])", "values.rotate(1)"),
+    "bytearray": ("bytearray(b'ab')", "values.append(3)"),
+    "ordered dict": ("collections.OrderedDict(a=1, b=2)", "values.move_to_end('a')"),
+    "dict, |= on a key it has": ("{'a': 1}", "values |= {'a': 2}"),
+    "set, |=": ("{1}", "values |= {2}"),
+    "list in a dict, +=": ("{'a': []}", "values['a'] += [2]"),
+    "list subclass": ("_Outcomes([1])", "values.append(2)"),
+}
+
+
+@pytest.mark.parametrize("case", list(_CHANGED))
+def test_an_arm_that_changes_a_container_of_any_kind_is_rejected(case):
+    made, change = _CHANGED[case]
+    source = (
+        "def k(q):\n"
+        "    d = get_drive_line(q)\n"
+        "    r = get_readout_line(q)\n"
+        f"    values = {made}\n"
+        "    if readout(r, square(40, 0.05)):\n"
+        f"        {change}\n"
+        "        drive(d, square(16, 0.1))\n"
+    )
+    namespace: dict = {}
+    scope = vars(pulse) | {"collections": collections, "_Outcomes": _Outcomes}
+    exec(compile(source, f"<{case}>", "exec"), scope, namespace)
+    with pytest.raises(CompilationError, match="may only change list entries that hold lines"):
+        pulse.compile(pulse.kernel(namespace["k"])).lower(Q[0])
+
+
+@pytest.mark.parametrize("made", ["collections.deque()", "bytearray()"])
+def test_a_loop_that_adds_to_a_deque_or_bytearray_traces_each_iteration(made):
+    source = (
+        "def k(q):\n"
+        "    d = get_drive_line(q)\n"
+        "    r = get_readout_line(q)\n"
+        f"    values = {made}\n"
+        "    for _ in range(4):\n"
+        "        readout(r, square(40, 0.05))\n"
+        "        values.append(1)\n"
+        "    drive(d, square(8 * len(values), 0.1))\n"
+    )
+    namespace: dict = {}
+    exec(compile(source, "<adds>", "exec"), vars(pulse) | {"collections": collections}, namespace)
+    events = pulse.compile(pulse.kernel(namespace["k"])).lower(Q[0]).schedule
+    assert [e.duration_cycles for e in events if e.kind == "drive"] == [32]
 
 
 def _beside_a_list(condition, listed, change=""):

@@ -514,6 +514,7 @@ _QUIET = frozenset(
         _bc.BUILD_TUPLE,
         _bc.BUILD_SLICE,
         _bc.RETURN,
+        _bc.NOTE_INPLACE,
     )
 )
 _CALLS = frozenset((_bc.CALL, _bc.CALL_KW, _bc.CALL_EX))
@@ -1195,6 +1196,8 @@ class _Run:
                 if box is not None and box.n is not None:
                     box.n = _add(box.n, 1)
                 stack.append(NONE)
+            elif op == _bc.NOTE_INPLACE:
+                pass
             elif op == _bc.UNSUPPORTED:
                 note = notes.get(i) if notes is not None else None
                 if note is None:
