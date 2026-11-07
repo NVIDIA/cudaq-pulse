@@ -41,7 +41,7 @@ def _system(*clocks, tolerance=0, **kwargs):
 
 def _device(*clocks, system=None, **config):
     control = system or _system(*clocks)
-    return pulse.device({"target": ladder_target(4), "control_system": control, **config})
+    return pulse.device(ladder_target(4), control_system=control, **config)
 
 
 # ── The program clock ────────────────────────────────────────────────────────
@@ -86,7 +86,7 @@ def test_a_device_built_directly_derives_its_program_clock_too():
 
 def test_a_derived_program_clock_round_trips_through_the_system_file():
     device = _device(1.0, 0.5)
-    again = pulse.device(json.loads(json.dumps(device.as_dict())))
+    again = pulse.Device.from_dict(json.loads(json.dumps(device.as_dict())))
     assert again.clock_ghz == 1.0 and again == device
 
 

@@ -41,7 +41,7 @@ def _slice(indices):
         residual_zz=renumbered(target.residual_zz),
         clock_ghz=target.clock_ghz,
     )
-    return pulse.device({"target": sliced}).qudit_handles, new
+    return pulse.device(sliced).qudit_handles, new
 
 
 @pulse.kernel

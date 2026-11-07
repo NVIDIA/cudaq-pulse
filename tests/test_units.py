@@ -521,8 +521,8 @@ def x_then_wait(q):
 
 
 def test_one_kernel_compiles_for_devices_with_different_clocks():
-    fast = pulse.device({"target": "transmon_17q", "clock_ghz": 2.0})
-    slow = pulse.device({"target": "transmon_17q", "clock_ghz": 1.0})
+    fast = pulse.device("transmon_17q", clock_ghz=2.0)
+    slow = pulse.device("transmon_17q", clock_ghz=1.0)
     on_fast = pulse.compile(x_then_wait, device=fast).lower(fast.qudit_handles[0])
     on_slow = pulse.compile(x_then_wait, device=slow).lower(slow.qudit_handles[0])
     assert _events(on_fast) == [("drive", 0, 40), ("wait", 40, 200), ("drive", 240, 40)]

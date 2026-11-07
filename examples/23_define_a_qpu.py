@@ -28,9 +28,7 @@ control = pulse.ControlSystem(
     controllers=[left, right],
     links={"feedback": pulse.Link(fixed_ns=40.0, feedback_ns=20.0, controllers=[left, right])},
 )
-qpu = pulse.device(
-    {"quantum_system": "transmon_17q", "layout": [0, 1, 2, 3], "control_system": control}
-)
+qpu = pulse.device("transmon_17q", layout=[0, 1, 2, 3], control_system=control)
 
 
 @pulse.classical(max_latency_ns=400, link="feedback")
@@ -61,7 +59,7 @@ for index in range(len(control.controllers)):
 with tempfile.TemporaryDirectory() as folder:
     path = Path(folder) / "qpu.json"
     path.write_text(json.dumps(qpu.as_dict(), indent=2))
-    assert pulse.device(path) == qpu
+    assert pulse.Device.load(path) == qpu
     print("saved and loaded", path.name, "format", json.loads(path.read_text())["format"])
 
     # A wiring mistake is reported with its place in the file.
@@ -69,7 +67,7 @@ with tempfile.TemporaryDirectory() as folder:
     broken["control_system"]["controllers"][1]["drive_lines"] = [2, 3, 30]
     path.write_text(json.dumps(broken, indent=2))
     try:
-        pulse.device(path)
+        pulse.Device.load(path)
     except pulse.DeviceDefinitionError as error:
         for problem in error.problems:
             print("problem:", problem.path, "line", problem.line, "-", problem.message)

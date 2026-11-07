@@ -45,7 +45,7 @@ _TARGET = TargetDescription(
         )
     },
 )
-_QUBIT = pulse.device({"target": _TARGET}).qudit_handles[0]
+_QUBIT = pulse.device(_TARGET).qudit_handles[0]
 
 
 @pulse.kernel

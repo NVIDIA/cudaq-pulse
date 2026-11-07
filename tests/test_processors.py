@@ -77,9 +77,7 @@ def _qpu(*processors, model="box.a", links=("cores", "gpu")):
         drive_lines=[0, 1], readout_lines=[0, 1], processors=list(processors), model=model
     )
     system = pulse.ControlSystem(controllers=[box], links={name: pulse.Link() for name in links})
-    return pulse.device(
-        {"quantum_system": TRANSMON_17Q, "layout": [0, 1], "control_system": system}
-    )
+    return pulse.device(TRANSMON_17Q, layout=[0, 1], control_system=system)
 
 
 def _lower(kernel, *processors):
@@ -334,11 +332,9 @@ def test_a_call_over_a_processor_limit_carries_the_report_of_its_values():
     # Limits of a system without processors have no usage report.
     box = pulse.Controller(drive_lines=[0, 1], readout_lines=[0, 1], max_pulses=1)
     plain = pulse.device(
-        {
-            "quantum_system": TRANSMON_17Q,
-            "layout": [0, 1],
-            "control_system": pulse.ControlSystem(controllers=[box], links={"cores": pulse.Link()}),
-        }
+        TRANSMON_17Q,
+        layout=[0, 1],
+        control_system=pulse.ControlSystem(controllers=[box], links={"cores": pulse.Link()}),
     )
     with pytest.raises(ControllerLimitError) as raised:
         pulse.compile(corrected, device=plain).lower(plain.qudits[0])
@@ -418,14 +414,12 @@ def test_a_float_parameter_defers_the_processor_check_to_the_call():
 
 def test_a_system_without_processors_reports_every_function_off_board():
     qpu = pulse.device(
-        {
-            "quantum_system": TRANSMON_17Q,
-            "layout": [0, 1],
-            "control_system": pulse.ControlSystem(
-                controllers=[pulse.Controller(drive_lines=[0, 1], readout_lines=[0, 1])],
-                links={"cores": pulse.Link()},
-            ),
-        }
+        TRANSMON_17Q,
+        layout=[0, 1],
+        control_system=pulse.ControlSystem(
+            controllers=[pulse.Controller(drive_lines=[0, 1], readout_lines=[0, 1])],
+            links={"cores": pulse.Link()},
+        ),
     )
     usage = pulse.compile(corrected, device=qpu).lower(qpu.qudits[0]).controller_usage
     assert usage.controllers == () and usage.off_board == ("_parity",) and usage.within_limits
@@ -452,13 +446,13 @@ def test_a_description_states_its_processors_and_their_dispatch_keys(tmp_path):
     system = pulse.ControlSystem(
         controllers=[box], links={"cores": pulse.Link(), "gpu": pulse.Link()}
     )
-    qpu = pulse.device({"quantum_system": TRANSMON_17Q, "layout": [0, 1], "control_system": system})
+    qpu = pulse.device(TRANSMON_17Q, layout=[0, 1], control_system=system)
     data = json.loads(json.dumps(qpu.as_dict()))
     assert data["control_system"]["controllers"][0]["processors"][0]["dispatch_keys"] == {
         "_parity": 7,
         "_scaled": 8,
     }
-    again = pulse.device(data)
+    again = pulse.Device.from_dict(data)
     assert again.control_system.controllers[0].processors == box.processors
     lowered = pulse.compile(both, device=again).lower(again.qudits[0])
     assert lowered.controller_usage.controllers[0].processors[0].clock_ghz == 0.5
@@ -471,8 +465,8 @@ def test_a_bad_processor_in_a_system_file_is_a_problem_with_its_path():
         controllers=[pulse.Controller(processors=[pulse.Processor(links=["cores"])])],
         links={"cores": pulse.Link()},
     )
-    qpu = pulse.device({"quantum_system": TRANSMON_17Q, "layout": [0, 1], "control_system": system})
+    qpu = pulse.device(TRANSMON_17Q, layout=[0, 1], control_system=system)
     data = qpu.as_dict()
     data["control_system"]["controllers"][0]["processors"][0]["unsupported"] = ["dvi"]
     with pytest.raises(DeviceDefinitionError, match="did you mean 'div'"):
-        pulse.device(data)
+        pulse.Device.from_dict(data)

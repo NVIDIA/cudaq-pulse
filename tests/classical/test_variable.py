@@ -340,7 +340,7 @@ def test_a_wait_from_an_answer_and_a_float_runs_their_sum_clamped(tau):
     from cudaq_pulse.targets import Qubit, TargetDescription
 
     qubits = {i: Qubit(i, 5e9 + 1e8 * i, -2e8, 2.0, 0.0) for i in range(2)}
-    dev = pulse.device({"target": TargetDescription(name="decay", qubits=qubits)})
+    dev = pulse.device(TargetDescription(name="decay", qubits=qubits))
     q, p = dev.qudit_handles
     length = min(max(round(2.0 * 10.0 + tau), 8), 1000)
     low = pulse.compile(offset_by_tau, device=dev).lower(q, p, tau)

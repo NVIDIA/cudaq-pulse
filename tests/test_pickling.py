@@ -195,7 +195,7 @@ def test_targets_compare_by_content():
     [
         lambda: LADDER,
         lambda: pulse.device(_SHIPPED_TARGET),
-        lambda: pulse.device({"target": _SHIPPED_TARGET, "layout": [4, 5, 6], "clock_ghz": 1.0}),
+        lambda: pulse.device(_SHIPPED_TARGET, layout=[4, 5, 6], clock_ghz=1.0),
     ],
     ids=["ladder", "shipped", "config"],
 )
@@ -217,7 +217,7 @@ def test_a_device_unpickles_equal_and_is_built_once_per_process(make, monkeypatc
 
 def _shipped_and_uncalibrated():
     shipped = pulse.device(_SHIPPED_TARGET)
-    uncalibrated = pulse.device({"target": make_target(_SHIPPED_TARGET)})
+    uncalibrated = pulse.device(make_target(_SHIPPED_TARGET))
     assert shipped.calibration is not None and uncalibrated.calibration is None
     return shipped, uncalibrated
 
@@ -226,7 +226,7 @@ def test_a_device_and_its_target_without_the_calibration_are_two_devices():
     shipped, uncalibrated = _shipped_and_uncalibrated()
     assert shipped.fingerprint != uncalibrated.fingerprint and shipped != uncalibrated
     assert shipped.qudit_handles[0] != uncalibrated.qudit_handles[0]
-    named = pulse.device({"target": _SHIPPED_TARGET, "calibration": _SHIPPED_CALIBRATION})
+    named = pulse.device(_SHIPPED_TARGET, calibration=_SHIPPED_CALIBRATION)
     assert named == shipped and named.calibration == shipped.calibration
     # One kernel, called on each, returns each its own device.
     assert rabi.lower(shipped.qudit_handles[0], 0.1).target is shipped
@@ -294,7 +294,7 @@ def test_a_shipped_calibration_of_another_file_is_refused(monkeypatch):
 def test_a_calibration_of_its_own_values_pickles_by_value_once_per_pickle():
     shipped = pulse.device(_SHIPPED_TARGET).calibration
     mine = Calibration(shipped._data, name="mine")
-    device = pulse.device({"target": make_target(_SHIPPED_TARGET), "calibration": mine})
+    device = pulse.device(make_target(_SHIPPED_TARGET), calibration=mine)
     back = _round_trip(mine)
     assert back is not mine and back == mine and back.name == "mine"
     one = len(pickle.dumps(rabi.lower(device.qudit_handles[0], 0.1)))
@@ -310,15 +310,15 @@ def test_a_calibration_of_other_values_makes_another_device():
     data["cooldowns"]["2022-main"] = "edited"
     other = Calibration(data, name="mine")
     target = make_target(_SHIPPED_TARGET)
-    devices = [pulse.device({"target": target, "calibration": c}) for c in (same, other)]
+    devices = [pulse.device(target, calibration=c) for c in (same, other)]
     assert devices[0] != devices[1]
-    again = pulse.device({"target": target, "calibration": Calibration(shipped._data, name="m")})
+    again = pulse.device(target, calibration=Calibration(shipped._data, name="m"))
     assert again == devices[0]
 
 
 def test_handles_and_registers_unpickle_as_their_device_and_indices(monkeypatch):
     monkeypatch.setattr(_pickling, "_devices", {})
-    dev = pulse.device({"target": _SHIPPED_TARGET, "layout": [4, 5, 6]})
+    dev = pulse.device(_SHIPPED_TARGET, layout=[4, 5, 6])
     handles = dev.qudit_handles
     q, pair, picked, everything = _round_trip((handles[1], handles[0:2], handles[[2, 0]], handles))
     assert q == handles[1] and (q.index, q.logical) == (5, 1)
@@ -736,7 +736,7 @@ def _qpu(max_in_flight=1, **processor):
     system = pulse.ControlSystem(
         controllers=[*controllers, pulse.Controller()], links={"decoder": link}
     )
-    return pulse.device({"target": ladder_target(4), "control_system": system})
+    return pulse.device(ladder_target(4), control_system=system)
 
 
 _QPU = _qpu()
@@ -748,7 +748,7 @@ def _declared_clock():
         for k, clock in enumerate((2.4, 1.0))
     ]
     system = pulse.ControlSystem(controllers=controllers)
-    return pulse.device({"target": ladder_target(2), "control_system": system, "clock_ghz": 12.0})
+    return pulse.device(ladder_target(2), control_system=system, clock_ghz=12.0)
 
 
 def _multi_controller_programs():
@@ -903,7 +903,7 @@ def _limit_error():
     [
         lambda: ControllerLimitError([f"violation {k}" for k in range(13)]),
         _limit_error,
-        lambda: _raised(lambda: pulse.device({"target": _SHIPPED_TARGET, "layout": [99]})),
+        lambda: _raised(lambda: pulse.device(_SHIPPED_TARGET, layout=[99])),
         lambda: _raised(lambda: pulse.device(42)),
         lambda: SymbolicValueError("tau must be known", ("tau",), "a duration"),
         lambda: _raised(lambda: rabi.lower(0, 0.1)),

@@ -50,7 +50,7 @@ def _two_chains(q, p, t1_guess_cycles: float):
 
 
 def _device(target):
-    dev = pulse.device({"target": target})
+    dev = pulse.device(target)
     return dev, dev.qudit_handles[0]
 
 

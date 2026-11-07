@@ -50,7 +50,7 @@ _TARGET = TargetDescription(
         )
     },
 )
-Q = pulse.device({"target": _TARGET}).qudit_handles
+Q = pulse.device(_TARGET).qudit_handles
 
 
 def t1(q, tau: float):

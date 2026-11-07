@@ -22,7 +22,7 @@ def test_a_qudit_by_its_label():
     assert dev.qudit("Z4").index == 16
     with pytest.raises(pulse.NotFoundError, match=r"no qudit labelled 'D10'; did you mean 'D1'\?"):
         dev.qudit("D10")
-    chip = pulse.device({"target": TRANSMON_17Q, "layout": [4, 5]})
+    chip = pulse.device(TRANSMON_17Q, layout=[4, 5])
     assert chip.qudit("D6") is chip.qudit_handles[1]
     with pytest.raises(pulse.NotFoundError, match="'D1' is carrier 0 of .* layout .* leaves out"):
         chip.qudit("D1")

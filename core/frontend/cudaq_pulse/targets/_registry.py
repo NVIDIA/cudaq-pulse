@@ -40,8 +40,9 @@ class NoTargetError(PulseError, RuntimeError):
 
 
 class UnknownTargetError(NotFoundError):
-    """A target name, given to ``device()``, in a device config or in ``CUDAQ_PULSE_TARGET``, is not
-    registered; the message lists the registered ones."""
+    """A target name, given to ``device()``, in a system file or in
+    ``CUDAQ_PULSE_TARGET``, is not registered; the message lists the
+    registered ones."""
 
 
 def _no_argument(name: str, factory: Callable[[], Any]) -> TargetFactory:

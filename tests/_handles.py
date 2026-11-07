@@ -19,5 +19,5 @@ def ladder_target(n: int = 64) -> TargetDescription:
     )
 
 
-LADDER = pulse.device({"target": ladder_target(256)})
+LADDER = pulse.device(ladder_target(256))
 Q = LADDER.qudit_handles

@@ -13,7 +13,7 @@ the target's carriers. ``dev.qudit_handles[i]`` is a ``Qudit``: a handle that
 names one carrier of that device. A kernel called with handles runs on their
 device, so one compiled kernel serves every device it is called with.
 
-Devices compare by content: two devices built from the same config are equal
+Devices compare by content: two devices built from the same values are equal
 and share compiled kernels. The content is the target, layout and
 calibration (a shipped one by name, cooldown and file, any other by its
 values); ``name`` and ``source`` are labels, and equal devices may differ
@@ -39,7 +39,7 @@ from ._errors import (
     _count,
     _ranges,
 )
-from .targets._registry import NoTargetError, UnknownTargetError
+from .targets._registry import NoTargetError, UnknownTargetError, _registry, make_target
 from .targets.base import TargetDescription
 from .targets.models import SimulationModel
 
@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from ._system import ControlSystem
     from .gates import Gate
     from .targets.base import Coupling, DragPulse, ReadoutPulse
+    from .targets.calibration import Calibration
 
 __all__ = [
     "Device",
@@ -81,7 +82,6 @@ _CONFIG_KEYS = (
     "format",
     "written_by",
     "quantum_system",
-    "target",
     "layout",
     "calibration",
     "cooldown",
@@ -302,8 +302,9 @@ def _out_of_range(index: Any, n: int, owner: str) -> IndexOutOfRangeError:
 class Device:
     """A read-only machine description; see the module docstring.
 
-    ``clock_ghz`` is the program clock: kernels count time in its cycles. A
-    config's ``"clock_ghz"`` sets it; else the fastest clock of the control
+    ``clock_ghz`` is the program clock: kernels count time in its cycles.
+    ``pulse.device(..., clock_ghz=)`` (a system file's ``"clock_ghz"``) sets
+    it; else the fastest clock of the control
     system's controllers, when every other one divides it (controllers whose
     clocks do not divide evenly need it declared); else the target's. Each
     controller may run its own clock, a whole-cycle ratio of it (see
@@ -550,8 +551,25 @@ class Device:
         """The qudit handles, by the user's numbering (``qudit_handles``)."""
         return self.qudit_handles
 
+    @staticmethod
+    def load(path: str | os.PathLike[str], /) -> Device:
+        """The device of a system file, as ``as_dict`` writes one: JSON with
+        its format (``cudaq-pulse.system/1``), its quantum system (a
+        registered name, or every value inline), layout, calibration,
+        cooldown, control system and program clock, each as data. A file
+        with problems raises ``DeviceDefinitionError`` listing all of them,
+        each with its path in the file, its line and its column; ``python -m
+        cudaq_pulse.doctor --system FILE`` runs the same checks."""
+        return _from_file(path)
+
+    @staticmethod
+    def from_dict(data: Mapping[str, Any], /) -> Device:
+        """The device of a system file's data, as ``as_dict`` returns it or
+        ``json.load`` reads it; see ``load``."""
+        return _from_data(data)
+
     def as_dict(self) -> dict[str, Any]:
-        """The device as JSON-serializable data, which ``pulse.device()``
+        """The device as JSON-serializable data, which ``Device.from_dict``
         reads back: its format (``cudaq-pulse.system/1``), the version that
         wrote it, its quantum system (a registered name, or every value
         inline), layout and calibration, and its control system."""
@@ -627,7 +645,9 @@ def _calibrated(
     return made
 
 
-def _target(spec: Any, problems: list[Problem], key: str = "target") -> TargetDescription | None:
+def _target(
+    spec: Any, problems: list[Problem], key: str = "quantum_system"
+) -> TargetDescription | None:
     from .targets._registry import available_targets, make_target
 
     if isinstance(spec, TargetDescription):
@@ -816,7 +836,7 @@ def _checked(config: Mapping[str, Any], source: str, problems: list[Problem]) ->
         close = _closest(str(key), _CONFIG_KEYS)
         problems.append(
             Problem(
-                "unknown device config key",
+                "is not a key of a system file",
                 path=str(key),
                 value=key,
                 fix=f"did you mean {close!r}?"
@@ -824,15 +844,7 @@ def _checked(config: Mapping[str, Any], source: str, problems: list[Problem]) ->
                 else "the keys are " + ", ".join(_CONFIG_KEYS),
             )
         )
-    key = "quantum_system" if "quantum_system" in config else "target"
-    if "quantum_system" in config and "target" in config:
-        problems.append(
-            Problem(
-                "is the former name of 'quantum_system', which the config also gives",
-                path="target",
-                fix="remove 'target'",
-            )
-        )
+    key = "quantum_system"
     spec = config.get(key)
     control = config.get("control_system")
     # A target by name or as a TargetDescription, without a format or a
@@ -933,70 +945,143 @@ def _located(problems: list[Problem], file: str, text: str) -> list[Problem]:
     return located
 
 
-def device(config: Mapping[str, Any] | str | os.PathLike[str] | None = None) -> Device:
-    """The device of a target name, a config, or the path of a JSON config file.
+def device(
+    description: TargetDescription | str | None = None,
+    /,
+    *,
+    layout: Sequence[int] | None = None,
+    calibration: Calibration | str | os.PathLike[str] | None = None,
+    cooldown: str | None = None,
+    control_system: ControlSystem | None = None,
+    clock_ghz: float | None = None,
+) -> Device:
+    """The device of a quantum system: a registered target name or a
+    ``TargetDescription``.
 
     ``device("transmon_17q")`` is the device of a registered target,
     with every carrier in order (a name takes its argument after a colon, as
     in ``"transmon_generic:4"``); ``cudaq_pulse.targets.available_targets()``
-    lists the names. ``device()`` is the process target, named by
-    ``CUDAQ_PULSE_TARGET`` (``python -m cudaq_pulse --target NAME`` sets it);
-    without one it raises ``NoTargetError``. A string that names no
-    registered target is the path of a config file.
-
-    A config gives the quantum system, by registered name or as a
-    ``TargetDescription``, and may give a layout, a calibration, the
-    control system and a program clock::
-
-        {"quantum_system": "transmon_17q", "layout": [4, 5, 6],
-         "calibration": "transmon_17q", "cooldown": "2022-main",
-         "control_system": pulse.ControlSystem(controllers=[...]), "clock_ghz": 2.0}
+    lists the names. A string is always a name: ``Device.load(path)`` reads
+    a system file, and ``Device.from_dict(data)`` its data. ``device()`` is
+    the process target, named by ``CUDAQ_PULSE_TARGET`` (``python -m
+    cudaq_pulse --target NAME`` sets it); without one it raises
+    ``NoTargetError``.
 
     ``layout[i]`` is the carrier that qudit ``i`` names; by default every
-    carrier of the target, in order. ``calibration`` is a ``Calibration``,
-    the name of a shipped one or the path of a calibration file, and
-    ``cooldown`` one of its cooldowns; the calibration's couplings replace
-    the target's, and ``Device.calibration`` holds it. The ``transmon_17q``
-    target uses the shipped ``transmon_17q`` calibration by default.
-    ``control_system`` is a ``ControlSystem``, whose lines must be carriers
-    of the quantum system. ``clock_ghz`` is the program clock kernels count
-    cycles of (``Device.clock_ghz``); by default the fastest controller clock
-    when the others divide it, else the quantum system's. Controller clocks
-    that do not divide evenly into one need it, and the problem lists the
-    clocks that work.
-    ``"target"`` is the former name of ``"quantum_system"``. A system file,
-    as ``Device.as_dict()`` writes it, gives each of these as data.
+    carrier of the quantum system, in order. ``calibration`` is a
+    ``Calibration``, the name of a shipped one or the path of a calibration
+    file, and ``cooldown`` one of its cooldowns; the calibration's couplings
+    replace the system's, and ``Device.calibration`` holds it. The
+    ``transmon_17q`` target uses the shipped ``transmon_17q`` calibration by
+    default. ``control_system`` is a ``ControlSystem``, whose lines must be
+    carriers of the quantum system. ``clock_ghz`` is the program clock
+    kernels count cycles of (``Device.clock_ghz``); by default the fastest
+    controller clock when the others divide it, else the quantum system's.
+    Controller clocks that do not divide evenly into one need it, and the
+    problem lists the clocks that work.
 
-    A config with problems raises ``DeviceDefinitionError`` listing all of
-    them, each with its path in the config and, for a file, its line and
-    column; ``python -m cudaq_pulse.doctor --system FILE`` runs the same
-    checks.
+    Arguments with problems raise ``DeviceDefinitionError`` listing all of
+    them, each at the argument it is in.
     """
-    if config is None:
-        from .targets._registry import current_target
+    if description.__class__ is str:
+        if description.partition(":")[0] not in _registry():
+            _unknown_target(description)
+        if (
+            layout is None
+            and calibration is None
+            and cooldown is None
+            and control_system is None
+            and clock_ghz is None
+        ):
+            return _from_spec(description, f"target {description}")
+    elif description is None:
+        if (
+            layout is None
+            and calibration is None
+            and cooldown is None
+            and control_system is None
+            and clock_ghz is None
+        ):
+            from .targets._registry import current_target
 
-        return current_target()
-    if isinstance(config, str):
-        from .targets._registry import _registry, make_target
+            return current_target()
+        from .targets._registry import ENV_VAR, _no_target_message
 
-        if config.partition(":")[0] in _registry():
-            return _from_spec(config, f"target {config}")
-        if not os.path.exists(config) and os.sep not in config and "." not in config:
-            make_target(config)
-    if not isinstance(config, (str, os.PathLike)):
-        if not isinstance(config, Mapping):
-            raise InvalidTypeError(f"device config must be a mapping, got {type(config).__name__}")
-        problems: list[Problem] = []
-        found = _definition(config, "config", problems)
-        if found is None:
-            raise DeviceDefinitionError(
-                f"{_count(len(problems), 'problem')} in the device config", problems=problems
-            )
-        return found
+        description = os.environ.get(ENV_VAR)
+        if not description:
+            raise NoTargetError(_no_target_message())
+        if description.partition(":")[0] not in _registry():
+            _unknown_target(description)
+    elif isinstance(description, str):
+        if description.partition(":")[0] not in _registry():
+            _unknown_target(description)
+    elif not isinstance(description, TargetDescription):
+        fix = (
+            "; Device.from_dict(data) reads a system file's data"
+            if isinstance(description, Mapping)
+            else ""
+        )
+        raise InvalidTypeError(
+            "pulse.device takes a registered target name or a TargetDescription, got "
+            f"{type(description).__name__}{fix}"
+        )
+    if isinstance(control_system, Mapping) or isinstance(calibration, Mapping):
+        name = "control_system" if isinstance(control_system, Mapping) else "calibration"
+        raise InvalidTypeError(
+            f"pulse.device's {name} is a "
+            + ("ControlSystem" if name == "control_system" else "Calibration, a name or a path")
+            + ", not data; Device.from_dict(data) reads a system file's data"
+        )
+    given = {
+        "quantum_system": description,
+        "layout": layout,
+        "calibration": calibration,
+        "cooldown": cooldown,
+        "control_system": control_system,
+        "clock_ghz": clock_ghz,
+    }
+    problems: list[Problem] = []
+    found = _definition({k: v for k, v in given.items() if v is not None}, "arguments", problems)
+    if found is None:
+        raise DeviceDefinitionError(
+            f"{_count(len(problems), 'problem')} in pulse.device()", problems=problems
+        )
+    return found
+
+
+def _unknown_target(name: str) -> None:
+    """Raise ``UnknownTargetError`` for *name*, which names no registered
+    target, naming the way to read a file when it looks like the path of one."""
+    if os.sep in name or name.endswith(".json") or os.path.exists(name):
+        try:
+            make_target(name)
+        except UnknownTargetError as error:
+            raise UnknownTargetError(
+                f"{Exception.__str__(error)}; a string is a target name: to read a system "
+                f"file, use pulse.Device.load({name!r})"
+            ) from None
+    make_target(name)
+
+
+def _from_data(data: Any) -> Device:
+    """``Device.from_dict``: the device of a system file's data."""
+    if not isinstance(data, Mapping):
+        raise InvalidTypeError(f"device data must be a mapping, got {type(data).__name__}")
+    problems: list[Problem] = []
+    found = _definition(data, "data", problems)
+    if found is None:
+        raise DeviceDefinitionError(
+            f"{_count(len(problems), 'problem')} in the device data", problems=problems
+        )
+    return found
+
+
+def _from_file(path: str | os.PathLike[str]) -> Device:
+    """``Device.load``: the device of a system file."""
     import json
 
-    file = os.fspath(config)
-    with open(config, encoding="utf-8") as f:
+    file = os.fspath(path)
+    with open(file, encoding="utf-8") as f:
         text = f.read()
     try:
         data = json.loads(text)
@@ -1007,7 +1092,7 @@ def device(config: Mapping[str, Any] | str | os.PathLike[str] | None = None) -> 
         raise DeviceDefinitionError(
             f"1 problem in device file {file}", problems=[problem]
         ) from error
-    problems = []
+    problems: list[Problem] = []
     if isinstance(data, Mapping):
         found = _definition(data, f"file {file}", problems)
     else:

@@ -72,12 +72,10 @@ _WORKLOADS = {name: (kernel, n) for name, kernel, n, _ in _workloads.WORKLOADS}
 
 # Qudit i at 5 GHz + i * 100 MHz, as in tests/_handles.py.
 _DEVICE = pulse.device(
-    {
-        "target": TargetDescription(
-            name="perf-gate",
-            qubits={i: Qubit(i, 5.0e9 + 1.0e8 * i, -300e6, 50.0, 30.0) for i in range(64)},
-        )
-    }
+    TargetDescription(
+        name="perf-gate",
+        qubits={i: Qubit(i, 5.0e9 + 1.0e8 * i, -300e6, 50.0, 30.0) for i in range(64)},
+    )
 )
 Q = _DEVICE.qudit_handles
 

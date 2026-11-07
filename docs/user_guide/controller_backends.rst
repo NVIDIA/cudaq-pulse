@@ -413,7 +413,7 @@ Clocks
 ------
 
 A kernel counts time in cycles of the device's program clock,
-``Device.clock_ghz`` (a device config's ``"clock_ghz"``, else the
+``Device.clock_ghz`` (``pulse.device(..., clock_ghz=)``, else the
 target's); a duration written as a time converts to them when the kernel
 compiles (see :ref:`durations`). A controller may run its own clock,
 ``Controller.clock_ghz``, at a whole-cycle ratio of it; may start
@@ -739,13 +739,8 @@ same name:
    backends.register("text", TextBackend)
    backend = backends.get("text")
    dev = pulse.device(
-       {
-           "target": TargetDescription(
-               name="one-qubit",
-               qubits={0: Qubit(0, 5.0e9, -2.0e8, 50.0, 30.0)},
-           ),
-           "clock_ghz": 1.0,
-       }
+       TargetDescription(name="one-qubit", qubits={0: Qubit(0, 5.0e9, -2.0e8, 50.0, 30.0)}),
+       clock_ghz=1.0,
    )
    cal = {"x_duration": 40 * pulse.ns, "x_sigma": 10 * pulse.ns, "readout_duration": 200 * pulse.ns}
 

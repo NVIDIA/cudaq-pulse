@@ -240,7 +240,7 @@ _PAIRS = [
 
 
 def _lower(kernel, n, schedule):
-    device = pulse.device({"target": _target(n)})
+    device = pulse.device(_target(n))
     compiled = pulse.compile(kernel, passes=EVOLVE_PASSES, schedule=schedule)
     return compiled.lower(*_handles(device, [Q[i] for i in range(n)]))
 

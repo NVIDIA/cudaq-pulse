@@ -34,7 +34,7 @@ TARGET = TargetDescription(
         0: Qubit(0, 5.0e9, -300e6, 0.0, 0.0, drive=MicrowaveDrive(amplitude_scale_rad_per_ns=1.0))
     },
 )
-Q = pulse.device({"target": TARGET}).qudit_handles[0]
+Q = pulse.device(TARGET).qudit_handles[0]
 UNROLL_ALL = 10**9
 
 

@@ -37,7 +37,7 @@ _TARGET = TargetDescription(
     clock_ghz=_CLOCK_GHZ,
     qubits={i: Qubit(i, _FREQUENCY_HZ + 1.0e7 * i, -2.0e8, 50.0, 30.0) for i in range(2)},
 )
-_DEV = pulse.device({"target": _TARGET})
+_DEV = pulse.device(_TARGET)
 Q = _DEV.qudit_handles
 _PERSISTENT = ControlSystem(controllers=[Controller(persistent_frames=True)])
 

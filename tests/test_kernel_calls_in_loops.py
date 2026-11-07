@@ -52,7 +52,7 @@ def _qubits(n, qvec, dev=None):
 
 
 def _device(n):
-    return pulse.device({"target": _target(n)})
+    return pulse.device(_target(n))
 
 
 def _trace(kernel, n=1, qvec=False, args=()):

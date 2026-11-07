@@ -35,7 +35,7 @@ def _device(t1_us=0.0, n=1, readout=None, calibrations=None):
         )
         for i in range(n)
     }
-    return pulse.device({"target": TargetDescription(name="sim", qubits=qubits)})
+    return pulse.device(TargetDescription(name="sim", qubits=qubits))
 
 
 @pulse.classical(max_latency_ns=0)

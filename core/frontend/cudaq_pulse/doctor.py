@@ -17,7 +17,7 @@
     python -m cudaq_pulse.doctor --system lab.json --json
 
 The compiler check always runs; any failure there exits non-zero.
-``--system FILE`` instead runs the checks of ``pulse.device(FILE)`` and
+``--system FILE`` instead runs the checks of ``pulse.Device.load(FILE)`` and
 prints each problem as ``FILE:LINE:COLUMN: error: PATH: MESSAGE``, or with
 ``--json`` as one JSON object; it exits 1 if the file has a problem.
 ``--setup-editor`` instead shows the change to the mypy and ruff
@@ -279,12 +279,12 @@ def _problem_json(problem: Problem) -> dict[str, Any]:
 def _check_system(file: Path, as_json: bool, write: Callable[[str], None]) -> int:
     """Check the device or system file *file*, and that the backends of its
     controllers are installed; return the exit code."""
-    from ._device import device
+    from ._device import Device
 
     problems: tuple[Problem, ...] = ()
     summary: dict[str, Any] | None = None
     try:
-        dev = device(file)
+        dev = Device.load(file)
     except DeviceDefinitionError as error:
         problems = error.problems
     except OSError as error:
@@ -406,7 +406,7 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         "--system",
         type=Path,
         metavar="FILE",
-        help="check the device or system file FILE as pulse.device(FILE) does: every "
+        help="check the system file FILE as pulse.Device.load(FILE) does: every "
         "problem, its controllers and links, and whether their backends are installed",
     )
     parser.add_argument(

@@ -39,7 +39,7 @@ PI_AMP = math.pi / 20
 
 def _device(t1_us: float = 0.0) -> pulse.Device:
     qubit = Qubit(index=0, frequency_hz=5e9, anharmonicity_hz=-2e8, t1_us=t1_us, t2_star_us=0.0)
-    return pulse.device({"target": TargetDescription(name="bench", qubits={0: qubit})})
+    return pulse.device(TargetDescription(name="bench", qubits={0: qubit}))
 
 
 def many_calls(n: int, links: int):

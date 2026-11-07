@@ -939,7 +939,7 @@ def test_a_long_rolled_loop_on_a_control_system_is_checked_as_every_iteration(
 ):
     from cudaq_pulse import _system
 
-    qpu = pulse.device({"target": ladder_target(4), "control_system": _systems()[system]})
+    qpu = pulse.device(ladder_target(4), control_system=_systems()[system])
     kernel = _across(trips)[name]
     kept: list[bool] = []
     summarized = _system.ControlSystem._summarized
@@ -982,8 +982,8 @@ def test_a_rolled_loop_of_10_15_iterations_across_controllers_is_checked_in_boun
         "def _controller(lines):\n"
         "    return pulse.Controller(drive_lines=lines, readout_lines=lines, instruction_cycles=4,"
         " min_idle_cycles=4)\n"
-        "qpu = pulse.device({'target': ladder_target(4), 'control_system': pulse.ControlSystem("
-        "controllers=[_controller([0, 1]), _controller([2, 3])], reference_clock_ghz=1.0)})\n"
+        "qpu = pulse.device(ladder_target(4), control_system=pulse.ControlSystem("
+        "controllers=[_controller([0, 1]), _controller([2, 3])], reference_clock_ghz=1.0))\n"
         "options = {'device': qpu}\n"
         "handles = (qpu.qudits[0], qpu.qudits[2])\n"
     )

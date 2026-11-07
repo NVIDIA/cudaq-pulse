@@ -495,9 +495,7 @@ def _system() -> Any:
     a = pulse.Controller(drive_lines=[0, 1], readout_lines=[0, 1], model="box.a")
     b = pulse.Controller(drive_lines=[2, 3], readout_lines=[2, 3], model="box.b")
     system = pulse.ControlSystem(controllers=[a, b])
-    return pulse.device(
-        {"quantum_system": "transmon_17q", "layout": [0, 1, 2, 3], "control_system": system}
-    )
+    return pulse.device("transmon_17q", layout=[0, 1, 2, 3], control_system=system)
 
 
 def _outcome(kernel: Any, schedule: str, unroll_threshold: int, machine: str) -> Any:

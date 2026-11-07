@@ -45,7 +45,7 @@ def _device(n=4, **kwargs):
             for i in range(n)
         },
     )
-    return pulse.device({"target": target, **kwargs})
+    return pulse.device(target, **kwargs)
 
 
 @pulse.kernel
@@ -421,17 +421,17 @@ def test_device_values_are_read_only():
         dev.target.name = "other"
 
 
-def test_a_device_from_a_config_file(tmp_path: Path):
+def test_a_device_from_a_system_file(tmp_path: Path):
     path = tmp_path / "dev.json"
-    path.write_text(json.dumps({"target": "transmon_17q", "layout": [4, 5]}))
-    dev = pulse.device(path)
+    path.write_text(json.dumps({"quantum_system": "transmon_17q", "layout": [4, 5]}))
+    dev = pulse.Device.load(path)
     assert [q.index for q in dev.qudit_handles] == [4, 5]
-    assert dev == pulse.device({"target": "transmon_17q", "layout": [4, 5]})
+    assert dev == pulse.device("transmon_17q", layout=[4, 5])
     assert dev != pulse.device("transmon_17q")
-    with pytest.raises(pulse.DeviceDefinitionError, match="lattice: unknown device config key"):
-        pulse.device({"target": "transmon_17q", "lattice": []})
+    with pytest.raises(pulse.DeviceDefinitionError, match="lattice: is not a key of a system"):
+        pulse.Device.from_dict({"quantum_system": "transmon_17q", "lattice": []})
     with pytest.raises(pulse.DeviceDefinitionError, match="zones: is reserved"):
-        pulse.device({"target": "transmon_17q", "zones": []})
+        pulse.Device.from_dict({"quantum_system": "transmon_17q", "zones": []})
 
 
 def test_a_waveform_as_a_frequency_is_reserved():
@@ -483,7 +483,7 @@ def test_a_returned_measurement_is_its_outcome():
     # A call samples its outcome unseeded. On three levels this pi pulse
     # leaves 0.5% outside level 1; on two, outcome 1 is certain.
     target = dataclasses.replace(_device().target, model=TransmonModel(levels={0: 2}))
-    q = pulse.device({"target": target}).qudit_handles[0]
+    q = pulse.device(target).qudit_handles[0]
     assert [b.levels for b in pulse.simulate(flip_and_measure.lower(q)).branches] == [(1,)]
     assert flip_and_measure(q) == 1
     assert pulse.compile(flip_and_measure)(q) == 1

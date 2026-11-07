@@ -49,7 +49,7 @@ behavior may change in any 0.x release.
   report, so a process pool re-raises them in the parent as they were
   raised. Targets now compare by content.
 - **Controllers with their own clocks.** Kernels count cycles of the
-  device's program clock, `"clock_ghz"` in the device config (or the
+  device's program clock, `pulse.device(..., clock_ghz=)` (or the
   target's). A controller whose clock is slower starts and times operations
   only every few program cycles: the scheduler puts each line's operations
   on its controller's grid and a `sync` on the grid its lines share, an
@@ -73,10 +73,9 @@ behavior may change in any 0.x release.
   plays, its peer latency, clock skew and alignment tolerance, its
   `supports`, `backend`, `model` and `version`) and `pulse.ControlSystem`
   (its controllers, its links by name, each `Link` with the `controllers`
-  it reaches). `pulse.device({"quantum_system": ..., "control_system":
-  ...})` checks the wiring against the quantum system and raises one
-  `DeviceDefinitionError` listing every problem; `"target"` still names the
-  quantum system. `compile(kernel, device=qpu)` checks every program against
+  it reaches). `pulse.device(quantum_system, control_system=...)` checks
+  the wiring against the quantum system and raises one
+  `DeviceDefinitionError` listing every problem. `compile(kernel, device=qpu)` checks every program against
   the system: a line on no controller, each controller's own limits, a
   capability (`pulse.Capability`) a controller lacks, and a call over a link
   that does not reach its controllers fail to compile.
@@ -157,8 +156,9 @@ behavior may change in any 0.x release.
   description installed with cudaq-pulse (or one given by path), parsed
   once, with the installation's wiring. `reference.controller` ships.
 - **System files.** `Device.as_dict()` writes a QPU as one mapping, format
-  `cudaq-pulse.system/1`, which `pulse.device()` reads back from a mapping
-  or a JSON file, reporting each problem with its line. A file written from
+  `cudaq-pulse.system/1`, which `pulse.Device.from_dict(data)` reads back,
+  and `pulse.Device.load(path)` from a JSON file, reporting each problem
+  with its line. A file written from
   another version of an installed description is noticed once
   (`UpgradeNotice`). `python -m cudaq_pulse.doctor --system FILE` checks a
   system file and whether its controllers' backends are installed.
@@ -426,8 +426,11 @@ behavior may change in any 0.x release.
   `max-readouts`, `readout-latency`, `switch-penalty`, `alap`).
 - **Devices and targets.** `pulse.device` is the one device getter: it
   describes a machine as a target plus a qudit layout, from a registered
-  target name (`pulse.device("transmon_17q")`), a config mapping
-  or file, or, with no argument, the process target. Devices compare by
+  target name (`pulse.device("transmon_17q")`) or a `TargetDescription`,
+  with `layout=`, `calibration=`, `cooldown=`, `control_system=` and
+  `clock_ghz=` keywords, or, with no argument, the process target; a string
+  is always a name, and `Device.load` / `Device.from_dict` read system
+  files. Devices compare by
   content and share compiled kernels, but handles of two devices, even
   equal ones, do not mix in one call or in a kernel compiled for one
   (`DeviceMismatchError`), and an empty `layout` is a
@@ -469,8 +472,8 @@ behavior may change in any 0.x release.
   `python -m cudaq_pulse.doctor --system FILE [--json]` runs the same checks.
 - **Calibrations and the transmon model.** `cudaq_pulse.targets.Calibration`
   loads fitted values, each with its kind, source, uncertainty and cooldown,
-  apart from the published target, and a device config takes `"calibration"`
-  and `"cooldown"`. `cudaq_pulse.targets.transmon_model` computes
+  apart from the published target, and `pulse.device` takes `calibration=`
+  and `cooldown=`. `cudaq_pulse.targets.transmon_model` computes
   flux-tunable transmon levels and charge-coupled pairs from circuit values.
   The shipped `transmon_17q` calibration has one device-wide charge coupling,
   fitted to the measured `|11>`-`|20>` coupling of X2-D4, so the

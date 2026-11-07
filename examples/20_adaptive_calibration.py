@@ -117,7 +117,7 @@ def t1_shot(q, wait_ns: int):
 
 if __name__ == "__main__":
     target = transmon_17q()
-    dev = pulse.device({"target": target})
+    dev = pulse.device(target)
     q = dev.qudit_handles[0]
     qubit = target.qubits[0]
 

@@ -608,7 +608,7 @@ def at_runtime(monkeypatch):
 
 def _fresh(kernel, n=1, **options):
     kernel.cache_clear()
-    dev = pulse.device({"target": _target(n)})
+    dev = pulse.device(_target(n))
     lowered = pulse.compile(kernel, **options).lower(*_handles(dev, [Q[i] for i in range(n)]))
     kernel.cache_clear()
     return lowered
@@ -687,7 +687,7 @@ def chosen_on_two(q0, q1):
 
 
 def test_without_a_target_that_takes_values_at_run_time_each_op_runs_in_the_arms():
-    for target in (current_target(), pulse.device({"target": _target()})):
+    for target in (current_target(), pulse.device(_target())):
         assert not any(pulse.compiler._can_select_at_runtime(target, kind) for kind in _KINDS)
     lowered = _fresh(chosen_amplitudes)
     assert not lowered.runtime_selects

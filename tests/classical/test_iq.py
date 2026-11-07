@@ -34,7 +34,7 @@ def _device(t1_us=0.0, **readout):
         readout=DispersiveReadout(**fields),
         calibrations={pulse.gates.READOUT: ReadoutPulse(**tuned)},
     )
-    return pulse.device({"target": TargetDescription(name="sim", qubits={0: qubit})})
+    return pulse.device(TargetDescription(name="sim", qubits={0: qubit}))
 
 
 def _centers(dev, amplitude=0.05, duration_ns=None):
@@ -253,7 +253,7 @@ def test_the_17_qubit_twin_separates_its_readout_states():
     from cudaq_pulse.classical import emulation
     from cudaq_pulse.targets import transmon_17q
 
-    dev = pulse.device({"target": transmon_17q()})
+    dev = pulse.device(transmon_17q())
     q = dev.qudit_handles[0]
     target = dev.target
     model = IQModel(target, (0,), decay=False)

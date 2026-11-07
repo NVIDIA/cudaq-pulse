@@ -62,7 +62,7 @@ def target(request):
 
 
 def _device(target):
-    return pulse.device({"target": target})
+    return pulse.device(target)
 
 
 # ── K11: adaptive T1 with a variable wait ───────────────────────────────────

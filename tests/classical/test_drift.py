@@ -115,7 +115,7 @@ def test_the_surrogates_match_simulating_the_plant():
     target = plant.target()
     assert target.qubits[0].t1_us == state.t1_us
     assert target.qubits[0].frequency_hz == pytest.approx(5e9 + state.frequency_offset_hz)
-    dev = pulse.device({"target": _target()})
+    dev = pulse.device(_target())
     q = dev.qudit_handles[0]
     compiled_t1 = pulse.compile(t1_shot, device=dev)
     for wait_cycles in (0.0, 4000.0, 16000.0):
@@ -148,7 +148,7 @@ def test_the_surrogates_match_simulating_the_plant():
 
 
 def test_the_plant_must_define_the_programs_qudits():
-    dev = pulse.device({"target": _target()})
+    dev = pulse.device(_target())
     lowered = pulse.compile(rabi, device=dev).lower(dev.qudit_handles[0], 1.0)
     empty = TargetDescription(name="none", qubits={})
     with pytest.raises(ValueError, match="does not define qudits"):

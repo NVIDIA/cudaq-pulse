@@ -64,7 +64,7 @@ def t1_shot(q, amplitude: float):
 
 
 def test_ten_thousand_iterations_run_without_compiling_again():
-    dev = pulse.device({"target": _target()})
+    dev = pulse.device(_target())
     q = dev.qudit_handles[0]
     compiled = pulse.compile(t1_shot, device=dev)
     start = time.perf_counter()

@@ -58,7 +58,7 @@ def test_full_pipeline_gpu():
             )
         },
     )
-    q0 = pulse.device({"target": target}).qudit_handles[0]
+    q0 = pulse.device(target).qudit_handles[0]
 
     @pulse.kernel
     def my_kernel(q0):

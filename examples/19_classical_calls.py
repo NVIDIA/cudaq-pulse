@@ -190,7 +190,7 @@ if __name__ == "__main__":
             0: Qubit(index=0, frequency_hz=5e9, anharmonicity_hz=-2e8, t1_us=10.0, t2_star_us=0.0)
         },
     )
-    dev = pulse.device({"target": target})
+    dev = pulse.device(target)
     q = dev.qudit_handles[0]
     # A 0.25 ns step resolves the third level's 200 MHz anharmonicity, with
     # 20 steps per period.

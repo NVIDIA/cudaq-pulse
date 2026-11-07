@@ -44,7 +44,7 @@ def _device(**fields):
     cz = FluxCZ(duration_ns=60.0, buffer_ns=10.0, interaction_frequency_hz=4.4e9)
     couplings = [Coupling((0, 1), 5.0e6, calibrations={CZ: cz})]
     target = TargetDescription(name="gates", qubits=qudits, couplings=couplings)
-    return pulse.device({"quantum_system": target})
+    return pulse.device(target)
 
 
 def _mlir(lowered, name):
@@ -334,7 +334,7 @@ def test_calibrations_and_metadata_round_trip_through_a_system_file():
     ]  # fmt: skip
     assert qudit["metadata"] == {"fridge": "B"}
     assert "calibrations" in data["quantum_system"]["couplings"][0]
-    back = pulse.device(json.loads(json.dumps(data)))
+    back = pulse.Device.from_dict(json.loads(json.dumps(data)))
     assert back == dev and back.target.qubits[0].metadata == {"fridge": "B"}
     assert back.target.qubits[0].get_calibration(X, (1, 2)) == x12
 
@@ -349,7 +349,7 @@ def test_a_system_file_names_a_calibration_of_the_wrong_kind(tmp_path):
     path = tmp_path / "qpu.json"
     path.write_text(json.dumps(data, indent=2))
     with pytest.raises(pulse.DeviceDefinitionError) as raised:
-        pulse.device(str(path))
+        pulse.Device.load(path)
     found = [(p.path, p.message) for p in raised.value.problems]
     where = "quantum_system.qudits[0].calibrations"
     assert found[:3] == [

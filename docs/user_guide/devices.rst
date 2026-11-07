@@ -19,8 +19,8 @@ read-only.
    import cudaq_pulse as pulse
 
    dev = pulse.device("transmon_17q")                  # shipped target
-   chip = pulse.device({"target": "transmon_17q", "layout": [4, 5, 6]})
-   chip = pulse.device("chip.json")                            # the same, from a file
+   chip = pulse.device("transmon_17q", layout=[4, 5, 6])
+   chip = pulse.Device.load("chip.json")              # the same, from a system file
 
    q = chip.qudit_handles[0]          # a handle naming carrier 4
    pair = chip.qudit_handles[0:2]     # a Register: carriers 4 and 5
@@ -30,10 +30,14 @@ read-only.
    chip.transition_freq[0, 1, 2]      # 1-2 frequency of qudit 0
    chip.qubit_freq[0] = 5.01e9        # ValueError: assignment destination is read-only
 
-A config is a mapping (or a JSON file of one) with ``"target"``, a
-registered target name or a ``cudaq_pulse.targets.TargetDescription``, and optionally
-``"layout"``. ``layout[i]`` is the carrier that qudit ``i`` names; by
-default every carrier of the target, in order. A ``TargetDescription``'s
+``pulse.device`` takes the quantum system, a registered target name or a
+``cudaq_pulse.targets.TargetDescription``, and optionally ``layout=``,
+``calibration=`` and ``cooldown=``, ``control_system=`` and ``clock_ghz=``.
+A string is always a name: ``pulse.Device.load(path)`` reads a system file
+(as ``Device.as_dict()`` writes one, and ``json.dumps`` saves), and
+``pulse.Device.from_dict(data)`` its data. ``layout[i]`` is the carrier
+that qudit ``i`` names; by default every carrier of the target, in order.
+A ``TargetDescription``'s
 ``model`` (``TransmonModel`` by default) decides the operator of its
 couplings, for transmons the exchange g (a^dagger b + a b^dagger):
 
@@ -47,7 +51,7 @@ couplings, for transmons the exchange g (a^dagger b + a b^dagger):
        qubits={i: Qubit(i, f, -2.0e8, 50.0, 30.0) for i, f in enumerate([4.8e9, 6.9e9])},
        couplings=[Coupling((0, 1), strength_hz=5.7e6, calibrations={pulse.gates.CZ: cz})],
    )
-   qpu = pulse.device({"quantum_system": pair})
+   qpu = pulse.device(pair)
 
 A coupling's ``strength_hz`` is g / 2 pi; ``None`` says it is not measured
 yet, and such a system compiles, schedules and exports while
@@ -58,10 +62,10 @@ zeta = E11 - E10 - E01 + E00. The values are checked when the system is
 built, and one ``DeviceDefinitionError`` lists every problem at its path
 (``couplings[1].qudits[0]``).
 
-A config with problems raises ``DeviceDefinitionError``, a ``ValueError``,
-which lists every problem rather than the first. Each is a
-``pulse.Problem`` with its path in the config, the offending value and a
-fix; for a file, the line and column too:
+Arguments or a system file with problems raise ``DeviceDefinitionError``, a
+``ValueError``, which lists every problem rather than the first. Each is a
+``pulse.Problem`` with its path (the argument, or its place in the file),
+the offending value and a fix; for a file, the line and column too:
 
 .. code-block:: text
 
@@ -82,13 +86,13 @@ devices to one call, or handles of another device to a kernel compiled for
 one, raises ``DeviceMismatchError``, and passing the same qudit twice raises
 ``TypeError``.
 
-Devices compare by content: two devices built from the same config are
+Devices compare by content: two devices built from the same values are
 equal and share compiled kernels, but each is its own device, so their
 handles do not mix in one call. A layout is part of the content, and an
 empty one is a ``DeviceDefinitionError``: leave ``layout`` out for every
 carrier of the target.
 
-To change a frequency, edit the config, or pass the frequency to the kernel
+To change a frequency, edit the quantum system, or pass the frequency to the kernel
 as a ``float`` argument and set it on the tone with ``set_frequency``; the
 argument stays symbolic, so a frequency sweep compiles once.
 
@@ -186,8 +190,7 @@ defect bands and feedline groups. Every value records its
 
 .. code-block:: python
 
-   dev = pulse.device({"target": "transmon_17q",
-                       "calibration": "transmon_17q", "cooldown": "2022-main"})
+   dev = pulse.device("transmon_17q", calibration="transmon_17q", cooldown="2022-main")
    cal = dev.calibration
    cal.entry("qubits", "D4", "ec")        # value with its provenance
    cal.exchange_hz("X2-D4")               # J_qq at the idle points

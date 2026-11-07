@@ -16,14 +16,14 @@ the classical devices beside them (by name) and the limits that apply to
 all of them::
 
     controllers = [pulse.Controller(drive_lines=range(8), readout_lines=range(8))]
-    qpu = pulse.device({
-        "quantum_system": "transmon_17q",
-        "control_system": pulse.ControlSystem(controllers=controllers),
-    })
+    qpu = pulse.device(
+        "transmon_17q", control_system=pulse.ControlSystem(controllers=controllers)
+    )
     compiled = pulse.compile(kernel, device=qpu)
 
 ``Device.as_dict()`` writes a QPU as one JSON-serializable mapping (format
-``SYSTEM_FORMAT``), which ``pulse.device()`` reads back.
+``SYSTEM_FORMAT``), which ``Device.from_dict`` reads back (``Device.load`` from a
+file).
 """
 
 from __future__ import annotations
@@ -2299,7 +2299,7 @@ def _config_systems(
     from ._device import _target
 
     problems.extend(_check_format(config))
-    reader = _Reader(None if source == "config" else source)
+    reader = _Reader(source if source.startswith("file ") else None)
     spec = config.get(key)
     if isinstance(spec, Mapping):
         target = reader.quantum_system(spec, key)

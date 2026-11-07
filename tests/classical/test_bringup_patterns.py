@@ -31,7 +31,7 @@ def _device(**readout):
         t2_star_us=0.0,
         readout=DispersiveReadout(**readout),
     )
-    return pulse.device({"target": TargetDescription(name="sim", qubits={0: qubit})})
+    return pulse.device(TargetDescription(name="sim", qubits={0: qubit}))
 
 
 @pulse.classical(max_latency_ns=100)

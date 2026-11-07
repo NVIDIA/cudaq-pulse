@@ -151,7 +151,7 @@ def test_invalid_kernel_settings_fail(monkeypatch, name, value):
 
 def test_system_lists_every_problem_of_a_device_file(tmp_path):
     path = tmp_path / "lab.json"
-    path.write_text('{"target": "transmon_17q",\n "layout": [4, 99], "cooldown": "x"}\n')
+    path.write_text('{"quantum_system": "transmon_17q",\n "layout": [4, 99], "cooldown": "x"}\n')
     code, output = _run("--system", str(path))
     assert code == 1
     assert output.splitlines() == [
@@ -166,7 +166,7 @@ def test_system_json_report(tmp_path):
     import json
 
     path = tmp_path / "lab.json"
-    path.write_text('{"target": "transmon_17q", "layout": [4, 99]}')
+    path.write_text('{"quantum_system": "transmon_17q", "layout": [4, 99]}')
     code, output = _run("--system", str(path), "--json")
     assert code == 1
     report = json.loads(output)
@@ -179,10 +179,10 @@ def test_system_json_report(tmp_path):
             "fix": "",
             "file": str(path),
             "line": 1,
-            "column": 42,
+            "column": 50,
         }
     ]
-    path.write_text('{"target": "transmon_17q", "layout": [4, 5]}')
+    path.write_text('{"quantum_system": "transmon_17q", "layout": [4, 5]}')
     code, output = _run("--system", str(path), "--json")
     assert code == 0
     assert json.loads(output) == {
@@ -195,7 +195,7 @@ def test_system_json_report(tmp_path):
 
 def test_system_reports_a_good_or_unreadable_file(tmp_path):
     path = tmp_path / "lab.json"
-    path.write_text('{"target": "transmon_17q", "layout": [4, 5]}')
+    path.write_text('{"quantum_system": "transmon_17q", "layout": [4, 5]}')
     assert _run("--system", str(path)) == (
         0,
         f"{path}: ok, device transmon_17q with 2 qudits\n",

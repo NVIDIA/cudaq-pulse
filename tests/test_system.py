@@ -69,7 +69,7 @@ def corrected(q, r):
 
 def _qpu(*controllers, links=None, layout=(0, 1, 2, 3), **config):
     system = pulse.ControlSystem(controllers=list(controllers), links=links or {})
-    return pulse.device(
+    return pulse.Device.from_dict(
         {"quantum_system": TRANSMON_17Q, "layout": list(layout), "control_system": system, **config}
     )
 
@@ -145,10 +145,8 @@ def test_the_device_holds_its_control_system():
     assert qpu.qudits[1] == qpu.qudit_handles[1]
     other = _qpu(pulse.Controller(drive_lines=range(4), readout_lines=range(3)))
     assert qpu.fingerprint == other.fingerprint and qpu != other
-    legacy = pulse.device({"target": TRANSMON_17Q, "layout": [0, 1, 2, 3]})
+    legacy = pulse.device(TRANSMON_17Q, layout=[0, 1, 2, 3])
     assert legacy.control_system is None and legacy.fingerprint == qpu.fingerprint
-    with pytest.raises(pulse.DeviceDefinitionError, match="target: is the former name"):
-        pulse.device({"target": TRANSMON_17Q, "quantum_system": TRANSMON_17Q})
 
 
 # ── rcp and the controllers' feedback latency ────────────────────────────────
@@ -286,9 +284,7 @@ def test_line_delays_and_a_reference_clock_are_the_control_systems():
     )
     system = pulse.ControlSystem(controllers=[box], reference_clock_ghz=0.5, line_delays_ns=delays)
     assert system._machine.line_delays_ns == delays and system._machine.reference_clock_ghz == 0.5
-    timed = pulse.device(
-        {"quantum_system": TRANSMON_17Q, "layout": [0, 1, 2, 3], "control_system": system}
-    )
+    timed = pulse.device(TRANSMON_17Q, layout=[0, 1, 2, 3], control_system=system)
     by_system = pulse.compile(drive_and_branch, device=timed).lower(
         timed.qudits[0], timed.qudits[1]
     )
@@ -307,9 +303,7 @@ def test_new_line_delays_of_a_control_system_schedule_again_to_the_same_bytes():
     kernel = pulse.kernel(drive_and_branch.__pulse_kernel_fn__)
     for k, delays in enumerate(({("drive", 0): 1.0}, {("drive", 1): 4.0, ("readout", 0): 1.5})):
         system = pulse.ControlSystem(controllers=[box], line_delays_ns=delays)
-        qpu = pulse.device(
-            {"quantum_system": TRANSMON_17Q, "layout": [0, 1], "control_system": system}
-        )
+        qpu = pulse.device(TRANSMON_17Q, layout=[0, 1], control_system=system)
         again = pulse.compile(kernel, device=qpu).lower(qpu.qudits[0], qpu.qudits[1])
         assert (again.metrics.trace_ms == 0.0) == (k > 0)
         fresh = pulse.kernel(drive_and_branch.__pulse_kernel_fn__)
@@ -330,7 +324,7 @@ def test_a_control_systems_line_delays_and_reference_clock_are_checked():
         controllers=[pulse.Controller()], line_delays_ns={("readout", 40): 1.0}
     )
     with pytest.raises(DeviceDefinitionError, match="the qudit is not in the quantum system"):
-        pulse.device({"quantum_system": TRANSMON_17Q, "control_system": system})
+        pulse.device(TRANSMON_17Q, control_system=system)
 
 
 def test_a_control_system_takes_its_times_as_times():
@@ -351,7 +345,7 @@ def test_a_control_system_takes_its_times_as_times():
     assert by_time == by_number
     assert [ns.__class__ for ns in by_time.line_delays_ns.values()] == [float, float]
     qpus = [
-        pulse.device({"quantum_system": TRANSMON_17Q, "layout": [0, 1], "control_system": system})
+        pulse.device(TRANSMON_17Q, layout=[0, 1], control_system=system)
         for system in (by_time, by_number)
     ]
     assert qpus[0].as_dict() == qpus[1].as_dict()
@@ -682,7 +676,7 @@ def _round_trip(qpu):
     data = qpu.as_dict()
     assert data["format"] == "cudaq-pulse.system/1"
     assert data["written_by"].startswith("cudaq-pulse ")
-    back = pulse.device(json.loads(json.dumps(data)))
+    back = pulse.Device.from_dict(json.loads(json.dumps(data)))
     assert back == qpu and back.fingerprint == qpu.fingerprint
     assert back.as_dict() == data
     return data
@@ -717,32 +711,26 @@ def test_a_qudit_s_drive_and_readout_round_trip_through_the_system_file():
         ),
         1: Qubit(1, 5.1e9, -2e8, 50.0, 30.0),
     }
-    dev = pulse.device({"quantum_system": TargetDescription(name="ro", qubits=qubits)})
+    dev = pulse.device(TargetDescription(name="ro", qubits=qubits))
     qudits = _round_trip(dev)["quantum_system"]["qudits"]
     assert qudits[0]["readout"]["kind"] == "dispersive"
     assert qudits[0]["readout"]["frequency_hz"] == 7.1e9
     assert qudits[0]["drive"] == {"kind": "microwave", "amplitude_scale_rad_per_ns": 0.3}
     assert qudits[1]["readout"] is None and qudits[1]["drive"] is None
     other = Qubit(0, 5.0e9, -2e8, 50.0, 30.0, readout=readout.replace(linewidth_hz=2e6))
-    moved = pulse.device(
-        {"quantum_system": TargetDescription(name="ro", qubits={**qubits, 0: other})}
-    )
+    moved = pulse.device(TargetDescription(name="ro", qubits={**qubits, 0: other}))
     assert moved.fingerprint != dev.fingerprint
 
 
 def test_a_system_file_refuses_an_unknown_component_kind_or_field():
     data = pulse.device(
-        {
-            "quantum_system": TargetDescription(
-                name="ro", qubits={0: Qubit(0, 5.0e9, -2e8, 50.0, 30.0)}
-            )
-        }
+        TargetDescription(name="ro", qubits={0: Qubit(0, 5.0e9, -2e8, 50.0, 30.0)})
     ).as_dict()
     qudit = data["quantum_system"]["qudits"][0]
     qudit["readout"] = {"kind": "fluorescence"}
     qudit["drive"] = {"kind": "microwave", "amplitude_scale": 0.2}
     with pytest.raises(DeviceDefinitionError) as found:
-        pulse.device(data)
+        pulse.Device.from_dict(data)
     message = str(found.value)
     assert "qudits[0].readout.kind" in message and "the kinds are dispersive" in message
     assert "qudits[0].drive.amplitude_scale" in message
@@ -755,30 +743,21 @@ def test_line_delays_and_a_reference_clock_round_trip_through_the_system_file():
         reference_clock_ghz=0.25,
         line_delays_ns={("drive", 0): 1.5, ("readout", 3): 2.0},
     )
-    qpu = pulse.device(
-        {"quantum_system": TRANSMON_17Q, "layout": [0, 1, 2, 3], "control_system": system}
-    )
+    qpu = pulse.device(TRANSMON_17Q, layout=[0, 1, 2, 3], control_system=system)
     data = _round_trip(qpu)["control_system"]
     assert data["line_delays_ns"] == {"drive": {"0": 1.5}, "readout": {"3": 2.0}}
     assert data["reference_clock_ghz"] == 0.25
     assert "line_delays_ns" not in _qpu(*_two_boxes()).as_dict()["control_system"]
     data["line_delays_ns"] = {"drive": {"zero": 1.0}}
     with pytest.raises(DeviceDefinitionError, match="line_delays_ns.drive: is keyed by qudit"):
-        pulse.device(
+        pulse.Device.from_dict(
             {"quantum_system": TRANSMON_17Q, "layout": [0, 1, 2, 3], "control_system": data}
         )
 
 
 def test_a_program_clock_round_trips_through_the_system_file():
     system = pulse.ControlSystem(controllers=[pulse.Controller(clock_ghz=1.0)])
-    qpu = pulse.device(
-        {
-            "quantum_system": TRANSMON_17Q,
-            "layout": [0, 1],
-            "control_system": system,
-            "clock_ghz": 4.0,
-        }
-    )
+    qpu = pulse.device(TRANSMON_17Q, layout=[0, 1], control_system=system, clock_ghz=4.0)
     assert qpu.clock_ghz == 4.0
     assert _round_trip(qpu)["clock_ghz"] == 4.0
     assert "clock_ghz" not in _round_trip(_qpu(pulse.Controller(), layout=[0, 1]))
@@ -790,7 +769,7 @@ def test_a_custom_quantum_system_is_written_inline_with_the_new_key_names():
         qubits={i: Qubit(i, 5e9 + i * 1e8, -2.5e8, 50.0, 40.0) for i in range(2)},
         couplings=[Coupling((0, 1), 3e6)],
     )
-    qpu = pulse.device({"quantum_system": target})
+    qpu = pulse.device(target)
     data = _round_trip(qpu)
     assert data["quantum_system"]["couplings"] == [{"qudits": [0, 1], "strength_hz": 3e6}]
     assert [q["index"] for q in data["quantum_system"]["qudits"]] == [0, 1]
@@ -805,7 +784,7 @@ def test_a_system_file_reports_every_problem_with_its_line(tmp_path):
     path = tmp_path / "qpu.json"
     path.write_text(json.dumps(data, indent=2))
     with pytest.raises(DeviceDefinitionError) as raised:
-        pulse.device(path)
+        pulse.Device.load(path)
     unknown, wiring = raised.value.problems
     assert unknown.path == "control_system.controllers[0].instruction_cycle"
     assert "did you mean 'instruction_cycles'?" in str(raised.value)
@@ -819,9 +798,9 @@ def test_a_system_file_reports_every_problem_with_its_line(tmp_path):
 
 def test_a_newer_system_file_format_is_refused():
     with pytest.raises(DeviceDefinitionError, match="newer than this cudaq-pulse reads"):
-        pulse.device({"format": "cudaq-pulse.system/2", "quantum_system": TRANSMON_17Q})
+        pulse.Device.from_dict({"format": "cudaq-pulse.system/2", "quantum_system": TRANSMON_17Q})
     with pytest.raises(DeviceDefinitionError, match="not a system file format"):
-        pulse.device({"format": "something/1", "quantum_system": TRANSMON_17Q})
+        pulse.Device.from_dict({"format": "something/1", "quantum_system": TRANSMON_17Q})
 
 
 # ── Controller descriptions ──────────────────────────────────────────────────
@@ -877,12 +856,12 @@ def test_a_system_file_from_another_description_version_is_noticed_once():
     with pytest.warns(
         UpgradeNotice, match="version 0-test; the installed description is version 1"
     ):
-        old = pulse.device(data)
+        old = pulse.Device.from_dict(data)
     assert old.control_system.controllers[0].version == "0-test"
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        pulse.device(data)
-        pulse.device(qpu.as_dict())
+        pulse.Device.from_dict(data)
+        pulse.Device.from_dict(qpu.as_dict())
 
 
 # ── doctor --system ──────────────────────────────────────────────────────────
@@ -926,10 +905,10 @@ def test_a_system_file_keeps_the_simulation_model():
         qubits={i: Qubit(i, 5e9 + i * 1e8, 0.0, 50.0, 40.0) for i in range(2)},
         model=SimulationModel(levels={1: 3}),
     )
-    qpu = pulse.device({"target": target})
+    qpu = pulse.device(target)
     data = qpu.as_dict()
     assert data["quantum_system"]["model"] == {"kind": "generic", "levels": {"1": 3}}
-    again = pulse.device(json.loads(json.dumps(data)))
+    again = pulse.Device.from_dict(json.loads(json.dumps(data)))
     assert again.target.model == target.model and again == qpu
 
     @pulse.kernel
@@ -941,10 +920,10 @@ def test_a_system_file_keeps_the_simulation_model():
         pulse.simulate(pulse.compile(nothing).lower(again.qudits[0]))
 
     data["quantum_system"]["model"] = None
-    assert pulse.device(data).target.model is None
+    assert pulse.Device.from_dict(data).target.model is None
     data["quantum_system"]["model"] = {"kind": "fluxonium"}
     with pytest.raises(DeviceDefinitionError, match="model.kind: must be one of transmon, generic"):
-        pulse.device(data)
+        pulse.Device.from_dict(data)
 
 
 def test_a_system_file_names_a_model_it_cannot_hold():
@@ -957,4 +936,4 @@ def test_a_system_file_names_a_model_it_cannot_hold():
         model=Custom,
     )
     with pytest.raises(InvalidValueError, match="Custom is not one"):
-        pulse.device({"target": target}).as_dict()
+        pulse.device(target).as_dict()

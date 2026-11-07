@@ -497,7 +497,7 @@ if __name__ == "__main__":
         "with the adaptive T1 tracker of Berritta et al., arXiv:2506.09576 (2025).\n"
     )
     target = transmon_17q()
-    dev = pulse.device({"target": target})
+    dev = pulse.device(target)
     q = dev.qudit_handles[0]
     plant = chain_plant(target)
 

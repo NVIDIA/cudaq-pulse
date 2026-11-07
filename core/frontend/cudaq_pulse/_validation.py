@@ -289,7 +289,7 @@ def _device(system: ControlSystem) -> Any:
         clock_ghz=clock,
         qubits={i: Qubit(i, 5.0e9 + 1.5e8 * i, -2.5e8, 50.0, 30.0) for i in range(_QUDITS)},
     )
-    return pulse.device({"target": target})
+    return pulse.device(target)
 
 
 def _formats(backend: Backend) -> list[str]:

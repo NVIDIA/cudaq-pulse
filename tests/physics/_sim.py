@@ -46,7 +46,7 @@ def device(freqs_hz, alphas_hz, couplings=(), t1_us=0.0, t2_us=0.0, **qubit):
         },
         couplings=[Coupling((i, j), g) for i, j, g in couplings],
     )
-    return pulse.device({"target": target})
+    return pulse.device(target)
 
 
 def run(dev, kernel, *args, n=None, backend="cpu", levels=2, **simulate):

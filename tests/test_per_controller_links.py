@@ -76,7 +76,7 @@ def _controllers(processors=False):
 def _device(per_controller, processors=False, max_in_flight=1):
     link = Link(fixed_ns=10, max_in_flight=max_in_flight, per_controller=per_controller)
     system = pulse.ControlSystem(controllers=_controllers(processors), links={"decoder": link})
-    return pulse.device({"target": ladder_target(4), "control_system": system})
+    return pulse.device(ladder_target(4), control_system=system)
 
 
 def _lower(kernel, qpu, schedule="asap"):
@@ -98,7 +98,7 @@ def test_a_system_file_states_a_per_controller_link_in_json_and_toml():
     qpu = _device(True)
     data = json.loads(json.dumps(qpu.as_dict()))
     assert data["control_system"]["links"]["decoder"]["per_controller"] is True
-    again = pulse.device(data)
+    again = pulse.Device.from_dict(data)
     assert again.control_system.links["decoder"].per_controller
     table = tomllib.loads(
         "[[control_system.controllers]]\ndrive_lines = [0, 1]\nreadout_lines = [0, 1]\n"
@@ -106,7 +106,7 @@ def test_a_system_file_states_a_per_controller_link_in_json_and_toml():
         "[control_system.links.decoder]\nfixed_ns = 10\nmax_in_flight = 1\n"
         "per_controller = true\n"
     )
-    loaded = pulse.device({"target": ladder_target(4)} | table)
+    loaded = pulse.Device.from_dict({"quantum_system": ladder_target(4)} | table)
     assert loaded.control_system.links["decoder"] == Link(
         fixed_ns=10, max_in_flight=1, per_controller=True
     )
@@ -181,7 +181,7 @@ def test_one_controller_schedules_a_per_controller_link_as_a_shared_one():
     for per in (False, True):
         link = Link(fixed_ns=10, max_in_flight=1, per_controller=per)
         system = pulse.ControlSystem(controllers=single, links={"decoder": link})
-        qpu = pulse.device({"target": ladder_target(4), "control_system": system})
+        qpu = pulse.device(ladder_target(4), control_system=system)
         reports.append(
             [(c.submit_cycles, c.due_cycles) for c in _lower(two_rounds, qpu).classical_report()]
         )
@@ -233,7 +233,7 @@ def calls_only(q):
 
 def _three():
     system = pulse.ControlSystem(controllers=_controllers(), links={"controller": Link()})
-    return pulse.device({"target": ladder_target(4), "control_system": system})
+    return pulse.device(ladder_target(4), control_system=system)
 
 
 def test_a_controller_the_program_does_not_use_exports_an_empty_program():

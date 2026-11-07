@@ -56,13 +56,13 @@ def _file_problems(tmp_path, data):
     text = json.dumps(data, indent=2)
     path.write_text(text)
     with pytest.raises(DeviceDefinitionError) as raised:
-        pulse.device(str(path))
+        pulse.Device.load(path)
     assert str(raised.value).startswith(f"{len(raised.value.problems)} problem")
     return raised.value.problems, text.splitlines()
 
 
 def _system_data(**changes):
-    data = pulse.device({"quantum_system": _system()}).as_dict()
+    data = pulse.device(_system()).as_dict()
     data["quantum_system"].update(changes)
     return data
 
@@ -125,18 +125,18 @@ def _unmeasured_system():
 
 
 def test_a_coupling_not_measured_yet_compiles_schedules_and_exports():
-    dev = pulse.device({"quantum_system": _unmeasured_system()})
+    dev = pulse.device(_unmeasured_system())
     lowered = pulse.compile(_pair_program).lower(*dev.qudit_handles[:2])
     assert [e.start_cycles for e in lowered.schedule] == [0, 8]
     assert lowered.export_controller() and lowered.export_emulation()
     assert "pulse.coupling" not in lowered.mlir()
     data = dev.as_dict()
     assert [c["strength_hz"] for c in data["quantum_system"]["couplings"]] == [None, 3.0e6, None]
-    assert pulse.device(json.loads(json.dumps(data))) == dev
+    assert pulse.Device.from_dict(json.loads(json.dumps(data))) == dev
 
 
 def test_simulate_refuses_a_coupling_not_measured_yet_by_name():
-    dev = pulse.device({"quantum_system": _unmeasured_system()})
+    dev = pulse.device(_unmeasured_system())
     lowered = pulse.compile(_pair_program).lower(*dev.qudit_handles[[2, 0]])
     with pytest.raises(pulse.InvalidValueError) as raised:
         pulse.simulate(lowered, levels=2)
@@ -245,7 +245,7 @@ def test_a_system_file_holds_couplings_gates_and_residual_zz():
         ],
         residual_zz=[ResidualZZ((0, 2), 1.5e4)],
     )
-    dev = pulse.device({"quantum_system": target})
+    dev = pulse.device(target)
     system = dev.as_dict()["quantum_system"]
     assert system["couplings"] == [
         {
@@ -264,7 +264,7 @@ def test_a_system_file_holds_couplings_gates_and_residual_zz():
     ]
     assert system["residual_zz"] == [{"qudits": [0, 2], "rate_hz": 1.5e4}]
     assert "crosstalk" not in system
-    back = pulse.device(json.loads(json.dumps(dev.as_dict())))
+    back = pulse.Device.from_dict(json.loads(json.dumps(dev.as_dict())))
     assert back == dev and back.target == target
     assert back.target.couplings[0].qudits == (1, 0)
 
@@ -289,9 +289,7 @@ def test_a_key_that_is_no_field_is_an_unknown_key(tmp_path):
 
 def test_the_fingerprint_holds_the_whole_cz_calibration():
     def fingerprint(calibrations):
-        return pulse.device(
-            {"quantum_system": _system(couplings=[Coupling((0, 1), 5e6, calibrations)])}
-        ).fingerprint
+        return pulse.device(_system(couplings=[Coupling((0, 1), 5e6, calibrations)])).fingerprint
 
     prints = {
         fingerprint({}),
@@ -458,7 +456,7 @@ def _coupled_data():
         couplings=[Coupling((0, 1), 5.0e6, _cz(98.0)), Coupling((1, 2), 4.0e6)],
         residual_zz=[ResidualZZ((0, 2), 1.0e4)],
     )
-    return pulse.device({"quantum_system": target}).as_dict()
+    return pulse.device(target).as_dict()
 
 
 def test_a_system_file_names_each_missing_key_by_its_file_name_and_line(tmp_path):
@@ -495,7 +493,7 @@ def test_a_config_mapping_lists_every_missing_key_and_value_problem():
     system["couplings"][1]["strength_hz"] = math.nan
     system["residual_zz"][0]["qudits"] = [2, 2]
     with pytest.raises(DeviceDefinitionError) as raised:
-        pulse.device(data)
+        pulse.Device.from_dict(data)
     assert [(p.path, p.message, p.file) for p in raised.value.problems] == [
         ("quantum_system.couplings[0].calibrations[0].gate", "is missing", None),
         ("quantum_system.couplings[1].strength_hz", "nan is not a finite number of Hz", None),

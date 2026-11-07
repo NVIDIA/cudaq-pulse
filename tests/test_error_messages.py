@@ -111,8 +111,8 @@ def test_needing_a_float_arguments_value_says_how_to_keep_it_symbolic():
 
 
 def test_qudits_of_two_devices_of_one_target_name_their_layouts():
-    a = pulse.device({"target": "transmon_generic:4"})
-    b = pulse.device({"target": "transmon_generic:4", "layout": [2, 3]})
+    a = pulse.device("transmon_generic:4")
+    b = pulse.device("transmon_generic:4", layout=[2, 3])
 
     @pulse.kernel
     def k(q0, q1):

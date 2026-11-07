@@ -57,7 +57,7 @@ if __name__ == "__main__":
     print(f"  compiled {sweep.cache_info().compiled} time(s) for the whole sweep")
 
     print("\n=== The same kernel on a device with a 1 GHz clock ===")
-    slow = pulse.device({"target": "transmon_17q", "clock_ghz": 1.0})
+    slow = pulse.device("transmon_17q", clock_ghz=1.0)
     for device in (dev, slow):
         lowered = rabi.lower(device.qudit_handles[0], cal["rabi_duration"], 0.5)
         cycles = lowered.schedule[0].duration_cycles

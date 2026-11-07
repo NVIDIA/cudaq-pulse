@@ -192,7 +192,7 @@ def test_a_sync_over_many_lines_takes_an_extended_record(n):
 
 def test_a_sync_over_a_thousand_lines_compiles_schedules_and_exports():
     n = 1200
-    dev = pulse.device({"target": ladder_target(n)})
+    dev = pulse.device(ladder_target(n))
 
     @pulse.kernel
     def wide(qs):

@@ -43,7 +43,7 @@ target = TargetDescription(
     clock_ghz=1.0,
     qubits={i: Qubit(i, 5.0e9 + 1.0e6 * i, -2.0e8, 50.0, 30.0) for i in range(lines)},
 )
-dev = pulse.device({"target": target})
+dev = pulse.device(target)
 readers = lines // 2
 limits = Controller(
     clock_ghz=1.0,

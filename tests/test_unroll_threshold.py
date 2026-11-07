@@ -32,7 +32,7 @@ TARGET = TargetDescription(
     },
     couplings=[Coupling((0, 1), 2e6)],
 )
-DEV = pulse.device({"target": TARGET})
+DEV = pulse.device(TARGET)
 Q = DEV.qudit_handles
 
 

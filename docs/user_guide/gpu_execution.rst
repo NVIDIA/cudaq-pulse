@@ -190,7 +190,7 @@ To execute on a GPU (requires cuDensityMat runtime):
        drive_line = get_drive_line(qubit)
        drive(drive_line, square(duration, math.pi / 20.0))
 
-   dev = pulse.device({"target": target})
+   dev = pulse.device(target)
    pi_time = 20 * pulse.ns
    lowered = x_gate.lower(dev.qudit_handles[0], pi_time)
    result = pulse.simulate(lowered, backend="gpu", t_end=20.0, dt_ns=0.1, integrator="rk4")

@@ -24,12 +24,10 @@ from cudaq_pulse.targets import Qubit, TargetDescription
 PI_AMP = math.pi / 20  # square(40, PI_AMP) is a pi pulse
 
 _DEVICE = pulse.device(
-    {
-        "target": TargetDescription(
-            name="three",
-            qubits={i: Qubit(i, 5e9 + 1e8 * i, -2e8, 0.0, 0.0) for i in range(3)},
-        )
-    }
+    TargetDescription(
+        name="three",
+        qubits={i: Qubit(i, 5e9 + 1e8 * i, -2e8, 0.0, 0.0) for i in range(3)},
+    )
 )
 
 

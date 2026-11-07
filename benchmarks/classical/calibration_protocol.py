@@ -147,7 +147,7 @@ def _shares(result, shots):
 
 def adaptive_t1(n, seed):
     target = _att_target()
-    dev = pulse.device({"target": target})
+    dev = pulse.device(target)
     lowered = pulse.compile(att_paper, device=dev, control_system=P["control_system"]).lower(
         dev.qudit_handles[0]
     )
@@ -180,7 +180,7 @@ def adaptive_t1(n, seed):
 
 def binary_search(n, seed):
     target = transmon_17q()
-    dev = pulse.device({"target": target})
+    dev = pulse.device(target)
     lowered = pulse.compile(
         P["binary_search"], device=dev, control_system=P["control_system"]
     ).lower(dev.qudit_handles[0], 15)
@@ -215,7 +215,7 @@ def binary_search(n, seed):
 
 def chain(n, seed):
     target = transmon_17q()
-    dev = pulse.device({"target": target})
+    dev = pulse.device(target)
     lowered = pulse.compile(
         P["calibration_chain"], device=dev, control_system=P["control_system"]
     ).lower(dev.qudit_handles[0], 20_000.0 * CLOCK)
@@ -263,7 +263,7 @@ def chain(n, seed):
 
 def steps(seed):
     target = transmon_17q()
-    dev = pulse.device({"target": target})
+    dev = pulse.device(target)
     q = dev.qudit_handles[0]
     plant = P["chain_plant"](target)
     shots_per_step = {

@@ -40,7 +40,7 @@ def _handles(dev, args):
 
 def on(target, kernel, *args, passes=EVOLVE_PASSES):
     """The module of ``kernel(*args)`` on a device of *target*."""
-    dev = pulse.device({"target": target})
+    dev = pulse.device(target)
     return pulse.compile(kernel, passes=passes).lower(*_handles(dev, args))
 
 
