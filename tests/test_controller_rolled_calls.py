@@ -124,11 +124,6 @@ def _calls(n: int) -> dict[str, Any]:
     }
 
 
-# A loop that waits for a value at run time ends an epoch every iteration:
-# it is walked in full, as the export's rolled walk walks it.
-_BOUNDED = frozenset({"before", "waited"})
-
-
 def _lowered(kernel: Any, schedule: str, **options: Any) -> Any:
     return pulse.compile(kernel, schedule=schedule, unroll_threshold=0, **options).lower(
         Q[0], Q[1], Q[2]
@@ -177,7 +172,7 @@ def test_a_long_rolled_loop_with_calls_is_summarized_and_checked_as_every_iterat
 ):
     lowered = _lowered(_calls(trips)[name], schedule)
     _, repeats = _summarizing(lowered)
-    assert bool(repeats) == (name not in _BOUNDED)
+    assert repeats
     for limits in _CALL_LIMITS:
         if clock is not None:
             limits = dataclasses.replace(limits, **OWN_CLOCKS[clock])
@@ -369,7 +364,7 @@ class _Expansion:
 def test_a_summarizing_walk_has_every_iteration_s_events_copy_by_copy(name, schedule):
     lowered = _lowered({**_calls(65), **_frames(65)}[name], schedule)
     events, repeats = _summarizing(lowered)
-    assert bool(repeats) == (name not in _BOUNDED)
+    assert repeats
     got = json.dumps(_Expansion(events, repeats).run(), sort_keys=True)
     assert got == json.dumps(_every(lowered), sort_keys=True)
 

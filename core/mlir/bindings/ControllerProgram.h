@@ -1173,7 +1173,9 @@ struct ControllerWalk : ControllerExpressions {
       if (ids)
         for (int64_t id : ids.asArrayRef())
           sizes.push_back(carried[id].size());
-      if (walk == Walk::Every || trips < 2 || holdsBoundary(loop))
+      // A walk that counts no epochs need not visit each boundary.
+      if (walk == Walk::Every || trips < 2 ||
+          ((epochs || walk == Walk::Rolled) && holdsBoundary(loop)))
         everyIteration(loop, trips);
       else if (walk == Walk::Sampled)
         sampled(loop, trips);

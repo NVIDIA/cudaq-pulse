@@ -490,6 +490,63 @@ struct EpochWalk {
   pulse::AllocationTracer trace;
   std::map<int64_t, int64_t> current;
   std::vector<Boundary> boundaries;
+  /// The boundaries of the loop iterations a summarizing walk does not
+  /// visit, which number the epochs after them as if it did.
+  int64_t skipped = 0;
+
+  /// The epochs opened so far.
+  int64_t count() const {
+    return static_cast<int64_t>(boundaries.size()) + skipped;
+  }
+
+  /// The epochs opened and each timeline's epoch at a point of the walk.
+  struct Mark {
+    int64_t opened = 0;
+    std::map<int64_t, int64_t> current;
+  };
+  Mark mark() const { return {count(), current}; }
+
+  /// Whether the iterations of a loop from each of `marks` to the next each
+  /// open as many epochs and move each timeline's epoch as far: then, as
+  /// iterations that play alike visit the same boundaries, every later one
+  /// does too, and an event of copy j is in its first copy's epoch moved j
+  /// times as far.
+  static bool steady(llvm::ArrayRef<Mark> marks) {
+    auto at = [](const Mark &mark, int64_t timeline) {
+      auto found = mark.current.find(timeline);
+      return found == mark.current.end() ? int64_t{0} : found->second;
+    };
+    for (size_t k = 2; k < marks.size(); ++k) {
+      const Mark &a = marks[k - 2], &b = marks[k - 1], &c = marks[k];
+      if (c.opened - b.opened != b.opened - a.opened)
+        return false;
+      for (const Mark *mark : {&a, &b, &c})
+        for (const auto &[timeline, epoch] : mark->current)
+          if (at(c, timeline) - at(b, timeline) !=
+              at(b, timeline) - at(a, timeline))
+            return false;
+    }
+    return true;
+  }
+
+  /// Count `times` more iterations of a loop as visited, each opening the
+  /// epochs and moving each timeline's epoch as much as the iteration
+  /// walked since `from` did; false past 2**63 epochs.
+  bool skip(int64_t times, const Mark &from) {
+    std::optional<int64_t> more = checkedMul(times, count() - from.opened);
+    if (!more || !checkedAdd(skipped, *more))
+      return false;
+    for (auto &[timeline, epoch] : current) {
+      auto found = from.current.find(timeline);
+      int64_t was = found == from.current.end() ? 0 : found->second;
+      std::optional<int64_t> moved = checkedMul(times, epoch - was);
+      if (!moved || !checkedAdd(epoch, *moved))
+        return false;
+      epoch += *moved;
+    }
+    skipped += *more;
+    return true;
+  }
 
   int64_t timelineOf(mlir::Operation *op) {
     if (op->hasAttr(classical::kTimelineAttr))
@@ -528,7 +585,7 @@ struct EpochWalk {
                               classical::intAttr(op, "classical.device"),
                               *start, 0, -1, after);
     }
-    epoch = static_cast<int64_t>(boundaries.size());
+    epoch = count();
     return mlir::isa<pulse::WaitOp>(op) ? after : epoch;
   }
 
@@ -1273,7 +1330,7 @@ struct ControllerEventWalk : ControllerExpressions {
     if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
       int64_t trips = pulse::constantTripCount(loop).value_or(0);
       iteration.push_back(0);
-      if (summarize && trips > kSummarizeAfter && !holdsBoundary(loop) &&
+      if (summarize && trips > kSummarizeAfter &&
           (!RunTime || tracked.empty())) {
         summarizeLoop<RunTime>(*loop.getBody(), trips);
         iteration.pop_back();
@@ -1372,22 +1429,9 @@ struct ControllerEventWalk : ControllerExpressions {
       epochs.push_back(epochWalk->visit(op, iteration));
   }
 
-  /// Whether `loop` holds a variable or blocking wait, which ends an epoch
-  /// in every iteration: a summarizing walk plays such a loop out, so that
-  /// it visits every boundary, as ControllerWalk does.
-  bool holdsBoundary(mlir::scf::ForOp loop) {
-    if (!epochWalk)
-      return false;
-    auto [it, inserted] = boundaries.try_emplace(loop, false);
-    if (inserted)
-      loop->walk([&](mlir::Operation *op) {
-        if (op->hasAttr("classical.variable") ||
-            op->hasAttr("classical.blocking"))
-          it->second = true;
-      });
-    return it->second;
+  EpochWalk::Mark epochsNow() const {
+    return epochWalk ? epochWalk->mark() : EpochWalk::Mark{};
   }
-  llvm::DenseMap<mlir::Operation *, bool> boundaries;
 
   /// With `summarize` (for a check, which tracks no tone's frame changes): a
   /// rolled loop of more than kSummarizeAfter iterations whose third
@@ -1430,24 +1474,34 @@ struct ControllerEventWalk : ControllerExpressions {
   template <bool RunTime>
   LLVM_ATTRIBUTE_NOINLINE void summarizeLoop(mlir::Block &body, int64_t trips) {
     Mark zero = mark();
+    std::array<EpochWalk::Mark, 4> epochStates;
+    epochStates[0] = epochsNow();
     iteration.back() = 0;
     block<RunTime>(body);
     Mark one = mark();
+    epochStates[1] = epochsNow();
     iteration.back() = 1;
     block<RunTime>(body);
     Mark two = mark();
+    epochStates[2] = epochsNow();
     auto framesOne = frames;
     auto reachedOne = reached;
     auto latestOne = latest;
     iteration.back() = 2;
     block<RunTime>(body);
     Mark three = mark();
+    epochStates[3] = epochsNow();
     std::map<int64_t, int64_t> periods;
     auto period = repeating(zero, one, two, three, framesOne, reachedOne,
                             latestOne, periods);
     if constexpr (RunTime)
       if (period && !sameRunTime(zero, one, two, three))
         period.reset();
+    if (period && epochWalk && !EpochWalk::steady(epochStates))
+      period.reset();
+    // The epochs the copies after the first open, as if visited.
+    if (period && epochWalk && !epochWalk->skip(trips - 3, epochStates[2]))
+      throw std::overflow_error("a rolled loop opens more than 2**63 epochs");
     if (period && *period < 0) {
       summarizeUnsynced(two, three, trips, reachedOne, periods);
       return;
