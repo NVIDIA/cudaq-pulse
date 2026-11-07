@@ -334,7 +334,8 @@ callInstances(mlir::func::FuncOp function, mlir::ModuleOp module,
   std::vector<std::tuple<mlir::Operation *, int64_t, int64_t>> calls;
   bool failed = false;
   function.walk([&](SubmitOp submit) {
-    auto callable = symbols.lookup<CallableOp>(submit.getCallee());
+    auto callable =
+        symbols.lookup<CallableOp>(submit.getCalleeAttr().getAttr());
     if (!callable)
       return;
     int64_t device = callable.getDevice();
@@ -394,6 +395,37 @@ annotateClassicalCalls(mlir::func::FuncOp function) {
                                  instances)))
     return mlir::failure();
   bool any = false;
+  // Every name interned and every link read once, not once per call: each
+  // interning is a lookup in the context's uniquer.
+  mlir::MLIRContext *context = function.getContext();
+  auto name = [&](llvm::StringRef text) {
+    return mlir::StringAttr::get(context, text);
+  };
+  mlir::StringAttr submitName = name("classical.submit_cycles"),
+                   budgetName = name("classical.budget_cycles"),
+                   deviceName = name("classical.device"),
+                   inFlightName = name("classical.max_in_flight"),
+                   eagerName = name("classical.eager"),
+                   blockingName = name("classical.blocking"),
+                   instanceName = name(kInstanceAttr),
+                   timelineName = name(kTimelineAttr);
+  std::map<int64_t, LinkModel> links;
+  auto linkOf = [&](int64_t device) -> const LinkModel & {
+    auto [it, inserted] = links.try_emplace(device);
+    if (inserted)
+      it->second = linkModel(module, device);
+    return it->second;
+  };
+  // Sets an i64 attribute, without making one when it holds the value.
+  auto setInt = [&](mlir::NamedAttrList &attrs, mlir::StringAttr key,
+                    int64_t value) {
+    auto old = mlir::dyn_cast_or_null<mlir::IntegerAttr>(attrs.get(key));
+    if (!old || old.getType() != b.getI64Type() || old.getInt() != value)
+      attrs.set(key, b.getI64IntegerAttr(value));
+  };
+  auto calleeOf = [&](mlir::FlatSymbolRefAttr callee) {
+    return symbols.lookup<CallableOp>(callee.getAttr());
+  };
   // The timelines on each link (and instance), for the submissions that
   // have one.
   using Slots = std::pair<int64_t, int64_t>;
@@ -401,50 +433,51 @@ annotateClassicalCalls(mlir::func::FuncOp function) {
   std::map<Slots, std::vector<int64_t>> timelines;
   function.walk([&](mlir::Operation *op) {
     if (auto submit = mlir::dyn_cast<SubmitOp>(op)) {
-      auto callable = symbols.lookup<CallableOp>(submit.getCallee());
+      auto callable = calleeOf(submit.getCalleeAttr());
       if (!callable)
         return;
       any = true;
-      LinkModel link = linkModel(module, callable.getDevice());
+      const LinkModel &link = linkOf(callable.getDevice());
       auto instance = instances.find(op);
       Slots slots{callable.getDevice(),
                   instance == instances.end() ? -1 : instance->second};
-      mlir::NamedAttrList attrs(op->getAttrDictionary());
-      attrs.set("classical.submit_cycles",
-                b.getI64IntegerAttr(submitCycles(callable, link, clock)));
-      attrs.set("classical.budget_cycles",
-                b.getI64IntegerAttr(budgetCycles(
-                    callable, link, clock, waitTimeoutNs(submit),
-                    callUncertaintyNs(submit, controllers, trace))));
-      attrs.set("classical.device", b.getI64IntegerAttr(callable.getDevice()));
-      attrs.set("classical.max_in_flight",
-                b.getI64IntegerAttr(link.maxInFlight));
+      mlir::NamedAttrList attrs(op->getDiscardableAttrDictionary());
+      setInt(attrs, submitName, submitCycles(callable, link, clock));
+      setInt(attrs, budgetName,
+             budgetCycles(callable, link, clock, waitTimeoutNs(submit),
+                          callUncertaintyNs(submit, controllers, trace)));
+      setInt(attrs, deviceName, callable.getDevice());
+      setInt(attrs, inFlightName, link.maxInFlight);
       if (callable.getSubmit() == "eager")
-        attrs.set("classical.eager", b.getUnitAttr());
+        attrs.set(eagerName, b.getUnitAttr());
       else
-        attrs.erase("classical.eager");
+        attrs.erase(eagerName);
       if (slots.second >= 0) {
-        attrs.set(kInstanceAttr, b.getI64IntegerAttr(slots.second));
-        for (WaitOp wait : waitsOf(submit))
-          wait->setAttr(kInstanceAttr, b.getI64IntegerAttr(slots.second));
+        setInt(attrs, instanceName, slots.second);
+        for (WaitOp wait : waitsOf(submit)) {
+          mlir::NamedAttrList waitAttrs(wait->getDiscardableAttrDictionary());
+          setInt(waitAttrs, instanceName, slots.second);
+          wait->setDiscardableAttrs(waitAttrs.getDictionary(context));
+        }
       } else {
-        attrs.erase(kInstanceAttr);
+        attrs.erase(instanceName);
       }
-      if (auto timeline = attrs.get(kTimelineAttr)) {
+      if (auto timeline = attrs.get(timelineName)) {
         int64_t t = mlir::cast<mlir::IntegerAttr>(timeline).getInt();
         shared.emplace_back(op, t, slots);
         timelines[slots].push_back(t);
       }
-      op->setAttrs(attrs.getDictionary(op->getContext()));
+      op->setDiscardableAttrs(attrs.getDictionary(context));
     } else if (auto wait = mlir::dyn_cast<WaitOp>(op)) {
-      auto callable = symbols.lookup<CallableOp>(wait.getCallee());
+      auto callable = calleeOf(wait.getCalleeAttr());
       if (!callable)
         return;
       any = true;
-      op->setAttr("classical.device",
-                  b.getI64IntegerAttr(callable.getDevice()));
+      mlir::NamedAttrList attrs(op->getDiscardableAttrDictionary());
+      setInt(attrs, deviceName, callable.getDevice());
       if (callable.getMode() == "blocking")
-        op->setAttr("classical.blocking", b.getUnitAttr());
+        attrs.set(blockingName, b.getUnitAttr());
+      op->setDiscardableAttrs(attrs.getDictionary(context));
     }
   });
   // A link that T timelines use gives each its share of the slots, the
@@ -452,13 +485,14 @@ annotateClassicalCalls(mlir::func::FuncOp function) {
   // request at a time, so each is sent at most after one pending send of
   // every other timeline: it holds the link for its own send and T - 1 of
   // the link's longest.
-  auto cyclesOf = [](mlir::Operation *op, llvm::StringRef name) {
-    return mlir::cast<mlir::IntegerAttr>(op->getAttr(name)).getInt();
+  auto cyclesOf = [&](mlir::Operation *op) {
+    return mlir::cast<mlir::IntegerAttr>(op->getDiscardableAttr(submitName))
+        .getInt();
   };
   std::map<Slots, int64_t> longest;
   for (auto [op, t, slots] : shared) {
     int64_t &most = longest[slots];
-    most = std::max(most, cyclesOf(op, "classical.submit_cycles"));
+    most = std::max(most, cyclesOf(op));
   }
   for (auto &[slots, list] : timelines) {
     std::sort(list.begin(), list.end());
@@ -471,15 +505,13 @@ annotateClassicalCalls(mlir::func::FuncOp function) {
       continue;
     auto rank = static_cast<int64_t>(
         std::lower_bound(list.begin(), list.end(), t) - list.begin());
-    int64_t slots = linkModel(module, key.first).maxInFlight;
+    int64_t slots = linkOf(key.first).maxInFlight;
     int64_t share = slots / count + (rank < slots % count ? 1 : 0);
-    int64_t send =
-        cyclesOf(op, "classical.submit_cycles") + (count - 1) * longest[key];
-    mlir::NamedAttrList attrs(op->getAttrDictionary());
-    attrs.set("classical.submit_cycles", b.getI64IntegerAttr(send));
-    attrs.set("classical.max_in_flight",
-              b.getI64IntegerAttr(std::max<int64_t>(1, share)));
-    op->setAttrs(attrs.getDictionary(op->getContext()));
+    int64_t send = cyclesOf(op) + (count - 1) * longest[key];
+    mlir::NamedAttrList attrs(op->getDiscardableAttrDictionary());
+    setInt(attrs, submitName, send);
+    setInt(attrs, inFlightName, std::max<int64_t>(1, share));
+    op->setDiscardableAttrs(attrs.getDictionary(context));
   }
   return any;
 }
