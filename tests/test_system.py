@@ -572,6 +572,44 @@ def test_a_call_sends_and_answers_only_controllers_its_link_reaches():
         compiled.lower(qpu.qudits[0], qpu.qudits[2])
 
 
+def _answered_rounds(n):
+    # Each round's shots branch on the answer about the round before's.
+    @pulse.kernel(unroll_threshold=10**9)
+    def rounds(q, r):
+        ro = get_readout_line(q)
+        d = get_drive_line(r)
+        bits = [readout(ro, square(20, 0.05)) for _ in range(n)]
+        for _ in range(4):
+            fix = flip.submit(bits).result()
+            bits = []
+            for _ in range(n):
+                if fix[0]:
+                    drive(d, square(16, 0.1))
+                bits.append(readout(ro, square(20, 0.05)))
+
+    return rounds
+
+
+def _two_box_qpu():
+    return _qpu(*_two_boxes(peer_latency_cycles={0: 12}), links={"feedback": Link(slot_bytes=4096)})
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("schedule", ["asap", "alap"])
+def test_rounds_on_two_controllers_that_branch_on_an_answer_schedule_in_linear_time(schedule):
+    # The answer reaches the drive's controller apart from the readouts it
+    # comes from; the time, native, is the best of three.
+    qpu = _two_box_qpu()
+    timings = {}
+    for n in (100, 1600):
+        program = pulse.compile(_answered_rounds(n), device=qpu, schedule=schedule)
+        timings[n] = min(
+            program.lower(qpu.qudits[0], qpu.qudits[2]).metrics.schedule_ms for _ in range(3)
+        )
+    # 16x the shots in well under 256x the time (quadratic would be 256x).
+    assert timings[1600] < 48 * timings[100], timings
+
+
 def test_runtime_qudits_are_checked_against_the_wiring_per_call():
     @pulse.kernel
     def pulse_one(q: pulse.Qudit):

@@ -170,8 +170,8 @@ inline llvm::SmallVector<WaitOp, 1> waitsOf(SubmitOp submit) {
   return found;
 }
 
-/// Adds to `found` the controllers of the readouts `value` is computed from;
-/// false if one is on no known controller.
+/// Adds to `found` the controllers of the readouts `value` is computed from,
+/// each once; false if one is on no known controller.
 inline bool readers(mlir::Value value, const pulse::Controllers &controllers,
                     pulse::AllocationTracer &trace,
                     llvm::SmallVectorImpl<int64_t> &found,
@@ -182,7 +182,8 @@ inline bool readers(mlir::Value value, const pulse::Controllers &controllers,
     if (value != readout.getResult())
       return true;
     int64_t reader = controllers.of(readout->getOperand(0), trace);
-    found.push_back(reader);
+    if (!llvm::is_contained(found, reader))
+      found.push_back(reader);
     return reader >= 0;
   }
   if (mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType, pulse::ToneType,
@@ -198,8 +199,8 @@ inline bool readers(mlir::Value value, const pulse::Controllers &controllers,
 }
 
 /// Adds to `found` the controllers of the pulses that use `value`, or of
-/// the branches on it; false if one of them is unknown, or `value` leaves
-/// what can be followed.
+/// the branches on it, each once; false if one of them is unknown, or
+/// `value` leaves what can be followed.
 inline bool takers(mlir::Value value, const pulse::Controllers &controllers,
                    pulse::AllocationTracer &trace,
                    llvm::SmallVectorImpl<int64_t> &found,
@@ -208,7 +209,8 @@ inline bool takers(mlir::Value value, const pulse::Controllers &controllers,
     return true;
   auto pulse = [&](mlir::Operation *op) {
     int64_t taker = controllers.of(op->getOperand(0), trace);
-    found.push_back(taker);
+    if (!llvm::is_contained(found, taker))
+      found.push_back(taker);
     return taker >= 0;
   };
   for (mlir::OpOperand &use : value.getUses()) {
