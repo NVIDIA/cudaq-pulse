@@ -498,12 +498,24 @@ class _Choice(Selection):
         )
 
     def _binary(self, op: str, other: Any) -> Any:
+        if self.vtype == "condition":
+            from ._conditions import not_a_number
+
+            not_a_number(self, op)
         return _choice_map(_CHOICE_OPS[op], self, other)
 
     def _rbinary(self, op: str, other: Any) -> Any:
+        if self.vtype == "condition":
+            from ._conditions import not_a_number
+
+            not_a_number(self, op)
         return _choice_map(_CHOICE_OPS[op], other, self)
 
     def __neg__(self) -> Any:
+        if self.vtype == "condition":
+            from ._conditions import not_a_number
+
+            not_a_number(self, "neg")
         return _choice_map(operator.neg, self)
 
     def __pos__(self) -> Any:
@@ -513,9 +525,17 @@ class _Choice(Selection):
         return _choice_map(abs, self)
 
     def __eq__(self, other: object) -> Any:
+        if self.vtype == "condition":
+            from ._conditions import compared
+
+            other = compared(other)
         return _choice_map(operator.eq, self, other)
 
     def __ne__(self, other: object) -> Any:
+        if self.vtype == "condition":
+            from ._conditions import compared
+
+            other = compared(other)
         return _choice_map(operator.ne, self, other)
 
     def __lt__(self, other: Any) -> Any:
@@ -533,6 +553,10 @@ class _Choice(Selection):
     def cast(self, dtype: str) -> Any:
         if dtype not in ("i64", "f64"):
             raise CompilationError(f"unsupported symbolic cast to {dtype}")
+        if self.vtype == "condition":
+            from ._conditions import not_a_number
+
+            not_a_number(self, "int() or float()")
         convert = int if dtype == "i64" else float
         return _choice_map(lambda v: v.cast(dtype) if is_symbolic(v) else convert(v), self)
 
@@ -544,6 +568,8 @@ class _Choice(Selection):
         )
 
     def __repr__(self) -> str:
+        if self.vtype == "condition":
+            return f"a condition on measurement results kept at line {self.line}"
         return f"_Choice({self.cond!r}, {self.then!r}, {self.other!r})"
 
 
@@ -675,7 +701,13 @@ def _choose(cond: IRValue, then: Any, other: Any, like: _Choice, scope: tuple[in
     cls = then.__class__
     if cls is other.__class__ and (cls is int or cls is float or cls is bool) and then == other:
         return then
-    return _Choice(cond, then, other, like.name, like.line, scope)
+    chosen = _Choice(cond, then, other, like.name, like.line, scope)
+    if like.vtype == "condition" and all(
+        v.__class__ is bool or (v.__class__ is _Choice and v.vtype == "condition")
+        for v in (then, other)
+    ):
+        chosen.vtype = "condition"
+    return chosen
 
 
 def _choice_map(fn: Callable[..., Any], *args: Any) -> Any:
@@ -722,6 +754,11 @@ def _choice_condition(choice: _Choice) -> Any:
         return decided
     if decided.then.__class__ is bool and decided.other.__class__ is bool:
         return decided.cond if decided.then else _NotMeasurement(decided.cond)
+    if choice.vtype == "condition":
+        # A condition on measurement results kept in a value.
+        from ._conditions import condition_bit
+
+        return condition_bit(choice)
     raise CompilationError(
         f"an if on {choice.origin} would depend on more than one measurement; "
         "branch on the measurements instead"
@@ -2458,8 +2495,11 @@ class PulseIREmitter:
             subject = "the value of the conditional expression, `and` or `or`"
             where = f"that expression at line {line}"
             inside = outside = "use an if statement with the op in each arm"
-        from ._conditions import is_condition
+        from ._conditions import is_condition, truth_choice
 
+        if truth_choice(cond, a, b):
+            # A condition on measurement results, chosen as one.
+            return
         if measurement and (is_condition(a) or is_condition(b)):
             raise CompilationError(
                 f"{subject} would depend on both a measurement result and a condition on "
@@ -2475,19 +2515,6 @@ class PulseIREmitter:
                 f"{subject} would depend on {on} through a value made inside an arm of "
                 f"{where}, which does not exist after it; {inside}, or make the value "
                 "before it"
-            )
-        # An arm that is a measurement result, or its `not`.
-        arms = [v.value if v.__class__ is _NotMeasurement else v for v in (a, b)]
-        if (
-            measurement
-            and not name
-            and any(v.__class__ is IRValue and v.vtype == "measurement" for v in arms)
-        ):
-            raise CompilationError(
-                f"`and`, `or` and `not` of measurement results at line {line} give no value "
-                "to keep: a measurement result is known only when the program runs, and only "
-                "an if tests it; write the condition in the if itself, as in "
-                "`if a and not b:`"
             )
         raise CompilationError(
             f"{subject} would depend on {on}: the arms of {where} leave {_describe(a)} and "
@@ -3277,6 +3304,10 @@ class PulseIREmitter:
 
     def _check_choice(self, choice: _Choice) -> None:
         """Reject *choice* outside the regions where its if is."""
+        if choice.vtype == "condition":
+            from ._conditions import note_builder
+
+            note_builder(self.b)
         scope = choice.scope
         if scope and getattr(self.b, "scope", ())[: len(scope)] != scope:
             raise CompilationError(
@@ -3303,6 +3334,10 @@ class PulseIREmitter:
         given = [*operands, *attrs.values()]
         if not nested:
             for root in _choices_in(given):
+                if root.vtype == "condition":
+                    from ._conditions import not_a_number
+
+                    not_a_number(root, f"{fname}()")
                 self._check_choice(root)
         b = self.b
         select = getattr(b, "select", None)

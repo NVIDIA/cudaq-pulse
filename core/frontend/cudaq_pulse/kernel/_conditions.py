@@ -14,10 +14,12 @@ imports this module when a kernel first does one of these.
 from __future__ import annotations
 
 import numbers
-from typing import TYPE_CHECKING, Any
+import operator
+import threading
+from typing import TYPE_CHECKING, Any, NoReturn
 
 from ._bytecode_normalize import FOR_ITER, LOAD_CONST, POP_TOP
-from ._emitter import _REJOIN_MESSAGE, _Choice, _NotMeasurement, _watch_choices
+from ._emitter import _REJOIN_MESSAGE, _Choice, _choice_map, _NotMeasurement, _watch_choices
 from .ir_builder import (
     AnswerValue,
     CompilationError,
@@ -84,6 +86,151 @@ def is_condition(value: Any) -> bool:
     if cls is AnswerValue:
         return bool(value.dtype == "i1")
     return cls is _NotMeasurement and answer_bit(value.value)
+
+
+# Conditions on measurement results kept in a value. Each is a choice of
+# bools (vtype "condition"): on a measurement, whether it is set, and on the
+# i1 of a condition on answers, whether it holds. An if on one that a single
+# measurement or answer does not decide tests its i1, a select of true and
+# false per condition, which lowering turns into the ifs on the measurements.
+
+_held = threading.local()
+
+
+def note_builder(builder: Any) -> None:
+    """Note *builder* as the one an if on a choice on this thread tests in."""
+    _held.builder = builder
+
+
+def truth_value(value: Any, scope: tuple[int, ...], builder: Any = None) -> Any:
+    """*value*, a bool, a measurement result, ``not`` of one, a condition
+    kept in a value or (given *builder*) a condition on answers, as the
+    condition it is; None if it is none of these."""
+    cls = value.__class__
+    if cls is bool:
+        return value
+    if cls is _Choice:
+        return value if value.vtype == "condition" else None
+    held = True
+    if cls is _NotMeasurement and not answer_bit(value.value):
+        value, held, cls = value.value, False, value.value.__class__
+    if cls is IRValue and value.vtype == "measurement":
+        return _leaf(value, held, scope)
+    if builder is not None and is_condition(value):
+        from ._classical import condition
+
+        if cls is _NotMeasurement:
+            value = negated(value)
+        return _leaf(condition(builder, value), True, scope)
+    return None
+
+
+def _leaf(cond: IRValue, held: bool, scope: tuple[int, ...]) -> _Choice:
+    leaf = _Choice(cond, held, not held, "", None, scope)
+    leaf.vtype = "condition"
+    return leaf
+
+
+def _truth_arm(value: Any) -> bool:
+    return is_condition(value) or truth_value(value, ()) is not None
+
+
+def truth_choice(cond: IRValue, a: Any, b: Any) -> bool:
+    """Whether an if on *cond*, a measurement result or a condition, whose
+    arms leave *a* and *b* chooses a condition kept in a value: each a bool,
+    a measurement result, ``not`` of one or a condition, and the choice
+    depending on a measurement result."""
+    if cond.vtype != "measurement" and cond.vtype != "i1":
+        return False
+    if not (_truth_arm(a) and _truth_arm(b)) or (a.__class__ is bool and b.__class__ is bool):
+        return False
+    if cond.vtype == "measurement":
+        return True
+    return any(v.__class__ is not bool and not is_condition(v) for v in (a, b))
+
+
+def chosen_condition(
+    builder: Any, cond: IRValue, a: Any, b: Any, name: str, line: int | None, scope: tuple[int, ...]
+) -> Any:
+    """The condition an if on *cond* leaves where its arms left *a* and *b*."""
+    then = truth_value(a, scope, builder)
+    other = truth_value(b, scope, builder)
+    if then is other or (then.__class__ is bool and other.__class__ is bool and then == other):
+        return then
+    _watch_choices(builder)
+    chosen = _Choice(cond, then, other, name, line, scope)
+    chosen.vtype = "condition"
+    return chosen
+
+
+def condition_bit(choice: _Choice) -> IRValue:
+    """The i1 an if tests where *choice*, a condition kept in a value, is
+    its condition: a select of true and false per measurement or answer."""
+    builder = _held.builder
+
+    def bit(value: Any) -> int:
+        if value.__class__ is bool:
+            return int(builder.bit_constant(value))
+        return _bit_select(builder, value.cond.vid, bit(value.then), bit(value.other))
+
+    return IRValue(bit(choice), "i1")
+
+
+def _bit_select(builder: Any, cond: int, then: int, other: int) -> int:
+    """The id of an i1 that is *then* where *cond* (a measurement, whether
+    it is set, or an i1) holds and *other* where not: a select the packed
+    builder records once in each region."""
+    from .packed_ir_builder import _SELECT, _header
+
+    key = ((cond, then, other), "bit")
+    vid = builder._numeric_vids.get(key)
+    if vid is not None:
+        return int(vid)
+    vid = builder._next_id
+    builder._next_id += 1
+    builder._put((_header(_SELECT, 4), vid, cond, then, other))
+    builder._numeric_vids[key] = vid
+    builder.selects = True
+    return int(vid)
+
+
+def not_a_number(choice: _Choice, operation: str) -> NoReturn:
+    """Raise for *operation* of *choice*, a condition kept in a value."""
+    symbol = _SYMBOLS.get(operation) or _OPERATION_SYMBOLS.get(operation)
+    symbol = f"`{symbol}`" if symbol else operation
+    raise CompilationError(
+        f"cannot trace {symbol} of {choice!r}: a condition on measurement results is known "
+        "only when the program runs, and only an if tests it (`if x:`); it combines with "
+        "and, or, not, &, |, ^, == and != of conditions, and is not a number"
+    )
+
+
+_OPERATION_SYMBOLS = {"div": "/"}
+
+
+def compared(other: Any) -> Any:
+    """*other* as what a condition kept in a value compares with: ``not``
+    of a measurement result is its truth; a measurement result itself stays
+    its level."""
+    if other.__class__ is _NotMeasurement and not answer_bit(other.value):
+        held = truth_value(other, ())
+        return other if held is None else held
+    return other
+
+
+def _truth_logic(symbol: str, lhs: Any, rhs: Any) -> Any:
+    """``lhs & rhs``, ``lhs | rhs`` or ``lhs ^ rhs`` of conditions, one at
+    least kept in a value; None for anything else, such as a measurement
+    result itself, whose bits are its level's."""
+    if lhs.__class__ is IRValue or rhs.__class__ is IRValue:
+        return None
+    a, b = truth_value(lhs, ()), truth_value(rhs, ())
+    if a is None or b is None or not (a.__class__ is _Choice or b.__class__ is _Choice):
+        return None
+    return _choice_map(_LOGIC[symbol], a, b)
+
+
+_LOGIC = {"&": operator.and_, "|": operator.or_, "^": operator.ne}
 
 
 def measurement_error(lhs: Any, symbol: str, rhs: Any) -> CompilationError:
@@ -189,6 +336,9 @@ def bit_logic(symbol: str, lhs: Any, rhs: Any) -> Any:
             # True | b and False & b are the constant; True & b and False | b are b.
             return constant if constant == (word == "or") else b
     if not (is_condition(lhs) and is_condition(rhs)):
+        kept = _truth_logic(symbol, lhs, rhs)
+        if kept is not None:
+            return kept
         if measured(lhs) or measured(rhs):
             raise measurement_error(lhs, symbol, rhs)
         raise CompilationError(
@@ -302,6 +452,12 @@ def any_or_all(either: bool, items: Any, error: CompilationError, generated: boo
         if item.__class__ is AnswerValue and item.dtype != "i1":
             item = UndecidableComparison(item, "!=", 0)
         elif not is_condition(item):
+            kept = truth_value(item, ())
+            if kept.__class__ is _Choice and (
+                found.__class__ is bool or found.__class__ is _Choice
+            ):
+                found = _choice_map(operator.or_ if either else operator.and_, found, kept)
+                continue
             if measured(item) or item.__class__ is IRValue:
                 raise error
             if bool(item) == either:
@@ -387,6 +543,8 @@ def chosen_value(
     else the choice between them."""
     if bits_chosen(cond, a, b):
         return bit_select(AnswerValue(cond.vid, "i1", scope), a, b)
+    if truth_choice(cond, a, b):
+        return chosen_condition(emitter.b, cond, a, b, name, line, scope)
     _watch_choices(emitter.b)
     return _Choice(cond, a, b, name, line, scope)
 

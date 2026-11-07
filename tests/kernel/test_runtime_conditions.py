@@ -266,8 +266,6 @@ def test_float_arguments_in_compared_conditions_specialize(condition):
         ("x in range(100)", "compare it with <, <= and == instead"),
         ("{n} == {5}", "it cannot be a set member or a dict key"),
         ("{n: 1}.get(5)", "it cannot be a set member or a dict key"),
-        ("any([m])", "known only when the program runs"),
-        ("all([m, not m])", "known only when the program runs"),
         ("any(c > 3 for c in (n,))", "give it a list, any([...])"),
         ("all(c > 3 for c in (n, 9))", "give it a list, all([...])"),
         ("[0.1, 0.2][n] > 0.1", "an index needs the value of get_n[0], the answer of a"),
@@ -306,7 +304,6 @@ _OF_A_PULSE_VALUE = (
     ("condition", "message"),
     [
         ("m == True", _MEASURED.format("measurement == True")),
-        ("m == False", _MEASURED.format("measurement == False")),
         ("m != True", _MEASURED.format("measurement != True")),
         ("True == m", _MEASURED.format("measurement == True")),
         ("m == 1", _MEASURED.format("measurement == 1")),
@@ -315,7 +312,6 @@ _OF_A_PULSE_VALUE = (
         ("m < 1", _MEASURED.format("measurement < 1")),
         ("m == np.True_", _MEASURED.format("measurement == np.True_")),
         ("bool(m) == True", _MEASURED.format("measurement == True")),
-        ("(not m) == True", _MEASURED.format("(not measurement) == True")),
         ("m == m", _MEASURED.format("measurement == measurement")),
         ("m is True", _MEASURED.format("measurement is True")),
         ("m is not False", _MEASURED.format("measurement is False")),
@@ -339,7 +335,6 @@ _OF_A_PULSE_VALUE = (
         ("m == b", _MIXED.format("measurement == get_b[0]")),
         ("b == m", _MIXED.format("get_b[0] == measurement")),
         ("m != (n > 3)", _MIXED.format("measurement != (get_n[0] > 3)")),
-        ("(not m) == (n > 3)", _MIXED.format("(not measurement) == (get_n[0] > 3)")),
         ("m & (n > 3)", _MIXED.format("measurement & (get_n[0] > 3)")),
         ("b | m", _MIXED.format("get_b[0] | measurement")),
         ("m ^ b", _MIXED.format("measurement ^ get_b[0]")),
@@ -410,13 +405,6 @@ def test_a_chosen_condition_is_one_compare_of_both_answers():
     assert len(re.findall(r"arith\.cmp[if] ", text)) == 2
 
 
-_NO_MEASURED_VALUE = (
-    "`and`, `or` and `not` of measurement results at line 9 give no value to keep: a "
-    "measurement result is known only when the program runs, and only an if tests it; "
-    "write the condition in the if itself, as in `if a and not b:`"
-)
-
-
 def _mlir_with(prelude, condition):
     return pulse.compile(_kernel(condition, prelude=prelude)).lower(Q[0]).mlir()
 
@@ -424,21 +412,7 @@ def _mlir_with(prelude, condition):
 @pytest.mark.parametrize(
     ("prelude", "message"),
     [
-        ("    c = m and (n > 3)\n", "both a measurement result and a condition on answers"),
-        ("    c = m and b\n", "both a measurement result and a condition on answers"),
-        (
-            "    if m:\n        c = n > 3\n    else:\n        c = b\n",
-            "'c' would depend on both a measurement result and a condition on answers",
-        ),
-        ("    c = (n > 3) and m\n", "the value of the conditional expression, `and` or `or`"),
         ("    c = 0.3 if n > 3 else 'a'\n", "an if chooses only between two numbers"),
-        ("    c = m and not m\n", _NO_MEASURED_VALUE),
-        ("    c = not m or m\n", _NO_MEASURED_VALUE),
-        ("    c = m or not m\n", _NO_MEASURED_VALUE),
-        (
-            "    if m:\n        c = not m\n    else:\n        c = m\n",
-            "leave `not` of a measurement result and a measurement result on it",
-        ),
     ],
 )
 def test_a_value_that_cannot_be_chosen_raises(prelude, message):

@@ -298,6 +298,28 @@ observed a nonzero level), whose arms yield the lines and tones they
 advance; both arms start once the measurement completes, and the code after
 the ``if`` waits for the longer arm.
 
+A condition on measurement results can be kept in a name and tested later,
+once or in several ``if`` statements:
+
+.. code-block:: python
+   :class: fragment
+
+   flip = s0 and not s1
+   if flip:
+       drive(drive_line, x)
+
+``and``, ``or``, ``not``, a conditional expression, ``any()`` and
+``all()`` of results keep their truth, whether each observed a nonzero
+level, as an ``if`` tests it; ``&``, ``|``, ``^``, ``==`` and ``!=``
+combine such conditions, and in ``and``, ``or`` and conditional expressions
+conditions on answers of classical calls mix with them. ``if flip:`` compiles to the ifs ``if s0 and not s1:`` gives: one
+``pulse.is_set`` test per readout, in the order the condition reads them,
+each where the condition still depends on that readout. A kept condition is
+only tested: it is not a number (``0.1 * flip`` and an amplitude or a
+duration from it are a ``CompilationError``), and ``&``, ``==`` and the
+other operators do not take a measurement result itself, whose level they
+would compare.
+
 Python Inside Kernels
 ---------------------
 
