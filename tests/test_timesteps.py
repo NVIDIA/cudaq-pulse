@@ -140,7 +140,11 @@ def test_format_2_on_the_program_clock_in_timesteps_unrolls_to_format_1(kernel, 
     if kernel is rolled:
         assert [e["kind"] for e in structured["events"]] == ["loop"]
     else:
-        waits = [e for e in structured["events"] if e["kind"] == "wait" and "length" in e]
+        # The loop of waits for an answer stays rolled; each of its three
+        # waits converts its run-time length in timesteps.
+        assert [e["kind"] for e in structured["events"]].count("loop") == 1
+        unrolled = controller.unroll(structured)["events"]
+        waits = [e for e in unrolled if e["kind"] == "wait" and "length" in e]
         assert len(waits) == 3 and all(w["length"]["timestep"] == 2 for w in waits)
 
 

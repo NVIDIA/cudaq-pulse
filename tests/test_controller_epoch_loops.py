@@ -9,8 +9,9 @@
 an answer, or a wait whose length is one.
 
 Such a loop repeats when every iteration opens as many epochs and moves each
-line's epoch as far: the check reasons about it once per body, and what it
-gives is what it gives with every iteration walked.
+line's epoch as far: the check reasons about it once per body and the
+structured export keeps it rolled, each event's epoch stepping per iteration;
+what they give is what they give with every iteration walked.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from typing import Any
 import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse import controller
-from cudaq_pulse.controller import check
+from cudaq_pulse.controller import check, unroll
 
 from tests import _child
 from tests._handles import Q
@@ -173,6 +174,29 @@ def test_an_epoch_loop_is_checked_as_every_iteration(monkeypatch, clock, name, s
             assert compiled == _outcome(lambda li=limits: controller._compile_check(lowered, li)[0])
 
 
+def _loops(events: list[Any]) -> list[Any]:
+    found = []
+    for event in events:
+        if event["kind"] == "loop":
+            found.append(event)
+            found.extend(_loops(event["body"]))
+    return found
+
+
+@pytest.mark.parametrize("name", list(_rounds(1)))
+@pytest.mark.parametrize("schedule", ["asap", "alap", "rcp"])
+def test_the_structured_export_keeps_an_epoch_loop_rolled_and_unrolls_to_every_iteration(
+    name, schedule
+):
+    lowered = _lowered(_rounds(80)[name], schedule)
+    structured = lowered.export_controller(version=2)
+    loops = _loops(structured["events"])
+    assert any(loop["trips"] > 2 for loop in loops)
+    stepped = [e for loop in loops for e in loop["body"] if "epoch_step" in e]
+    assert stepped and all(len(e["epoch_step"]) >= 1 for e in stepped)
+    assert unroll(structured)["events"] == lowered.export_controller()["events"]
+
+
 _PROGRAM = """
 import json
 import cudaq_pulse as pulse
@@ -199,10 +223,17 @@ system = ControlSystem(controllers=[Controller(instruction_cycles=2, max_amplitu
 lowered = pulse.compile(rounds, control_system=system, unroll_threshold=0).lower(Q[0])
 print(json.dumps({"ops": lowered.metrics.op_count}))
 """
+_EXPORTED = """
+lowered = pulse.compile(rounds, unroll_threshold=0).lower(Q[0])
+program = lowered.export_controller(version=2)
+print(json.dumps({"events": len(program["events"])}))
+"""
 
 
-def test_10_5_rounds_of_blocking_answers_are_checked_in_bounded_memory():
-    step, rss_mb = _CHECKED, 150
+@pytest.mark.parametrize(
+    ("step", "rss_mb"), [(_CHECKED, 150), (_EXPORTED, 600)], ids=["check", "structured export"]
+)
+def test_10_5_rounds_of_blocking_answers_are_checked_and_exported_in_bounded_memory(step, rss_mb):
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     env = dict(os.environ, PYTHONPATH=os.pathsep.join(p for p in sys.path if p))
     source = _child.limits(30, rss_mb) + _PROGRAM.format(step=step)
@@ -216,4 +247,4 @@ def test_10_5_rounds_of_blocking_answers_are_checked_in_bounded_memory():
     )
     assert out.returncode == 0, out.stderr[-2000:]
     result = json.loads(out.stdout.splitlines()[-1])
-    assert result["ops"] > 0
+    assert result.get("ops", 1) > 0 and result.get("events", 0) < 16

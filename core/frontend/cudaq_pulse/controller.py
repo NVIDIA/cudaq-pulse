@@ -1354,7 +1354,13 @@ def unroll(program: Mapping[str, Any]) -> dict[str, Any]:
                 "duration_cycles": duration,
                 "end_cycles": None if start is None or duration is None else start + duration,
                 "iteration": iteration,
-                "epoch": item.get("epoch", 0),
+                "epoch": item.get("epoch", 0)
+                + sum(
+                    j * step
+                    for (_, _, j, _, _), step in zip(
+                        loops, item.get("epoch_step", ()), strict=False
+                    )
+                ),
                 "conditions": conditions,
             }
             if kind in _PLAYED or kind == "frame_update":

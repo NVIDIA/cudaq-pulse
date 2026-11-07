@@ -80,11 +80,15 @@ struct ControllerRecord {
   // for its iteration 1, 2 for its last) for each sampled loop around it.
   int64_t weight = 1;
   std::vector<std::pair<int64_t, int8_t>> samples;
-  // Rolled: the phase's step per iteration of each rolled loop around it,
-  // outermost first. A loop record has its iterations, first iteration,
-  // period, the number of records of its body after it, and the end of its
-  // last iteration.
-  std::vector<double> phaseSteps;
+  // Rolled: the phase's and the epoch's step per iteration of each rolled
+  // loop around it, outermost first. A loop record has its iterations,
+  // first iteration, period, the number of records of its body after it,
+  // and the end of its last iteration.
+  struct Step {
+    double phase;
+    int64_t epoch;
+  };
+  std::vector<Step> steps;
   int64_t trips = 0;
   int64_t first = 0;
   int64_t period = 0;
@@ -268,8 +272,9 @@ struct ControllerWalk : ControllerExpressions {
   int64_t nextInstance = 0;
   llvm::DenseMap<mlir::Operation *, bool> boundaries;
   // The epoch of each event, when the program has classical calls. A loop
-  // holding an epoch boundary is walked at every iteration, so the walk
-  // visits the boundaries in program order, once per execution.
+  // holding an epoch boundary is sampled at every iteration, so that the
+  // walk visits the boundaries in program order; one rolled counts the
+  // boundaries of the iterations it does not walk (EpochWalk::skip).
   std::optional<EpochWalk> epochs;
 
   static Frame initialFrame(mlir::Operation *root) {
@@ -1173,9 +1178,10 @@ struct ControllerWalk : ControllerExpressions {
       if (ids)
         for (int64_t id : ids.asArrayRef())
           sizes.push_back(carried[id].size());
-      // A walk that counts no epochs need not visit each boundary.
+      // A sampled walk that counts epochs visits each boundary; a rolled one
+      // counts those of the iterations it does not walk.
       if (walk == Walk::Every || trips < 2 ||
-          ((epochs || walk == Walk::Rolled) && holdsBoundary(loop)))
+          (epochs && walk == Walk::Sampled && holdsBoundary(loop)))
         everyIteration(loop, trips);
       else if (walk == Walk::Sampled)
         sampled(loop, trips);
@@ -1320,20 +1326,27 @@ struct ControllerWalk : ControllerExpressions {
     uint64_t nextUpdate;
     std::map<int64_t, std::vector<Carried>> carried;
     std::map<mlir::Operation *, FrameDependencies> frameDependencies;
+    size_t boundaries = 0;
+    EpochWalk::Mark epochs;
   };
 
   State save() const {
-    return {frames,
-            reached,
-            latest,
-            nextBranch,
-            result.size(),
-            pending,
-            toneIds,
-            nextUpdate,
-            carried,
-            track ? frameDependencies
-                  : std::map<mlir::Operation *, FrameDependencies>()};
+    State state{frames,
+                reached,
+                latest,
+                nextBranch,
+                result.size(),
+                pending,
+                toneIds,
+                nextUpdate,
+                carried,
+                track ? frameDependencies
+                      : std::map<mlir::Operation *, FrameDependencies>()};
+    if (epochs) {
+      state.boundaries = epochs->boundaries.size();
+      state.epochs = epochs->mark();
+    }
+    return state;
   }
 
   void restore(State &state) {
@@ -1350,6 +1363,12 @@ struct ControllerWalk : ControllerExpressions {
       dependencies.resize(state.size);
       natives.resize(state.size);
       frameDependencies = std::move(state.frameDependencies);
+    }
+    if (epochs) {
+      epochs->boundaries.resize(state.boundaries);
+      epochs->skipped =
+          state.epochs.opened - static_cast<int64_t>(state.boundaries);
+      epochs->current = std::move(state.epochs.current);
     }
   }
 
@@ -1382,7 +1401,7 @@ struct ControllerWalk : ControllerExpressions {
     return std::strcmp(x.kind, y.kind) == 0 && x.op == y.op &&
            x.start.has_value() == y.start.has_value() && x.trips == y.trips &&
            x.first == y.first && x.size == y.size &&
-           x.phaseSteps.size() == y.phaseSteps.size() &&
+           x.steps.size() == y.steps.size() &&
            sameKnown(x, y, static_cast<int64_t>(a), static_cast<int64_t>(b));
   }
 
@@ -1503,6 +1522,12 @@ struct ControllerWalk : ControllerExpressions {
     auto frames0 = frames;
     size_t a0 = result.size();
     block(*loop.getBody());
+    // The epochs at the start of each iteration walked, and after the last.
+    std::array<EpochWalk::Mark, 4> marks;
+    if (epochs) {
+      marks[0] = entry.epochs;
+      marks[1] = epochs->mark();
+    }
     // The states before and after the first iteration exported rolled.
     auto framesFirst = frames0, framesNext = frames;
     auto reachedNext = reached;
@@ -1511,6 +1536,8 @@ struct ControllerWalk : ControllerExpressions {
     iteration.back() = 1;
     block(*loop.getBody());
     size_t a2 = result.size();
+    if (epochs)
+      marks[2] = epochs->mark();
     int64_t first = 0;
     size_t a = a0, b = a1, e = a2;
     if (!sameFrequencies(framesFirst, framesNext)) {
@@ -1523,6 +1550,8 @@ struct ControllerWalk : ControllerExpressions {
         latestNext = latest;
         iteration.back() = 2;
         block(*loop.getBody());
+        if (epochs)
+          marks[3] = epochs->mark();
         a = a1, b = a2, e = result.size();
       } else {
         e = 0;
@@ -1530,18 +1559,23 @@ struct ControllerWalk : ControllerExpressions {
     }
     std::optional<int64_t> period =
         e && !tracks() ? periodOf(a, b, e, false) : std::optional<int64_t>();
+    // The iterations exported rolled open as many epochs each.
+    if (period && epochs &&
+        !EpochWalk::steady(llvm::ArrayRef(marks).slice(first, 3)))
+      period.reset();
 
-    std::vector<double> steps;
+    std::vector<ControllerRecord::Step> steps;
     for (size_t i = 0; period && i < b - a; ++i) {
       const ControllerRecord &x = result[a + i], &y = result[b + i];
       double step = y.phase - x.phase;
       if (!same(x.frequency, y.frequency) ||
           std::isnan(x.phase) != std::isnan(y.phase))
         period.reset();
-      for (size_t l = 0; period && l < x.phaseSteps.size(); ++l)
-        if (!same(x.phaseSteps[l], y.phaseSteps[l]))
+      for (size_t l = 0; period && l < x.steps.size(); ++l)
+        if (!same(x.steps[l].phase, y.steps[l].phase) ||
+            x.steps[l].epoch != y.steps[l].epoch)
           period.reset();
-      steps.push_back(step);
+      steps.push_back({step, epochs ? y.epoch - x.epoch : 0});
     }
     if (!period) {
       iteration.pop_back();
@@ -1551,6 +1585,8 @@ struct ControllerWalk : ControllerExpressions {
     // The state after the last iteration: every number moves by the same
     // amount per iteration from the first exported one on.
     int64_t more = trips - first - 2;
+    if (epochs && !epochs->skip(more, marks[first + 1]))
+      throw std::overflow_error("a rolled loop opens more than 2**63 epochs");
     auto framesAfter = frames;
     for (auto &[root, frame] : framesAfter) {
       auto found = framesNext.find(root);
@@ -1611,7 +1647,7 @@ struct ControllerWalk : ControllerExpressions {
     for (size_t i = a; i < b; ++i) {
       ControllerRecord &r = result[i];
       r.iteration[depth] = -1;
-      r.phaseSteps.insert(r.phaseSteps.begin(), steps[i - a]);
+      r.steps.insert(r.steps.begin(), steps[i - a]);
       if (timed && r.frameUpdate())
         continue;
       if (r.start && !node.start)
@@ -2218,7 +2254,8 @@ private:
              *conditions = intern("conditions"), *constant = intern("const"),
              *controller = intern("controller"),
              *duration = intern("duration_cycles"), *end = intern("end_cycles"),
-             *epoch = intern("epoch"), *expression = intern("expression"),
+             *epoch = intern("epoch"), *epochStep = intern("epoch_step"),
+             *expression = intern("expression"),
              *first = intern("first_iteration"),
              *frameUpdates = intern("frame_updates"),
              *frequency = intern("frequency_hz"),
@@ -2562,6 +2599,13 @@ private:
     int64_t epoch = r.start ? r.epoch : 0;
     if (!compact || epoch)
       put(event, key.epoch, integer(epoch));
+    if (r.start &&
+        llvm::any_of(r.steps, [](const auto &s) { return s.epoch; })) {
+      nb::list steps = list(r.steps.size());
+      for (size_t i = 0; i < r.steps.size(); ++i)
+        set(steps, i, integer(r.steps[i].epoch));
+      put(event, key.epochStep, steps);
+    }
     if (!compact || !r.conditions.empty()) {
       nb::list conditions = list(r.conditions.size());
       for (size_t i = 0; i < r.conditions.size(); ++i) {
@@ -2597,10 +2641,10 @@ private:
     nb::dict tone;
     put(tone, key.frequency, number(r.frequency));
     put(tone, key.phase, number(r.phase));
-    if (!r.phaseSteps.empty()) {
-      nb::list steps = list(r.phaseSteps.size());
-      for (size_t i = 0; i < r.phaseSteps.size(); ++i)
-        set(steps, i, number(r.phaseSteps[i]));
+    if (!r.steps.empty()) {
+      nb::list steps = list(r.steps.size());
+      for (size_t i = 0; i < r.steps.size(); ++i)
+        set(steps, i, number(r.steps[i].phase));
       put(tone, key.phaseStep, steps);
     }
     nb::list tones = list(1);

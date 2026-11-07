@@ -366,6 +366,11 @@ Played events and frame updates
     frame), each with its ``frequency_hz``, its ``phase_rad`` in the loops'
     first iterations, and ``phase_step_rad``, the phase added per iteration
     of each loop around it, outermost first.
+Epochs in a rolled loop
+    An event's ``epoch`` is that of the loops' first iterations; in a loop
+    whose body ends epochs (a blocking wait for an answer, or a wait whose
+    length is an answer), ``epoch_step`` is the epochs added per iteration
+    of each loop around it, outermost first, omitted where every step is 0.
 Values known at run time
     As in ``/1``, and only where a value is computed from a readout or an
     answer: ``tone``, ``frame_updates`` and ``phase_offset_rad`` on a play
