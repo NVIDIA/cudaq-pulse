@@ -44,7 +44,6 @@ from typing import TYPE_CHECKING, Any, NoReturn
 from .._errors import NotFoundError, PulseError
 from ..classical import ClassicalFunction
 from . import _bytecode_normalize as bc
-from . import _classical
 from ._bytecode_normalize import (
     BINARY,
     CALL,
@@ -87,6 +86,9 @@ from .ir_builder import (
     is_symbolic,
 )
 from .packed_ir_builder import MAX_CUSTOM_SAMPLES
+
+if TYPE_CHECKING:
+    from .._units import Time
 
 _WAVEFORMS = frozenset(
     {"gaussian", "square", "drag", "cosine", "tanh_ramp", "gaussian_square", "custom"}
@@ -161,8 +163,67 @@ def _extract_closures(fn: Any) -> dict[str, Any]:
 _PULSE_FUNCTIONS: dict[Any, str] = {}
 _PLAY_FUNCTIONS: dict[Any, str] = {}
 _TONE_KEYWORD = ("tone",)
+
+
+class Future:
+    """A request to a classical function, sent from inside a kernel."""
+
+    __slots__ = ("function", "index", "vid", "flow", "answers", "timeout_ns")
+
+    def __init__(
+        self,
+        function: ClassicalFunction[..., Any],
+        index: int,
+        vid: int,
+        flow: tuple[tuple[int, bool], ...],
+    ) -> None:
+        self.function = function
+        self.index = index
+        self.vid = vid
+        self.flow = flow
+        self.answers: Any = None
+        self.timeout_ns: float | None = None
+
+    def result(self, timeout: float | Time | None = None) -> Any:
+        """Take the answer; only meaningful while a kernel is traced."""
+        raise CompilationError("a future's result() is taken inside the kernel that submitted it")
+
+    def __repr__(self) -> str:
+        return f"<future of {self.function.name}>"
+
+
 _SUBMIT = ClassicalFunction.submit
-_RESULT = _classical.Future.result
+_RESULT = Future.result
+
+
+def _is_answer_condition(value: Any) -> bool:
+    """Whether *value* is a branch condition computed from an answer."""
+    return isinstance(value, (AnswerValue, UndecidableComparison)) and contains_answer(value)
+
+
+# The tracing of classical calls (_classical) is loaded when a kernel first
+# submits a request, takes an answer or branches on one: the first of these
+# three run binds all three to the module's functions.
+def _load_classical() -> None:
+    global _trace_submit, _trace_take, _trace_condition
+    from ._classical import condition, submit, take
+
+    _trace_submit, _trace_take, _trace_condition = submit, take, condition
+
+
+def _trace_submit(*args: Any, **kwargs: Any) -> Any:
+    _load_classical()
+    return _trace_submit(*args, **kwargs)
+
+
+def _trace_take(*args: Any, **kwargs: Any) -> Any:
+    _load_classical()
+    return _trace_take(*args, **kwargs)
+
+
+def _trace_condition(*args: Any, **kwargs: Any) -> Any:
+    _load_classical()
+    return _trace_condition(*args, **kwargs)
 
 
 def _load_pulse_functions() -> None:
@@ -295,11 +356,9 @@ def _takes_ir(args: Sequence[Any], kwargs: dict[str, Any] | None) -> bool:
     directly or in a list or tuple."""
 
     def traced(value: Any) -> bool:
-        if isinstance(value, (IRValue, _classical.Future)):
+        if isinstance(value, (IRValue, Future)):
             return True
-        return isinstance(value, (list, tuple)) and any(
-            isinstance(v, _classical.Future) for v in value
-        )
+        return isinstance(value, (list, tuple)) and any(isinstance(v, Future) for v in value)
 
     return any(traced(a) for a in args) or bool(kwargs and any(traced(v) for v in kwargs.values()))
 
@@ -1751,8 +1810,8 @@ class PulseIREmitter:
                         if cond.__class__ is _Choice:
                             self._check_choice(cond)
                             cond = _choice_condition(cond)
-                        if _classical.is_answer_condition(cond):
-                            cond = _classical.condition(self.b, cond)
+                        if _is_answer_condition(cond):
+                            cond = _trace_condition(self.b, cond)
                         if isinstance(cond, (IRValue, _NotMeasurement)):
                             pc = self._runtime_branch(prog, pc - 1, cond, op is _jit)
                             pc = self._jump(pc, lo, hi, header)
@@ -1874,8 +1933,8 @@ class PulseIREmitter:
 
                 elif op is _not:
                     value = pop()
-                    if _classical.is_answer_condition(value):
-                        value = _classical.condition(self.b, value)
+                    if _is_answer_condition(value):
+                        value = _trace_condition(self.b, value)
                     if isinstance(value, IRValue):
                         push(_NotMeasurement(value))
                     elif isinstance(value, _NotMeasurement):
@@ -2988,10 +3047,10 @@ class PulseIREmitter:
         if callable_val.__class__ is types.MethodType:
             owner = callable_val.__self__
             if owner.__class__ is ClassicalFunction and callable_val.__func__ is _SUBMIT:
-                self.stack.append(_classical.submit(self.b, owner, call_args, kwargs))
+                self.stack.append(_trace_submit(self.b, owner, call_args, kwargs))
                 return
-            if owner.__class__ is _classical.Future and callable_val.__func__ is _RESULT:
-                self.stack.append(_classical.take(self.b, owner, call_args, kwargs))
+            if owner.__class__ is Future and callable_val.__func__ is _RESULT:
+                self.stack.append(_trace_take(self.b, owner, call_args, kwargs))
                 return
         elif callable_val.__class__ is ClassicalFunction:
             raise CompilationError(

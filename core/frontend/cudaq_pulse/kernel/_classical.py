@@ -11,7 +11,8 @@
 ``Future``; its ``.result()`` records a ``classical.wait`` and gives the
 answer as ``AnswerValue``s, which later pulse ops take like float kernel
 parameters and which branches test. The tracer calls these instead of the
-methods themselves.
+methods themselves, and imports this module when a kernel first makes a
+classical call or branches on an answer.
 """
 
 from __future__ import annotations
@@ -32,49 +33,21 @@ from ..classical import (
     _enter_slow,
     _spelled,
 )
+from ._emitter import Future
 from .ir_builder import (
     AnswerValue,
     CompilationError,
     IRValue,
     UndecidableComparison,
-    contains_answer,
     is_symbolic,
 )
 
 if TYPE_CHECKING:
-    from .._units import Time
     from .packed_ir_builder import PackedIRBuilder
 
 # The values an f64 argument takes as they are: _numbers would pass them
 # straight to _get_numeric_vid.
 _DIRECT_F64 = frozenset({float, int, AnswerValue})
-
-
-class Future:
-    """A request to a classical function, sent from inside a kernel."""
-
-    __slots__ = ("function", "index", "vid", "flow", "answers", "timeout_ns")
-
-    def __init__(
-        self,
-        function: ClassicalFunction[..., Any],
-        index: int,
-        vid: int,
-        flow: tuple[tuple[int, bool], ...],
-    ) -> None:
-        self.function = function
-        self.index = index
-        self.vid = vid
-        self.flow = flow
-        self.answers: Any = None
-        self.timeout_ns: float | None = None
-
-    def result(self, timeout: float | Time | None = None) -> Any:
-        """Take the answer; only meaningful while a kernel is traced."""
-        raise CompilationError("a future's result() is taken inside the kernel that submitted it")
-
-    def __repr__(self) -> str:
-        return f"<future of {self.function.name}>"
 
 
 def _builder_supports(builder: Any) -> None:
@@ -406,11 +379,6 @@ def take(builder: Any, future: Future, args: Sequence[Any], kwargs: dict[str, An
     future.answers = result
     future.timeout_ns = timeout_ns
     return result
-
-
-def is_answer_condition(value: Any) -> bool:
-    """Whether *value* is a branch condition computed from an answer."""
-    return isinstance(value, (AnswerValue, UndecidableComparison)) and contains_answer(value)
 
 
 def condition(builder: Any, value: Any) -> IRValue:
