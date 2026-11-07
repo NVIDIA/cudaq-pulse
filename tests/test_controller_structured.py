@@ -358,6 +358,27 @@ def test_a_first_iteration_that_differs_is_exported_before_its_loop():
     assert program["events"][-1]["first_iteration"] == 1
 
 
+@pulse.kernel
+def _first_in_loop(q):
+    # The drive line plays first in the loop; the sync after it waits for it.
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    readout(r, square(10, 0.05))
+    for _ in range(6):
+        drive(d, square(16, 0.1))
+        wait(d, 4)
+    sync(d, r)
+    readout(r, square(20, 0.05))
+
+
+@pytest.mark.parametrize("schedule", ["asap", "alap"])
+def test_a_line_first_played_in_a_rolled_loop_is_free_after_its_last_iteration(schedule):
+    lowered = pulse.compile(_first_in_loop, schedule=schedule, unroll_threshold=0).lower(Q[0])
+    structured = lowered.export_controller(version=2)
+    assert list(_loops(structured["events"]))
+    assert unroll(structured)["events"] == lowered.export_controller()["events"]
+
+
 def test_waveforms_are_listed_once_and_lines_list_their_qudits():
     lowered, _ = _lower("unrolled")
     program = lowered.export_controller(version=2)

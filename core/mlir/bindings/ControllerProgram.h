@@ -1503,7 +1503,7 @@ struct ControllerWalk : ControllerExpressions {
     block(*loop.getBody());
     // The states before and after the first iteration exported rolled.
     auto framesFirst = frames0, framesNext = frames;
-    auto reachedFirst = entry.reached, reachedNext = reached;
+    auto reachedNext = reached;
     auto latestNext = latest;
     size_t a1 = result.size();
     iteration.back() = 1;
@@ -1517,7 +1517,6 @@ struct ControllerWalk : ControllerExpressions {
       if (repeats) {
         framesFirst = std::move(framesNext);
         framesNext = frames;
-        reachedFirst = std::move(reachedNext);
         reachedNext = reached;
         latestNext = latest;
         iteration.back() = 2;
@@ -1562,14 +1561,16 @@ struct ControllerWalk : ControllerExpressions {
       frame.phase = extend(before.phase, next.phase, more + 1);
       frame.timeNs = extend(before.timeNs, next.timeNs, more + 1);
     }
+    // A line's reach moves as from the next-to-last iteration walked to the
+    // last: a line first played in the loop has no reach before it.
     for (auto &[allocation, time] : reached) {
       auto next = reachedNext.find(allocation);
-      auto before = reachedFirst.find(allocation);
-      std::optional<int64_t> now =
-          next == reachedNext.end() ? time : next->second;
-      if (now && before != reachedFirst.end() && before->second)
-        now = *now + (more + 1) * (*now - *before->second);
-      time = now;
+      if (next == reachedNext.end())
+        continue;
+      if (time && next->second)
+        time = *time + more * (*time - *next->second);
+      else
+        time = std::nullopt;
     }
     frames = std::move(framesAfter);
     if (!carried.empty())
