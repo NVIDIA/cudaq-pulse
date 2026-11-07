@@ -707,7 +707,13 @@ def test_a_qudit_s_drive_and_readout_round_trip_through_the_system_file():
     readout = DispersiveReadout(frequency_hz=7.1e9, linewidth_hz=1e6, error_1to0=0.02)
     qubits = {
         0: Qubit(
-            0, 5.0e9, -2e8, 50.0, 30.0, drive=MicrowaveDrive(x_amplitude=0.3), readout=readout
+            0,
+            5.0e9,
+            -2e8,
+            50.0,
+            30.0,
+            drive=MicrowaveDrive(amplitude_scale_rad_per_ns=0.3),
+            readout=readout,
         ),
         1: Qubit(1, 5.1e9, -2e8, 50.0, 30.0),
     }
@@ -715,9 +721,7 @@ def test_a_qudit_s_drive_and_readout_round_trip_through_the_system_file():
     qudits = _round_trip(dev)["quantum_system"]["qudits"]
     assert qudits[0]["readout"]["kind"] == "dispersive"
     assert qudits[0]["readout"]["frequency_hz"] == 7.1e9
-    assert qudits[0]["drive"] == {"kind": "microwave", **dict.fromkeys(MicrowaveDrive._fields)} | {
-        "x_amplitude": 0.3
-    }
+    assert qudits[0]["drive"] == {"kind": "microwave", "amplitude_scale_rad_per_ns": 0.3}
     assert qudits[1]["readout"] is None and qudits[1]["drive"] is None
     other = Qubit(0, 5.0e9, -2e8, 50.0, 30.0, readout=readout.replace(linewidth_hz=2e6))
     moved = pulse.device(
@@ -736,12 +740,13 @@ def test_a_system_file_refuses_an_unknown_component_kind_or_field():
     ).as_dict()
     qudit = data["quantum_system"]["qudits"][0]
     qudit["readout"] = {"kind": "fluorescence"}
-    qudit["drive"] = {"kind": "microwave", "x_amp": 0.2}
+    qudit["drive"] = {"kind": "microwave", "amplitude_scale": 0.2}
     with pytest.raises(DeviceDefinitionError) as found:
         pulse.device(data)
     message = str(found.value)
     assert "qudits[0].readout.kind" in message and "the kinds are dispersive" in message
-    assert "qudits[0].drive.x_amp" in message and "did you mean 'x_amplitude'" in message
+    assert "qudits[0].drive.amplitude_scale" in message
+    assert "did you mean 'amplitude_scale_rad_per_ns'" in message
 
 
 def test_line_delays_and_a_reference_clock_round_trip_through_the_system_file():
@@ -787,9 +792,7 @@ def test_a_custom_quantum_system_is_written_inline_with_the_new_key_names():
     )
     qpu = pulse.device({"quantum_system": target})
     data = _round_trip(qpu)
-    assert data["quantum_system"]["couplings"] == [
-        {"qudits": [0, 1], "strength_hz": 3e6, "gate": None}
-    ]
+    assert data["quantum_system"]["couplings"] == [{"qudits": [0, 1], "strength_hz": 3e6}]
     assert [q["index"] for q in data["quantum_system"]["qudits"]] == [0, 1]
     assert "control_system" not in data
 

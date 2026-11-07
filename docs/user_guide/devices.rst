@@ -9,8 +9,8 @@ Devices and Targets
 ===================
 
 A *target* is the calibrated physics of a machine: qudit frequencies and
-anharmonicities, couplings, residual ZZ, T1/T2 and drive calibration, and the
-pulse clock. A *device* is a target together with a *layout*, which maps
+anharmonicities, couplings, residual ZZ, T1/T2, the pulses its gates are
+calibrated for, and the pulse clock. A *device* is a target together with a *layout*, which maps
 the qudit numbering a program uses to the target's carriers. Both are
 read-only.
 
@@ -39,12 +39,13 @@ couplings, for transmons the exchange g (a^dagger b + a b^dagger):
 
 .. code-block:: python
 
-   from cudaq_pulse.targets import Coupling, Gate, Qubit, TargetDescription
+   from cudaq_pulse.targets import Coupling, FluxCZ, Qubit, TargetDescription
 
+   cz = FluxCZ(duration_ns=98.0)
    pair = TargetDescription(
        name="pair",
        qubits={i: Qubit(i, f, -2.0e8, 50.0, 30.0) for i, f in enumerate([4.8e9, 6.9e9])},
-       couplings=[Coupling((0, 1), strength_hz=5.7e6, gate=Gate("cz", duration_ns=98.0))],
+       couplings=[Coupling((0, 1), strength_hz=5.7e6, calibrations={pulse.gates.CZ: cz})],
    )
    qpu = pulse.device({"quantum_system": pair})
 
@@ -91,6 +92,41 @@ To change a frequency, edit the config, or pass the frequency to the kernel
 as a ``float`` argument and set it on the tone with ``set_frequency``; the
 argument stays symbolic, so a frequency sweep compiles once.
 
+Gate calibrations
+-----------------
+
+The pulses a device is tuned for are its gate calibrations, named by
+``pulse.gates`` (``X``, ``X90``, ``Y``, ``Y90``, ``READOUT``, ``CZ``). In a
+kernel a line gives its qudit's, ready to play; outside one, a qudit handle
+and a coupling give the same values:
+
+.. code-block:: python
+
+   dev = pulse.device("transmon_17q")
+
+   @pulse.kernel
+   def x_then_measure(q):
+       d = get_drive_line(q)
+       r = get_readout_line(q)
+       x = d.get_calibration(pulse.gates.X)        # a DragPulse
+       drive(d, x)
+       drive(d, x.replace(amplitude=x.amplitude / 4))
+       sync(d, r)
+       readout(r, r.get_calibration(pulse.gates.READOUT))
+
+   dev.qudits[4].get_calibration(pulse.gates.X).amplitude         # 0.1313: a pi rotation
+   a, d = dev.qudit("X1"), dev.qudit("D2")
+   dev.coupling(a, d).get_calibration(pulse.gates.CZ).duration_ns   # 98.0
+
+What a device does not publish is derived: an ``X`` without an amplitude
+gets the one that makes its area a pi rotation at the qudit's drive scale,
+``X90`` is ``X`` at half the amplitude, and ``Y`` and ``Y90`` are ``X`` and
+``X90`` at +90 degrees. A ``CZ`` or ``READOUT`` the device does not publish
+is a ``NotFoundError`` naming the coupling or qudit, and so is another
+transition's (``transition=(1, 2)``) calibration. A ``FluxCZ`` does not play:
+flux lines are not modeled yet, so a kernel leaves the qudits idle for its
+``duration_ns``.
+
 The process target
 ------------------
 
@@ -115,7 +151,8 @@ Registered names are ``transmon_17q`` and ``transmon_generic:N``;
 Krinner et al., Nature 605, 669 (2022), built from the values the paper
 publishes. Its qudits 0-16 are D1-D9, X1-X4 and Z1-Z4 (``Qubit.label``), and
 its 24 couplings are the auxiliary-data pairs of the stabilizers, each with
-its CZ's duration, buffers and interaction frequency (``Coupling.gate``).
+its CZ's duration, buffers and interaction frequency (its ``CZ``
+calibration, below).
 ``cudaq_pulse.targets.transmon.CZ_LAYERS`` gives the CZ time steps of a
 cycle, each a tuple of (auxiliary, data) qudit pairs.
 ``python -m cudaq_pulse.doctor`` lists them and reports the process target.

@@ -20,7 +20,17 @@ from typing import Any
 
 from .._errors import InvalidValueError
 from . import _transmon_17q as _k
-from .base import Coupling, DispersiveReadout, Gate, MicrowaveDrive, Qubit, TargetDescription
+from .base import (
+    Coupling,
+    DispersiveReadout,
+    DragPulse,
+    FluxCZ,
+    MicrowaveDrive,
+    Qubit,
+    ReadoutPulse,
+    TargetDescription,
+    _Calibrations,
+)
 
 #: The CZs of one error correction cycle of ``transmon_17q``, layer by layer
 #: (Fig. 3a and the edge labels of Fig. 6c): each layer is three CZs on
@@ -63,12 +73,13 @@ def transmon_17q(calibration: Any = "transmon_17q") -> TargetDescription:
     exchange J_qq = g_c ``<0|n_a|1> <0|n_d|1>`` at the qubits' idle points:
     5.67-6.08 MHz with the shipped ``transmon_17q``. With
     ``calibration=None`` it is the published value over sqrt(2), 4.95 MHz.
-    Each coupling's ``gate`` is its CZ: 98 ns on average, with 15 ns
-    buffers, at the pair's interaction frequency of Fig. 6c. ``CZ_LAYERS``
-    gives the time steps the CZs run in.
-    Drives are the published 40 ns DRAG pulses with sigma = 10 ns; their
-    amplitudes are not published, so amplitudes are angular rates in
-    rad/ns. Readout parameters are those of Tab. I and App. F1.
+    Each coupling's ``CZ`` calibration is a ``FluxCZ``: 98 ns on average,
+    with 15 ns buffers, at the pair's interaction frequency of Fig. 6c.
+    ``CZ_LAYERS`` gives the time steps the CZs run in.
+    Each qudit's ``X`` is the published 40 ns DRAG pulse with sigma = 10 ns;
+    its amplitude is not published, so amplitudes are angular rates in
+    rad/ns and ``get_calibration`` gives the pi pulse's. Readout physics is
+    that of Tab. I, and the ``READOUT`` pulse that of App. F1.
 
     No residual ZZ is listed: the paper gives no per-pair values, only
     that the calculated idle ZZ is below about 8 kHz. Simulated with three
@@ -110,7 +121,23 @@ def _published_17q() -> TargetDescription:
 
 def _build_published_17q() -> TargetDescription:
     qubits = {}
-    drive = MicrowaveDrive(x_duration_ns=_k.DRIVE_DURATION_NS, x_sigma_ns=_k.DRIVE_SIGMA_NS)
+    drive = MicrowaveDrive()
+    x = DragPulse(duration_ns=_k.DRIVE_DURATION_NS, sigma_ns=_k.DRIVE_SIGMA_NS)
+    # One calibration mapping per kind of qudit (data, X and Z auxiliaries),
+    # built as checked: these values are known to be right.
+    calibrations = {
+        kind: _Calibrations(
+            {
+                "x": x,
+                "readout": ReadoutPulse(
+                    duration_ns=duration_ns,
+                    sigma_ns=_k.READOUT_SIGMA_NS,
+                    integration_ns=_k.READOUT_INTEGRATION_NS,
+                ),
+            }
+        )
+        for kind, duration_ns in _k.READOUT_DURATION_NS.items()
+    }
     for index, q in enumerate(_k.QUBITS):
         qubits[index] = Qubit(
             index=index,
@@ -126,20 +153,21 @@ def _build_published_17q() -> TargetDescription:
                 frequency_hz=q.readout_frequency_hz,
                 dispersive_shift_hz=q.dispersive_shift_hz,
                 linewidth_hz=q.kappa_eff_hz,
-                duration_ns=_k.READOUT_DURATION_NS[q.label[0]],
-                integration_ns=_k.READOUT_INTEGRATION_NS,
-                sigma_ns=_k.READOUT_SIGMA_NS,
             ),
+            calibrations=calibrations[q.label[0]],
         )
     couplings = [
         Coupling(
             (_k.INDEX[e.auxiliary], _k.INDEX[e.data]),
             strength_hz=_k.coupling_11_20_hz(e.auxiliary, e.data) / math.sqrt(2.0),
-            gate=Gate(
-                "cz",
-                duration_ns=_k.CZ_DURATION_NS,
-                buffer_ns=_k.CZ_BUFFER_NS,
-                interaction_frequency_hz=e.interaction_frequency_hz,
+            calibrations=_Calibrations(
+                {
+                    "cz": FluxCZ(
+                        duration_ns=_k.CZ_DURATION_NS,
+                        buffer_ns=_k.CZ_BUFFER_NS,
+                        interaction_frequency_hz=e.interaction_frequency_hz,
+                    )
+                }
             ),
         )
         for e in _k.EDGES

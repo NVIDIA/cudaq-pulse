@@ -372,9 +372,10 @@ it.
   them synthesized per shot from a
   dispersive readout model, at the true level of each readout, from the
   frequency of its tone and the amplitude of its pulse. It needs ``shots``.
-  The model reads each qubit's ``DispersiveReadout``: it puts the
-  resonator at its ``frequency_hz`` and scales the points by the pulse's
-  amplitude over its ``amplitude``; without the first every tone is on
+  The model reads each qubit's ``DispersiveReadout`` and its ``READOUT``
+  calibration (a ``ReadoutPulse``): it puts the resonator at the readout's
+  ``frequency_hz`` and scales the points by the pulse's amplitude over the
+  calibration's ``amplitude``; without the first every tone is on
   resonance, and without the second the amplitude does not change the
   points. A tone frequency or amplitude it
   needs and cannot compute where the readout plays (from constants, float

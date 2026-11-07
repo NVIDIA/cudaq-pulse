@@ -23,8 +23,10 @@ Drive and readout
 -----------------
 
 A qudit's ``drive`` and ``readout`` are components of their modality: a
-``MicrowaveDrive`` and a ``DispersiveReadout`` for a transmon. They are
-read-only values; ``component.replace(field=value)`` makes a changed copy.
+``MicrowaveDrive`` and a ``DispersiveReadout`` for a transmon. They hold the
+qudit's physics only; the pulses it is tuned for are its calibrations
+(below). They are read-only values; ``component.replace(field=value)`` makes
+a changed copy.
 Simulation picks its model by the component's type and refuses one it has no
 model for. In a system file each is a mapping with its ``kind``
 (``"microwave"``, ``"dispersive"``) and its fields.
@@ -48,13 +50,51 @@ Couplings
    :members:
    :undoc-members:
 
-.. autoclass:: cudaq_pulse.targets.Gate
-   :members:
-   :undoc-members:
-
 .. autoclass:: cudaq_pulse.targets.ResidualZZ
    :members:
    :undoc-members:
+
+Gate calibrations
+-----------------
+
+The pulses a device is tuned for are calibrations, by gate
+(``pulse.gates``): a qudit's ``calibrations`` hold its ``X`` (and, if
+published, ``X90``, ``Y``, ``Y90``) as a ``DragPulse`` and its ``READOUT`` as
+a ``ReadoutPulse``; a coupling's hold its ``CZ`` as a ``FluxCZ``. A key
+``(gate, (lower, upper))`` holds another transition's. ``get_calibration``
+reads them, deriving what is not published:
+
+.. code-block:: python
+
+   import cudaq_pulse as pulse
+   from cudaq_pulse.targets import DragPulse, Qubit, ReadoutPulse
+
+   qubit = Qubit(
+       0, 5.0e9, -2.0e8, 50.0, 30.0,
+       calibrations={
+           pulse.gates.X: DragPulse(duration_ns=40.0, sigma_ns=10.0),
+           pulse.gates.READOUT: ReadoutPulse(duration_ns=300.0, integration_ns=400.0),
+       },
+   )
+   qubit.get_calibration(pulse.gates.X90)   # X at half the amplitude of a pi rotation
+
+In a system file a qudit's or coupling's ``calibrations`` is a list of
+entries, each its ``gate``, its ``transition`` if not ``[0, 1]``, and its
+fields. A qudit's ``metadata`` is the user's own data (JSON values): the
+library never reads it, it does not make two devices differ, and system
+files keep it.
+
+.. automodule:: cudaq_pulse.gates
+   :members: Gate
+
+.. autoclass:: cudaq_pulse.targets.DragPulse
+   :members:
+
+.. autoclass:: cudaq_pulse.targets.ReadoutPulse
+   :members:
+
+.. autoclass:: cudaq_pulse.targets.FluxCZ
+   :members:
 
 Simulation models
 -----------------

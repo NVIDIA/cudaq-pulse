@@ -5,7 +5,7 @@
 # This source code and the accompanying materials are made available under     #
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
-"""A qudit's drive and readout: components of their modality."""
+"""A qudit's drive and readout: components of their modality, holding its physics."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from cudaq_pulse.runtime._call_tree import ReadoutModel
 from cudaq_pulse.runtime._calls import IQModel
 from cudaq_pulse.targets import (
     DispersiveReadout,
+    DragPulse,
     Drive,
     MicrowaveDrive,
     Qubit,
@@ -58,7 +59,7 @@ def test_a_component_is_a_read_only_value():
     assert a == b and hash(a) == hash(b)
     assert a != DispersiveReadout(frequency_hz=7e9) and a != MicrowaveDrive()
     assert repr(a) == "DispersiveReadout(frequency_hz=7000000000.0, linewidth_hz=1000000.0)"
-    assert (a.frequency_hz, a.photon_number, a.error_1to0, a.depletion_ns) == (7e9, 4.0, 0.0, None)
+    assert (a.frequency_hz, a.efficiency, a.error_1to0, a.depletion_ns) == (7e9, 0.5, 0.0, None)
     with pytest.raises(AttributeError, match="is read-only"):
         a.linewidth_hz = 2e6  # type: ignore[misc]
     with pytest.raises(AttributeError):
@@ -72,10 +73,29 @@ def test_a_component_is_a_read_only_value():
     for back in (pickle.loads(pickle.dumps(a)), copy.deepcopy(a)):
         assert back == a and type(back) is DispersiveReadout
     if sys.version_info >= (3, 13):
-        assert copy.replace(a, photon_number=2.0).photon_number == 2.0  # type: ignore[attr-defined]
-    drive = MicrowaveDrive(x_amplitude=0.2, x_duration_ns=40.0, x_sigma_ns=10.0)
+        assert copy.replace(a, efficiency=0.9).efficiency == 0.9  # type: ignore[attr-defined]
+    drive = MicrowaveDrive(amplitude_scale_rad_per_ns=0.2)
     assert pickle.loads(pickle.dumps(drive)) == drive
-    assert drive.amplitude_scale_rad_per_ns is None
+    assert MicrowaveDrive().amplitude_scale_rad_per_ns is None
+
+
+def test_the_components_hold_physics_and_not_tuned_pulses():
+    assert MicrowaveDrive._fields == ("amplitude_scale_rad_per_ns",)
+    assert DispersiveReadout._fields == (
+        "frequency_hz",
+        "dispersive_shift_hz",
+        "linewidth_hz",
+        "efficiency",
+        "error_1to0",
+        "error_0to1",
+        "depletion_ns",
+    )
+    for tuned in ("x_amplitude", "x_duration_ns", "x_sigma_ns"):
+        with pytest.raises(TypeError):
+            MicrowaveDrive(**{tuned: 1.0})
+    for tuned in ("amplitude", "duration_ns", "sigma_ns", "integration_ns", "photon_number"):
+        with pytest.raises(TypeError):
+            DispersiveReadout(**{tuned: 1.0})
 
 
 def test_the_depletion_comes_from_the_readout():
@@ -90,14 +110,18 @@ def test_the_depletion_comes_from_the_readout():
 def test_the_shipped_target_describes_its_drive_and_readout():
     qubit = transmon_17q().qubits[0]
     assert isinstance(qubit.drive, MicrowaveDrive) and isinstance(qubit.readout, DispersiveReadout)
-    assert qubit.drive.x_duration_ns == 40.0 and qubit.drive.x_sigma_ns == 10.0
+    x = qubit.calibrations[pulse.gates.X]
+    assert (x.duration_ns, x.sigma_ns, x.amplitude) == (40.0, 10.0, None)
     assert qubit.readout.frequency_hz > 6e9 and qubit.readout.linewidth_hz > 0
 
 
 def test_the_drive_strength_comes_from_the_drive():
-    pi = MicrowaveDrive(x_amplitude=0.5, x_duration_ns=40.0, x_sigma_ns=10.0)
+    pi = {pulse.gates.X: DragPulse(duration_ns=40.0, sigma_ns=10.0, amplitude=0.5)}
     area = 10.0 * math.sqrt(2 * math.pi) * math.erf(40.0 / (2 * math.sqrt(2) * 10.0))
-    assert _target(drive=pi).drive_amplitude_scale(0) == pytest.approx(math.pi / (0.5 * area))
+    published = _target(drive=MicrowaveDrive(), calibrations=pi)
+    assert published.drive_amplitude_scale(0) == pytest.approx(math.pi / (0.5 * area))
+    unpublished = {pulse.gates.X: DragPulse(duration_ns=40.0, sigma_ns=10.0)}
+    assert _target(drive=MicrowaveDrive(), calibrations=unpublished).drive_amplitude_scale(0) == 1.0
     scaled = _target(drive=MicrowaveDrive(amplitude_scale_rad_per_ns=2.0))
     assert scaled.drive_amplitude_scale(0) == 2.0
     assert _target().drive_amplitude_scale(0) == 1.0

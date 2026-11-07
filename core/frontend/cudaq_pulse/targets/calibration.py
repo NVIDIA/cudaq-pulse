@@ -299,7 +299,7 @@ class Calibration:
                 else:
                     strength = self.exchange_hz(name, *at)
                 if c.__class__ is Coupling:
-                    c = Coupling(c.qudits, strength, c.gate)
+                    c = Coupling(c.qudits, strength, c.calibrations)
                 else:
                     c = replace(c, strength_hz=strength)
             couplings.append(c)

@@ -84,8 +84,7 @@ def _bootstrap(values, stat, rng, n=2000):
 def _att_target():
     base = transmon_17q()
     qubit = base.qubits[0]
-    att = dataclasses.replace(
-        qubit,
+    att = qubit.replace(
         frequency_hz=4.13e9,
         anharmonicity_hz=-210e6,
         t1_us=160.0,

@@ -29,7 +29,7 @@ from cudaq_pulse.classical import calibration as cal
 from cudaq_pulse.classical.loop import EstimateLog, ParameterStore
 from cudaq_pulse.runtime._calls import IQModel
 from cudaq_pulse.runtime.drift import DriftingPlant, OrnsteinUhlenbeck, TelegraphT1
-from cudaq_pulse.targets import DispersiveReadout, transmon_17q, transmon_generic
+from cudaq_pulse.targets import DispersiveReadout, ReadoutPulse, transmon_17q, transmon_generic
 
 PI_AMP = math.pi / 20  # square(40, PI_AMP) is a pi pulse (unit drive scale)
 CLOCK = 2.0  # GHz on both targets
@@ -40,16 +40,15 @@ def _generic():
     # The generic target has no readout parameters; give it a dispersive
     # readout so the readout skeletons have something to optimize.
     target = transmon_generic(1)
-    qubit = dataclasses.replace(
-        target.qubits[0],
+    qubit = target.qubits[0].replace(
         readout=DispersiveReadout(
             frequency_hz=7.0e9,
             dispersive_shift_hz=-1.5e6,
             linewidth_hz=4e6,
-            integration_ns=400.0,
             error_0to1=0.01,
             error_1to0=0.03,
         ),
+        calibrations={pulse.gates.READOUT: ReadoutPulse(integration_ns=400.0)},
     )
     return dataclasses.replace(target, qubits={0: qubit})
 
@@ -175,9 +174,7 @@ def test_k12_frequency_binary_search_follows_a_detuned_plant(target):
         target,
         qubits={
             **target.qubits,
-            0: dataclasses.replace(
-                target.qubits[0], frequency_hz=target.qubits[0].frequency_hz + offset
-            ),
+            0: target.qubits[0].replace(frequency_hz=target.qubits[0].frequency_hz + offset),
         },
     )
     lowered = pulse.compile(binary_search, device=dev, control_system=MACHINE).lower(
@@ -237,9 +234,7 @@ def test_k13_three_point_decay_and_phase_recover_the_device(target):
         target,
         qubits={
             **target.qubits,
-            0: dataclasses.replace(
-                target.qubits[0], frequency_hz=target.qubits[0].frequency_hz + offset
-            ),
+            0: target.qubits[0].replace(frequency_hz=target.qubits[0].frequency_hz + offset),
         },
     )
     ramsey = pulse.compile(ramsey_shot, device=dev)
@@ -276,9 +271,7 @@ def test_k14_golden_section_finds_the_qubit_frequency(target):
         target,
         qubits={
             **target.qubits,
-            0: dataclasses.replace(
-                target.qubits[0], frequency_hz=target.qubits[0].frequency_hz + offset
-            ),
+            0: target.qubits[0].replace(frequency_hz=target.qubits[0].frequency_hz + offset),
         },
     )
     compiled = pulse.compile(spectroscopy, device=dev)
@@ -302,7 +295,7 @@ def test_k14_nelder_mead_optimizes_readout_frequency_and_amplitude(target):
     # points, plus a penalty on photons (amplitude squared).
     model = IQModel(target, (0,), decay=False)
     resonator = target.qubits[0].readout.frequency_hz
-    tau = target.qubits[0].readout.integration_ns
+    tau = target.qubits[0].get_calibration(pulse.gates.READOUT).integration_ns
 
     def cost(point):
         offset_mhz, amplitude = point
@@ -450,8 +443,7 @@ def test_k17_latency_within_depletion_is_hidden(target):
         target,
         qubits={
             **target.qubits,
-            0: dataclasses.replace(
-                target.qubits[0],
+            0: target.qubits[0].replace(
                 readout=target.qubits[0].readout.replace(depletion_ns=250.0),
             ),
         },
@@ -479,13 +471,15 @@ def test_k17_latency_within_depletion_is_hidden(target):
 
 
 def test_k18_readout_models_on_the_target(target):
-    given = target.qubits[0].readout
-    params = given.replace(
-        error_0to1=given.error_0to1 or 0.02, error_1to0=given.error_1to0 or 0.05, duration_ns=400.0
-    )
+    qubit = target.qubits[0]
+    given = qubit.readout
+    params = given.replace(error_0to1=given.error_0to1 or 0.02, error_1to0=given.error_1to0 or 0.05)
+    pulses = qubit.calibrations
+    window = (pulses.get(pulse.gates.READOUT) or ReadoutPulse()).replace(duration_ns=400.0)
+    calibrations = {**pulses, pulse.gates.READOUT: window}
     modelled = dataclasses.replace(
         target,
-        qubits={**target.qubits, 0: dataclasses.replace(target.qubits[0], readout=params)},
+        qubits={**target.qubits, 0: qubit.replace(readout=params, calibrations=calibrations)},
     )
     dev = _device(modelled)
 

@@ -127,7 +127,7 @@ if __name__ == "__main__":
         target,
         qubits={
             **target.qubits,
-            0: dataclasses.replace(qubit, frequency_hz=qubit.frequency_hz + offset_hz),
+            0: qubit.replace(frequency_hz=qubit.frequency_hz + offset_hz),
         },
     )
     lowered = pulse.compile(binary_search, device=dev, control_system=control_system).lower(q, 2)

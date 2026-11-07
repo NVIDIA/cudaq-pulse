@@ -111,7 +111,7 @@ def drifted(factors):
         given = qubits[q].drive
         assert isinstance(given, MicrowaveDrive)
         stronger = given.replace(amplitude_scale_rad_per_ns=strength)
-        qubits[q] = dataclasses.replace(qubits[q], drive=stronger)
+        qubits[q] = qubits[q].replace(drive=stronger)
     return dataclasses.replace(target, qubits=qubits)
 
 

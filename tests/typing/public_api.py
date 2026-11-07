@@ -27,10 +27,12 @@ from cudaq_pulse.ops import Waveform
 from cudaq_pulse.targets import (
     Coupling,
     DispersiveReadout,
-    Gate,
+    DragPulse,
+    FluxCZ,
     MicrowaveDrive,
     Qubit,
     Readout,
+    ReadoutPulse,
     ResidualZZ,
     TargetDescription,
 )
@@ -195,28 +197,55 @@ pulse.controller(3)  # type: ignore[arg-type]
 
 readout = DispersiveReadout(frequency_hz=7.0e9, linewidth_hz=1.0e6)
 assert_type(readout.frequency_hz, float | None)
-assert_type(readout.photon_number, float)
+assert_type(readout.efficiency, float)
 assert_type(readout.replace(linewidth_hz=2.0e6), DispersiveReadout)
 DispersiveReadout(7.0e9)  # type: ignore[call-arg]
+DispersiveReadout(photon_number=4.0)  # type: ignore[call-arg]
 readout.linewidth_hz = 2.0e6  # type: ignore[misc]
-qudit = Qubit(0, 5.0e9, -2.0e8, 50.0, 30.0, drive=MicrowaveDrive(x_amplitude=0.2), readout=readout)
+MicrowaveDrive(x_amplitude=0.2)  # type: ignore[call-arg]
+
+# A qudit's tuned pulses are its calibrations, by gate; get_calibration gives
+# each as the type of its gate, on the qudit, a handle or a kernel's line.
+x = DragPulse(duration_ns=40.0, sigma_ns=10.0)
+assert_type(x.amplitude, float | None)
+assert_type(x.replace(amplitude=0.1), DragPulse)
+DragPulse(duration_ns=40.0)  # type: ignore[call-arg]
+qudit = Qubit(
+    0,
+    5.0e9,
+    -2.0e8,
+    50.0,
+    30.0,
+    drive=MicrowaveDrive(amplitude_scale_rad_per_ns=0.2),
+    readout=readout,
+    calibrations={pulse.gates.X: x, pulse.gates.READOUT: ReadoutPulse(duration_ns=300.0)},
+    metadata={"fridge": "B"},
+)
 assert_type(qudit.readout, Readout | None)
+assert_type(qudit.metadata, Mapping[str, Any])
+assert_type(qudit.get_calibration(pulse.gates.X), DragPulse)
+assert_type(qudit.get_calibration(pulse.gates.Y90, transition=(1, 2)), DragPulse)
+assert_type(qudit.get_calibration(pulse.gates.READOUT), ReadoutPulse)
+assert_type(qudit.replace(label="Q0"), Qubit)
+assert_type(qpu.qudits[0].get_calibration(pulse.gates.X90), DragPulse)
+gate: pulse.gates.Gate = pulse.gates.CZ
 
 # A coupling gives its qudits and strength (None: not measured yet), and its
-# gate is one object of typed fields; leaving a required field out, or
-# giving one the gate does not have, is a type error.
-cz = Gate("cz", 98.0, buffer_ns=15.0, interaction_frequency_hz=4.4e9)
+# CZ calibration is one object of typed fields; leaving a required field out,
+# or giving one it does not have, is a type error.
+cz = FluxCZ(duration_ns=98.0, buffer_ns=15.0, interaction_frequency_hz=4.4e9)
 assert_type(cz.duration_ns, float)
 assert_type(cz.interaction_frequency_hz, float | None)
-Gate("cz", 98.0, params={"cz_step": 1.0})  # type: ignore[call-arg]
-Gate("cz", 98.0, fidelity=0.99)  # type: ignore[call-arg]
-edge = Coupling((0, 1), 5.7e6, gate=cz)
+FluxCZ(duration_ns=98.0, fidelity=0.99)  # type: ignore[call-arg]
+FluxCZ()  # type: ignore[call-arg]
+edge = Coupling((0, 1), 5.7e6, calibrations={pulse.gates.CZ: cz})
 assert_type(edge.qudits, tuple[int, ...])
 assert_type(edge.strength_hz, float | None)
-assert_type(edge.gate, Gate | None)
+assert_type(edge.get_calibration(pulse.gates.CZ), FluxCZ)
+assert_type(qpu.coupling(qpu.qudits[13], qpu.qudits[0]), Coupling)
 Coupling((0, 1), None)
 Coupling((0, 1))  # type: ignore[call-arg]
-Gate("cz")  # type: ignore[call-arg]
+Coupling((0, 1), 5.7e6, gate=cz)  # type: ignore[call-arg]
 zz = ResidualZZ((0, 1), 1.5e4)
 assert_type(zz.rate_hz, float)
 ResidualZZ((0, 1), 1.5e4, zz_coupling=0.5)  # type: ignore[call-arg]

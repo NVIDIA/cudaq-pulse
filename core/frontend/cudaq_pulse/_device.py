@@ -25,12 +25,13 @@ from __future__ import annotations
 import dataclasses
 import os
 from collections.abc import Iterator, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, overload
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 from ._errors import (
     DeviceDefinitionError,
     IndexOutOfRangeError,
     InvalidTypeError,
+    InvalidValueError,
     NotFoundError,
     Problem,
     PulseError,
@@ -52,6 +53,8 @@ if TYPE_CHECKING:
     from array import array
 
     from ._system import ControlSystem
+    from .gates import Gate
+    from .targets.base import Coupling, DragPulse, ReadoutPulse
 
 __all__ = [
     "Device",
@@ -108,20 +111,12 @@ def _fingerprint(target: TargetDescription, layout: tuple[int, ...], calibration
             q.thermal_population,
             None if (drive := q.drive) is None else (type(drive).__name__, drive._values),
             None if (readout := q.readout) is None else (type(readout).__name__, readout._values),
+            q.calibrations._content,  # type: ignore[attr-defined]
         )
         for q in sorted(target.qubits.values(), key=lambda q: q.index)
     ]
     couplings = [
-        (c.qudits, c.strength_hz)
-        if (g := c.gate) is None
-        else (
-            c.qudits,
-            c.strength_hz,
-            g.name,
-            g.duration_ns,
-            g.buffer_ns,
-            g.interaction_frequency_hz,
-        )
+        (c.qudits, c.strength_hz, c.calibrations._content)  # type: ignore[attr-defined]
         for c in target.couplings
     ]
     residual_zz = [(x.qudits, x.rate_hz) for x in target.residual_zz]
@@ -179,6 +174,30 @@ class Qudit:
 
     def __repr__(self) -> str:
         return f"<Qudit {self.logical} -> {self.carrier} {self.index} of {self.device.name}>"
+
+    if TYPE_CHECKING:
+
+        @overload
+        def get_calibration(
+            self,
+            gate: Literal[Gate.X, Gate.X90, Gate.Y, Gate.Y90],
+            transition: tuple[int, int] = (0, 1),
+        ) -> DragPulse: ...
+        @overload
+        def get_calibration(
+            self, gate: Literal[Gate.READOUT], transition: tuple[int, int] = (0, 1)
+        ) -> ReadoutPulse: ...
+        @overload
+        def get_calibration(
+            self, gate: Gate, transition: tuple[int, int] = (0, 1)
+        ) -> DragPulse | ReadoutPulse: ...
+
+    def get_calibration(self, gate: Any, transition: tuple[int, int] = (0, 1)) -> Any:
+        """The calibrated pulse of *gate* on this qudit of its device, as
+        ``get_drive_line(q).get_calibration(gate)`` (``X`` to ``Y90``) and
+        ``get_readout_line(q).get_calibration(pulse.gates.READOUT)`` give it
+        in a kernel; see ``Qubit.get_calibration``."""
+        return self.device.target.qubits[self.index].get_calibration(gate, transition)
 
 
 class Register(Sequence[Qudit]):
@@ -478,6 +497,48 @@ class Device:
         hint = f"did you mean {close!r}? " if close else ""
         known = f"its labels are {', '.join(labels)}" if labels else "its qudits have no labels"
         raise NotFoundError(f"device {self.name!r} has no qudit labelled {label!r}; {hint}{known}")
+
+    def coupling(self, a: Qudit, b: Qudit) -> Coupling:
+        """The coupling of the device's qudits *a* and *b* (handles, in either
+        order), as calibrated: ``dev.coupling(a, b).get_calibration(
+        pulse.gates.CZ)`` is its CZ. A ``NotFoundError`` names the qudits *a*
+        couples to."""
+        for handle in (a, b):
+            if handle.__class__ is not Qudit:
+                raise InvalidTypeError(
+                    f"Device.coupling takes two qudit handles, as dev.qudits[i]; got {handle!r}"
+                )
+            if handle.device is not self and handle.device != self:
+                raise DeviceMismatchError(
+                    f"{handle!r} is a qudit of {handle.device.name!r}, not of {self.name!r}"
+                )
+        return self.target.coupling(a.index, b.index)
+
+    def _line_calibration(
+        self, index: int, readout: bool, gate: Any, transition: Any
+    ) -> DragPulse | ReadoutPulse:
+        """``line.get_calibration(gate, transition)`` of the drive (or
+        readout) line of carrier *index*, while a kernel is traced."""
+        from .targets.base import _DRIVE_GATES, _gate_label, _gate_name, _qudit_calibration
+
+        name = _gate_name(gate)
+        if (name == "readout") is not readout:
+            line, other = ("readout", "drive") if readout else ("drive", "readout")
+            if name == "cz":
+                fix = "it is a coupling's: dev.coupling(a, b).get_calibration(pulse.gates.CZ)"
+            else:
+                fix = (
+                    f"it is the {other} line's: "
+                    f"get_{other}_line(q).get_calibration({_gate_label(name)})"
+                )
+            gates = "pulse.gates.READOUT" if readout else ", ".join(map(_gate_label, _DRIVE_GATES))
+            raise InvalidValueError(
+                f"a {line} line has the calibrations of {gates}, not {_gate_label(name)}; {fix}"
+            )
+        pulse: DragPulse | ReadoutPulse = _qudit_calibration(
+            self.target.qubits[index], name, transition
+        )
+        return pulse
 
     @property
     def quantum_system(self) -> TargetDescription:

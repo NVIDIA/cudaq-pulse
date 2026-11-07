@@ -5,7 +5,7 @@
 # This source code and the accompanying materials are made available under     #
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
-"""A quantum system's couplings, gates and residual ZZ entries.
+"""A quantum system's couplings, their CZ calibrations and residual ZZ entries.
 
 A field left out in Python is Python's own TypeError at the constructor; a
 system file or config reports each missing key, at its path and (for a file)
@@ -23,7 +23,7 @@ import pytest
 from cudaq_pulse import DeviceDefinitionError
 from cudaq_pulse.targets import (
     Coupling,
-    Gate,
+    FluxCZ,
     Qubit,
     ResidualZZ,
     SimulationModel,
@@ -39,6 +39,16 @@ def _qudits(n=3):
 
 def _system(**fields):
     return TargetDescription(name="checked", qubits=_qudits(), **fields)
+
+
+def _cz(duration_ns, buffer_ns=None, interaction_frequency_hz=None):
+    """The calibrations of a coupling with a CZ."""
+    cz = FluxCZ(
+        duration_ns=duration_ns,
+        buffer_ns=buffer_ns,
+        interaction_frequency_hz=interaction_frequency_hz,
+    )
+    return {pulse.gates.CZ: cz}
 
 
 def _file_problems(tmp_path, data):
@@ -96,7 +106,7 @@ def test_the_hamiltonian_terms_of_a_model_with_no_coupling_operator_are_unsuppor
         assert len(_system(model=model).hamiltonian_terms()) == 3
 
 
-# ── Couplings, gates and residual ZZ ───────────────────────────────────────
+# ── Couplings, CZ calibrations and residual ZZ ─────────────────────────────
 
 
 @pulse.kernel
@@ -183,20 +193,39 @@ def test_residual_zz_is_a_static_zz_term():
     )
 
 
-def test_a_gate_belongs_to_its_coupling_and_is_read_only():
-    gate = Gate("cz", 98.0, buffer_ns=15.0, interaction_frequency_hz=4.4e9)
-    coupling = Coupling([3, 1], 5.0e6, gate=gate)
+def test_a_cz_calibration_belongs_to_its_coupling_and_is_read_only():
+    calibrations = _cz(98.0, 15.0, 4.4e9)
+    coupling = Coupling([3, 1], 5.0e6, calibrations=calibrations)
     assert coupling.qudits == (3, 1)
-    assert coupling == Coupling((3, 1), 5.0e6, gate=Gate("cz", 98.0, 15.0, 4.4e9))
-    assert hash(coupling) == hash(Coupling((3, 1), 5.0e6, gate=gate))
-    with pytest.raises(dataclasses.FrozenInstanceError):
-        gate.interaction_frequency_hz = 4.5e9  # type: ignore[misc]
-    assert not hasattr(gate, "params") and not hasattr(gate, "fidelity")
-    with pytest.raises(TypeError, match="missing 1 required positional argument: 'duration_ns'"):
-        Gate("cz")  # type: ignore[call-arg]
+    assert coupling == Coupling((3, 1), 5.0e6, calibrations=_cz(98.0, 15.0, 4.4e9))
+    assert hash(coupling) == hash(Coupling((3, 1), 5.0e6, calibrations=calibrations))
+    cz = coupling.get_calibration(pulse.gates.CZ)
+    assert cz == FluxCZ(duration_ns=98.0, buffer_ns=15.0, interaction_frequency_hz=4.4e9)
+    with pytest.raises(AttributeError):
+        cz.duration_ns = 4.5e9  # type: ignore[misc]
+    with pytest.raises(TypeError, match="read-only"):
+        coupling.calibrations[pulse.gates.CZ] = cz  # type: ignore[index]
+    assert not hasattr(cz, "fidelity") and not hasattr(coupling, "gate")
+    with pytest.raises(TypeError, match="missing 1 required keyword-only argument: 'duration_ns'"):
+        FluxCZ()  # type: ignore[call-arg]
     with pytest.raises(TypeError, match="missing 1 required positional argument: 'strength_hz'"):
         Coupling((0, 1))  # type: ignore[call-arg]
-    assert {f for f in Coupling.__dataclass_fields__} == {"qudits", "strength_hz", "gate"}
+    assert {f for f in Coupling.__dataclass_fields__} == {"qudits", "strength_hz", "calibrations"}
+
+
+def test_a_coupling_has_only_a_couplings_calibrations():
+    with pytest.raises(pulse.InvalidValueError, match="pulse.gates.X is a qudit's calibration"):
+        Coupling((0, 1), 5.0e6, calibrations={pulse.gates.X: FluxCZ(duration_ns=1.0)})
+    with pytest.raises(pulse.InvalidTypeError, match="CZ calibration .* must be a FluxCZ"):
+        Coupling((0, 1), 5.0e6, calibrations={pulse.gates.CZ: 98.0})
+    with pytest.raises(pulse.InvalidValueError, match="did you mean pulse.gates.CZ"):
+        Coupling((0, 1), 5.0e6, calibrations={"czz": FluxCZ(duration_ns=1.0)})
+    plain = Coupling((0, 1), 5.0e6)
+    assert plain.calibrations == {}
+    with pytest.raises(pulse.NotFoundError, match="qudits 0 and 1 publishes no pulse.gates.CZ"):
+        plain.get_calibration(pulse.gates.CZ)
+    with pytest.raises(pulse.InvalidValueError, match="calibrated on a qudit"):
+        plain.get_calibration(pulse.gates.X)
 
 
 def test_residual_zz_is_its_qudits_and_rate():
@@ -211,7 +240,7 @@ def test_residual_zz_is_its_qudits_and_rate():
 def test_a_system_file_holds_couplings_gates_and_residual_zz():
     target = _system(
         couplings=[
-            Coupling((1, 0), 5.7e6, gate=Gate("cz", 98.0, 15.0, 4.4e9)),
+            Coupling((1, 0), 5.7e6, calibrations=_cz(98.0, 15.0, 4.4e9)),
             Coupling((1, 2), None),
         ],
         residual_zz=[ResidualZZ((0, 2), 1.5e4)],
@@ -222,14 +251,16 @@ def test_a_system_file_holds_couplings_gates_and_residual_zz():
         {
             "qudits": [1, 0],
             "strength_hz": 5.7e6,
-            "gate": {
-                "name": "cz",
-                "duration_ns": 98.0,
-                "buffer_ns": 15.0,
-                "interaction_frequency_hz": 4.4e9,
-            },
+            "calibrations": [
+                {
+                    "gate": "cz",
+                    "duration_ns": 98.0,
+                    "buffer_ns": 15.0,
+                    "interaction_frequency_hz": 4.4e9,
+                }
+            ],
         },
-        {"qudits": [1, 2], "strength_hz": None, "gate": None},
+        {"qudits": [1, 2], "strength_hz": None},
     ]
     assert system["residual_zz"] == [{"qudits": [0, 2], "rate_hz": 1.5e4}]
     assert "crosstalk" not in system
@@ -239,34 +270,35 @@ def test_a_system_file_holds_couplings_gates_and_residual_zz():
 
 
 def test_a_key_that_is_no_field_is_an_unknown_key(tmp_path):
-    gate = {"name": "cz", "duration_ns": 98.0, "fidelity": 0.99, "params": {"cz_step": 1.0}}
+    cz = {"gate": "cz", "duration_ns": 98.0, "fidelity": 0.99, "params": {"cz_step": 1.0}}
     data = _system_data(
-        couplings=[{"qudits": [0, 1], "strength_hz": 1.0e6, "gate": gate}],
+        couplings=[{"qudits": [0, 1], "strength_hz": 1.0e6, "calibrations": [cz], "gate": cz}],
         crosstalk=[{"qudits": [0, 1], "static_zz_hz": 1.0e4}],
         residual_zz=[{"qudits": [0, 2], "static_zz_hz": 1.0e4}],
     )
     problems, _ = _file_problems(tmp_path, data)
     assert sorted((p.path, p.message) for p in problems) == [
-        ("quantum_system.couplings[0].gate.fidelity", "is not a known key"),
-        ("quantum_system.couplings[0].gate.params", "is not a known key"),
+        ("quantum_system.couplings[0].calibrations[0].fidelity", "is not a known key"),
+        ("quantum_system.couplings[0].calibrations[0].params", "is not a known key"),
+        ("quantum_system.couplings[0].gate", "is not a known key"),
         ("quantum_system.crosstalk", "is not a known key"),
         ("quantum_system.residual_zz[0].rate_hz", "is missing"),
         ("quantum_system.residual_zz[0].static_zz_hz", "is not a known key"),
     ]
 
 
-def test_the_fingerprint_holds_the_whole_gate():
-    def fingerprint(gate):
+def test_the_fingerprint_holds_the_whole_cz_calibration():
+    def fingerprint(calibrations):
         return pulse.device(
-            {"target": _system(couplings=[Coupling((0, 1), 5e6, gate)])}
+            {"quantum_system": _system(couplings=[Coupling((0, 1), 5e6, calibrations)])}
         ).fingerprint
 
     prints = {
-        fingerprint(None),
-        fingerprint(Gate("cz", 98.0)),
-        fingerprint(Gate("cz", 99.0)),
-        fingerprint(Gate("cz", 98.0, buffer_ns=15.0)),
-        fingerprint(Gate("cz", 98.0, interaction_frequency_hz=4.4e9)),
+        fingerprint({}),
+        fingerprint(_cz(98.0)),
+        fingerprint(_cz(99.0)),
+        fingerprint(_cz(98.0, buffer_ns=15.0)),
+        fingerprint(_cz(98.0, interaction_frequency_hz=4.4e9)),
     }
     assert len(prints) == 5
 
@@ -279,7 +311,9 @@ def test_a_calibration_matches_a_pair_named_in_either_order():
     calibration = shipped_calibration("transmon_17q")
     reversed_ = dataclasses.replace(
         published,
-        couplings=[Coupling(c.qudits[::-1], c.strength_hz, c.gate) for c in published.couplings],
+        couplings=[
+            Coupling(c.qudits[::-1], c.strength_hz, c.calibrations) for c in published.couplings
+        ],
     )
     forward = calibration.apply(published).couplings
     backward = calibration.apply(reversed_).couplings
@@ -353,29 +387,28 @@ def test_a_coupling_is_between_two_qudits_in_this_release():
     ]
 
 
-def test_a_gate_is_checked_with_its_coupling():
+def test_a_cz_calibration_is_checked_with_its_coupling():
     problems = _problems(
         couplings=[
-            Coupling((0, 1), 1.0e6, gate=Gate("", -1.0, buffer_ns=math.nan)),
-            Coupling((1, 2), 1.0e6, gate=Gate("cz", 98.0, interaction_frequency_hz="4.4e9")),  # type: ignore[arg-type]
-            Coupling((0, 2), 1.0e6, gate="cz"),  # type: ignore[arg-type]
+            Coupling((0, 1), 1.0e6, calibrations=_cz(-1.0, buffer_ns=math.nan)),
+            Coupling((1, 2), 1.0e6, calibrations=_cz(98.0, interaction_frequency_hz="4.4e9")),
         ]
     )
     assert problems == [
-        "couplings[0].gate.name: must be a non-empty string, got ''; name the gate, as \"cz\"",
-        "couplings[0].gate.duration_ns: -1.0 is not a finite time of 0 ns or more; give it in ns",
-        "couplings[0].gate.buffer_ns: nan is not a finite time of 0 ns or more; give it in ns, "
-        "or None",
-        "couplings[1].gate.interaction_frequency_hz: '4.4e9' is not a finite frequency above "
-        "0 Hz; give it in Hz, or None",
-        "couplings[2].gate: must be a Gate or None, got str",
+        "couplings[0].calibrations[CZ].duration_ns: -1.0 is not a finite time of 0 ns or more; "
+        "give it in ns",
+        "couplings[0].calibrations[CZ].buffer_ns: nan is not a finite time of 0 ns or more; "
+        "give it in ns, or None",
+        "couplings[1].calibrations[CZ].interaction_frequency_hz: '4.4e9' is not a finite "
+        "frequency above 0 Hz; give it in Hz, or None",
     ]
-    assert _problems(couplings=[Coupling((0, 1), 1.0e6, gate=Gate("cz", 98.0, None, 0.0))]) == [
-        "couplings[0].gate.interaction_frequency_hz: 0.0 is not a finite frequency above 0 Hz; "
-        "give it in Hz, or None",
+    assert _problems(couplings=[Coupling((0, 1), 1.0e6, calibrations=_cz(98.0, None, 0.0))]) == [
+        "couplings[0].calibrations[CZ].interaction_frequency_hz: 0.0 is not a finite frequency "
+        "above 0 Hz; give it in Hz, or None",
     ]
-    gate = _system(couplings=[Coupling((0, 1), 1.0e6, gate=Gate("cz", 0, 0, 4))]).couplings[0].gate
-    assert gate is not None and (gate.duration_ns, gate.interaction_frequency_hz) == (0, 4)
+    checked = _system(couplings=[Coupling((0, 1), 1.0e6, calibrations=_cz(0, 0, 4))])
+    cz = checked.couplings[0].get_calibration(pulse.gates.CZ)
+    assert (cz.duration_ns, cz.interaction_frequency_hz) == (0, 4)
 
 
 def test_residual_zz_has_the_qudit_checks_of_couplings():
@@ -412,7 +445,7 @@ def test_a_calibration_keeps_the_checks():
     from cudaq_pulse.targets import transmon_17q
 
     target = transmon_17q()
-    assert all(c.gate is not None for c in target.couplings)
+    assert all(pulse.gates.CZ in c.calibrations for c in target.couplings)
     with pytest.raises(DeviceDefinitionError, match=r"couplings\[1\].qudits: names the same pair"):
         dataclasses.replace(target, couplings=[target.couplings[0]] * 2)
 
@@ -422,7 +455,7 @@ def test_a_calibration_keeps_the_checks():
 
 def _coupled_data():
     target = _system(
-        couplings=[Coupling((0, 1), 5.0e6, gate=Gate("cz", 98.0)), Coupling((1, 2), 4.0e6)],
+        couplings=[Coupling((0, 1), 5.0e6, _cz(98.0)), Coupling((1, 2), 4.0e6)],
         residual_zz=[ResidualZZ((0, 2), 1.0e4)],
     )
     return pulse.device({"quantum_system": target}).as_dict()
@@ -432,7 +465,7 @@ def test_a_system_file_names_each_missing_key_by_its_file_name_and_line(tmp_path
     data = _coupled_data()
     system = data["quantum_system"]
     del system["couplings"][0]["strength_hz"]
-    del system["couplings"][0]["gate"]["duration_ns"]
+    del system["couplings"][0]["calibrations"][0]["duration_ns"]
     del system["couplings"][1]["qudits"]
     del system["residual_zz"][0]["rate_hz"]
     problems, lines = _file_problems(tmp_path, data)
@@ -458,29 +491,30 @@ def test_a_system_file_names_each_missing_key_by_its_file_name_and_line(tmp_path
 def test_a_config_mapping_lists_every_missing_key_and_value_problem():
     data = _coupled_data()
     system = data["quantum_system"]
-    del system["couplings"][0]["gate"]["name"]
+    del system["couplings"][0]["calibrations"][0]["gate"]
     system["couplings"][1]["strength_hz"] = math.nan
     system["residual_zz"][0]["qudits"] = [2, 2]
     with pytest.raises(DeviceDefinitionError) as raised:
         pulse.device(data)
     assert [(p.path, p.message, p.file) for p in raised.value.problems] == [
-        ("quantum_system.couplings[0].gate.name", "is missing", None),
+        ("quantum_system.couplings[0].calibrations[0].gate", "is missing", None),
         ("quantum_system.couplings[1].strength_hz", "nan is not a finite number of Hz", None),
         ("quantum_system.residual_zz[0].qudits", "names qudit 2 twice", None),
     ]
 
 
-def test_a_missing_gate_key_is_named_inside_the_gate(tmp_path):
+def test_a_missing_calibration_key_is_named_inside_the_calibration(tmp_path):
     data = _coupled_data()
-    del data["quantum_system"]["couplings"][0]["gate"]["duration_ns"]
-    data["quantum_system"]["couplings"][0]["gate"]["interaction_frequency"] = 4.4e9
+    del data["quantum_system"]["couplings"][0]["calibrations"][0]["duration_ns"]
+    data["quantum_system"]["couplings"][0]["calibrations"][0]["interaction_frequency"] = 4.4e9
     problems, lines = _file_problems(tmp_path, data)
     assert [str(p).split(": ", 1)[1] for p in problems] == [
-        "quantum_system.couplings[0].gate.interaction_frequency: is not a known key; did you "
-        "mean 'interaction_frequency_hz'?",
-        "quantum_system.couplings[0].gate.duration_ns: is missing; give how long it takes, in ns",
+        "quantum_system.couplings[0].calibrations[0].interaction_frequency: is not a known key; "
+        "did you mean 'interaction_frequency_hz'?",
+        "quantum_system.couplings[0].calibrations[0]: FluxCZ.__init__() missing 1 required "
+        "keyword-only argument: 'duration_ns'",
     ]
-    assert problems[1].line == _line_of(lines, '"gate"')
+    assert problems[1].line == _line_of(lines, "{", after=_line_of(lines, '"calibrations"'))
 
 
 def test_a_coupling_of_unknown_keys_names_each_and_its_missing_qudits(tmp_path):
@@ -511,43 +545,43 @@ def test_a_value_problem_in_a_file_has_its_file_path_and_line(tmp_path):
     assert problems[2].line == _line_of(lines, '"rate_hz"')
 
 
-def test_a_gate_is_read_only_and_pickles_by_content():
+def test_a_cz_calibration_is_read_only_and_pickles_by_content():
     import pickle
 
-    gate = Gate("cz", 98.0, 15.0, 4.4e9)
-    with pytest.raises(dataclasses.FrozenInstanceError):
-        gate.name = "cx"  # type: ignore[misc]
-    with pytest.raises(dataclasses.FrozenInstanceError):
-        del gate.buffer_ns  # type: ignore[misc]
-    assert repr(gate) == (
-        "Gate(name='cz', duration_ns=98.0, buffer_ns=15.0, interaction_frequency_hz=4400000000.0)"
+    cz = FluxCZ(duration_ns=98.0, buffer_ns=15.0, interaction_frequency_hz=4.4e9)
+    with pytest.raises(AttributeError):
+        cz.buffer_ns = 1.0  # type: ignore[misc]
+    assert repr(cz) == (
+        "FluxCZ(duration_ns=98.0, buffer_ns=15.0, interaction_frequency_hz=4400000000.0)"
     )
-    back = pickle.loads(pickle.dumps(gate))
-    assert back == gate and hash(back) == hash(gate)
-    assert gate != Gate("cz", 98.0, 15.0) and gate != ("cz", 98.0, 15.0, 4.4e9)
-    assert Gate("cz", 98.0) == Gate("cz", 98.0, None, None)
+    back = pickle.loads(pickle.dumps(cz))
+    assert back == cz and hash(back) == hash(cz)
+    assert cz != FluxCZ(duration_ns=98.0, buffer_ns=15.0) and cz != (98.0, 15.0, 4.4e9)
+    coupling = Coupling((0, 1), 1.0e6, _cz(98.0))
+    back = pickle.loads(pickle.dumps(coupling))
+    assert back == coupling and back.calibrations.__class__ is coupling.calibrations.__class__
 
 
 def test_a_system_made_from_a_checked_one_is_checked_for_what_changed():
     checked = _system(
-        couplings=[Coupling((0, 1), 1.0e6, gate=Gate("cz", 98.0)), Coupling((1, 2), 2.0e6)],
+        couplings=[Coupling((0, 1), 1.0e6, _cz(98.0)), Coupling((1, 2), 2.0e6)],
         residual_zz=[ResidualZZ((0, 2), 1.0e4)],
     )
     assert dataclasses.replace(checked, clock_ghz=1.0).couplings is checked.couplings
     fewer = {i: q for i, q in checked.qubits.items() if i < 2}
     with pytest.raises(DeviceDefinitionError, match=r"couplings\[1\].qudits\[1\]: 2 is not"):
         dataclasses.replace(checked, qubits=fewer)
-    restrengthened = [Coupling(c.qudits, math.nan, c.gate) for c in checked.couplings]
+    restrengthened = [Coupling(c.qudits, math.nan, c.calibrations) for c in checked.couplings]
     problems = [str(p) for p in _problems_of(checked, restrengthened)]
     assert [p.split(":")[0] for p in problems] == [
         "couplings[0].strength_hz",
         "couplings[1].strength_hz",
     ]
-    regated = [Coupling(c.qudits, c.strength_hz, Gate("cz", -1.0)) for c in checked.couplings]
-    problems = [str(p) for p in _problems_of(checked, regated)]
+    recalibrated = [Coupling(c.qudits, c.strength_hz, _cz(-1.0)) for c in checked.couplings]
+    problems = [str(p) for p in _problems_of(checked, recalibrated)]
     assert [p.split(":")[0] for p in problems] == [
-        "couplings[0].gate.duration_ns",
-        "couplings[1].gate.duration_ns",
+        "couplings[0].calibrations[CZ].duration_ns",
+        "couplings[1].calibrations[CZ].duration_ns",
     ]
 
 
@@ -560,8 +594,8 @@ def _problems_of(target, couplings):
 def test_values_that_are_not_floats_take_the_complete_checks():
     target = _system(
         couplings=[
-            Coupling((0, 1), 5, gate=Gate("cz", 98, buffer_ns=0, interaction_frequency_hz=4)),
-            Coupling((1, 2), 0.0, gate=Gate("cz", 0.0, buffer_ns=0.0)),
+            Coupling((0, 1), 5, _cz(98, buffer_ns=0, interaction_frequency_hz=4)),
+            Coupling((1, 2), 0.0, _cz(0.0, buffer_ns=0.0)),
         ],
         residual_zz=[ResidualZZ((2, 0), 0)],
     )

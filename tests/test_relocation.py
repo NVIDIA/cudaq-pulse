@@ -78,9 +78,7 @@ def _plain(export):
 def _recalibrated(device, carrier, shift_hz):
     target = device.target
     qubits = dict(target.qubits)
-    qubits[carrier] = dataclasses.replace(
-        qubits[carrier], frequency_hz=qubits[carrier].frequency_hz + shift_hz
-    )
+    qubits[carrier] = qubits[carrier].replace(frequency_hz=qubits[carrier].frequency_hz + shift_hz)
     return Device(dataclasses.replace(target, qubits=qubits), name=device.name)
 
 

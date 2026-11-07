@@ -34,7 +34,8 @@ Compiler types (``CompileMetrics``, ``ScheduledEvent``,
 calibrations in ``cudaq_pulse.targets``. ``pulse.classical`` declares the
 classical functions a kernel calls while the QPU runs; ``pulse.Bits`` and
 ``pulse.Length`` (``typing.Annotated``, for a fixed list length) type their
-parameters and results. ``pulse.controller``
+parameters and results. ``pulse.gates`` names the gates a device is
+calibrated for, whose pulses ``get_calibration`` gives. ``pulse.controller``
 exports a compiled kernel to a controller and states a controller's limits,
 and ``pulse.backends`` finds the controller backends installed beside
 cudaq-pulse.
@@ -103,6 +104,7 @@ __version__: str = _build_config.PACKAGE_VERSION
 # use.
 if TYPE_CHECKING:
     from . import backends as backends
+    from . import gates as gates
     from . import viz as viz
     from ._capability import Capability as Capability
     from ._system import Controller as Controller
@@ -139,7 +141,12 @@ _LAZY_EXPORTS = {
     "Processor": "._system",
     "Link": ".classical",
 }
-_LAZY_MODULES = {"viz": ".viz", "backends": ".backends", "controller": ".controller"}
+_LAZY_MODULES = {
+    "viz": ".viz",
+    "backends": ".backends",
+    "controller": ".controller",
+    "gates": ".gates",
+}
 
 __all__ = [
     "kernel",
@@ -191,6 +198,7 @@ __all__ = [
     "Length",
     "controller",
     "backends",
+    "gates",
     "Event",
 ]
 

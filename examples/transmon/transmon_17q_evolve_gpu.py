@@ -23,47 +23,33 @@ D2 are simulated, a 4-dimensional space; the other 15 qudits are classical
 spectators.
 """
 
-import math
-
 import cudaq_pulse as pulse
 import numpy as np
 from cudaq_pulse.runtime import require_gpu_runtime
-from cudaq_pulse.targets import MicrowaveDrive
 
 require_gpu_runtime()
 
 dev = pulse.device("transmon_17q")
-target = dev.target
-index = {q.label: q.index for q in target.qubits.values()}
-auxiliary, data = index["X1"], index["D2"]
-
-# The published 40 ns, sigma = 10 ns pulse; amplitudes are rates in rad/ns.
-microwave = target.qubits[data].drive
-assert isinstance(microwave, MicrowaveDrive)
-duration_ns, sigma_ns = microwave.x_duration_ns, microwave.x_sigma_ns
-assert duration_ns is not None and sigma_ns is not None
-area_ns = sigma_ns * math.sqrt(2 * math.pi) * math.erf(duration_ns / (2 * math.sqrt(2) * sigma_ns))
-pi_amplitude = math.pi / area_ns
-cal = {
-    "x_duration": duration_ns * pulse.ns,
-    "x_sigma": sigma_ns * pulse.ns,
-    "cz_slot": 98 * pulse.ns,
-}
+qudit_aux, qudit_data = dev.qudit("X1"), dev.qudit("D2")
+auxiliary, data = qudit_aux.index, qudit_data.index
+# The CZ's slot, from the coupling's calibration; the pulses are the
+# qudits' X90 and X calibrations (the published 40 ns, sigma = 10 ns DRAG,
+# amplitudes rates in rad/ns).
+cz_slot = dev.coupling(qudit_aux, qudit_data).get_calibration(pulse.gates.CZ).duration_ns * pulse.ns
 
 
 @pulse.kernel
 def evolve_pair(qubit_aux, qubit_data):
     drive_line_aux = get_drive_line(qubit_aux)
     drive_line_data = get_drive_line(qubit_data)
-    duration, sigma = cal["x_duration"], cal["x_sigma"]
-    drive(drive_line_aux, drag(duration, pi_amplitude / 2, sigma, 0.0))
-    drive(drive_line_data, drag(duration, pi_amplitude, sigma, 0.0))
+    drive(drive_line_aux, drive_line_aux.get_calibration(pulse.gates.X90))
+    drive(drive_line_data, drive_line_data.get_calibration(pulse.gates.X))
     sync(drive_line_aux, drive_line_data)
-    wait(drive_line_aux, cal["cz_slot"])
-    wait(drive_line_data, cal["cz_slot"])
+    wait(drive_line_aux, cz_slot)
+    wait(drive_line_data, cz_slot)
 
 
-lowered = evolve_pair.lower(dev.qudit_handles[auxiliary], dev.qudit_handles[data])
+lowered = evolve_pair.lower(qudit_aux, qudit_data)
 # The coupling turns at the 2.1 GHz detuning of the two frames: the step
 # resolves it with 24 steps per period.
 result = pulse.simulate(lowered, backend="gpu", dt_ns=0.02, integrator="rk4")

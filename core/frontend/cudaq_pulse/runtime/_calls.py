@@ -138,8 +138,9 @@ def _answer_values(function: ClassicalFunction[..., Any], answer: Any) -> list[f
 class IQModel:
     """Synthesized IQ points of readouts, from each qudit's
     ``DispersiveReadout``, which must give its ``dispersive_shift_hz`` and
-    ``linewidth_hz``; a qudit without one, or with another readout, is
-    ``UnsupportedError``.
+    ``linewidth_hz``, and its ``READOUT`` calibration (a ``ReadoutPulse``;
+    one with every field left out if it publishes none); a qudit without a
+    readout, or with another, is ``UnsupportedError``.
 
     The resonator, at its ``frequency_hz`` (else at the readout tone, so the
     tone sits midway between the pulled frequencies), is pulled by
@@ -150,7 +151,7 @@ class IQModel:
         alpha_k = epsilon / (kappa / 2 - i 2 pi (f - f_r - chi_k)),
 
     (``linewidth_hz``). ``epsilon`` scales with the readout pulse's
-    amplitude: at ``amplitude`` (default: the amplitude played) driving
+    amplitude: at the pulse's ``amplitude`` (default: the amplitude played) driving
     midway holds ``photon_number`` photons. The integrated point over
     ``integration_ns`` (else the readout's length) ``tau`` is
 
@@ -167,7 +168,7 @@ class IQModel:
     """
 
     def __init__(self, target: Any, qudits: Sequence[int], decay: bool) -> None:
-        from cudaq_pulse.targets.base import DispersiveReadout
+        from cudaq_pulse.targets.base import DispersiveReadout, ReadoutPulse
 
         self.decay = decay
         self._params: dict[int, dict[str, float]] = {}
@@ -186,8 +187,10 @@ class IQModel:
                 raise UnsupportedError(
                     f"{problem}: IQ points are synthesized from a DispersiveReadout"
                 )
-            # DispersiveReadout._fields, in its order.
-            f_r, chi, linewidth, eta, _, _, depletion, amp, _, _, tau, photons = r._values
+            # DispersiveReadout._fields and ReadoutPulse._fields, in their order.
+            f_r, chi, linewidth, eta, _, _, depletion = r._values
+            pulse = q.calibrations.get("readout") or ReadoutPulse()
+            _, amp, _, tau, photons = pulse._values
             if chi is None or linewidth is None:
                 from .._errors import UnsupportedError
 
@@ -249,7 +252,7 @@ class IQModel:
                     f"the IQ points of a readout of qudit {qudit} depend on its pulse's peak "
                     "amplitude, which is not a number where the readout plays: the readout "
                     "model computes it from constants, float arguments and the answers of "
-                    "earlier calls, for a built-in waveform; its DispersiveReadout's amplitude "
+                    "earlier calls, for a built-in waveform; its READOUT calibration's amplitude "
                     "needs it"
                 )
             scale = 1.0

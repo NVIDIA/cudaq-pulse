@@ -16,6 +16,23 @@ behavior may change in any 0.x release.
 
 ### Added
 
+- **Gate calibrations.** `pulse.gates` names the gates a device is
+  calibrated for (`X`, `X90`, `Y`, `Y90`, `READOUT`, `CZ`), and
+  `get_calibration(gate, transition=(0, 1))` gives each one's pulse: in a
+  kernel from a line, `get_drive_line(q).get_calibration(pulse.gates.X)` (a
+  `DragPulse`, which `drive(line, pulse)` plays) and
+  `get_readout_line(q).get_calibration(pulse.gates.READOUT)` (a
+  `ReadoutPulse`); outside one from a handle,
+  `dev.qudits[i].get_calibration(...)`, and from a coupling,
+  `dev.coupling(a, b).get_calibration(pulse.gates.CZ)` (a `FluxCZ`). A
+  qudit's `drive` and `readout` (`MicrowaveDrive`, `DispersiveReadout`)
+  hold its physics; its tuned pulses are its `calibrations`, by gate.
+  What a device does not publish is derived: an `X` amplitude from the
+  pulse's area, `X90` at half of it, `Y` and `Y90` at +90 degrees; an
+  unpublished `CZ`, `READOUT` or other transition is an error naming the
+  coupling or qudit. A qudit's `metadata` holds the user's own JSON
+  values, which the library never reads and which do not make two devices
+  differ; system files keep them.
 - **Pickling, for process pools and caches on disk.** Kernels pickle as
   functions do: by reference, or with cloudpickle (Ray, Dask) by value
   when defined in `__main__`, at the prompt or inside a function. Targets, devices, qudit handles and registers
@@ -425,13 +442,13 @@ behavior may change in any 0.x release.
   `TransmonModel`); each model class declares its levels (3 for
   transmons), and `TransmonModel(levels={0: 4})` sets a qudit's own. No
   label changes the physics: targets have no `architecture`.
-  A coupling is `Coupling(qudits=(a, b), strength_hz, gate=None)`: the
+  A coupling is `Coupling(qudits=(a, b), strength_hz, calibrations={})`: the
   qudits it couples, in order (two in this release), the strength in Hz of
   the model's operator (g / 2 pi of the exchange), or `None` when it
   is not measured yet, which compiles, schedules and exports while
-  `simulate` refuses it by name, and the gate characterized on it, if any,
-  a `cudaq_pulse.targets.Gate(name, duration_ns, buffer_ns=None,
-  interaction_frequency_hz=None)`; the `transmon_17q` target gives its
+  `simulate` refuses it by name, and its tuned gates,
+  `{pulse.gates.CZ: FluxCZ(duration_ns, buffer_ns=None,
+  interaction_frequency_hz=None)}`; the `transmon_17q` target gives its
   published CZ values, and `cudaq_pulse.targets.transmon.CZ_LAYERS` the
   (auxiliary, data) pairs of each of its CZ time steps. A target's
   `residual_zz` lists `ResidualZZ(qudits, rate_hz)` entries, a static ZZ

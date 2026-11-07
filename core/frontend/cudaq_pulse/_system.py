@@ -2117,8 +2117,9 @@ _QUDIT_FIELDS = (
     "t2_echo_us",
     "thermal_population",
 )
-_COUPLING_FIELDS = ("qudits", "strength_hz", "gate")
-_GATE_FIELDS = ("name", "duration_ns", "buffer_ns", "interaction_frequency_hz")
+# Written only when a qudit gives them.
+_QUDIT_EXTRAS = ("calibrations", "metadata")
+_COUPLING_FIELDS = ("qudits", "strength_hz", "calibrations")
 _RESIDUAL_ZZ_FIELDS = ("qudits", "rate_hz")
 # The keys an entry must give, with the fix for each.
 _QUDITS_FIX = "give the indices of the two qudits, as [0, 1]"
@@ -2127,9 +2128,6 @@ _COUPLING_REQUIRED = MappingProxyType(
         "qudits": _QUDITS_FIX,
         "strength_hz": "give the strength in Hz, or null if it is not measured yet",
     }
-)
-_GATE_REQUIRED = MappingProxyType(
-    {"name": 'give the name of the gate, as "cz"', "duration_ns": "give how long it takes, in ns"}
 )
 _RESIDUAL_ZZ_REQUIRED = MappingProxyType(
     {"qudits": _QUDITS_FIX, "rate_hz": "give the ZZ rate in Hz"}
@@ -2194,6 +2192,33 @@ def _component_data(member: str, component: Any) -> dict[str, Any] | None:
     return {"kind": kind, **dict(zip(component._fields, component._values, strict=True))}
 
 
+def _calibration_data(calibrations: Mapping[Any, Any]) -> list[dict[str, Any]]:
+    """Calibrations by gate as a system file holds them: one entry per
+    calibration, its gate, its transition if not (0, 1), and its fields."""
+    data = []
+    for key, pulse in calibrations.items():
+        gate, transition = key if key.__class__ is tuple else (key, None)
+        entry: dict[str, Any] = {"gate": str.__str__(gate)}
+        if transition is not None:
+            entry["transition"] = list(transition)
+        entry.update(zip(pulse._fields, pulse._values, strict=True))
+        data.append(entry)
+    return data
+
+
+def _qudit_data(q: Any) -> dict[str, Any]:
+    data = {
+        key: _component_data(key, value) if key in ("drive", "readout") else _plain(value)
+        for key in _QUDIT_FIELDS
+        for value in (getattr(q, key),)
+    }
+    if q.calibrations:
+        data["calibrations"] = _calibration_data(q.calibrations)
+    if q.metadata:
+        data["metadata"] = _plain(q.metadata)
+    return data
+
+
 def _model_kinds() -> dict[str, type]:
     """The simulation models a system file holds, by the kind it writes."""
     from .targets.models import SimulationModel, TransmonModel
@@ -2223,22 +2248,10 @@ def _quantum_data(target: TargetDescription) -> dict[str, Any]:
         "model": _model_data(target.model),
         "attribution": target.attribution,
         "clock_ghz": target.clock_ghz,
-        "qudits": [
-            {
-                key: _component_data(key, value) if key in ("drive", "readout") else _plain(value)
-                for key in _QUDIT_FIELDS
-                for value in (getattr(q, key),)
-            }
-            for q in sorted(target.qubits.values(), key=lambda q: q.index)
-        ],
+        "qudits": [_qudit_data(q) for q in sorted(target.qubits.values(), key=lambda q: q.index)],
         "couplings": [
-            {
-                "qudits": list(c.qudits),
-                "strength_hz": c.strength_hz,
-                "gate": None
-                if c.gate is None
-                else {key: _plain(getattr(c.gate, key)) for key in _GATE_FIELDS},
-            }
+            {"qudits": list(c.qudits), "strength_hz": c.strength_hz}
+            | ({"calibrations": _calibration_data(c.calibrations)} if c.calibrations else {})
             for c in target.couplings
         ],
         "residual_zz": [
@@ -2372,11 +2385,14 @@ class _Reader:
             return None
         qudits: dict[int, Any] = {}
         for i, item in enumerate(system.get("qudits", ())):
-            entry = self.mapping(item, f"{path}.qudits[{i}]", _QUDIT_FIELDS)
+            where = f"{path}.qudits[{i}]"
+            entry = self.mapping(item, where, (*_QUDIT_FIELDS, *_QUDIT_EXTRAS))
             if entry is not None:
                 entry = {
-                    key: self.component(value, f"{path}.qudits[{i}].{key}", key)
+                    key: self.component(value, f"{where}.{key}", key)
                     if key in ("drive", "readout") and value is not None
+                    else self.calibrations(value, f"{where}.{key}", "qudit")
+                    if key == "calibrations"
                     else value
                     for key, value in entry.items()
                 }
@@ -2390,11 +2406,12 @@ class _Reader:
             entry = self.mapping(item, where, _COUPLING_FIELDS)
             if entry is None or self.missing(entry, where, _COUPLING_REQUIRED):
                 continue
-            gate = entry.get("gate")
-            if gate is not None and (gate := self.gate(gate, f"{where}.gate")) is None:
-                continue
             given = {k: entry[k] for k in ("qudits", "strength_hz")}
-            coupling = self.build(where, Coupling, **given, gate=gate)
+            if "calibrations" in entry:
+                given["calibrations"] = self.calibrations(
+                    entry["calibrations"], f"{where}.calibrations", "coupling"
+                )
+            coupling = self.build(where, Coupling, **given)
             if coupling is not None:
                 entries["couplings"].append((i, coupling))
         for i, item in enumerate(system.get("residual_zz", ())):
@@ -2442,13 +2459,48 @@ class _Reader:
             self.problem(path, str(error))
         return None
 
-    def gate(self, data: Any, path: str) -> Any:
-        from .targets.base import Gate
+    def calibrations(self, data: Any, path: str, owner: str) -> dict[Any, Any]:
+        """The calibrations of a qudit or coupling (*owner*), by gate (or
+        ``(gate, transition)``), from their entries in the file."""
+        from .targets.base import _CALIBRATION_TYPES, _COUPLING_GATES, _QUDIT_GATES
 
-        entry = self.mapping(data, path, _GATE_FIELDS)
-        if entry is None or self.missing(entry, path, _GATE_REQUIRED):
-            return None
-        return self.build(path, Gate, **{k: v for k, v in entry.items() if k in _GATE_FIELDS})
+        allowed = _QUDIT_GATES if owner == "qudit" else _COUPLING_GATES
+        found: dict[Any, Any] = {}
+        if not isinstance(data, list):
+            self.problem(
+                path,
+                f"must be a list of calibrations, got {type(data).__name__}",
+                data,
+                fix=f'give each as {{"gate": "{allowed[0]}", ...}}',
+            )
+            return found
+        for j, item in enumerate(data):
+            where = f"{path}[{j}]"
+            if not isinstance(item, Mapping):
+                self.problem(where, f"must be a mapping, got {type(item).__name__}", item)
+                continue
+            gate = item.get("gate")
+            if not (isinstance(gate, str) and gate in allowed):
+                self.problem(
+                    f"{where}.gate",
+                    f"is not a gate of a {owner}" if "gate" in item else "is missing",
+                    gate if "gate" in item else Problem.UNSET,
+                    fix=f"the gates of a {owner} are {', '.join(allowed)}",
+                )
+                continue
+            made = _CALIBRATION_TYPES[gate]
+            self.mapping(item, where, ("gate", "transition", *made._fields))
+            pulse = self.build(where, made, **{k: item[k] for k in made._fields if k in item})
+            if pulse is None:
+                continue
+            transition = item.get("transition")
+            if transition is None:
+                found[gate] = pulse
+            else:
+                found[(gate, tuple(transition) if isinstance(transition, list) else transition)] = (
+                    pulse
+                )
+        return found
 
     def missing(self, entry: Mapping[str, Any], path: str, required: Mapping[str, str]) -> bool:
         """Whether *entry* lacks a key of *required*, each noted as a problem

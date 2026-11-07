@@ -31,7 +31,8 @@ from cudaq_pulse.kernel import _kernel
 from cudaq_pulse.kernel.ir_builder import SymbolicValueError
 from cudaq_pulse.targets import (
     Coupling,
-    Gate,
+    DragPulse,
+    FluxCZ,
     MicrowaveDrive,
     Qubit,
     ResidualZZ,
@@ -156,8 +157,19 @@ def _views(program):
 
 
 def test_targets_and_their_parts_unpickle_equal_with_equal_hashes():
-    qubit = Qubit(3, 5.1e9, -300e6, 50.0, 30.0, label="D3", drive=MicrowaveDrive(x_amplitude=0.2))
-    coupling = Coupling((3, 4), 5e6, gate=Gate("cz", 40.0, interaction_frequency_hz=4.4e9))
+    qubit = Qubit(
+        3,
+        5.1e9,
+        -300e6,
+        50.0,
+        30.0,
+        label="D3",
+        drive=MicrowaveDrive(amplitude_scale_rad_per_ns=0.2),
+        calibrations={pulse.gates.X: DragPulse(duration_ns=40.0, sigma_ns=10.0)},
+        metadata={"fridge": "B", "fit": [1, 2.5]},
+    )
+    cz = FluxCZ(duration_ns=40.0, interaction_frequency_hz=4.4e9)
+    coupling = Coupling((3, 4), 5e6, calibrations={pulse.gates.CZ: cz})
     residual = ResidualZZ((3, 4), -1.5e4)
     shipped = _SHIPPED_DEVICE.target
     for value in (qubit, coupling, residual, LADDER.target, shipped):
@@ -167,6 +179,7 @@ def test_targets_and_their_parts_unpickle_equal_with_equal_hashes():
     assert back.qubits[0].drive == shipped.qubits[0].drive
     assert back.qubits[0].readout == shipped.qubits[0].readout
     assert back.couplings == shipped.couplings and back.residual_zz == shipped.residual_zz
+    assert back.qubits[0].calibrations == shipped.qubits[0].calibrations
 
 
 def test_targets_compare_by_content():

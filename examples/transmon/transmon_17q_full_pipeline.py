@@ -20,69 +20,52 @@ The device's CZ is a flux pulse; flux lines are not modeled yet, so the
 gate's 98 ns slot is left idle here.
 """
 
-import math
 import shutil
 import subprocess
 
 import cudaq_pulse as pulse
-from cudaq_pulse.targets import MicrowaveDrive, transmon_17q
 from cudaq_pulse.targets.transmon import CZ_LAYERS
 
-target = transmon_17q()
 dev = pulse.device("transmon_17q")
-index = {q.label: q.index for q in target.qubits.values()}
-auxiliary, data = index["X1"], index["D2"]
-coupling = target.coupling(auxiliary, data)
-# The transmon_17q target gives each CZ's published values; a generic Coupling
-# has no gate (None).
-cz = coupling.gate
-assert cz is not None and coupling.strength_hz is not None
-assert cz.interaction_frequency_hz is not None
-cz_ns = cz.duration_ns
-layer = next(i for i, pairs in enumerate(CZ_LAYERS, 1) if (auxiliary, data) in pairs)
+clock_ghz = dev.clock_ghz  # the program clock the schedule counts cycles of
+qudit_aux, qudit_data = dev.qudit("X1"), dev.qudit("D2")
+coupling = dev.coupling(qudit_aux, qudit_data)
+# The transmon_17q target publishes each coupling's CZ; a generic coupling
+# has none (get_calibration raises NotFoundError).
+cz = coupling.get_calibration(pulse.gates.CZ)
+assert cz.interaction_frequency_hz is not None and coupling.strength_hz is not None
+pair = (qudit_aux.index, qudit_data.index)
+layer = next(i for i, pairs in enumerate(CZ_LAYERS, 1) if pair in pairs)
 print(
     f"X1-D2: J_qq/2pi = {coupling.strength_hz / 1e6:.2f} MHz, CZ layer {layer} at "
-    f"{cz.interaction_frequency_hz / 1e9:.2f} GHz, {cz_ns:.0f} ns"
+    f"{cz.interaction_frequency_hz / 1e9:.2f} GHz, {cz.duration_ns:.0f} ns"
 )
-
-# The published 40 ns, sigma = 10 ns pulse; amplitudes are rates in rad/ns.
-microwave = target.qubits[data].drive
-assert isinstance(microwave, MicrowaveDrive)
-clock_ghz = dev.clock_ghz  # the program clock the schedule counts cycles of
-duration_ns, sigma_ns = microwave.x_duration_ns, microwave.x_sigma_ns
-assert duration_ns is not None and sigma_ns is not None
-area_ns = sigma_ns * math.sqrt(2 * math.pi) * math.erf(duration_ns / (2 * math.sqrt(2) * sigma_ns))
-pi_amplitude = math.pi / area_ns
-cal = {
-    "x_duration": duration_ns * pulse.ns,
-    "x_sigma": sigma_ns * pulse.ns,
-    "cz_slot": cz_ns * pulse.ns,
-}
+cz_slot = cz.duration_ns * pulse.ns
 
 
 @pulse.kernel
 def cz_pair(qubit_aux, qubit_data):
     drive_line_aux = get_drive_line(qubit_aux)
     drive_line_data = get_drive_line(qubit_data)
-    duration, sigma = cal["x_duration"], cal["x_sigma"]
+    # The qudits' calibrated pulses: the published 40 ns, sigma = 10 ns DRAG,
+    # amplitudes rates in rad/ns.
+    x90 = drive_line_aux.get_calibration(pulse.gates.X90)
 
     # pi/2 on the auxiliary qubit, pi on the data qubit
-    drive(drive_line_aux, drag(duration, pi_amplitude / 2, sigma, 0.0))
-    drive(drive_line_data, drag(duration, pi_amplitude, sigma, 0.0))
+    drive(drive_line_aux, x90)
+    drive(drive_line_data, drive_line_data.get_calibration(pulse.gates.X))
     sync(drive_line_aux, drive_line_data)
 
     # The CZ slot
-    wait(drive_line_aux, cal["cz_slot"])
-    wait(drive_line_data, cal["cz_slot"])
+    wait(drive_line_aux, cz_slot)
+    wait(drive_line_data, cz_slot)
     sync(drive_line_aux, drive_line_data)
 
-    drive(drive_line_aux, drag(duration, pi_amplitude / 2, sigma, 0.0))
+    drive(drive_line_aux, x90)
 
 
 print("=== Stage 1: compile (default passes, ALAP schedule) ===")
-compiled = pulse.compile(cz_pair, device=dev).lower(
-    dev.qudit_handles[auxiliary], dev.qudit_handles[data]
-)
+compiled = pulse.compile(cz_pair, device=dev).lower(qudit_aux, qudit_data)
 total_cycles = max(e.end for e in compiled.schedule)
 print(f"  {compiled.metrics.op_count} ops, {total_cycles / clock_ghz:.0f} ns total")
 

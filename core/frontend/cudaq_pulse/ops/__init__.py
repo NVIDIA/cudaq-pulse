@@ -25,6 +25,7 @@ from ..kernel.ir_builder import Parameter
 
 if TYPE_CHECKING:
     from .._units import Time
+    from ..gates import Gate
 
 __all__ = [
     "cosine",
@@ -88,6 +89,18 @@ class Line:
         has only its own tone. A transition the qudit does not have raises
         a ``KeyError`` that lists those it has."""
         return _require_context("Line.tones")
+
+    def get_calibration(self, gate: Gate, transition: tuple[int, int] = (0, 1)) -> Any:
+        """The calibrated pulse of *gate* (a ``pulse.gates.Gate``) on the
+        line's qudit, from the device the kernel compiles for: a
+        ``DragPulse`` for ``X``, ``X90``, ``Y`` and ``Y90`` on a drive line,
+        a ``ReadoutPulse`` for ``READOUT`` on a readout line, derived as
+        ``pulse.gates`` describes where not published. Both play:
+        ``drive(line, line.get_calibration(pulse.gates.X))``, and their
+        fields are numbers known while the kernel compiles. *transition*
+        names another transition's calibration, which must be published;
+        play it at that transition's tone, ``line.tones[transition]``."""
+        return _require_context("Line.get_calibration")
 
 
 class MeasurementResult(int):

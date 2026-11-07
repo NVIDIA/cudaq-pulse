@@ -74,8 +74,7 @@ def test_the_pi_train_corrects_a_drive_amplitude_error():
 def test_adaptive_t1_tracks_the_papers_device_on_the_controller():
     base = transmon_17q()
     qubit = base.qubits[0]
-    device_qubit = dataclasses.replace(
-        qubit,
+    device_qubit = qubit.replace(
         frequency_hz=4.13e9,
         anharmonicity_hz=-210e6,
         t1_us=160.0,

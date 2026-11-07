@@ -245,8 +245,8 @@ qudit, with the levels the target's simulation model declares for it (three
 for a ``TransmonModel``) unless ``levels`` sets them. Drive envelopes are converted to X/Y Hamiltonian
 coefficients in radians per nanosecond; tone frequency and phase determine the
 rotating-frame detuning and quadrature. A target may supply
-``amplitude_scale_rad_per_ns`` explicitly, or pulse infers a scale from its
-calibrated Gaussian/DRAG pi-pulse parameters when available.
+``amplitude_scale_rad_per_ns`` explicitly, or pulse infers a scale from the
+amplitude of the qudit's ``X`` calibration when it publishes one.
 
 Target relaxation and dephasing data produce Lindblad collapse operators.
 A qudit whose ``thermal_population`` p is nonzero starts in its thermal

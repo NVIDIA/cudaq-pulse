@@ -23,14 +23,11 @@ idles both qubits. Readout, which the device overlaps with the next half
 cycle, is left out.
 """
 
-import math
-
 import cudaq_pulse as pulse
-from cudaq_pulse.targets import MicrowaveDrive, transmon_17q
 from cudaq_pulse.targets.transmon import CZ_LAYERS
 
-target = transmon_17q()
 dev = pulse.device("transmon_17q")
+target = dev.target
 clock_ghz = dev.clock_ghz  # the program clock the schedule counts cycles of
 labels = {q.index: q.label for q in target.qubits.values()}
 n_qubits = target.n_qubits
@@ -41,44 +38,35 @@ x_auxiliaries = [i for i in range(n_qubits) if labels[i].startswith("X")]
 # The CZs of each time step, (auxiliary, data), and their slot.
 z_steps = [list(CZ_LAYERS[0:2]), list(CZ_LAYERS[2:4])]
 x_steps = [list(CZ_LAYERS[4:6]), list(CZ_LAYERS[6:8])]
-cz_ns = max(c.gate.duration_ns for c in target.couplings if c.gate is not None)
+cz_slot = max(c.get_calibration(pulse.gates.CZ).duration_ns for c in target.couplings) * pulse.ns
 
 for s, layer in enumerate(CZ_LAYERS, 1):
     print(f"CZ step {s}: " + ", ".join(f"{labels[a]}-{labels[d]}" for a, d in layer))
 
-# The published 40 ns, sigma = 10 ns pulse; amplitudes are rates in rad/ns.
-microwave = target.qubits[0].drive
-assert isinstance(microwave, MicrowaveDrive)
-duration_ns, sigma_ns = microwave.x_duration_ns, microwave.x_sigma_ns
-assert duration_ns is not None and sigma_ns is not None
-area_ns = sigma_ns * math.sqrt(2 * math.pi) * math.erf(duration_ns / (2 * math.sqrt(2) * sigma_ns))
-pi_amplitude = math.pi / area_ns
-half_pi_amplitude = pi_amplitude / 2
-cal = {
-    "x_duration": duration_ns * pulse.ns,
-    "x_sigma": sigma_ns * pulse.ns,
-    "cz_slot": cz_ns * pulse.ns,
-}
-
 
 @pulse.kernel
 def surface_code_cycle(qubits):
+    # Each qudit's calibrated pi and pi/2 pulses: the published 40 ns,
+    # sigma = 10 ns DRAG, amplitudes rates in rad/ns.
     lines = []
     tones = []
+    pi_pulses = []
+    half_pi_pulses = []
     for i in range(n_qubits):
         line = get_drive_line(qubits[i])
         lines.append(line)
         tones.append(line.tone)
-    duration, sigma, cz_slot = cal["x_duration"], cal["x_sigma"], cal["cz_slot"]
+        pi_pulses.append(line.get_calibration(pulse.gates.X))
+        half_pi_pulses.append(line.get_calibration(pulse.gates.X90))
 
     for auxiliaries, basis_change, halves in (
         (z_auxiliaries, [], z_steps),
         (x_auxiliaries, data_qubits, x_steps),
     ):
         for i in auxiliaries:
-            drive(lines[i], drag(duration, half_pi_amplitude, sigma, 0.0), tone=tones[i])
+            drive(lines[i], half_pi_pulses[i], tone=tones[i])
         for i in basis_change:
-            drive(lines[i], drag(duration, half_pi_amplitude, sigma, 0.0), tone=tones[i])
+            drive(lines[i], half_pi_pulses[i], tone=tones[i])
         for h in range(2):
             for gates in halves[h]:
                 # A barrier over every line, then the step's CZ slots.
@@ -96,11 +84,11 @@ def surface_code_cycle(qubits):
             if h == 0:
                 # The echo between the second and third step of each half.
                 for i in data_qubits:
-                    drive(lines[i], drag(duration, pi_amplitude, sigma, 0.0), tone=tones[i])
+                    drive(lines[i], pi_pulses[i], tone=tones[i])
         for i in auxiliaries:
-            drive(lines[i], drag(duration, half_pi_amplitude, sigma, 0.0), tone=tones[i])
+            drive(lines[i], half_pi_pulses[i], tone=tones[i])
         for i in basis_change:
-            drive(lines[i], drag(duration, half_pi_amplitude, sigma, 0.0), tone=tones[i])
+            drive(lines[i], half_pi_pulses[i], tone=tones[i])
         for i in range(n_qubits - 1):
             sync(lines[i], lines[i + 1])
         for i in range(n_qubits - 1):
