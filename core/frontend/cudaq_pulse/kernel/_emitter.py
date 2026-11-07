@@ -2256,12 +2256,12 @@ class PulseIREmitter:
         stack = self.stack
         saved_stack = list(stack)
         saved_locals = dict(self.locals)
-        # A list or dict is copied when an arm first changes it
+        # A container is copied when an arm first changes it
         # (_note_mutation), with its length: a growing list of outcomes is
         # not copied at every branch. A list holding lines or tones, whose
-        # slots the trace rebinds, and a subclass, are copied now, and the
-        # list's slots tracked again after the first arm.
-        containers: list[Any] = [v for v in saved_locals.values() if isinstance(v, (list, dict))]
+        # slots the trace rebinds, is copied now, and its slots tracked again
+        # after the first arm.
+        containers: list[Any] = [v for v in saved_locals.values() if isinstance(v, _MUTABLE)]
         lazy: list[tuple[Any, int]] = []
         if containers:
             found = containers
@@ -2280,10 +2280,10 @@ class PulseIREmitter:
                 if v is yielded:
                     containers.append((v, list(v)))
                     continue
-                if v.__class__ is dict:
+                if v.__class__ is dict or v.__class__ is not list and not isinstance(v, list):
                     lazy.append((v, len(v)))
                     continue
-                if v.__class__ is list and id(v) not in rebound:
+                if id(v) not in rebound:
                     seen = plain.get(id(v))
                     i = 0 if seen is None or seen[0] is not v else seen[1]
                     n = len(v)
@@ -2299,7 +2299,7 @@ class PulseIREmitter:
                         lazy.append((v, n))
                         continue
                     plain.pop(id(v), None)
-                containers.append((v, list(v) if isinstance(v, list) else dict(v)))
+                containers.append((v, list(v)))
 
         # Each channel value entering the branch, as (cell, value).
         held = self._lines.held

@@ -349,26 +349,45 @@ class _Outcomes(list):
     pass
 
 
-def _rounds(n):
+class _Record(dict):
+    pass
+
+
+# What a kernel keeps its outcomes in, and how it adds one.
+_KEPT = {
+    "list": (list, "append"),
+    "list subclass": (_Outcomes, "append"),
+    "dict subclass": (_Record, "setdefault"),
+    "set": (set, "add"),
+    "deque": (collections.deque, "append"),
+}
+
+
+def _rounds(n, kept="list"):
+    make, add = _KEPT[kept]
+
     @pulse.kernel(unroll_threshold=10**9)
     def rounds(q):
         d = get_drive_line(q)  # noqa: F821
         r = get_readout_line(q)  # noqa: F821
-        outcomes = []
-        for _ in range(n):
+        outcomes = make()
+        for k in range(n):
             m = readout(r, square(40, 0.05))  # noqa: F821
             sync(d, r)  # noqa: F821
             if m:
                 drive(d, square(16, 0.1))  # noqa: F821
-            outcomes.append(m)
+            getattr(outcomes, add)(k)
 
     return rounds
 
 
 @pytest.mark.slow
-def test_branches_beside_a_growing_list_of_outcomes_trace_in_linear_work():
-    # An arm that leaves a list as it was costs nothing for its length.
-    work = {n: python_work(lambda n=n: pulse.compile(_rounds(n)).lower(Q[0])) for n in (50, 200)}
+@pytest.mark.parametrize("kept", list(_KEPT))
+def test_branches_beside_a_growing_container_of_outcomes_trace_in_linear_work(kept):
+    # An arm that leaves a container as it was costs nothing for its length.
+    work = {
+        n: python_work(lambda n=n: pulse.compile(_rounds(n, kept)).lower(Q[0])) for n in (50, 200)
+    }
     assert all(work[200][count] <= 4 * work[50][count] for count in work[50]), work
 
 
