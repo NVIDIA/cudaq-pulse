@@ -620,12 +620,28 @@ def test_a_check_on_a_controllers_own_clock_converts_what_runs_at_run_time_as_it
     limits = dataclasses.replace(Controller(), **OWN_CLOCKS[clock])
     lowered = _on(_delayed_at_run_time, "asap", limits)
     own = controller._native_clock(lowered.clocks)
-    checked = controller._walk(lowered, values=False, own=own, waveforms=False, summary=([], None))[
-        1
-    ]
+    repeats: list[Any] = []
+    checked = controller._walk(
+        lowered, values=False, own=own, waveforms=False, summary=(repeats, None)
+    )[1]
     exported = controller._walk(lowered, values=False, own=own, waveforms=False)[1]
+    assert repeats
+
+    def answered(value: Any, events: list[Any]) -> Any:
+        # An answer by the event's kind and start: the summarized loop
+        # before it has fewer events.
+        if isinstance(value, dict):
+            if "answer" in value:
+                event = events[value["answer"]]
+                return {**value, "answer": (event["kind"], event["start_cycles"])}
+            return {k: answered(v, events) for k, v in value.items()}
+        if isinstance(value, list):
+            return [answered(v, events) for v in value]
+        return value
+
     lengths = [
-        [e["length"] for e in events if e["kind"] == "wait"] for events in (checked, exported)
+        [answered(e["length"], events) for e in events if e["kind"] == "wait"]
+        for events in (checked, exported)
     ]
     assert lengths[0] == lengths[1]
 

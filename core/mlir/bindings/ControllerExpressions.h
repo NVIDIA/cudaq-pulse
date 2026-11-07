@@ -497,18 +497,26 @@ struct ControllerExpressions {
   /// Whether expression `y` is `x` one iteration on: records [a, b) moved
   /// to [b, 2b - a), the rest the same.
   bool sameExpression(int32_t x, int32_t y, int64_t a, int64_t b) const {
+    return sameExpression(x, y, a, b, b - a);
+  }
+
+  /// Whether expression `y` is `x` with the records it refers to in
+  /// [low, high) `shift` later, the rest the same.
+  bool sameExpression(int32_t x, int32_t y, int64_t low, int64_t high,
+                      int64_t shift) const {
     const Expression &p = expressions[x], &q = expressions[y];
     if (p.kind != q.kind || p.term != q.term || p.name != q.name ||
         p.type != q.type || p.result != q.result ||
         p.of.size() != q.of.size() || !same(p.number, q.number))
       return false;
     if (p.kind == Expression::Readout || p.kind == Expression::Answer) {
-      int64_t moved = p.event >= a && p.event < b ? p.event + (b - a) : p.event;
+      int64_t moved =
+          p.event >= low && p.event < high ? p.event + shift : p.event;
       if (q.event != moved)
         return false;
     }
     for (size_t i = 0; i < p.of.size(); ++i)
-      if (!sameExpression(p.of[i], q.of[i], a, b))
+      if (!sameExpression(p.of[i], q.of[i], low, high, shift))
         return false;
     return true;
   }

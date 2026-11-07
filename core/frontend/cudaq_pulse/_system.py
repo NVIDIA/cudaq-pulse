@@ -1452,24 +1452,81 @@ class ControlSystem:
         one period, on a system that ``_lines_up``, as ``_loops.parts``
         gives them, with *rates* those of
         ``controller._sample_rate_violations``; ``None`` unless every copy of
-        a loop needs and forwards what its first does (the walk summarizes
-        no calls), each period is whole timesteps of every controller, and
-        *rates* come last. A sync lines up the pulses of several controllers
-        exactly, so ``_alignment`` finds nothing."""
+        a loop needs and forwards what its first does, each period is whole
+        timesteps of every controller, and *rates* come last. A sync lines
+        up the pulses of several controllers exactly, so ``_alignment``
+        finds nothing."""
         from . import _clocks, _loops
+        from .controller import _computes_at_run_time
 
+        run_time = _computes_at_run_time(lowered)
         if clocks is not None and clocks.owners is not None:
             grids = {c.grid for c in clocks.controllers}
             if any(r[3] % grid for r in repeats for grid in grids):
                 return None
-            if _clocks.off_grid(clocks, lines, events):
+            if _clocks.off_grid(clocks, lines, events, run_time, False, run_time):
                 return None
         if rates is not None and self._placement:
             return None
         owners, found = self._owners(lines)
+        several = len(self.controllers) > 1
+        # A copy needs or forwards what its first does not: where calls are
+        # checked (as _needs checks them), when an answer is taken across
+        # its bounds (after its loop, or in the copy after it), so that its
+        # takers are not the first's; and on several controllers, when
+        # another controller's readout of it is tested or computed with
+        # after its loop, which a later copy's reaches later. Only a program
+        # that computes at run time computes with an answer or a readout.
+        checks = any(c.supports is not None for c in self.controllers) or any(
+            link.controllers is not None or link.per_controller for link in self.links.values()
+        )
+        for i, event in enumerate(events if checks or several else ()):
+            conditions = event["conditions"]
+            if not (conditions or run_time):
+                continue
+            kind = event["kind"]
+            if kind not in _NEEDS:
+                continue
+            user = owners[event["line"]]
+            if user is None:
+                continue
+            forwards = several and kind in _PLAYED
+            if run_time:
+                readouts: list[int] = []
+                answers: list[int] = []
+                stack = [value for key, value in event.items() if key != "conditions"]
+                while stack:
+                    value = stack.pop()
+                    if isinstance(value, dict):
+                        ref = value.get("readout")
+                        if type(ref) is int:
+                            readouts.append(ref)
+                        ref = value.get("answer")
+                        if type(ref) is int:
+                            answers.append(ref)
+                        stack.extend(value.values())
+                    elif isinstance(value, list):
+                        stack.extend(value)
+                conditions = [*conditions, {"readouts": readouts, "answers": answers}]
+            for condition in conditions:
+                if forwards:
+                    for ref in condition["readouts"]:
+                        if owners[events[ref]["line"]] not in (None, user):
+                            for r in repeats:
+                                if r[0] <= ref < r[1] and not r[0] <= i < r[1]:
+                                    return None
+                if checks:
+                    for ref in condition["answers"]:
+                        for r in repeats:
+                            begin, end = r[0], r[1]
+                            if begin <= i < end:
+                                if begin - (end - begin) <= ref < begin:
+                                    return None
+                            elif begin <= ref < end:
+                                return None
         if self._needs(lowered, events, owners, unresolved):
             return None
-        if len(self.controllers) == 1:
+        if not several:
             from .controller import _native_clock
 
             found.extend(
@@ -1488,19 +1545,6 @@ class ControlSystem:
                 )
             )
         else:
-            ranges = [(r[0], r[1]) for r in repeats]
-            for i, event in enumerate(events):
-                user = owners[event["line"]] if event["kind"] in _PLAYED else None
-                if user is None:
-                    continue
-                for condition in event["conditions"]:
-                    for ref in condition["readouts"]:
-                        # A later copy's readout reaches an event after its
-                        # loop later than the first copy's does.
-                        if owners[events[ref]["line"]] not in (None, user) and any(
-                            begin <= ref < end and not begin <= i < end for begin, end in ranges
-                        ):
-                            return None
             if self._forwarding(events, owners, clocks):
                 return None
             for index, controller in enumerate(self.controllers):

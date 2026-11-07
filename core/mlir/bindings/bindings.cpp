@@ -1273,12 +1273,12 @@ struct ControllerEventWalk : ControllerExpressions {
     if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
       int64_t trips = pulse::constantTripCount(loop).value_or(0);
       iteration.push_back(0);
-      if constexpr (!RunTime)
-        if (summarize && trips > kSummarizeAfter && !holdsBoundary(loop)) {
-          summarizeLoop(*loop.getBody(), trips);
-          iteration.pop_back();
-          return;
-        }
+      if (summarize && trips > kSummarizeAfter && !holdsBoundary(loop) &&
+          (!RunTime || tracked.empty())) {
+        summarizeLoop<RunTime>(*loop.getBody(), trips);
+        iteration.pop_back();
+        return;
+      }
       for (int64_t k = 0; k < trips; ++k) {
         iteration.back() = k;
         block<RunTime>(*loop.getBody());
@@ -1389,11 +1389,12 @@ struct ControllerEventWalk : ControllerExpressions {
   }
   llvm::DenseMap<mlir::Operation *, bool> boundaries;
 
-  /// With `summarize` (for a check of a module that computes nothing at run
-  /// time): a rolled loop of more than kSummarizeAfter iterations whose third
-  /// iteration plays its second again one period later is walked three
-  /// times, and `repeats` records that the third stands for every later one.
-  /// Frame phases are not followed past such a loop.
+  /// With `summarize` (for a check, which tracks no tone's frame changes): a
+  /// rolled loop of more than kSummarizeAfter iterations whose third
+  /// iteration plays its second again one period later, computing at run
+  /// time what it computes (sameRunTime), is walked three times, and
+  /// `repeats` records that the third stands for every later one. Frame
+  /// phases are not followed past such a loop.
   bool summarize = false;
   static constexpr int64_t kSummarizeAfter = 64;
   /// The events a summarizing walk plays at most, loops that do not repeat
@@ -1411,33 +1412,42 @@ struct ControllerEventWalk : ControllerExpressions {
   /// iteration 1 again at a period of their own, which syncs only lines of
   /// one period, also repeats. Its Repeat has period -1, and each line's
   /// period is a (repeat index, line, period) here; a line with none moves
-  /// no event.
+  /// no event. A classical call's submit or answer, i events into the body,
+  /// is on a line of its own, kCallLine - i.
   bool unsynced = false;
   std::vector<std::array<int64_t, 3>> linePeriods;
+  static constexpr int64_t kCallLine = std::numeric_limits<int64_t>::min() / 2;
 
   struct Mark {
     size_t event, repeat;
     int64_t branch;
+    size_t known;
   };
-  Mark mark() const { return {result.size(), repeats.size(), nextBranch}; }
+  Mark mark() const {
+    return {result.size(), repeats.size(), nextBranch, known.size()};
+  }
 
+  template <bool RunTime>
   LLVM_ATTRIBUTE_NOINLINE void summarizeLoop(mlir::Block &body, int64_t trips) {
     Mark zero = mark();
     iteration.back() = 0;
-    block<false>(body);
+    block<RunTime>(body);
     Mark one = mark();
     iteration.back() = 1;
-    block<false>(body);
+    block<RunTime>(body);
     Mark two = mark();
     auto framesOne = frames;
     auto reachedOne = reached;
     auto latestOne = latest;
     iteration.back() = 2;
-    block<false>(body);
+    block<RunTime>(body);
     Mark three = mark();
     std::map<int64_t, int64_t> periods;
     auto period = repeating(zero, one, two, three, framesOne, reachedOne,
                             latestOne, periods);
+    if constexpr (RunTime)
+      if (period && !sameRunTime(zero, one, two, three))
+        period.reset();
     if (period && *period < 0) {
       summarizeUnsynced(two, three, trips, reachedOne, periods);
       return;
@@ -1471,7 +1481,9 @@ struct ControllerEventWalk : ControllerExpressions {
       return;
     }
     for (int64_t k = 3; k < trips; ++k) {
-      if (result.size() > kMaxEvents)
+      // A walk at run time plays out a loop that does not repeat, as the
+      // walk of every iteration does.
+      if (!RunTime && result.size() > kMaxEvents)
         throw std::length_error(
             "the controller check plays more than " +
             std::to_string(kMaxEvents) +
@@ -1479,8 +1491,55 @@ struct ControllerEventWalk : ControllerExpressions {
             "period apart; give the loop fewer iterations, or sync its lines "
             "so that every iteration plays alike");
       iteration.back() = k;
-      block<false>(body);
+      block<RunTime>(body);
     }
+  }
+
+  /// Whether iteration 2 (after `two`) computes at run time what iteration
+  /// 1 (after `one`) does, as `repeating` compares their events: the same
+  /// waveform operands, wait lengths and bounds and submitted values, term
+  /// by term, each readout or answer they refer to in the iteration before
+  /// or in their own one iteration later; and a phase known where the
+  /// other's is.
+  LLVM_ATTRIBUTE_NOINLINE bool sameRunTime(Mark zero, Mark one, Mark two,
+                                           Mark three) const {
+    if (three.known - two.known != two.known - one.known)
+      return false;
+    const auto len = static_cast<int64_t>(two.event - one.event);
+    const auto low = static_cast<int64_t>(zero.event);
+    const auto high = static_cast<int64_t>(two.event);
+    auto alike = [&](int32_t a, int32_t b) {
+      return sameExpression(a, b, low, high, len);
+    };
+    for (size_t i = 0; i < two.event - one.event; ++i)
+      if (std::isnan(std::get<8>(result[one.event + i])) !=
+          std::isnan(std::get<8>(result[two.event + i])))
+        return false;
+    for (size_t i = 0; i < two.known - one.known; ++i) {
+      const Known &a = known[one.known + i];
+      const Known &b = known[two.known + i];
+      if (b.event != a.event + len || a.tone >= 0 || b.tone >= 0 ||
+          a.minCycles != b.minCycles || a.maxCycles != b.maxCycles ||
+          (a.length < 0) != (b.length < 0) ||
+          (a.length >= 0 && !alike(a.length, b.length)) ||
+          a.waveform.size() != b.waveform.size() ||
+          a.operands.has_value() != b.operands.has_value())
+        return false;
+      for (size_t k = 0; k < a.waveform.size(); ++k) {
+        const auto &[nodeA, indexA, valueA] = a.waveform[k];
+        const auto &[nodeB, indexB, valueB] = b.waveform[k];
+        if (nodeA != nodeB || indexA != indexB || !alike(valueA, valueB))
+          return false;
+      }
+      if (a.operands) {
+        if (a.operands->size() != b.operands->size())
+          return false;
+        for (size_t k = 0; k < a.operands->size(); ++k)
+          if (!alike((*a.operands)[k], (*b.operands)[k]))
+            return false;
+      }
+    }
+    return true;
   }
 
   /// The later copies of a loop whose lines repeat at `periods`, as
@@ -1557,7 +1616,13 @@ struct ControllerEventWalk : ControllerExpressions {
       const Event &b = result[two.event + i];
       if (!std::get<3>(a) || std::get<1>(a) < 0)
         continue;
-      if (!agree(std::get<1>(a), *std::get<3>(b) - *std::get<3>(a)))
+      // A call's line is its link, which it shares with other calls: each
+      // submit and answer has a period of its own, the line kCallLine - i
+      // for the i-th event of the body.
+      int64_t line = std::get<1>(a);
+      if (std::get<0>(a) == "submit" || std::get<0>(a) == "answer")
+        line = kCallLine - static_cast<int64_t>(i);
+      if (!agree(line, *std::get<3>(b) - *std::get<3>(a)))
         return std::nullopt;
     }
     for (size_t i = 0; i < len; ++i) {

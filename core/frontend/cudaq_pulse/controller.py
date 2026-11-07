@@ -1931,7 +1931,12 @@ def _limit_violations(
             break
         from ._loops import UnsyncedError, violations
 
-        assert not problems
+        if problems:
+            # A summarizing walk's problems name only the copies it plays.
+            lines, events, _, off, problems = _walk(
+                lowered, unresolved is None, _native_clock(clocks), False
+            )
+            break
         own = _native_clock(clocks)
         try:
             return violations(
@@ -2403,15 +2408,16 @@ def _compile_check(
         )
         if not repeats:
             break
-        assert not problems
-        from ._loops import summarized_check
+        # A summarizing walk's problems name only the copies it plays.
+        if not problems:
+            from ._loops import summarized_check
 
-        checked = summarized_check(
-            lowered, limits, system, clocks, slots, lines, events, repeats, periods, off
-        )
-        if checked is not None:
-            return checked
-        repeats = [] if unsynced else None
+            checked = summarized_check(
+                lowered, limits, system, clocks, slots, lines, events, repeats, periods, off
+            )
+            if checked is not None:
+                return checked
+        repeats = [] if unsynced and not problems else None
     if system is not None and slots and not system._plays_everything:
         # Which controller plays a line depends on the qudits a call binds.
         return [], False
@@ -2471,12 +2477,13 @@ def _call_violations(lowered: Lowered) -> Sequence[str]:
                 break
             from ._loops import finished
 
-            assert not problems
-            parts = system._summarized(
-                lowered, lines, events, repeats, clocks, off, None, None, None
-            )
-            if parts is not None:
-                return finished(parts)
+            # A summarizing walk's problems name only the copies it plays.
+            if not problems:
+                parts = system._summarized(
+                    lowered, lines, events, repeats, clocks, off, None, None, None
+                )
+                if parts is not None:
+                    return finished(parts)
             repeats = None
         return system._violations(lowered, lines, events, clocks, off, problems, True, None, None)
     assert machine.controller is not None

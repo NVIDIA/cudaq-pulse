@@ -57,9 +57,10 @@ class UnsyncedError(Exception):
 class _Rep:
     """Copies of the events of ``body``: copy j starts j * ``period``
     cycles after the first, which the events of ``body`` are; or, with
-    ``lines``, j times the period of its event's line."""
+    ``lines``, j times the period of its event's line, ``at`` the line of
+    each event of the first copy."""
 
-    __slots__ = ("begin", "end", "copies", "period", "depth", "body", "orig", "lines")
+    __slots__ = ("begin", "end", "copies", "period", "depth", "body", "orig", "lines", "at")
 
     def __init__(
         self,
@@ -73,12 +74,13 @@ class _Rep:
         self.begin, self.end, self.copies = begin, end, copies
         self.period, self.depth = period, depth
         self.lines = lines
+        self.at: dict[int, int] = {}
         self.body: list[Any] = []
         self.orig = self
 
     def keeping(self, body: list[Any]) -> _Rep:
         kept = _Rep(self.begin, self.end, self.copies, self.period, self.depth, self.lines)
-        kept.body, kept.orig = body, self.orig
+        kept.body, kept.orig, kept.at = body, self.orig, self.at
         return kept
 
 
@@ -301,13 +303,14 @@ class Schedule(Sequence[Any]):
 
 
 def _tree(
-    count: int,
+    events: Sequence[Mapping[str, Any]],
     repeats: Sequence[Sequence[int]],
     periods: Sequence[Sequence[int]] = (),
 ) -> tuple[list[Any], list[tuple[_Rep, ...]]]:
-    """The events 0 to *count* - 1 with their repeats as nested nodes, and
-    the repeats each event lies in, outermost first; *periods* the
-    (repeat, line, period) of repeats whose lines have periods of their own."""
+    """The indices of *events* with their repeats as nested nodes, and the
+    repeats each event lies in, outermost first; *periods* the (repeat,
+    line, period) of repeats whose lines have periods of their own."""
+    count = len(events)
     lines: dict[int, dict[int, int]] = {}
     for index, line, period in periods:
         lines.setdefault(index, {})[line] = period
@@ -319,6 +322,14 @@ def _tree(
         ),
         key=lambda r: (r.begin, -r.end),
     )
+    for rep in reps:
+        if rep.lines is not None:
+            # A classical call's submit or answer, i events into the body, is
+            # on a line of its own, kCallLine - i (ControllerEventWalk).
+            for i in range(rep.begin, rep.end):
+                event = events[i]
+                call = event["kind"] in ("submit", "answer")
+                rep.at[i] = -(1 << 62) - (i - rep.begin) if call else event["line"]
     chains: list[tuple[_Rep, ...]] = [()] * count
     at = 0
 
@@ -371,7 +382,7 @@ def _each_event(
     nodes: list[Any], make: Callable[[int], Any], lines: Iterable[int] | None = None
 ) -> list[Any]:
     """The violation *make* gives for each event of *nodes* (or ``None``),
-    in program order; their events are on *lines*, else on any line."""
+    in program order; their events are on *lines*, else each on its own."""
     parts: list[Any] = []
     for node in nodes:
         if type(node) is int:
@@ -379,9 +390,20 @@ def _each_event(
             if part is not None:
                 parts.append(part)
         else:
-            body = _each_event(node.body, make, lines)
+            made: list[int] = []
+
+            def making(i: int, made: list[int] = made) -> Any:
+                part = make(i)
+                if part is not None:
+                    made.append(i)
+                return part
+
+            body = _each_event(node.body, making, lines)
             if body:
-                on = lines if lines is not None else (node.lines or ())
+                if lines is not None:
+                    on: Iterable[int] = lines
+                else:
+                    on = {node.at[i] for i in made} if node.lines is not None else ()
                 parts.append(_Copies(body, 0, node.copies, _period(node, on)))
     return parts
 
@@ -641,7 +663,7 @@ def parts(
     the runtime qudit whose own frequency its tone plays, or -1.
     ``UnsyncedError`` when a check pairs events of lines of different
     periods."""
-    tree, chains = _tree(len(events), repeats, periods)
+    tree, chains = _tree(events, repeats, periods)
     budget = _Budget()
     found: list[Any] = []
     if off:
