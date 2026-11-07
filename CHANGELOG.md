@@ -87,10 +87,13 @@ behavior may change in any 0.x release.
   that does not plays it unrolled, and its limit error names the loop; unrolling adds pulses,
   not waveform memory, which holds each shape once. `rcp` keeps a branch
   on a readout the `feedback_latency_cycles` of the controllers that read out.
-  A control system's `line_delays_ns` (times or numbers of ns) and
-  `reference_clock_ghz` are its calibrated line delays and shared clock; new
-  delays alone schedule its programs again without tracing them. Without a
-  declared `"clock_ghz"`, a device's program clock is its fastest
+  A line's calibrated delay is part of its declaration,
+  `Controller(drive_lines=[DriveLine(5, delay_ns=4.0), 6],
+  readout_lines=[ReadoutLine(5, delay_ns=12.0)])` (times or numbers of ns;
+  a bare carrier index is an undelayed line), and a control system's
+  `reference_clock_ghz` is its shared clock; new delays alone schedule its
+  programs again without tracing them. Without a
+  declared `clock_ghz`, a device's program clock is its fastest
   controller clock when every other one divides it; clocks that do not
   divide evenly are a `DeviceDefinitionError` that lists the program clocks
   that work, and every controller clock must be a whole multiple of the

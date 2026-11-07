@@ -20,6 +20,12 @@ Export and limits
 
 .. autodata:: cudaq_pulse.controller.FORMAT
 
+.. autoclass:: cudaq_pulse.controller.DriveLine
+   :members: qudit, delay_ns
+
+.. autoclass:: cudaq_pulse.controller.ReadoutLine
+   :members: qudit, delay_ns
+
 .. autoclass:: cudaq_pulse.controller.WaveformMemoryScope
    :members:
    :undoc-members:

@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import io
 import json
 import tomllib
@@ -25,7 +26,7 @@ from cudaq_pulse._errors import (
 )
 from cudaq_pulse._system import installed_descriptions
 from cudaq_pulse.classical import Link
-from cudaq_pulse.controller import ControllerLimitError
+from cudaq_pulse.controller import ControllerLimitError, DriveLine, ReadoutLine
 from cudaq_pulse.targets.base import (
     Coupling,
     DispersiveReadout,
@@ -94,7 +95,7 @@ def test_a_controller_checks_its_wiring_fields():
     with pytest.raises(ValueError, match="negative"):
         pulse.Controller(clock_skew_cycles=-1)
     box = pulse.Controller(drive_lines=range(3), supports=["play", pulse.Capability.SYNC])
-    assert box.drive_lines == (0, 1, 2)
+    assert box.drive_lines == (DriveLine(0), DriveLine(1), DriveLine(2))
     assert box.supports == (pulse.Capability.PLAY, pulse.Capability.SYNC)
     assert box.supports_capability(pulse.Capability.SYNC)
     assert not box.supports_capability(pulse.Capability.BRANCH)
@@ -277,19 +278,27 @@ def _outputs(lowered):
     )
 
 
+def _delayed_box(delays, **fields):
+    """A controller of qudits 0 to 3, its lines delayed as *delays* gives,
+    by (role, qudit)."""
+    return pulse.Controller(
+        drive_lines=[DriveLine(q, delay_ns=delays.get(("drive", q), 0.0)) for q in range(4)],
+        readout_lines=[ReadoutLine(q, delay_ns=delays.get(("readout", q), 0.0)) for q in range(4)],
+        **fields,
+    )
+
+
 def test_line_delays_and_a_reference_clock_are_the_control_systems():
     delays = {("drive", 0): 2.3, ("readout", 0): 1.0}
-    box = pulse.Controller(
-        drive_lines=range(4), readout_lines=range(4), clock_ghz=1.0, max_fine_delay_ns=1.0
-    )
-    system = pulse.ControlSystem(controllers=[box], reference_clock_ghz=0.5, line_delays_ns=delays)
-    assert system._machine.line_delays_ns == delays and system._machine.reference_clock_ghz == 0.5
+    box = _delayed_box(delays, clock_ghz=1.0, max_fine_delay_ns=1.0)
+    assert box.drive_lines[0] == DriveLine(0, delay_ns=2.3)
+    system = pulse.ControlSystem(controllers=[box], reference_clock_ghz=0.5)
+    assert system._machine._line_delays == delays and system._machine.reference_clock_ghz == 0.5
     timed = pulse.device(TRANSMON_17Q, layout=[0, 1, 2, 3], control_system=system)
     by_system = pulse.compile(drive_and_branch, device=timed).lower(
         timed.qudits[0], timed.qudits[1]
     )
-    machine = ControlSystem(controllers=[box], reference_clock_ghz=0.5, line_delays_ns=delays)
-    by_model = pulse.compile(drive_and_branch, control_system=machine).lower(
+    by_model = pulse.compile(drive_and_branch, control_system=system).lower(
         timed.qudits[0], timed.qudits[1]
     )
     assert _outputs(by_system) == _outputs(by_model)
@@ -299,10 +308,9 @@ def test_line_delays_and_a_reference_clock_are_the_control_systems():
 
 
 def test_new_line_delays_of_a_control_system_schedule_again_to_the_same_bytes():
-    box = pulse.Controller(drive_lines=range(4), readout_lines=range(4))
     kernel = pulse.kernel(drive_and_branch.__pulse_kernel_fn__)
     for k, delays in enumerate(({("drive", 0): 1.0}, {("drive", 1): 4.0, ("readout", 0): 1.5})):
-        system = pulse.ControlSystem(controllers=[box], line_delays_ns=delays)
+        system = pulse.ControlSystem(controllers=[_delayed_box(delays)])
         qpu = pulse.device(TRANSMON_17Q, layout=[0, 1], control_system=system)
         again = pulse.compile(kernel, device=qpu).lower(qpu.qudits[0], qpu.qudits[1])
         assert (again.metrics.trace_ms == 0.0) == (k > 0)
@@ -312,18 +320,15 @@ def test_new_line_delays_of_a_control_system_schedule_again_to_the_same_bytes():
 
 
 def test_a_control_systems_line_delays_and_reference_clock_are_checked():
-    with pytest.raises(ValueError, match=r"ControlSystem.line_delays_ns\[\('drive', 0\)\] is -1"):
-        pulse.ControlSystem(line_delays_ns={("drive", 0): -1.0})
+    with pytest.raises(ValueError, match=r"DriveLine\(0\).delay_ns is -1.0 ns"):
+        pulse.Controller(drive_lines=[DriveLine(0, delay_ns=-1.0)])
     with pytest.raises(ValueError, match="ControlSystem.reference_clock_ghz must be positive"):
         pulse.ControlSystem(reference_clock_ghz=0.0)
-    with pytest.raises(
-        DeviceDefinitionError, match="delays qudit 4's drive line, which no controller plays"
-    ):
-        pulse.ControlSystem(controllers=list(_two_boxes()), line_delays_ns={("drive", 4): 1.0})
-    system = pulse.ControlSystem(
-        controllers=[pulse.Controller()], line_delays_ns={("readout", 40): 1.0}
-    )
-    with pytest.raises(DeviceDefinitionError, match="the qudit is not in the quantum system"):
+    with pytest.raises(TypeError, match="line_delays_ns"):
+        pulse.ControlSystem(line_delays_ns={("drive", 0): 1.0})  # type: ignore[call-arg]
+    box = pulse.Controller(readout_lines=[ReadoutLine(40, delay_ns=1.0)])
+    system = pulse.ControlSystem(controllers=[box])
+    with pytest.raises(DeviceDefinitionError, match="qudit 40 is not in the quantum system"):
         pulse.device(TRANSMON_17Q, control_system=system)
 
 
@@ -332,25 +337,33 @@ def test_a_control_system_takes_its_times_as_times():
     lines = {"drive_lines": range(4), "readout_lines": range(4)}
     box = pulse.Controller(max_fine_delay_ns=1 * ns, **lines)
     assert box == pulse.Controller(max_fine_delay_ns=1.0, **lines)
+    timed = pulse.Controller(
+        max_fine_delay_ns=1 * ns,
+        drive_lines=[DriveLine(0, delay_ns=2.5 * ns), 1, 2, 3],
+        readout_lines=[ReadoutLine(0, delay_ns=0.001 * us), 1, 2, 3],
+    )
+    numbered = pulse.Controller(
+        max_fine_delay_ns=1.0,
+        drive_lines=[DriveLine(0, delay_ns=2.5), 1, 2, 3],
+        readout_lines=[ReadoutLine(0, delay_ns=1.0), 1, 2, 3],
+    )
     by_time = pulse.ControlSystem(
-        controllers=[box],
+        controllers=[timed],
         links={"decoder": Link(fixed_ns=0.1 * us, feedback_ns=20 * ns, per_controller=True)},
-        line_delays_ns={("drive", 0): 2.5 * ns, ("readout", 0): 0.001 * us},
     )
     by_number = pulse.ControlSystem(
-        controllers=[box],
+        controllers=[numbered],
         links={"decoder": Link(fixed_ns=100, feedback_ns=20, per_controller=True)},
-        line_delays_ns={("drive", 0): 2.5, ("readout", 0): 1.0},
     )
     assert by_time == by_number
-    assert [ns.__class__ for ns in by_time.line_delays_ns.values()] == [float, float]
+    assert [ns.__class__ for ns in by_time._line_delays.values()] == [float, float]
     qpus = [
         pulse.device(TRANSMON_17Q, layout=[0, 1], control_system=system)
         for system in (by_time, by_number)
     ]
     assert qpus[0].as_dict() == qpus[1].as_dict()
-    with pytest.raises(ValueError, match=r"ControlSystem.line_delays_ns\[\('drive', 0\)\] is -1"):
-        pulse.ControlSystem(line_delays_ns={("drive", 0): -1 * ns})
+    with pytest.raises(ValueError, match=r"ReadoutLine\(0\).delay_ns is -1.0 ns"):
+        ReadoutLine(0, delay_ns=-1 * ns)
 
 
 @pytest.mark.parametrize(
@@ -738,21 +751,23 @@ def test_a_system_file_refuses_an_unknown_component_kind_or_field():
 
 
 def test_line_delays_and_a_reference_clock_round_trip_through_the_system_file():
-    system = pulse.ControlSystem(
-        controllers=list(_two_boxes()),
-        reference_clock_ghz=0.25,
-        line_delays_ns={("drive", 0): 1.5, ("readout", 3): 2.0},
-    )
+    a, b = _two_boxes()
+    a = dataclasses.replace(a, drive_lines=[DriveLine(0, delay_ns=1.5), *a.drive_lines[1:]])
+    b = dataclasses.replace(b, readout_lines=[2, ReadoutLine(3, delay_ns=2.0)])
+    system = pulse.ControlSystem(controllers=[a, b], reference_clock_ghz=0.25)
     qpu = pulse.device(TRANSMON_17Q, layout=[0, 1, 2, 3], control_system=system)
-    data = _round_trip(qpu)["control_system"]
-    assert data["line_delays_ns"] == {"drive": {"0": 1.5}, "readout": {"3": 2.0}}
-    assert data["reference_clock_ghz"] == 0.25
-    assert "line_delays_ns" not in _qpu(*_two_boxes()).as_dict()["control_system"]
-    data["line_delays_ns"] = {"drive": {"zero": 1.0}}
-    with pytest.raises(DeviceDefinitionError, match="line_delays_ns.drive: is keyed by qudit"):
-        pulse.Device.from_dict(
-            {"quantum_system": TRANSMON_17Q, "layout": [0, 1, 2, 3], "control_system": data}
-        )
+    data = _round_trip(qpu)
+    control = data["control_system"]
+    assert control["controllers"][0]["drive_lines"][0] == {"qudit": 0, "delay_ns": 1.5}
+    assert control["controllers"][1]["readout_lines"] == [2, {"qudit": 3, "delay_ns": 2.0}]
+    assert control["reference_clock_ghz"] == 0.25 and "line_delays_ns" not in control
+    control["controllers"][0]["drive_lines"][0] = {"qudit": 0, "delay": 1.0}
+    control["line_delays_ns"] = {"drive": {"0": 1.0}}
+    with pytest.raises(DeviceDefinitionError) as raised:
+        pulse.Device.from_dict(data)
+    found = [(p.path, p.message) for p in raised.value.problems]
+    assert ("control_system.line_delays_ns", "is not a known key") in found
+    assert ("control_system.controllers[0].drive_lines[0].delay", "is not a known key") in found
 
 
 def test_a_program_clock_round_trips_through_the_system_file():
@@ -810,7 +825,8 @@ def test_a_description_is_loaded_by_name_with_the_installation_wiring():
     box = pulse.controller("reference.controller", drive_lines=[0, 1], readout_lines=[0])
     assert isinstance(box, pulse.Controller)
     assert (box.model, box.version) == ("reference.controller", "1")
-    assert box.drive_lines == (0, 1) and box.readout_lines == (0,)
+    assert box.drive_lines == (DriveLine(0), DriveLine(1))
+    assert box.readout_lines == (ReadoutLine(0),)
     assert pulse.controller("reference.controller") is pulse.controller("reference.controller")
     with pytest.raises(KeyError, match="did you mean 'reference.controller'"):
         pulse.controller("reference.controler")

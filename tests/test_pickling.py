@@ -26,7 +26,7 @@ import numpy as np
 import pytest
 from cudaq_pulse import Controller, ControlSystem, _pickling, _source_stamp
 from cudaq_pulse.classical import Link
-from cudaq_pulse.controller import ControllerLimitError
+from cudaq_pulse.controller import ControllerLimitError, DriveLine
 from cudaq_pulse.kernel import _kernel
 from cudaq_pulse.kernel.ir_builder import SymbolicValueError
 from cudaq_pulse.targets import (
@@ -116,7 +116,9 @@ def idle(tau: float):
 
 _SHIPPED_DEVICE = pulse.device(_SHIPPED_TARGET)
 _SLOW_CONTROLLER = ControlSystem(controllers=[Controller(clock_ghz=1.0)])
-_DELAYED = ControlSystem(line_delays_ns={("drive", 0): 1.5})
+_DELAYED = ControlSystem(
+    controllers=[Controller(drive_lines=[DriveLine(0, delay_ns=1.5)], readout_lines=[0])]
+)
 
 
 def _programs():

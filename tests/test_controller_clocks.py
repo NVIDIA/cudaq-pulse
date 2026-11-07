@@ -19,7 +19,7 @@ from cudaq_pulse import DeviceDefinitionError
 from cudaq_pulse.classical import Link
 from cudaq_pulse.controller import ControllerLimitError
 
-from tests._handles import ladder_target
+from tests._handles import ladder_target, with_line_delays
 
 
 def _system(*clocks, tolerance=0, **kwargs):
@@ -375,7 +375,7 @@ def test_each_lines_delay_is_split_by_its_own_controllers_fine_delay():
     ]
 
     def compiled(delays):
-        system = pulse.ControlSystem(controllers=controllers, line_delays_ns=delays)
+        system = pulse.ControlSystem(controllers=with_line_delays(controllers, delays))
         qpu = _device(system=system)
         return pulse.compile(feedback, device=qpu).lower(qpu.qudits[0])
 
@@ -905,7 +905,7 @@ def test_pulses_a_sync_lines_up_across_controllers_land_within_their_alignment_t
             ),
         ]
         system = pulse.ControlSystem(
-            controllers=controllers, reference_clock_ghz=reference, line_delays_ns=delays or {}
+            controllers=with_line_delays(controllers, delays or {}), reference_clock_ghz=reference
         )
         qpu = _device(system=system, clock_ghz=2.0)
         return pulse.compile(paired, device=qpu).lower(qpu.qudits[0], qpu.qudits[2])

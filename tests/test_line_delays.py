@@ -5,8 +5,9 @@
 # This source code and the accompanying materials are made available under     #
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
-"""Calibrated line delays: whole grid steps move a line's operations, the
-rest is its fine delay, and a change of delays alone schedules again."""
+"""Calibrated line delays, declared with each line (``DriveLine(5,
+delay_ns=4.0)``): whole grid steps move a line's operations, the rest is its
+fine delay, and a change of delays alone schedules again."""
 
 from __future__ import annotations
 
@@ -14,8 +15,7 @@ import json
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse import Controller, ControlSystem
-from cudaq_pulse.controller import ControllerLimitError
+from cudaq_pulse.controller import ControllerLimitError, DriveLine, ReadoutLine
 
 from tests._handles import Q
 
@@ -51,6 +51,18 @@ def rabi(q, amplitude: float):
     readout(r, square(40, 0.05))
 
 
+def _delayed(delays=None, links=None, **controller):
+    """A system of one controller (of the fields *controller*) playing the
+    lines of qudits 0 to 3, each delayed as *delays* gives, by (role, qudit)."""
+    delays = delays or {}
+    box = pulse.Controller(
+        drive_lines=[DriveLine(q, delay_ns=delays.get(("drive", q), 0.0)) for q in range(4)],
+        readout_lines=[ReadoutLine(q, delay_ns=delays.get(("readout", q), 0.0)) for q in range(4)],
+        **controller,
+    )
+    return pulse.ControlSystem(controllers=[box], links=links or {})
+
+
 def _starts(lowered, kind="drive"):
     return [(e.qubit, e.start) for e in lowered.schedule if e.kind == kind]
 
@@ -61,7 +73,7 @@ def _lines(lowered):
 
 def test_whole_cycles_of_a_delay_move_the_lines_operations():
     plain = pulse.compile(two_lines, schedule="asap").lower(Q[0], Q[1])
-    machine = ControlSystem(line_delays_ns={("drive", 0): 1.5})
+    machine = _delayed({("drive", 0): 1.5})
     delayed = pulse.compile(two_lines, schedule="asap", control_system=machine).lower(Q[0], Q[1])
     # 1.5 ns is 3 cycles of the 2 GHz clock; only qudit 0's line moves.
     assert _starts(plain) == [(0, 0), (1, 0), (0, 8)]
@@ -77,9 +89,7 @@ def test_without_delays_nothing_changes():
     assert "line_delays" not in lowered.mlir()
     assert all("fine_delay_ns" not in line for line in lowered.export_controller()["lines"])
     # A delay of no whole cycle moves nothing and adds no attribute.
-    machine = ControlSystem(
-        controllers=[Controller(max_fine_delay_ns=0.5)], line_delays_ns={("drive", 0): 0.25}
-    )
+    machine = _delayed({("drive", 0): 0.25}, max_fine_delay_ns=0.5)
     lowered = pulse.compile(two_lines, control_system=machine).lower(Q[0], Q[1])
     assert "line_delays" not in lowered.mlir()
     assert _lines(lowered)[("drive", 0)]["fine_delay_ns"] == pytest.approx(0.25)
@@ -88,8 +98,7 @@ def test_without_delays_nothing_changes():
 def test_the_rest_of_a_delay_is_the_lines_fine_delay():
     # A 1 GHz controller starts every 2 cycles of the 2 GHz program clock:
     # steps of 1 ns.
-    limits = Controller(clock_ghz=1.0, max_fine_delay_ns=1.0)
-    machine = ControlSystem(controllers=[limits], line_delays_ns={("drive", 1): 2.3})
+    machine = _delayed({("drive", 1): 2.3}, clock_ghz=1.0, max_fine_delay_ns=1.0)
     lowered = pulse.compile(two_lines, schedule="asap", control_system=machine).lower(Q[0], Q[1])
     assert _starts(lowered) == [(0, 0), (1, 4), (0, 8)]
     lines = _lines(lowered)
@@ -103,12 +112,11 @@ def test_the_rest_of_a_delay_is_the_lines_fine_delay():
 
 
 def test_a_rest_the_controller_cannot_add_fails_to_compile():
-    limits = Controller(clock_ghz=1.0)
-    machine = ControlSystem(controllers=[limits], line_delays_ns={("drive", 1): 2.3})
+    machine = _delayed({("drive", 1): 2.3}, clock_ghz=1.0)
     with pytest.raises(pulse.CompilationError) as caught:
         pulse.compile(two_lines, control_system=machine).lower(Q[0], Q[1])
     message = str(caught.value)
-    assert message.startswith("line_delays_ns: the drive line of qudit 1 is delayed 2.3 ns")
+    assert message.startswith("the drive line of qudit 1 is delayed 2.3 ns (its delay_ns)")
     assert (
         "0.3 ns (0.3 of its controller's cycles) from a whole number of its 1 ns timesteps"
         in message
@@ -116,48 +124,68 @@ def test_a_rest_the_controller_cannot_add_fails_to_compile():
     assert "give it max_fine_delay_ns, raise its alignment_tolerance_cycles to 0.3" in message
     assert "calibrate the delay to 2 or 3 ns" in message
     # Within the tolerance, the delay rounds to the nearest step.
-    limits = Controller(clock_ghz=1.0, alignment_tolerance_cycles=0.3)
-    machine = ControlSystem(controllers=[limits], line_delays_ns={("drive", 1): 2.7})
+    machine = _delayed({("drive", 1): 2.7}, clock_ghz=1.0, alignment_tolerance_cycles=1)
     lowered = pulse.compile(two_lines, schedule="asap", control_system=machine).lower(Q[0], Q[1])
     assert _starts(lowered) == [(0, 0), (1, 6), (0, 8)]
     assert _lines(lowered)[("drive", 1)]["fine_delay_ns"] == 0.0
     # Past the fine delay a controller has.
-    limits = Controller(clock_ghz=1.0, max_fine_delay_ns=0.25)
-    machine = ControlSystem(controllers=[limits], line_delays_ns={("drive", 1): 2.3})
+    machine = _delayed({("drive", 1): 2.3}, clock_ghz=1.0, max_fine_delay_ns=0.25)
     with pytest.raises(pulse.CompilationError, match="adds at most 0.25 ns of fine delay"):
         pulse.compile(two_lines, control_system=machine).lower(Q[0], Q[1])
 
 
 @pytest.mark.parametrize(
-    "delays, match",
+    "make, error, match",
     [
-        ({("drive", 0): -1.0}, "cannot be negative"),
-        ({("drive", 0): float("nan")}, "must be a number"),
-        ({("flux", 0): 1.0}, "keys are"),
-        ({"d0": 1.0}, "keys are"),
-        ({("drive", -1): 1.0}, "keys are"),
+        (lambda: DriveLine(0, delay_ns=-1.0), pulse.InvalidValueError, "cannot be negative"),
+        (lambda: DriveLine(0, delay_ns=-1 * pulse.ns), pulse.InvalidValueError, "-1.0 ns"),
+        (lambda: DriveLine(0, delay_ns=float("nan")), pulse.InvalidValueError, "a number of ns"),
+        (lambda: ReadoutLine(-1), pulse.InvalidValueError, "negative carrier index"),
+        (lambda: DriveLine("d0"), pulse.InvalidTypeError, "carrier index of its qudit"),
+        (
+            lambda: pulse.Controller(drive_lines=[ReadoutLine(0)]),
+            pulse.InvalidTypeError,
+            "holds DriveLines or carrier indices",
+        ),
+        (
+            lambda: pulse.Controller(drive_lines=[0, DriveLine(0, delay_ns=1.0)]),
+            pulse.InvalidValueError,
+            "lists a carrier twice",
+        ),
     ],
 )
-def test_line_delays_are_checked(delays, match):
-    with pytest.raises(ValueError, match=match):
-        ControlSystem(line_delays_ns=delays)
+def test_line_delays_are_checked(make, error, match):
+    with pytest.raises(error, match=match):
+        make()
 
 
-def test_delays_are_part_of_the_machine():
-    a = ControlSystem(line_delays_ns={("drive", 0): 1.0, ("readout", 1): 2.0})
-    b = ControlSystem(line_delays_ns={("readout", 1): 2.0, ("drive", 0): 1.0})
+def test_a_line_is_its_qudit_and_its_delay():
+    line = DriveLine(5, delay_ns=4 * pulse.ns)
+    assert (line.qudit, line.delay_ns) == (5, 4.0) and line == DriveLine(5, 4.0)
+    assert line != DriveLine(5) and line != ReadoutLine(5, 4.0) and DriveLine(5) != 5
+    assert repr(line) == "DriveLine(5, delay_ns=4.0)" and repr(ReadoutLine(5)) == "ReadoutLine(5)"
+    with pytest.raises(AttributeError):
+        line.delay_ns = 1.0  # type: ignore[misc]
+    box = pulse.Controller(drive_lines=[line, 6], readout_lines=[ReadoutLine(5, delay_ns=12.0)])
+    assert box.drive_lines == (line, DriveLine(6))
+    assert box.as_dict()["drive_lines"] == [{"qudit": 5, "delay_ns": 4.0}, 6]
+    assert not hasattr(pulse.ControlSystem(controllers=[box]), "line_delays_ns")
+
+
+def test_delays_are_part_of_the_system():
+    a = _delayed({("drive", 0): 1.0, ("readout", 1): 2.0})
+    b = _delayed({("readout", 1): 2.0, ("drive", 0): 1.0})
     assert a == b and hash(a) == hash(b)
-    assert a != ControlSystem() and a != ControlSystem(line_delays_ns={("drive", 0): 1.5})
+    assert a != _delayed() and a != _delayed({("drive", 0): 1.5})
 
 
 def test_moved_lines_are_checked_like_any_others():
-    limits = Controller(feedback_latency_cycles=20)
-    machine = ControlSystem(controllers=[limits])
+    machine = _delayed(feedback_latency_cycles=20)
     assert pulse.compile(feedback, schedule="rcp", control_system=machine).lower(Q[0], Q[1])
-    later = ControlSystem(controllers=[limits], line_delays_ns={("drive", 1): 5.0})
+    later = _delayed({("drive", 1): 5.0}, feedback_latency_cycles=20)
     assert pulse.compile(feedback, schedule="rcp", control_system=later).lower(Q[0], Q[1])
     # The readout ends 10 cycles later, too close to the branch on it.
-    late_readout = ControlSystem(controllers=[limits], line_delays_ns={("readout", 0): 5.0})
+    late_readout = _delayed({("readout", 0): 5.0}, feedback_latency_cycles=20)
     with pytest.raises(ControllerLimitError, match="feedback"):
         pulse.compile(feedback, schedule="rcp", control_system=late_readout).lower(Q[0], Q[1])
 
@@ -184,7 +212,7 @@ def _retimed(lowered):
     return lowered.generic.metrics.trace_ms == 0.0
 
 
-MIXED = Controller(clock_ghz=1.0, max_fine_delay_ns=1.0)
+MIXED = {"clock_ghz": 1.0, "max_fine_delay_ns": 1.0}
 # Traced with the first, then scheduled again with each of the others.
 DELAYS = (
     {("drive", 0): 1.0},
@@ -194,7 +222,7 @@ DELAYS = (
 )
 
 
-@pytest.mark.parametrize("controller", (None, MIXED), ids=("program_clock", "mixed"))
+@pytest.mark.parametrize("controller", ({}, MIXED), ids=("program_clock", "mixed"))
 @pytest.mark.parametrize("schedule", ("asap", "alap", "rcp", "alap_rcp"))
 @pytest.mark.parametrize(
     "kernel, args",
@@ -204,8 +232,7 @@ DELAYS = (
 def test_new_delays_alone_schedule_again_to_the_same_bytes(kernel, args, schedule, controller):
     kernel = _fresh(kernel)
     for k, delays in enumerate(DELAYS):
-        controllers = [] if controller is None else [controller]
-        machine = ControlSystem(controllers=controllers, line_delays_ns=delays)
+        machine = _delayed(delays, **controller)
         again = pulse.compile(kernel, schedule=schedule, control_system=machine).lower(*args)
         assert _retimed(again) == (k > 0)
         full = pulse.compile(_fresh(kernel), schedule=schedule, control_system=machine).lower(*args)
@@ -217,7 +244,7 @@ def test_a_program_without_delays_is_traced_as_before():
     kernel = _fresh(two_lines)
     pulse.compile(kernel).lower(Q[0], Q[1])
     assert not kernel._traced
-    machine = ControlSystem(line_delays_ns={("drive", 0): 1.0})
+    machine = _delayed({("drive", 0): 1.0})
     pulse.compile(kernel, control_system=machine).lower(Q[0], Q[1])
     # The same delays again trace again, as without them.
     assert not _retimed(pulse.compile(kernel, control_system=machine).lower(Q[0], Q[1]))
@@ -227,10 +254,8 @@ def test_a_program_without_delays_is_traced_as_before():
 def test_new_delays_schedule_the_matrix_again_to_the_same_bytes():
     from tests.classical import _schedule_matrix as matrix
 
-    first = ControlSystem(links=matrix.MACHINE.links, line_delays_ns={("drive", 1): 1.0})
-    then = ControlSystem(
-        links=matrix.MACHINE.links, line_delays_ns={("drive", 0): 2.5, ("readout", 1): 1.5}
-    )
+    first = _delayed({("drive", 1): 1.0}, links=matrix.MACHINE.links)
+    then = _delayed({("drive", 0): 2.5, ("readout", 1): 1.5}, links=matrix.MACHINE.links)
     checked = 0
     for case in matrix.all_cases()[::5]:
         if matrix.expected_error(case) is not None:
@@ -253,7 +278,7 @@ def test_new_delays_schedule_the_matrix_again_to_the_same_bytes():
 
 
 def test_a_call_with_new_values_keeps_the_delays():
-    machine = ControlSystem(line_delays_ns={("drive", 0): 1.0})
+    machine = _delayed({("drive", 0): 1.0})
     compiled = pulse.compile(rabi, schedule="asap", control_system=machine)
     assert [s for _, s in _starts(compiled.lower(Q[0], 0.2))][0] == 2
     assert [s for _, s in _starts(compiled.lower(Q[0], 0.4))][0] == 2

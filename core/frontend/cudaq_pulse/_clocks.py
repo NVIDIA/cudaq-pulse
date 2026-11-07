@@ -34,14 +34,12 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 from ._errors import InvalidValueError, Problem
-from ._units import as_nanoseconds
 from .ops import RoundDirection, round_duration
 
 if TYPE_CHECKING:
     from fractions import Fraction
 
     from ._system import Controller, ControlSystem
-    from ._units import Time
 
 __all__ = ["RoundDirection", "round_duration"]
 
@@ -415,7 +413,7 @@ def line_delays(
             rest = 0.0
         if fine_max > 0 and rest > fine_max + _TOLERANCE:
             raise InvalidValueError(
-                f"line_delays_ns: the {role} line of qudit {qudit} is delayed {ns:g} ns, "
+                f"the {role} line of qudit {qudit} is delayed {ns:g} ns (its delay_ns), "
                 f"{rest:g} ns past a whole number of its {step_ns:g} ns timesteps, "
                 f"and the controller adds at most {fine_max:g} ns of fine delay; raise its "
                 f"max_fine_delay_ns to {rest:g}, or calibrate the delay to "
@@ -424,7 +422,7 @@ def line_delays(
         if fine_max == 0 and abs(rest) * own_ghz > tolerance + _TOLERANCE:
             low = math.floor(steps + _TOLERANCE) * step_ns
             raise InvalidValueError(
-                f"line_delays_ns: the {role} line of qudit {qudit} is delayed {ns:g} ns, "
+                f"the {role} line of qudit {qudit} is delayed {ns:g} ns (its delay_ns), "
                 f"{abs(rest):g} ns ({abs(rest) * own_ghz:g} of its controller's cycles) from "
                 f"a whole number of its {step_ns:g} ns timesteps, and the controller has no fine "
                 f"delay; give it max_fine_delay_ns, raise its alignment_tolerance_cycles to "
@@ -840,39 +838,6 @@ def round_on_grid(n: Any, grid: int, direction: RoundDirection | str) -> int:
             f"round_duration() takes a finite, non-negative number of cycles, got {n!r}"
         )
     return _round(float(n), grid, mode)
-
-
-def checked_line_delays(
-    given: Mapping[tuple[str, int], float | Time], owner: str
-) -> Mapping[tuple[str, int], float]:
-    """*given*, line delays of *owner* (``ControlSystem``) as times or
-    numbers of ns, checked, as floats of ns in line order."""
-    delays: dict[tuple[str, int], float] = {}
-    for line, ns in dict(given).items():
-        if (
-            not isinstance(line, tuple)
-            or len(line) != 2
-            or line[0] not in ("drive", "readout")
-            or isinstance(line[1], bool)
-            or not isinstance(line[1], int)
-            or line[1] < 0
-        ):
-            raise InvalidValueError(
-                f"{owner}.line_delays_ns keys are ('drive', qudit) or "
-                f"('readout', qudit), got {line!r}"
-            )
-        ns = as_nanoseconds(ns)
-        if isinstance(ns, bool) or not isinstance(ns, (int, float)) or not math.isfinite(ns):
-            raise InvalidValueError(
-                f"{owner}.line_delays_ns[{line!r}] must be a number, got {ns!r}"
-            )
-        if ns < 0:
-            raise InvalidValueError(
-                f"{owner}.line_delays_ns[{line!r}] is {ns} ns; delays cannot be "
-                "negative: to play a line earlier, delay every other line instead"
-            )
-        delays[line] = float(ns)
-    return MappingProxyType(dict(sorted(delays.items())))
 
 
 def _program_clock(

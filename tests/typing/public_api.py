@@ -25,6 +25,7 @@ from cudaq_pulse.compiler import CompileMetrics, ScheduledEvent
 from cudaq_pulse.controller import (
     ControllerModule,
     ControllerNames,
+    DriveLine,
     ExpressionTerm,
     WaveformMemoryScope,
 )
@@ -191,7 +192,12 @@ declared: ControllerNames = pulse.controller
 assert_type(pulse.controller, ControllerModule)
 control = pulse.ControlSystem(controllers=[box], links={"feedback": pulse.Link(controllers=[box])})
 assert_type(control.controllers, Sequence[pulse.Controller])
-pulse.ControlSystem(line_delays_ns={("drive", 0): 2 * pulse.ns, ("readout", 0): 1.5})
+delayed = pulse.Controller(
+    drive_lines=[pulse.controller.DriveLine(0, delay_ns=2 * pulse.ns), 1],
+    readout_lines=[pulse.controller.ReadoutLine(0, delay_ns=1.5)],
+)
+assert_type(delayed.drive_lines, Sequence[DriveLine | int])
+pulse.ControlSystem(line_delays_ns={("drive", 0): 1.5})  # type: ignore[call-arg]
 pulse.Link(fixed_ns=100 * pulse.ns, feedback_ns=20.0, per_controller=True)
 assert_type(box.supports_capability(pulse.Capability.BRANCH), bool)
 cores = pulse.Processor(

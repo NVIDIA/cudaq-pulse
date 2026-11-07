@@ -31,7 +31,7 @@ from cudaq_pulse import Controller, ControlSystem, controller
 from cudaq_pulse.controller import ControllerLimitError, check
 
 from tests import _child
-from tests._handles import Q, ladder_target
+from tests._handles import Q, ladder_target, with_line_delays
 
 # The child's limits: a check of one body takes well under a second and a
 # few hundred MB.
@@ -803,18 +803,18 @@ def _systems() -> dict[str, Any]:
     ) -> Any:
         # A processor leaves a check with float values to each call.
         processors = [pulse.Processor(links=["cores"])] if cores else []
+        controllers = [
+            pulse.Controller(
+                drive_lines=[0, 1], readout_lines=[0, 1], processors=processors, **each
+            ),
+            pulse.Controller(
+                drive_lines=[2, 3], readout_lines=[2, 3], clock_skew_cycles=skew, **each
+            ),
+        ]
         return pulse.ControlSystem(
-            controllers=[
-                pulse.Controller(
-                    drive_lines=[0, 1], readout_lines=[0, 1], processors=processors, **each
-                ),
-                pulse.Controller(
-                    drive_lines=[2, 3], readout_lines=[2, 3], clock_skew_cycles=skew, **each
-                ),
-            ],
+            controllers=with_line_delays(controllers, delays or {}),
             links={"cores": pulse.Link()} if cores else {},
             reference_clock_ghz=reference,
-            line_delays_ns=delays or {},
         )
 
     one = pulse.Controller(

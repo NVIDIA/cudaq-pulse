@@ -19,6 +19,7 @@ import numpy as np
 import pytest
 from cudaq_pulse import Controller, ControlSystem
 from cudaq_pulse.classical import Link
+from cudaq_pulse.controller import DriveLine
 
 from tests._handles import Q
 
@@ -594,7 +595,9 @@ def test_a_machine_takes_its_link_and_line_times_as_times():
     assert link.fixed_ns.__class__ is float and link.feedback_ns.__class__ is float
     limits = Controller(max_fine_delay_ns=2 * ns)
     assert limits == Controller(max_fine_delay_ns=2.0)
-    machine = ControlSystem(controllers=[limits], line_delays_ns={("drive", 0): 3 * ns})
-    assert machine.line_delays_ns == {("drive", 0): 3.0}
+    line = DriveLine(0, delay_ns=3 * ns)
+    assert line == DriveLine(0, delay_ns=3.0) and line.delay_ns.__class__ is float
+    system = ControlSystem(controllers=[Controller(drive_lines=[line])])
+    assert system._line_delays == {("drive", 0): 3.0}
     with pytest.raises(pulse.InvalidValueError, match="cannot be negative"):
-        ControlSystem(line_delays_ns={("drive", 0): -1 * ns})
+        DriveLine(0, delay_ns=-1 * ns)

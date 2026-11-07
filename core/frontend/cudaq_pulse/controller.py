@@ -101,6 +101,8 @@ if TYPE_CHECKING:
     from ._op_tables import OpCounts as OpCounts
     from ._op_tables import OpCycles as OpCycles
     from ._system import Controller, ControlSystem
+    from ._system import DriveLine as DriveLine
+    from ._system import ReadoutLine as ReadoutLine
     from .compiler import Lowered
 
     # The real and the imaginary parts of a waveform's samples.
@@ -110,6 +112,7 @@ __all__ = [
     "FORMAT",
     "ControllerLimitError",
     "ControllerUsage",
+    "DriveLine",
     "Event",
     "ExpressionTerm",
     "FunctionCost",
@@ -121,6 +124,7 @@ __all__ = [
     "OpCounts",
     "OpCycles",
     "ProcessorUsage",
+    "ReadoutLine",
     "ResourceReport",
     "UsageReport",
     "WaveformMemoryScope",
@@ -2562,6 +2566,8 @@ class ControllerNames(Protocol):
     UsageReport: type[UsageReport]
     WaveformMemoryScope: type[WaveformMemoryScope]
     if TYPE_CHECKING:
+        DriveLine: type[DriveLine]
+        ReadoutLine: type[ReadoutLine]
         ExpressionTerm: type[ExpressionTerm]
         OpClass: type[OpClass]
         OpCounts: type[OpCounts]
@@ -2630,6 +2636,8 @@ class _Loaded(str):
 # The names _Loaded imports from elsewhere than _controller_cost: building
 # an enum costs more than the rest of an export.
 _ELSEWHERE = {
+    "DriveLine": "cudaq_pulse._system",
+    "ReadoutLine": "cudaq_pulse._system",
     "ExpressionTerm": "cudaq_pulse._op_classes",
     "OpClass": "cudaq_pulse._op_classes",
     "OpCounts": "cudaq_pulse._op_tables",
@@ -2673,6 +2681,8 @@ class _ControllerModule(types.ModuleType):
         OpClass: Any
         OpCounts: Any
         OpCycles: Any
+        DriveLine: Any
+        ReadoutLine: Any
 
     FunctionCost = _Loaded("FunctionCost")
     ControllerUsage = _Loaded("ControllerUsage")
@@ -2691,6 +2701,8 @@ class _ControllerModule(types.ModuleType):
     OpClass = _Loaded("OpClass")
     OpCounts = _Loaded("OpCounts")
     OpCycles = _Loaded("OpCycles")
+    DriveLine = _Loaded("DriveLine")
+    ReadoutLine = _Loaded("ReadoutLine")
 
 
 sys.modules[__name__].__class__ = _ControllerModule

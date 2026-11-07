@@ -566,10 +566,13 @@ never exported in program cycles.
 Line delays
 -----------
 
-Cables and electronics delay each line differently. The calibrated delays
-belong to the system, not to kernels: ``ControlSystem(line_delays_ns=...)``
-gives them by line, ``("drive", qudit)`` or ``("readout", qudit)``, as times
-(``2.3 * pulse.ns``) or numbers of ns, and every operation on a delayed line starts that much later than scheduled.
+Cables and electronics delay each line differently. The calibrated delay
+of a line belongs to the line, as its controller declares it:
+``DriveLine(5, delay_ns=4.0)`` and ``ReadoutLine(5, delay_ns=12.0)`` (from
+``cudaq_pulse.controller``) in the controller's ``drive_lines`` and
+``readout_lines``, as times (``2.3 * pulse.ns``) or numbers of ns; a bare
+carrier index is an undelayed line. Every operation on a delayed line starts
+that much later than scheduled.
 Whole :ref:`timesteps <timestep>` of the line move its operations, which
 are then checked against the controller's limits like any others; the rest,
 less than one timestep, is the line's ``fine_delay_ns`` in the export, for
@@ -579,18 +582,23 @@ rounds the delay to the nearest timestep if that is within its
 ``alignment_tolerance_cycles``, and otherwise the program fails to compile
 with an error naming the line, the rest and the fixes::
 
-    control_system = pulse.ControlSystem(
-        controllers=[pulse.Controller(clock_ghz=1.0, max_fine_delay_ns=1.0)],
-        line_delays_ns={("drive", 0): 2.3, ("readout", 0): 41.0},
+    from cudaq_pulse.controller import DriveLine, ReadoutLine
+
+    box = pulse.Controller(
+        clock_ghz=1.0,
+        max_fine_delay_ns=1.0,
+        drive_lines=[DriveLine(0, delay_ns=2.3), 1],
+        readout_lines=[ReadoutLine(0, delay_ns=41.0), 1],
     )
+    control_system = pulse.ControlSystem(controllers=[box])
     # The drive line of qudit 0 moves 2 ns (4 cycles of a 2 GHz program
     # clock) and plays with fine_delay_ns = 0.3.
 
-Compiling a kernel again with only other delays, such as a control system
-calibrated again, reuses its trace and optimized module and schedules it
-again, with the same result, byte for byte, as compiling it anew. A delay
-of a line no controller of the system plays, or of a qudit the quantum
-system lacks, is a ``DeviceDefinitionError``.
+In a system file a delayed line is ``{"qudit": 0, "delay_ns": 2.3}`` and an
+undelayed one its carrier index. Compiling a kernel again with only other
+delays, such as a control system calibrated again, reuses its trace and
+optimized module and schedules it again, with the same result, byte for
+byte, as compiling it anew.
 
 Waveform memory
 ---------------

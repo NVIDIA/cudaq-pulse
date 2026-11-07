@@ -650,7 +650,7 @@ class Kernel[**P]:
         return out
 
     def _specialize(self, values: tuple[Any, ...], target: Any, options: CompileOptions) -> _Entry:
-        if options.machine.line_delays_ns or self._traced:
+        if options.machine._line_delays or self._traced:
             found = self._retimed(values, target, options)
             if found is not None:
                 return found
@@ -705,7 +705,7 @@ class Kernel[**P]:
         )
         pins = tuple(values[i] for i in static)
         entry = _Entry(lowered, guard, returns, pins, runtime)
-        if options.machine.line_delays_ns and lowered.scheduled:
+        if options.machine._line_delays and lowered.scheduled:
             # Only a kept entry is scheduled again, for its qudits.
             entry.n_qudits = builder.n_qubits
             self._keep_traced(self._traced_key(values, target, options), entry)
@@ -722,11 +722,9 @@ class Kernel[**P]:
         """What a specialization is traced for: everything but line delays,
         which only move its schedule."""
         machine = options.machine
-        if machine.line_delays_ns:
-            system = machine._system
-            if system is not None:
-                system = replace(system, line_delays_ns={})
-            options = replace(options, machine=replace(machine, line_delays_ns={}, _system=system))
+        system = machine._system
+        if machine._line_delays and system is not None:
+            options = replace(options, machine=system._undelayed()._machine)
         static = self._split[0]
         return (target.fingerprint, options, static, *[_static_key(values[i]) for i in static])
 
@@ -738,7 +736,7 @@ class Kernel[**P]:
         prior = self._traced.get(self._traced_key(values, target, options))
         if (
             prior is None
-            or prior.lowered.options.machine.line_delays_ns == options.machine.line_delays_ns
+            or prior.lowered.options.machine._line_delays == options.machine._line_delays
             or not prior.guard.check()
         ):
             return None

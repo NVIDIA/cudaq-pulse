@@ -17,7 +17,7 @@ from fractions import Fraction
 import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse import Controller, ControlSystem, _clocks, _waits, controller
-from cudaq_pulse.controller import ControllerLimitError, check
+from cudaq_pulse.controller import ControllerLimitError, DriveLine, check
 
 from tests._handles import Q
 
@@ -28,6 +28,18 @@ TIMED = ("drive", "readout", "wait")
 def _steps(cycles_per_timestep: int, **kwargs) -> ControlSystem:
     limits = Controller(cycles_per_timestep=cycles_per_timestep, **kwargs)
     return ControlSystem(controllers=[limits])
+
+
+def _delayed_steps(cycles_per_timestep: int, **kwargs) -> ControlSystem:
+    """A controller of timesteps of *cycles_per_timestep* playing qudits 0
+    and 1, qudit 0's drive line delayed 3 ns."""
+    box = Controller(
+        cycles_per_timestep=cycles_per_timestep,
+        drive_lines=[DriveLine(0, delay_ns=3.0), 1],
+        readout_lines=[0, 1],
+        **kwargs,
+    )
+    return ControlSystem(controllers=[box])
 
 
 @pulse.kernel
@@ -166,17 +178,14 @@ def test_one_cycle_per_timestep_changes_nothing():
 
 def test_a_line_delay_moves_a_line_by_whole_timesteps():
     # 3 ns is 6 cycles of the 2 GHz clock: one timestep of 4, and 1 ns of fine delay.
-    machine = _steps(4, max_fine_delay_ns=1.5)
-    machine = ControlSystem(controllers=machine.controllers, line_delays_ns={("drive", 0): 3.0})
+    machine = _delayed_steps(4, max_fine_delay_ns=1.5)
     lowered = pulse.compile(stepped, schedule="asap", control_system=machine).lower(Q[0], Q[1])
     first = [e.start for e in lowered.schedule if e.kind == "drive" and e.qubit == 0]
     assert first == [4]
     lines = {(x["role"], x["qudit"]): x for x in lowered.export_controller()["lines"]}
     assert lines[("drive", 0)]["fine_delay_ns"] == pytest.approx(1.0)
     # Without fine delay, the 1 ns left over is 2 cycles past a timestep.
-    exact = ControlSystem(
-        controllers=[Controller(cycles_per_timestep=4)], line_delays_ns={("drive", 0): 3.0}
-    )
+    exact = _delayed_steps(4)
     with pytest.raises(
         pulse.CompilationError, match="its 2 ns timesteps, and the controller has no"
     ):

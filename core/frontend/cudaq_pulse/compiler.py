@@ -249,7 +249,8 @@ class _MachineModel:
     links: Mapping[int | str, Link] = _NO_LINKS
     controller: Controller | None = None
     reference_clock_ghz: float | None = None
-    line_delays_ns: Mapping[tuple[str, int], float | Time] = _NO_DELAYS
+    # (role, carrier) -> the delay in ns of each delayed line of _system.
+    _line_delays: Mapping[tuple[str, int], float] = field(default=_NO_DELAYS, repr=False)
     link_names: Mapping[str, int] = field(init=False, repr=False, compare=False)
     # The ControlSystem this model was made from, whose wiring and
     # capabilities every program is checked against.
@@ -267,13 +268,6 @@ class _MachineModel:
                 "ControlSystem.reference_clock_ghz must be positive, "
                 f"got {self.reference_clock_ghz}"
             )
-        if self.line_delays_ns:
-            from ._clocks import checked_line_delays
-
-            delays = checked_line_delays(self.line_delays_ns, "ControlSystem")
-        else:
-            delays = _NO_DELAYS
-        object.__setattr__(self, "line_delays_ns", delays)
         # Nothing of clocks to do: no controller, control system, reference
         # clock or delays.
         object.__setattr__(
@@ -282,7 +276,7 @@ class _MachineModel:
             self.controller is None
             and self._system is None
             and self.reference_clock_ghz is None
-            and not delays,
+            and not self._line_delays,
         )
         if isinstance(self.links, _Links):
             # Another model's links, as dataclasses.replace passes them: by
@@ -333,7 +327,7 @@ class _MachineModel:
                     tuple(sorted(by_name.items())),
                     self.controller,
                     self.reference_clock_ghz,
-                    tuple(self.line_delays_ns.items()),
+                    tuple(self._line_delays.items()),
                     self._system,
                 )
             ),
@@ -359,7 +353,7 @@ class _MachineModel:
             dict(self.link_names),
             self.controller,
             self.reference_clock_ghz,
-            dict(self.line_delays_ns),
+            dict(self._line_delays),
             self._system,
         ) == (
             other.max_concurrent_drives,
@@ -370,7 +364,7 @@ class _MachineModel:
             dict(other.link_names),
             other.controller,
             other.reference_clock_ghz,
-            dict(other.line_delays_ns),
+            dict(other._line_delays),
             other._system,
         )
 
@@ -1392,7 +1386,7 @@ def _clocked_module(
     if system is not None and machine.controller is None:
         module.set_attributes(system._controllers_attribute(target.clock_ghz, builder.n_qubits))
     fine_delays = None
-    if machine.line_delays_ns:
+    if machine._line_delays:
         shifts, fine_delays = _line_delays(machine, target, clocks, builder.n_qubits)
         if shifts is not None:
             module.set_attributes(f"{{pulse.line_delays = {shifts}}}")
@@ -1407,7 +1401,7 @@ def _line_delays(
     system = machine._system if machine.controller is None else None
     try:
         return _clocks.line_delays(
-            machine.line_delays_ns,
+            machine._line_delays,
             machine.controller,
             clocks,
             target.clock_ghz,
@@ -1446,7 +1440,7 @@ def _check_controller(lowered: Lowered) -> Lowered:
 
 def with_line_delays(lowered: Lowered, options: CompileOptions, n_qudits: int) -> Lowered | None:
     """*lowered*, a scheduled module of *n_qudits* qudits, compiled again for
-    *options*, which differ from its own only in ``machine.line_delays_ns``:
+    *options*, which differ from its own only in the machine's line delays:
     its module before scheduling is kept, and only scheduling, the checks and
     the exports are done again. ``None`` when scheduling it again fails, for
     a full compile to report, and for a module with list or qudit
@@ -1457,7 +1451,7 @@ def with_line_delays(lowered: Lowered, options: CompileOptions, n_qudits: int) -
     clocks = lowered.clocks
     fine_delays = None
     shifts = None
-    if options.machine.line_delays_ns:
+    if options.machine._line_delays:
         shifts, fine_delays = _line_delays(options.machine, target, clocks, n_qudits)
     if clocks is None or clocks.readout_latency_cycles is None:
         schedule_args = options.schedule_args()
