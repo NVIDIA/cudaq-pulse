@@ -468,13 +468,16 @@ static int64_t nativeOffset(mlir::Operation *line) {
   });
 }
 
+#include "ControllerExpressions.h"
+
 /// The walk behind PulseModule::controller_events(), a check's walk of a
 /// module that computes nothing at run time (its events are those of
 /// ControllerWalk::Walk::Every): every timed op, sync and classical call once
 /// per loop iteration, both arms of every branch, with the frame of its tone
 /// and the branches it lies in; with `summarize`, a long rolled loop whose
-/// iterations repeat walked three times.
-struct ControllerEventWalk {
+/// iterations repeat walked three times. What it computes at run time is
+/// in the export's vocabulary (ControllerExpressions).
+struct ControllerEventWalk : ControllerExpressions {
   using WaveformNode =
       std::tuple<std::string, std::vector<double>, std::vector<int64_t>>;
   using Condition = std::tuple<int64_t, int64_t, std::vector<int64_t>,
@@ -588,18 +591,6 @@ struct ControllerEventWalk {
     return it->second;
   }
 
-  static constexpr double kUnknown = std::numeric_limits<double>::quiet_NaN();
-
-  /// A number computed from constants alone, else NaN.
-  static double number(mlir::Value value) {
-    if (auto constant = pulse::constantNumber(value))
-      return *constant;
-    if (auto affine = pulse::affineNumber(value);
-        affine && affine->isConstant())
-      return affine->evaluate({});
-    return kUnknown;
-  }
-
   pulse::AllocationTracer trace;
   pulse::ToneRoots toneRoots;
   llvm::SmallVector<int64_t, 2> iteration;
@@ -609,8 +600,6 @@ struct ControllerEventWalk {
   // The time each line has reached (the end of its latest event), or none
   // when an event on it is not scheduled.
   std::map<mlir::Operation *, std::optional<int64_t>> reached;
-  // The event of the latest execution of each readout and classical wait.
-  llvm::DenseMap<mlir::Operation *, int64_t> latest;
 
   static Frame initialFrame(mlir::Operation *root) {
     if (!root)
@@ -623,8 +612,8 @@ struct ControllerEventWalk {
       return {kUnknown, kUnknown, 0.0, 0.0};
     if (root->getName().getStringRef() == "pulse.tone" &&
         root->getNumOperands() == 2) {
-      double frequency = number(root->getOperand(0));
-      return {frequency, frequency, number(root->getOperand(1)), 0.0};
+      double frequency = numberOf(root->getOperand(0));
+      return {frequency, frequency, numberOf(root->getOperand(1)), 0.0};
     }
     return {};
   }
@@ -712,20 +701,6 @@ struct ControllerEventWalk {
     }
   }
 
-  /// How a value is computed at run time, children before their parent: a
-  /// number (a frame change's value), a constant, an unknown (`name`: what),
-  /// the result of a readout or answer event, or an op (`name`, and a
-  /// comparison's `predicate`) over the expressions `of`.
-  struct Expression {
-    enum Kind : uint8_t { Number, Constant, Unknown, Readout, Answer, Op };
-    Kind kind = Number;
-    double number = 0.0;
-    int64_t event = 0, result = 0;
-    llvm::StringRef name, predicate;
-    std::vector<int32_t> of;
-  };
-  std::vector<Expression> expressions;
-
   // Each tracked tone's id, in the order tones are first played, and the
   // frame changes on it since its latest drive or readout.
   struct FrameUpdate {
@@ -756,65 +731,11 @@ struct ControllerEventWalk {
   /// In event order, only for the events that have any.
   std::vector<Known> known;
 
-  int32_t add(Expression expression) {
-    expressions.push_back(std::move(expression));
-    return static_cast<int32_t>(expressions.size()) - 1;
-  }
-
-  int32_t add(Expression::Kind kind, double number, int64_t event = 0,
-              int64_t result = 0, llvm::StringRef name = {}) {
-    Expression expression;
-    expression.kind = kind;
-    expression.number = number;
-    expression.event = event;
-    expression.result = result;
-    expression.name = name;
-    return add(std::move(expression));
-  }
-
-  int32_t numberExpression(double value) {
-    return add(Expression::Number, value);
-  }
-
-  /// How `value` is computed at run time: a constant, a result of a readout
-  /// or answer event, or an op (by its MLIR name) over such expressions.
-  int32_t expression(mlir::Value value, int depth = 0) {
-    double constant = number(value);
-    if (!std::isnan(constant))
-      return add(Expression::Constant, constant);
-    mlir::Operation *def = value.getDefiningOp();
-    if (!def)
-      return add(Expression::Unknown, 0.0, 0, 0, "argument");
-    llvm::StringRef name = def->getName().getStringRef();
-    if (mlir::isa<pulse::ReadoutOp, classical::WaitOp>(def)) {
-      auto found = latest.find(def);
-      if (found == latest.end())
-        return add(Expression::Unknown, 0.0, 0, 0, name);
-      if (mlir::isa<pulse::ReadoutOp>(def))
-        return add(Expression::Readout, 0.0, found->second);
-      return add(Expression::Answer, 0.0, found->second,
-                 static_cast<int64_t>(
-                     mlir::cast<mlir::OpResult>(value).getResultNumber()));
-    }
-    if (depth > 64 || def->getNumRegions() != 0 || def->getNumResults() != 1)
-      return add(Expression::Unknown, 0.0, 0, 0, name);
-    Expression op;
-    op.kind = Expression::Op;
-    op.name = name;
-    for (mlir::Value operand : def->getOperands())
-      op.of.push_back(expression(operand, depth + 1));
-    if (auto cmp = mlir::dyn_cast<mlir::arith::CmpFOp>(def))
-      op.predicate = mlir::arith::stringifyCmpFPredicate(cmp.getPredicate());
-    else if (auto cmp = mlir::dyn_cast<mlir::arith::CmpIOp>(def))
-      op.predicate = mlir::arith::stringifyCmpIPredicate(cmp.getPredicate());
-    return add(std::move(op));
-  }
-
   /// A frame change's value: its number, else its expression.
   int32_t frameValue(mlir::Value value) {
-    double constant = number(value);
+    double constant = numberOf(value);
     return std::isnan(constant) ? expression(value)
-                                : numberExpression(constant);
+                                : add(Expression::Number, constant);
   }
 
   void frameUpdate(mlir::Operation *root, llvm::StringRef op, int32_t value) {
@@ -917,7 +838,7 @@ struct ControllerEventWalk {
       if (mlir::isa<pulse::WaveformType>(operand.getType()))
         children.push_back(waveform(operand, nodes));
       else
-        numbers.push_back(number(operand));
+        numbers.push_back(numberOf(operand));
     }
     if (auto samples = def->getAttrOfType<mlir::ArrayAttr>("samples"))
       for (mlir::Attribute sample : samples)
@@ -1115,7 +1036,7 @@ struct ControllerEventWalk {
         if (auto shift =
                 op->getAttrOfType<mlir::FloatAttr>("frame_phase_offset"))
           frameUpdate(root, "shift_phase",
-                      numberExpression(shift.getValueAsDouble()));
+                      add(Expression::Number, shift.getValueAsDouble()));
         if (auto own = op->getAttrOfType<mlir::FloatAttr>("phase_offset"))
           next.offset = own.getValueAsDouble();
       }
@@ -1238,7 +1159,7 @@ struct ControllerEventWalk {
         merge(field, found);
         frame.retuned |= !phase;
       }
-      double value = number(op->getOperand(1));
+      double value = numberOf(op->getOperand(1));
       Frame &frame = frameOf(op->getOperand(0));
       if constexpr (RunTime)
         if (!tracked.empty())
@@ -1787,17 +1708,26 @@ private:
                minCycles = key("min_cycles"), name = key("name"),
                of = key("of"), op = key("op"), operands = key("operands"),
                params = key("params"), phase = key("phase_rad"),
-               phaseOffset = key("phase_offset_rad"),
-               predicate = key("predicate"), qudit = key("qudit"),
+               phaseOffset = key("phase_offset_rad"), qudit = key("qudit"),
                re = key("re"), readout = key("readout"),
                readouts = key("readouts"), result = key("result"),
                role = key("role"), runtime = key("runtime"),
                samples = key("samples"), shape = key("shape"),
                start = key("start_cycles"), test = key("test"),
                timeout = key("timeout_ns"), tone = key("tone"),
-               unknown = key("unknown"), value = key("value"),
-               values = key("values"), wait = key("wait"),
+               type = key("type"), unknown = key("unknown"),
+               value = key("value"), values = key("values"), wait = key("wait"),
                waveform = key("waveform");
+    using Expression = ControllerExpressions::Expression;
+    std::array<nb::object, Expression::Terms> terms;
+    std::array<nb::object, Expression::Types> types;
+
+    Keys() {
+      for (size_t i = 0; i < terms.size(); ++i)
+        terms[i] = key(Expression::names[i]);
+      for (size_t i = 0; i < types.size(); ++i)
+        types[i] = key(Expression::typeNames[i]);
+    }
   };
   /// Interned once, for the life of the process.
   static const Keys &sharedKeys() {
@@ -1905,7 +1835,10 @@ private:
     nb::object out = dict();
     switch (e.kind) {
     case Expression::Constant:
-      put(out, keys.constant, textNumber(e.number));
+      if (e.type == Expression::Bool)
+        put(out, keys.constant, nb::bool_(e.number != 0.0));
+      else
+        put(out, keys.constant, textNumber(e.number));
       break;
     case Expression::Unknown:
       put(out, keys.unknown, string(e.name));
@@ -1918,13 +1851,12 @@ private:
       put(out, keys.result, integer(e.result));
       break;
     default: {
+      put(out, keys.op, keys.terms[e.term]);
+      put(out, keys.type, keys.types[e.type]);
       nb::list of = list(e.of.size());
       for (size_t i = 0; i < e.of.size(); ++i)
         set(of, i, expression(e.of[i]));
       put(out, keys.of, of);
-      put(out, keys.op, string(e.name));
-      if (!e.predicate.empty())
-        put(out, keys.predicate, string(e.predicate));
     }
     }
     return out;

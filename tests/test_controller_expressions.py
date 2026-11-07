@@ -21,7 +21,14 @@ import pytest
 from cudaq_pulse import Controller, ControlSystem, _validation
 from cudaq_pulse._errors import ExecutionError, InvalidValueError, UnsupportedError
 from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline
-from cudaq_pulse.controller import EXPRESSION_TERMS, FORMAT, evaluate_expression, unroll
+from cudaq_pulse.controller import (
+    _AMPLITUDES,
+    _PARAMETERS,
+    EXPRESSION_TERMS,
+    FORMAT,
+    evaluate_expression,
+    unroll,
+)
 
 from tests._handles import Q
 from tests.kernel.test_runtime_conditions import _kernel as _traced
@@ -609,6 +616,53 @@ def test_no_export_of_the_corpus_names_an_operation_of_the_compiler(version):
     ):
         lowered = pulse.compile(_kernel(body), control_system=machine).lower(Q[0])
         _no_dialect(lowered.export_controller(version=version))
+
+
+def _computed(events):
+    """What each event computes at run time: its length and bounds, its
+    submitted values, its waveform's operands and its frame changes."""
+
+    def operands(node):
+        if not isinstance(node, dict):
+            return []
+        found = [(node["shape"], node["runtime"])] if "runtime" in node else []
+        for child in node.get("of", ()):
+            found += operands(child)
+        return found
+
+    keys = ("length", "min_cycles", "max_cycles", "operands")
+    return [
+        (
+            event["kind"],
+            {key: event[key] for key in keys if key in event},
+            operands(event.get("waveform")),
+            [(update["op"], update["value"]) for update in event.get("frame_updates", ())],
+        )
+        for event in events
+    ]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        *([*body, "drive(d, square(20, 0.2))"] for body in _PHASES.values()),
+        *_WAITS.values(),
+        ["wait(d, n * 4, bounds=(8, 400))"],
+        _BRANCH,
+        ["if (n * 3 - 4) // 2 >= n % 2 + 1:", *_BRANCH[1:]],
+    ],
+)
+def test_the_check_walk_computes_at_run_time_as_the_export(body):
+    lowered = pulse.compile(_kernel(body)).lower(Q[0])
+    module = lowered._concrete()
+    _, checked = module.controller_events(
+        _PARAMETERS, _AMPLITUDES, lowered._event_epochs(syncs=True), None, None, None
+    )
+    _, exported, _ = module.controller_program(
+        _PARAMETERS, _AMPLITUDES, lowered.classical != (), exportable=False
+    )
+    assert _computed(checked) == _computed(exported)
+    _no_dialect(checked)
 
 
 @pytest.mark.parametrize("version", [1, 2])
