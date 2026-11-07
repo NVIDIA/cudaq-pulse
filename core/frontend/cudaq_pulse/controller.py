@@ -708,9 +708,7 @@ def _walk(
     module = lowered._concrete()
     off_grid: Sequence[tuple[int, int, int]] = ()
     problems: list[str] = []
-    # What the summarizing walk computes at run time is in MLIR's ops, not
-    # the export's vocabulary a controller's own cycles are converted in.
-    if summary is not None and (own is None or not _computes_at_run_time(lowered)):
+    if summary is not None:
         repeats, periods = summary
         epochs = lowered._event_epochs(syncs=True)
         with lowered._lock:
