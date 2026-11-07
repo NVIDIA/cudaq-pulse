@@ -79,6 +79,11 @@ def test_a_system_names_no_architecture():
     assert "architecture" not in _system_data()["quantum_system"]
 
 
+def test_a_system_gives_no_hamiltonian_term_dicts():
+    assert not hasattr(TargetDescription, "hamiltonian_terms")
+    assert not hasattr(TargetDescription, "dissipator_terms")
+
+
 def test_the_model_decides_the_coupling_operator():
     assert dict(_COUPLING_OPERATORS) == {TransmonModel: "exchange"}
     assert _coupling_operator(TransmonModel()) == "exchange"
@@ -91,19 +96,6 @@ def test_the_model_decides_the_coupling_operator():
     assert _coupling_operator(SimulationModel()) is None
     assert _coupling_operator(None) is None
     assert _system().model == TransmonModel()
-
-
-def test_the_hamiltonian_terms_of_a_model_with_no_coupling_operator_are_unsupported():
-    coupled = [Coupling((0, 1), 1.0e6)]
-    for model in (SimulationModel, None):
-        with pytest.raises(pulse.UnsupportedError) as raised:
-            _system(model=model, couplings=coupled).hamiltonian_terms()
-        assert str(raised.value) == (
-            f"the model {_system(model=model).model!r} of 'checked' gives its couplings no "
-            "operator, so they have no Hamiltonian terms; the models whose couplings have one "
-            "are TransmonModel (exchange)"
-        )
-        assert len(_system(model=model).hamiltonian_terms()) == 3
 
 
 # ── Couplings, CZ calibrations and residual ZZ ─────────────────────────────
@@ -160,31 +152,10 @@ def _three_qudits(q0, q1, q2):
     drive(d0, square(8, 0.1))
 
 
-def test_the_hamiltonian_terms_need_every_strength():
-    with pytest.raises(pulse.InvalidValueError) as raised:
-        _unmeasured_system().hamiltonian_terms()
-    assert str(raised.value) == (
-        "the Hamiltonian terms need every coupling's strength; couplings[0] (qudits 0 and 1) "
-        "and couplings[2] (qudits 2 and 0) of 'checked' have strength_hz None, not measured "
-        "yet: give the strength in Hz"
-    )
-
-
-def test_the_hamiltonian_terms_name_the_rotating_wave_exchange():
-    terms = _system(couplings=[Coupling((2, 1), 1.0e6)]).hamiltonian_terms()
-    (coupling,) = (t for t in terms if t["kind"].startswith("coupling"))
-    assert coupling["kind"] == "coupling_exchange"
-    assert coupling["qubit_indices"] == (2, 1)
-    assert coupling["coefficient"] == pytest.approx(2e-3 * math.pi)
-
-
 def test_residual_zz_is_a_static_zz_term():
     from cudaq_pulse.runtime._attributes import _target_attributes
 
     system = _system(residual_zz=[ResidualZZ((2, 0), -4.5e4), ResidualZZ((1, 2), 1.0e3)])
-    (term, _) = (t for t in system.hamiltonian_terms() if t["kind"] == "static_zz")
-    assert term["qubit_indices"] == (2, 0)
-    assert term["coefficient"] == pytest.approx(-9e-5 * math.pi)
     attrs = _target_attributes(system, (0, 2), integrator="rk4")
     assert "crosstalk" not in attrs
     assert attrs.endswith(

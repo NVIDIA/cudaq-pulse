@@ -883,8 +883,9 @@ class CompiledKernel[**P]:
     def schedule(self) -> Sequence[Any]:
         return self._view().schedule
 
-    def timeline(self, **kwargs: Any) -> Any:
-        return self._view().timeline(**kwargs)
+    def timeline(self, *, figsize: tuple[float, float] = (14, 4), title: str | None = None) -> Any:
+        """The schedule's plot; see ``Lowered.timeline``."""
+        return self._view().timeline(figsize=figsize, title=title)
 
     @property
     def metrics(self) -> Any:

@@ -405,6 +405,32 @@ def _not_ready(callee: str, request_id: int) -> ExecutionError:
     )
 
 
+def _check_transport(transport: Any, machine: Any) -> None:
+    """Refuse a *transport* mapping that names a link the control system
+    does not have, or holds anything but a ``Transport``."""
+    from .._errors import InvalidTypeError, InvalidValueError, _closest
+
+    if not isinstance(transport, Mapping):
+        raise InvalidTypeError(
+            "transport is a Transport, or a mapping of link names or ids to Transports; "
+            f"got {type(transport).__name__}"
+        )
+    names = list(machine.link_names)
+    for key, value in transport.items():
+        if isinstance(key, str) and key not in names:
+            close = _closest(key, names)
+            hint = f"did you mean {close!r}? " if close else ""
+            known = f"its links are {', '.join(names)}" if names else "it has no named links"
+            raise InvalidValueError(
+                f"transport names the link {key!r}, which the control system does not "
+                f"have; {hint}{known}"
+            )
+        if not isinstance(value, Transport):
+            raise InvalidTypeError(
+                f"transport[{key!r}] must be a Transport, got {type(value).__name__}"
+            )
+
+
 def emulate(
     lowered: Any,
     *,
@@ -445,6 +471,8 @@ def emulate(
 
     rng = np.random.default_rng(seed)
     machine = lowered.options.machine
+    if transport is not None and not isinstance(transport, Transport):
+        _check_transport(transport, machine)
     schedule_args = lowered.options.schedule_args()
     base = lowered._concrete().simulation_module(*schedule_args)
     due_ns = base.call_due_ns()

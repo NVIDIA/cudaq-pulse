@@ -16,7 +16,6 @@
 
 model = "reference.controller"
 version = "1"
-owner = "cudaq-pulse maintainers"
 
 instruction_cycles = 1
 min_idle_cycles = 0

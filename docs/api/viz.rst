@@ -10,8 +10,8 @@ Visualization API
 =================
 
 Plotting needs matplotlib, from the ``[viz]`` extra:
-``pip install "cudaq-pulse[viz]"``. ``Lowered.timeline()`` calls
-``plot_schedule`` on a compiled module.
+``pip install "cudaq-pulse[viz]"``. ``Lowered.timeline(figsize=, title=)``
+calls ``plot_schedule`` on a compiled module.
 
 .. autofunction:: cudaq_pulse.viz.plot_schedule
 

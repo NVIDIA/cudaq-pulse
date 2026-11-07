@@ -821,7 +821,7 @@ def test_a_description_is_loaded_by_name_with_the_installation_wiring():
 @pytest.mark.parametrize("name", sorted(installed_descriptions()))
 def test_every_installed_description_loads_and_compiles(name):
     path = installed_descriptions()[name]
-    assert "owner" in tomllib.loads(path.read_text(encoding="utf-8"))
+    assert "owner" not in tomllib.loads(path.read_text(encoding="utf-8"))
     box = pulse.controller(name, drive_lines=range(4), readout_lines=range(4))
     assert box.model == name
     qpu = _qpu(box)
@@ -847,6 +847,15 @@ def test_a_description_file_reports_every_problem_with_its_line(tmp_path):
     path.write_text('model = "lab.box"\nversion = "2"\ninstruction_cycles = 3\n')
     box = pulse.controller(path, drive_lines=[0])
     assert box.instruction_cycles == 3 and box.model == "lab.box"
+    path.write_text('model = "lab.box"\nversion = "2"\nowner = "the lab"\n')
+    with pytest.raises(DeviceDefinitionError) as raised:
+        pulse.controller(path)
+    (problem,) = raised.value.problems
+    assert (problem.path, problem.message, problem.line) == (
+        "owner",
+        "is not a controller field",
+        3,
+    )
 
 
 def test_a_system_file_from_another_description_version_is_noticed_once():

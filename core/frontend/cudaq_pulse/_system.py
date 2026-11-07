@@ -2017,7 +2017,7 @@ def _parse_description(path: str) -> Controller:
                 "is wiring, which the installation gives",
                 f"pass it when loading: pulse.controller(name, {key}=...)",
             )
-        elif key not in known and key != "owner":
+        elif key not in known:
             hint = _closest(key, known)
             problem(key, "is not a controller field", f"did you mean {hint!r}?" if hint else "")
     for key in ("model", "version"):

@@ -435,6 +435,8 @@ timeout arm, as does a decoder's ``NOT_READY`` (status 4, corrections not
 decoded yet); a call without a timeout that gets ``NOT_READY`` is an error.
 ``late_fraction`` is the fraction of the answers the program waits on that
 came late; calls it only sends, such as enqueues of syndromes, do not count.
+``transport`` is one ``Transport`` for every link, or one per link by name
+or id; a name the control system has no link for is an ``InvalidValueError``.
 
 .. code-block:: python
    :class: fragment

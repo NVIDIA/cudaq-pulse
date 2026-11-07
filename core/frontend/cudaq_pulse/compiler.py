@@ -1000,11 +1000,14 @@ class Lowered:
 
         return export(self, sample_rate_ghz, controller, version)
 
-    def timeline(self, **kwargs: Any) -> Figure:
-        """Plot the schedule, one row per line (needs matplotlib)."""
+    def timeline(
+        self, *, figsize: tuple[float, float] = (14, 4), title: str | None = None
+    ) -> Figure:
+        """Plot the schedule, one row per line, in a figure of *figsize*
+        inches with *title* (needs matplotlib); see ``viz.plot_schedule``."""
         from .viz.timeline import plot_schedule
 
-        return plot_schedule(self, **kwargs)
+        return plot_schedule(self, figsize=figsize, title=title)
 
     # Read-only: a copy is the module itself.
     def __copy__(self) -> Lowered:

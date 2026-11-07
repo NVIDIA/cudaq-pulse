@@ -232,10 +232,10 @@ the module of one call:
    ``Lowered`` has one: a kernel or ``CompiledKernel`` has no duration until
    it is lowered for a call, since the call's arguments decide it.
 
-The device's handles find a qudit by its label, ``dev.qudit("D1")``, and a
-target gives the coupling of two qudits, ``dev.target.coupling(a, b)``.
+The device's handles find a qudit by its label, ``dev.qudit("D1")``, and the
+device gives the coupling of two of them, ``dev.coupling(a, b)``.
 
-``.timeline(**kwargs)``
+``.timeline(figsize=(14, 4), title=None)``
    A matplotlib figure of the schedule, one row per line.
 
 ``.metrics``

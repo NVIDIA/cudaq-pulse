@@ -8,9 +8,9 @@
 """Architecture-neutral target API for QPU Hamiltonians and decoherence models.
 
 A ``TargetDescription`` fully describes a quantum device: qubit frequencies,
-anharmonicities, coupling topology, decoherence parameters, and readout.
-It can generate Hamiltonian and Lindblad dissipator terms for the Pulse ->
-QOp lowering.
+anharmonicities, coupling topology, decoherence parameters, readout, and
+the pulses its gates are calibrated for. Simulation lowers it to the
+module attributes of the Pulse -> QOp lowering.
 """
 
 from __future__ import annotations
@@ -47,8 +47,6 @@ else:
 
 _TRANSMON = TransmonModel()
 
-_SECONDS_PER_NANOSECOND = 1.0e-9
-_NANOSECONDS_PER_MICROSECOND = 1.0e3
 # The default of the mapping fields: __post_init__ keeps a read-only copy of
 # whatever a field is given, so every instance may share it.
 if TYPE_CHECKING:
@@ -1082,125 +1080,6 @@ class TargetDescription:
         if x is not None and x.amplitude:
             return math.pi / (float(x.amplitude) * _area_ns(x, _qudit_name(qubit)))
         return 1.0
-
-    def hamiltonian_terms(self) -> list[dict[str, Any]]:
-        """Generate two-level static and coupling Hamiltonian terms.
-
-        Returns a list of term dicts compatible with ``OperatorTerm``.
-        Each dict has keys: kind, qubit_indices, coefficient, time_dependent.
-        Coefficients are angular frequencies in radians per nanosecond, matching
-        the pulse IR time unit.
-
-        ``anharmonicity_hz`` is calibration metadata for leakage models and is
-        intentionally not emitted into this two-level spin Hamiltonian. A
-        faithful anharmonicity term requires a three-or-more-level mode.
-
-        The terms are in the lab frame: ``static_z`` is (omega / 2) Z, a
-        coupling is the operator of the system's model (``coupling_exchange``,
-        g (sigma+_a sigma-_b + sigma-_a sigma+_b) for ``TransmonModel``: the
-        exchange in the rotating-wave approximation, as the simulator lowers
-        it), and a ``residual_zz`` entry's ``static_zz`` is zeta n_a n_b.
-        A coupling whose strength
-        is not measured yet (``None``) is an ``InvalidValueError`` naming it,
-        and couplings of a model that gives them no operator an
-        ``UnsupportedError``.
-        """
-        terms: list[dict[str, Any]] = []
-        operator = _coupling_operator(self.model) if self.couplings else None
-        if self.couplings and operator is None:
-            known = ", ".join(f"{c.__name__} ({op})" for c, op in _COUPLING_OPERATORS.items())
-            raise UnsupportedError(
-                f"the model {self.model!r} of {self.name!r} gives its couplings no "
-                f"operator, so they have no Hamiltonian terms; the models whose couplings "
-                f"have one are {known}"
-            )
-        coupling_kind = f"coupling_{operator}"
-
-        for q in self.qubits.values():
-            omega = q.frequency_hz * 2.0 * math.pi * _SECONDS_PER_NANOSECOND
-            terms.append(
-                {
-                    "kind": "static_z",
-                    "qubit_indices": (q.index,),
-                    "coefficient": complex(omega / 2.0, 0),
-                    "time_dependent": False,
-                }
-            )
-        unmeasured = []
-        for i, c in enumerate(self.couplings):
-            if c.strength_hz is None:
-                unmeasured.append(i)
-                continue
-            g = c.strength_hz * 2.0 * math.pi * _SECONDS_PER_NANOSECOND
-            terms.append(
-                {
-                    "kind": coupling_kind,
-                    "qubit_indices": c.qudits,
-                    "coefficient": complex(g, 0),
-                    "time_dependent": False,
-                }
-            )
-        if unmeasured:
-            raise _unmeasured(
-                self, unmeasured, "the Hamiltonian terms need every coupling's strength"
-            )
-
-        for xt in self.residual_zz:
-            zz = xt.rate_hz * 2.0 * math.pi * _SECONDS_PER_NANOSECOND
-            terms.append(
-                {
-                    "kind": "static_zz",
-                    "qubit_indices": xt.qudits,
-                    "coefficient": complex(zz, 0),
-                    "time_dependent": False,
-                }
-            )
-
-        return terms
-
-    def dissipator_terms(self) -> list[dict[str, Any]]:
-        """Generate T1 / T2 Lindblad dissipator terms.
-
-        Returns a list of term dicts, each with kind, qubit_indices,
-        and coefficient. Collapse-operator coefficients have units of inverse
-        square-root nanoseconds, matching evolution time in nanoseconds.
-        """
-        terms: list[dict[str, Any]] = []
-
-        for q in self.qubits.values():
-            if q.t1_us > 0:
-                # Detailed balance: down at (1 - p) / T1 and up at p / T1.
-                gamma1 = 1.0 / (q.t1_us * _NANOSECONDS_PER_MICROSECOND)
-                p = q.thermal_population
-                terms.append(
-                    {
-                        "kind": "dissipator_t1",
-                        "qubit_indices": (q.index,),
-                        "coefficient": complex(math.sqrt((1.0 - p) * gamma1), 0),
-                    }
-                )
-                if p > 0:
-                    terms.append(
-                        {
-                            "kind": "dissipator_thermal",
-                            "qubit_indices": (q.index,),
-                            "coefficient": complex(math.sqrt(p * gamma1), 0),
-                        }
-                    )
-            if q.t2_star_us > 0:
-                gamma_phi = 1.0 / (q.t2_star_us * _NANOSECONDS_PER_MICROSECOND)
-                if q.t1_us > 0:
-                    gamma_phi -= 1.0 / (2.0 * q.t1_us * _NANOSECONDS_PER_MICROSECOND)
-                if gamma_phi > 0:
-                    terms.append(
-                        {
-                            "kind": "dissipator_t2",
-                            "qubit_indices": (q.index,),
-                            "coefficient": complex(math.sqrt(gamma_phi / 2.0), 0),
-                        }
-                    )
-
-        return terms
 
 
 def _unmeasured(

@@ -117,6 +117,21 @@ def test_late_answers_take_the_timeout_arm_at_the_modelled_rate():
     assert all(c.budget_ns == due_ns for shot in result.calls for c in shot)
 
 
+def test_a_transport_for_a_link_the_control_system_lacks_is_refused():
+    system = ControlSystem(links={"decoder": Link(fixed_ns=100)})
+    low = pulse.compile(feedback, control_system=system).lower(Q[0])
+    fast = emulation.Transport(fixed_ns=1)
+    emulation.emulate(low, transport={"decoder": fast, 0: fast}, service_time="none", seed=1)
+    with pytest.raises(pulse.InvalidValueError) as raised:
+        emulation.emulate(low, transport={"decodr": fast})
+    assert str(raised.value) == (
+        "transport names the link 'decodr', which the control system does not have; "
+        "did you mean 'decoder'? its links are decoder"
+    )
+    with pytest.raises(pulse.InvalidTypeError, match=r"transport\['decoder'\] must be a Transport"):
+        emulation.emulate(low, transport={"decoder": 100.0})
+
+
 @pytest.mark.parametrize("arrival_ns", [602, 603])
 def test_an_answer_is_in_time_when_the_compiled_program_can_use_it(arrival_ns):
     # The request holds the link 100 + 25 / 10 ns, then the 500 ns timeout and

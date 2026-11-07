@@ -110,3 +110,14 @@ def test_save_schedule_writes_the_image_and_closes_its_figure(lowered, tmp_path)
     svg = tmp_path / "schedule.svg"
     viz.save_schedule(lowered, str(svg))
     assert "<svg" in svg.read_text()
+
+
+def test_timeline_takes_the_keywords_of_plot_schedule(lowered):
+    fig = lowered.timeline(figsize=(6, 2), title="two lines")
+    assert tuple(fig.get_size_inches()) == (6, 2)
+    assert fig.axes[0].get_title() == "two lines"
+    compiled = pulse.compile(_two_lines, device=Q[0].device)
+    with pytest.raises(TypeError):
+        lowered.timeline(dpi=100)  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        compiled.timeline(dpi=100)  # type: ignore[call-arg]
