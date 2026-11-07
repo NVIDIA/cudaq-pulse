@@ -595,7 +595,7 @@ def _two_box_qpu():
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("schedule", ["asap", "alap"])
+@pytest.mark.parametrize("schedule", ["asap", "alap", "rcp"])
 def test_rounds_on_two_controllers_that_branch_on_an_answer_schedule_in_linear_time(schedule):
     # The answer reaches the drive's controller apart from the readouts it
     # comes from; the time, native, is the best of three.
@@ -608,6 +608,55 @@ def test_rounds_on_two_controllers_that_branch_on_an_answer_schedule_in_linear_t
         )
     # 16x the shots in well under 256x the time (quadratic would be 256x).
     assert timings[1600] < 48 * timings[100], timings
+
+
+@pulse.kernel
+def answered_before_a_loop(q, r):
+    ro = get_readout_line(q)
+    d = get_drive_line(r)
+    fix = flip.submit([readout(ro, square(20, 0.05)), readout(ro, square(30, 0.05))]).result()
+    for _ in range(6):
+        if fix[0]:
+            drive(d, square(16, 0.1))
+        wait(d, 40)
+
+
+@pulse.kernel
+def answered_in_each_iteration(q, r):
+    ro = get_readout_line(q)
+    d = get_drive_line(r)
+    for _ in range(6):
+        fix = flip.submit([readout(ro, square(20, 0.05)), readout(ro, square(30, 0.05))]).result()
+        if fix[0]:
+            drive(d, square(16, 0.1))
+        drive(d, square(8, 0.1))
+
+
+def _controller_events(kernel, qpu, schedule):
+    lowered = pulse.compile(kernel, device=qpu, schedule=schedule).lower(
+        qpu.qudits[0], qpu.qudits[2]
+    )
+    return lowered, [
+        [
+            (e["kind"], e["start_cycles"], e["duration_cycles"], len(e["conditions"]))
+            for e in lowered.export_controller(controller=c)["events"]
+        ]
+        for c in (0, 1)
+    ]
+
+
+@pytest.mark.parametrize("schedule", ["asap", "alap", "rcp", "alap_rcp"])
+@pytest.mark.parametrize("kernel", [answered_before_a_loop, answered_in_each_iteration])
+def test_a_rolled_loop_on_two_controllers_that_branches_on_an_answer_schedules_as_unrolled(
+    kernel, schedule
+):
+    # The bounds of each iteration's branches on the answer reach the
+    # readouts it comes from, as when every iteration is written out.
+    qpu = _two_box_qpu()
+    rolled, events = _controller_events(kernel, qpu, schedule)
+    assert rolled._concrete().print().count("scf.for") == 1
+    unrolled = pulse.kernel(unroll_threshold=10**9)(kernel.__wrapped__)
+    assert events == _controller_events(unrolled, qpu, schedule)[1]
 
 
 def test_runtime_qudits_are_checked_against_the_wiring_per_call():

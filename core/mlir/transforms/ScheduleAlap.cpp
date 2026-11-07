@@ -2182,6 +2182,106 @@ private:
 
   int64_t ready(mlir::Value value) const { return readyAt.lookup(value); }
 
+  /// On several controllers, the measurements a branch condition comes
+  /// from, through answers, each with the controller that reads it out; and
+  /// per such controller, the latest its outcomes may be ready by the
+  /// branches on the condition the backward pass has passed (late() reads it
+  /// with each measurement's own bound): a branch bounds the condition once,
+  /// not every measurement.
+  struct AnswerGroup {
+    mlir::Value condition;
+    llvm::SmallVector<std::pair<mlir::Value, int64_t>, 4> measured;
+    llvm::SmallVector<int64_t, 2> readers;
+    llvm::SmallVector<int64_t, 2> latest;
+  };
+
+  AnswerGroup &answerGroup(mlir::Value condition) {
+    auto [it, inserted] = groupOf.try_emplace(
+        condition, static_cast<unsigned>(answerGroups.size()));
+    if (!inserted)
+      return answerGroups[it->second];
+    AnswerGroup &group = answerGroups.emplace_back();
+    group.condition = condition;
+    for (mlir::Value measurement : conditionMeasurements(condition)) {
+      int64_t reader = readerOf(measurement);
+      auto slot = static_cast<unsigned>(llvm::find(group.readers, reader) -
+                                        group.readers.begin());
+      if (slot == group.readers.size()) {
+        group.readers.push_back(reader);
+        group.latest.push_back(kNever);
+      }
+      group.measured.push_back({measurement, reader});
+      memberOf[measurement].push_back({it->second, slot});
+    }
+    return group;
+  }
+
+  /// `time`, or the latest the groups of `measurement` let it be ready
+  /// (only measurements are in groups).
+  int64_t withGroups(mlir::Value measurement, int64_t time) const {
+    if (memberOf.empty())
+      return time;
+    auto it = memberOf.find(measurement);
+    if (it == memberOf.end())
+      return time;
+    for (auto [group, slot] : it->second)
+      time = std::min(time, answerGroups[group].latest[slot]);
+    return time;
+  }
+
+  /// Bound the measurements of the groups on a condition inside `loop` by
+  /// what its branches asked, before the loop's next iteration forgets the
+  /// bounds of its body's values.
+  void settleGroups(mlir::Operation *loop) {
+    for (AnswerGroup &group : answerGroups) {
+      mlir::Value condition = group.condition;
+      mlir::Operation *at = condition.getDefiningOp();
+      if (!at)
+        at = condition.getParentBlock()->getParentOp();
+      if (!loop->isAncestor(at))
+        continue;
+      for (auto [slot, latest] : llvm::enumerate(group.latest)) {
+        if (latest == kNever)
+          continue;
+        for (auto [measurement, reader] : group.measured)
+          if (reader == group.readers[slot])
+            bound(measurement, latest);
+        latest = kNever;
+      }
+    }
+  }
+
+  /// On several controllers, when the latest measurement a branch condition
+  /// comes from (through answers) is ready, and when the outcomes reach each
+  /// controller: what forwardIf takes from them, found once per condition
+  /// while none of them is placed again (forwardLoop forgets them at each
+  /// iteration).
+  struct ConditionReady {
+    bool any = false;
+    int64_t ready = 0;
+    llvm::SmallVector<int64_t, 4> reached;
+  };
+
+  const ConditionReady &conditionReadyOf(mlir::Value condition) {
+    auto [it, inserted] = conditionReady.try_emplace(condition);
+    ConditionReady &at = it->second;
+    if (!inserted)
+      return at;
+    for (auto [measurement, reader] : answerGroup(condition).measured) {
+      int64_t time = ready(measurement);
+      if (!at.any) {
+        at.any = true;
+        at.ready = time;
+        at.reached.assign(static_cast<size_t>(controllers.count()), 0);
+      }
+      at.ready = std::max(at.ready, time);
+      for (auto [c, reached] : llvm::enumerate(at.reached))
+        reached = std::max(
+            reached, time + controllers.extra(reader, static_cast<int64_t>(c)));
+    }
+    return at;
+  }
+
   /// When every operand of `op` is available: data from answers included.
   /// A submission with its own order on a link (`ownOrder`) does not wait
   /// for the link it is threaded through.
@@ -2772,6 +2872,10 @@ private:
     LoopLinks links = linksOf(loop);
     for (int64_t k = 0; k < count; ++k) {
       iteration.back() = k;
+      // Each iteration places its readouts again, so the conditions on them
+      // are found again.
+      if (!conditionReady.empty())
+        conditionReady.clear();
       // Slots held past an iteration's last request may delay the next
       // ones: their iterations repeat only if the iteration moved them too.
       llvm::SmallVector<HeldSlots, 1> slotsBefore;
@@ -2969,20 +3073,21 @@ private:
     int64_t savedFloor = floor;
     auto savedArmFloors = armFloors;
     // On several controllers each outcome reaches each controller apart,
-    // so the measurements an answer comes from bound the arm too.
-    for (mlir::Value measurement :
-         conditionMeasurements(branch.getCondition(), several())) {
-      floor = std::max(floor, ready(measurement));
-      // Each controller's ops wait until the outcome reaches it.
-      if (several()) {
+    // so the measurements an answer comes from bound the arm too, and each
+    // controller's ops wait until the outcomes reach it.
+    if (several()) {
+      const ConditionReady &at = conditionReadyOf(branch.getCondition());
+      if (at.any) {
+        floor = std::max(floor, at.ready);
         if (armFloors.empty())
           armFloors.assign(static_cast<size_t>(controllers.count()), 0);
-        int64_t reader = readerOf(measurement);
-        for (auto [c, at] : llvm::enumerate(armFloors))
-          at = std::max(at,
-                        ready(measurement) +
-                            controllers.extra(reader, static_cast<int64_t>(c)));
+        for (auto [arm, reached] : llvm::zip(armFloors, at.reached))
+          arm = std::max(arm, reached);
       }
+    } else {
+      for (mlir::Value measurement :
+           conditionMeasurements(branch.getCondition(), false))
+        floor = std::max(floor, ready(measurement));
     }
     if (classical)
       floor = std::max(floor, ready(branch.getCondition()));
@@ -3039,10 +3144,10 @@ private:
   int64_t late(mlir::Value value) {
     auto it = lateAt.find(value);
     if (it != lateAt.end())
-      return it->second;
+      return withGroups(value, it->second);
     mlir::Type type = value.getType();
     if (mlir::isa<pulse::MeasurementType>(type))
-      return kNever;
+      return withGroups(value, kNever);
     // Nothing waits for an unused future or untimed value; a line, tone or
     // link may run until the makespan.
     if (classical && !mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType,
@@ -3444,6 +3549,8 @@ private:
       llvm::SmallVector<HeldSlots, 1> slotsBefore;
       if (!links.empty() && !lanesBound)
         slotsBefore = heldSlots(links, true);
+      if (!answerGroups.empty())
+        settleGroups(loop);
       for (mlir::Value value : bodyValues)
         lateAt.erase(value);
       for (mlir::Value arg : args)
@@ -3719,9 +3826,8 @@ private:
       for (int64_t start : armStarts)
         earliest = std::min(earliest, start);
       if (earliest != kNever) {
-        for (mlir::Value measurement :
-             conditionMeasurements(branch.getCondition())) {
-          int64_t reader = readerOf(measurement);
+        AnswerGroup &group = answerGroup(branch.getCondition());
+        for (auto [reader, bounded] : llvm::zip(group.readers, group.latest)) {
           int64_t latest = armStart == kNever
                                ? kNever
                                : armStart - controllers.extra(reader, -1);
@@ -3730,7 +3836,7 @@ private:
               latest = std::min(
                   latest,
                   start - controllers.extra(reader, static_cast<int64_t>(c)));
-          bound(measurement, latest);
+          bounded = std::min(bounded, latest);
         }
         if (classical)
           bound(branch.getCondition(), earliest);
@@ -3747,11 +3853,14 @@ private:
       for (mlir::Value result : branch.getResults())
         needed = std::min(needed, late(result));
       if (needed != kNever) {
-        for (mlir::Value measurement :
-             conditionMeasurements(branch.getCondition(), several()))
-          bound(measurement, several() ? needed - controllers.extra(
-                                                      readerOf(measurement), -1)
-                                       : needed);
+        if (several()) {
+          AnswerGroup &group = answerGroup(branch.getCondition());
+          for (auto [reader, bounded] : llvm::zip(group.readers, group.latest))
+            bounded = std::min(bounded, needed - controllers.extra(reader, -1));
+        } else
+          for (mlir::Value measurement :
+               conditionMeasurements(branch.getCondition(), false))
+            bound(measurement, needed);
         bound(branch.getCondition(), needed);
       }
     }
@@ -3765,6 +3874,15 @@ private:
   Resources resources;
   llvm::DenseMap<mlir::Value, int64_t> readyAt;
   llvm::DenseMap<mlir::Value, int64_t> lateAt;
+  /// Per branch condition, on several controllers: answerGroup, and the
+  /// groups each measurement is in (group, slot of its reader);
+  /// conditionReadyOf.
+  std::vector<AnswerGroup> answerGroups;
+  llvm::DenseMap<mlir::Value, unsigned> groupOf;
+  llvm::DenseMap<mlir::Value,
+                 llvm::SmallVector<std::pair<unsigned, unsigned>, 1>>
+      memberOf;
+  llvm::DenseMap<mlir::Value, ConditionReady> conditionReady;
   /// Under rcp, the drive and readout lanes of each timeline.
   Lanes driveLanes, readoutLanes;
   llvm::SmallVector<int64_t, 2> iteration;
