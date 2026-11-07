@@ -87,8 +87,21 @@ from .ir_builder import (
 )
 from .packed_ir_builder import MAX_CUSTOM_SAMPLES
 
+# The module's variables' types, for type checkers: annotations at module
+# level would cost each process's import.
 if TYPE_CHECKING:
     from .._units import Time
+
+    _PULSE_FUNCTIONS: dict[Any, str]
+    _PLAY_FUNCTIONS: dict[Any, str]
+    _GLOBAL_NAMES: dict[int, tuple[types.CodeType, frozenset[str]]]
+    _PLAIN_VALUES: tuple[type, ...]
+    _HASHED: frozenset[type]
+    _CHOICE_OPS: dict[str, Callable[[Any, Any], Any]]
+    _CHOICE_COMPARE: dict[str, Callable[[Any, Any], Any]]
+    _OPERAND_TYPES: dict[str, tuple[tuple[str, ...], ...]]
+    _identity_keys: Callable[[dict[str, Any], Any, Any], tuple[str | None, str | None]] | None
+    _SIGNATURES: dict[int, tuple[Any, inspect.Signature]]
 
 _WAVEFORMS = frozenset(
     {"gaussian", "square", "drag", "cosine", "tanh_ramp", "gaussian_square", "custom"}
@@ -160,8 +173,8 @@ def _extract_closures(fn: Any) -> dict[str, Any]:
     return closures
 
 
-_PULSE_FUNCTIONS: dict[Any, str] = {}
-_PLAY_FUNCTIONS: dict[Any, str] = {}
+_PULSE_FUNCTIONS = {}
+_PLAY_FUNCTIONS = {}
 _TONE_KEYWORD = ("tone",)
 
 
@@ -294,7 +307,7 @@ def _uses_pulse_ops(
 
 
 # Shared by threads without a lock, as the decode cache is.
-_GLOBAL_NAMES: dict[int, tuple[types.CodeType, frozenset[str]]] = {}
+_GLOBAL_NAMES = {}
 
 
 def _global_names(code: types.CodeType) -> frozenset[str]:
@@ -312,7 +325,7 @@ def _global_names(code: types.CodeType) -> frozenset[str]:
 
 
 # Values whose attributes are never pulse helpers.
-_PLAIN_VALUES: tuple[type, ...] = (
+_PLAIN_VALUES = (
     int,
     float,
     complex,
@@ -423,7 +436,7 @@ _NUMBERS = (bool, int, float)
 
 
 # The containers `in` looks a value up in by its hash.
-_HASHED: frozenset[type] = frozenset({dict, set, frozenset, type({}.keys())})
+_HASHED = frozenset({dict, set, frozenset, type({}.keys())})
 
 
 # ── Values a measurement-conditioned if chose ───────────────────────────
@@ -432,7 +445,7 @@ _HASHED: frozenset[type] = frozenset({dict, set, frozenset, type({}.keys())})
 # has four values. Past this many, the ops given one would be too many ifs.
 _MAX_CHOICE_VALUES = 64
 
-_CHOICE_OPS: dict[str, Callable[[Any, Any], Any]] = {
+_CHOICE_OPS = {
     "add": operator.add,
     "sub": operator.sub,
     "mul": operator.mul,
@@ -681,7 +694,7 @@ def _in_arm(value: Any, cond: IRValue, taken: bool) -> Any:
     return value
 
 
-_CHOICE_COMPARE: dict[str, Callable[[Any, Any], Any]] = {
+_CHOICE_COMPARE = {
     "==": operator.eq,
     "!=": operator.ne,
     "<": operator.lt,
@@ -833,7 +846,7 @@ _QUDIT = ("qref",)
 _TONE = ("tone",)
 _WAVEFORM = ("waveform",)
 # The IR types each leading operand of a pulse op may have.
-_OPERAND_TYPES: dict[str, tuple[tuple[str, ...], ...]] = {
+_OPERAND_TYPES = {
     "get_drive_line": (_QUDIT,),
     "get_readout_line": (_QUDIT,),
     "drive": (("drive_line",), _WAVEFORM, _TONE),
@@ -1437,7 +1450,7 @@ def _current(value: IRValue) -> IRValue:
     return value if chan is None else chan.value
 
 
-_identity_keys: Callable[[dict[str, Any], Any, Any], tuple[str | None, str | None]] | None = None
+_identity_keys = None
 
 
 def _load_identity_keys() -> Callable[[dict[str, Any], Any, Any], tuple[str | None, str | None]]:
@@ -4066,7 +4079,7 @@ def _container_unchanged(obj: list[Any] | dict[Any, Any] | set[Any], copy: Any) 
     return all(k in copy and obj[k] is copy[k] for k in obj)
 
 
-_SIGNATURES: dict[int, tuple[Any, inspect.Signature]] = {}
+_SIGNATURES = {}
 
 
 def _bound(fn: Any, args: list[StackVal], kwargs: dict[str, StackVal]) -> inspect.BoundArguments:

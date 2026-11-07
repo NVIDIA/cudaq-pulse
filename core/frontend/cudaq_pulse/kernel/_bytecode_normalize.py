@@ -43,9 +43,29 @@ import opcode
 import operator as _op
 import sys
 from types import CodeType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .._errors import UnsupportedError
+
+# The module's variables' types, for type checkers: annotations at module
+# level would cost each process's import.
+if TYPE_CHECKING:
+    OP_NAMES: tuple[str, ...]
+    _SIMPLE: dict[str, int]
+    _JUMP_NAMES: dict[str, int]
+    _SUPERINSTRUCTIONS: dict[str, tuple[int, int]]
+    _NB_OPS: tuple[Any, ...]
+    _UNARY_NAMES: dict[str, Any]
+    _COMPARE: dict[str, Any]
+    _UNSUPPORTED: dict[str, str]
+    _INTRINSICS: dict[str, str]
+    _COMMON_CONSTANTS: tuple[Any, ...]
+    _FOR_EXIT_CLEANUP: tuple[str, ...]
+    _INTRINSIC_1_NAMES: list[str]
+    _OP_INFO: list[_OpInfo | None]
+    _JOINS: dict[tuple[int, int], tuple[DecodedCode, int]]
+    _VIEWS: dict[tuple[int, int], tuple[DecodedCode, DecodedCode]]
+    _CACHE: dict[int, DecodedCode]
 
 # ── Canonical opcodes ────────────────────────────────────────────────
 
@@ -110,7 +130,7 @@ from .._errors import UnsupportedError
     GEN_YIELD,
 ) = range(58)
 
-OP_NAMES: tuple[str, ...] = tuple(
+OP_NAMES = tuple(
     (
         "LOAD_FAST STORE_FAST DELETE_FAST LOAD_CONST LOAD_GLOBAL LOAD_DEREF "
         "STORE_DEREF LOAD_ATTR CALL CALL_KW BINARY SUBSCR STORE_SUBSCR BUILD_SLICE "
@@ -156,7 +176,7 @@ _SKIP = frozenset(
     }
 )
 
-_SIMPLE: dict[str, int] = {
+_SIMPLE = {
     "LOAD_FAST": LOAD_FAST,
     "LOAD_FAST_CHECK": LOAD_FAST,
     "LOAD_FAST_BORROW": LOAD_FAST,
@@ -200,7 +220,7 @@ _SIMPLE: dict[str, int] = {
     "RETURN_VALUE": RETURN,
 }
 
-_JUMP_NAMES: dict[str, int] = {
+_JUMP_NAMES = {
     "JUMP_FORWARD": JUMP,
     "JUMP_BACKWARD": JUMP,
     "JUMP_BACKWARD_NO_INTERRUPT": JUMP,
@@ -211,7 +231,7 @@ _JUMP_NAMES: dict[str, int] = {
     "FOR_ITER": FOR_ITER,
 }
 
-_SUPERINSTRUCTIONS: dict[str, tuple[int, int]] = {
+_SUPERINSTRUCTIONS = {
     "LOAD_FAST_LOAD_FAST": (LOAD_FAST, LOAD_FAST),
     "LOAD_FAST_BORROW_LOAD_FAST_BORROW": (LOAD_FAST, LOAD_FAST),
     "STORE_FAST_LOAD_FAST": (STORE_FAST, LOAD_FAST),
@@ -219,7 +239,7 @@ _SUPERINSTRUCTIONS: dict[str, tuple[int, int]] = {
 }
 
 # BINARY_OP sub-codes, in ``_nb_ops`` order; 26 is the 3.14+ subscript.
-_NB_OPS: tuple[Any, ...] = (
+_NB_OPS = (
     _op.add,
     _op.and_,
     _op.floordiv,
@@ -249,12 +269,12 @@ _NB_OPS: tuple[Any, ...] = (
 )
 _NB_SUBSCR = 26
 
-_UNARY_NAMES: dict[str, Any] = {
+_UNARY_NAMES = {
     "UNARY_NEGATIVE": _op.neg,
     "UNARY_INVERT": _op.invert,
 }
 
-_COMPARE: dict[str, Any] = {
+_COMPARE = {
     "<": _op.lt,
     "<=": _op.le,
     "==": _op.eq,
@@ -289,7 +309,7 @@ _GLOBAL = (
     + "; keep the value in a local, or compute it before calling the kernel"
 )
 # What each opcode the tracer does not run stands for, with what to write instead.
-_UNSUPPORTED: dict[str, str] = {
+_UNSUPPORTED = {
     "BEFORE_WITH": _TRY_MESSAGE,
     "LOAD_SPECIAL": _TRY_MESSAGE,
     "WITH_EXCEPT_START": _TRY_MESSAGE,
@@ -327,7 +347,7 @@ _UNSUPPORTED: dict[str, str] = {
     "BUILD_TEMPLATE": _not_supported("template strings") + "; use an f-string",
     "BUILD_INTERPOLATION": _not_supported("template strings") + "; use an f-string",
 }
-_INTRINSICS: dict[str, str] = {
+_INTRINSICS = {
     "INTRINSIC_IMPORT_STAR": _not_supported("star imports (from m import *)")
     + "; import the names the kernel uses at module level",
     "INTRINSIC_STOPITERATION_ERROR": _GENERATORS,
@@ -340,7 +360,7 @@ _WHILE_MESSAGE = (
 
 _PY_MINOR = sys.version_info[1]
 # What LOAD_COMMON_CONSTANT (3.14+) loads, by its argument.
-_COMMON_CONSTANTS: tuple[Any, ...] = tuple(getattr(opcode, "_common_constants", ()))
+_COMMON_CONSTANTS = tuple(getattr(opcode, "_common_constants", ()))
 
 # CPython minors whose bytecode this decoder has been verified against.
 SUPPORTED_MINORS = (12, 13, 14, 15)
@@ -367,7 +387,7 @@ def check_interpreter() -> None:
 
 # Instructions at a FOR_ITER exit target that pop the exhausted iterator.
 # Canonical FOR_ITER already consumes it.
-_FOR_EXIT_CLEANUP: tuple[str, ...] = {
+_FOR_EXIT_CLEANUP = {
     12: ("END_FOR",),
     13: ("END_FOR", "POP_TOP"),
     14: ("END_FOR", "POP_ITER"),
@@ -419,11 +439,11 @@ def _compare_fn(instr: _Instr) -> Any:
 ) = range(10)
 _EXTENDED_ARG = dis.EXTENDED_ARG
 _INTRINSIC_1 = opcode.opmap.get("CALL_INTRINSIC_1", -1)
-_INTRINSIC_1_NAMES: list[str] = list(getattr(dis, "_intrinsic_1_descs", ()))
+_INTRINSIC_1_NAMES = list(getattr(dis, "_intrinsic_1_descs", ()))
 # By raw opcode: its name, deoptimized opcode, argument kind, inline cache
 # count and whether it takes an argument.
 _OpInfo = tuple[str, int, int, int, bool]
-_OP_INFO: list[_OpInfo | None] = [None] * 256
+_OP_INFO = [None] * 256
 
 
 def _op_info(raw: int) -> _OpInfo:
@@ -982,9 +1002,9 @@ def region_view(decoded: DecodedCode, join: int) -> DecodedCode:
 
 # Each read and write is one dict operation and a hit is checked by identity,
 # so threads share these without a lock: a race only decodes twice.
-_JOINS: dict[tuple[int, int], tuple[DecodedCode, int]] = {}
-_VIEWS: dict[tuple[int, int], tuple[DecodedCode, DecodedCode]] = {}
-_CACHE: dict[int, DecodedCode] = {}
+_JOINS = {}
+_VIEWS = {}
+_CACHE = {}
 _CACHE_LIMIT = 4096
 
 
