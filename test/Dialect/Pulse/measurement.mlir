@@ -23,7 +23,7 @@ func.func @active_reset() {
   %zero = arith.constant 0.0 : f64
   %ro = pulse.square %c300, %amp, %zero : i64, f64, f64 -> !pulse.waveform
   %x = pulse.square %c40, %x_amp, %zero : i64, f64, f64 -> !pulse.waveform
-  %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, "iq" : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %bit = pulse.is_set %m : !pulse.measurement -> i1
   %d1, %t1 = scf.if %bit -> (!pulse.drive_line, !pulse.tone) {
     %d, %t = pulse.drive %d0, %x, %t0 : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
@@ -41,7 +41,7 @@ func.func @active_reset() {
 // CANON: pulse.is_set %{{.*}} : !pulse.measurement -> i1
 // CANON: arith.cmpi eq
 func.func @qudit_level(%r0: !pulse.readout_line, %rt0: !pulse.tone, %wf: !pulse.waveform) -> (i1, i1) {
-  %r1, %rt1, %m = pulse.readout %r0, %wf, %rt0, "iq" : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r1, %rt1, %m = pulse.readout %r0, %wf, %rt0, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %k = pulse.outcome %m : !pulse.measurement -> i64
   %c0 = arith.constant 0 : i64
   %c2 = arith.constant 2 : i64

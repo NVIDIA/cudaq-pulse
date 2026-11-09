@@ -262,14 +262,20 @@ def ReadoutOp : PulseOp<"readout", []> {
     returning the updated line and tone and a `!pulse.measurement`. The
     measurement completes at the end of the pulse: `pulse.is_set` and
     `pulse.outcome` read it, and `pulse-verify` checks that ops
-    conditioned on it start after it completes. `mode` names the
-    acquisition; the frontend emits `"iq"`.
+    conditioned on it start after it completes. `mode` names what the
+    acquisition gives: `iq` (demodulated and discriminated into a level, what
+    the frontend emits), `discriminated`, `trace` or `counts`. Only `iq` is
+    simulated and exported so far; the others are refused there.
+
+    ```mlir
+    %r1, %t1, %m = pulse.readout %r0, %w, %t0, iq : ...
+    ```
   }];
   let arguments = (ins
     ReadoutLineType:$line,
     WaveformType:$pulse,
     ToneType:$tone,
-    StrAttr:$mode
+    EnumProp<ReadoutMode>:$mode
   );
   let results = (outs
     ReadoutLineType:$updated_line,
@@ -578,8 +584,8 @@ def ScheduleBlockOp : PulseOp<"schedule_block", [
                               ["getEntrySuccessorOperands"]>]> {
   let summary = "A subroutine scheduled on its own, then placed as one unit";
   let description = [{
-    The body is scheduled in isolation with its own `policy` ("asap" or
-    "alap"), every input available at local time 0. The enclosing schedule
+    The body is scheduled in isolation with its own `policy` (`asap` or
+    `alap`), every input available at local time 0. The enclosing schedule
     then places the whole block at one start time, so the relative timing of
     the ops inside is the same wherever the block appears.
 
@@ -591,7 +597,7 @@ def ScheduleBlockOp : PulseOp<"schedule_block", [
     enclosing region directly.
 
     ```mlir
-    %d1, %t1 = pulse.schedule_block "asap" (%d0, %t0)
+    %d1, %t1 = pulse.schedule_block asap (%d0, %t0)
         : (!pulse.drive_line, !pulse.tone) -> (!pulse.drive_line, !pulse.tone) {
     ^bb0(%d: !pulse.drive_line, %t: !pulse.tone):
       %d2, %t2 = pulse.drive %d, %x, %t : ...
@@ -607,15 +613,15 @@ def ScheduleBlockOp : PulseOp<"schedule_block", [
     it passes through unchanged. With `max_duration_cycles`, scheduling fails
     if the block can take longer than that many cycles.
   }];
-  let arguments = (ins StrAttr:$policy, Variadic<AnyTimedType>:$inputs,
+  let arguments = (ins EnumProp<SchedulePolicy>:$policy,
+                       Variadic<AnyTimedType>:$inputs,
                        OptionalAttr<StrAttr>:$callee);
   let results = (outs Variadic<AnyTimedType>:$outputs);
   let regions = (region SizedRegion<1>:$body);
   let assemblyFormat = [{
-    $policy `(` $inputs `)` attr-dict `:` functional-type($inputs, $outputs)
+    $policy ` ` `(` $inputs `)` attr-dict `:` functional-type($inputs, $outputs)
     $body
   }];
-  let hasVerifier = 1;
   let hasRegionVerifier = 1;
 }
 

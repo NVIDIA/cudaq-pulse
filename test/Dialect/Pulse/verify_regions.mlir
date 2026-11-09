@@ -8,7 +8,7 @@ func.func @one_use_per_arm(%x: !pulse.waveform) {
   %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %r0, %rt0 = pulse.get_readout_line %q : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
-  %r1, %rt1, %m = pulse.readout %r0, %x, %rt0, "iq" : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r1, %rt1, %m = pulse.readout %r0, %x, %rt0, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %bit = pulse.is_set %m : !pulse.measurement -> i1
   %d1, %t1 = scf.if %bit -> (!pulse.drive_line, !pulse.tone) {
     %d, %t = pulse.drive %d0, %x, %t0 : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
@@ -63,7 +63,7 @@ func.func @branch_before_measurement() {
   %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %r0, %rt0 = pulse.get_readout_line %q : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
-  %r1, %rt1, %m = pulse.readout %r0, %probe, %rt0, "iq" {start_cycles = 0 : i64, duration_cycles = 300 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r1, %rt1, %m = pulse.readout %r0, %probe, %rt0, iq {start_cycles = 0 : i64, duration_cycles = 300 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %bit = pulse.is_set %m : !pulse.measurement -> i1
   %d1, %t1 = scf.if %bit -> (!pulse.drive_line, !pulse.tone) {
     // expected-error @+1 {{operation in a measurement-conditioned branch starts at 100, before its measurement completes at 300}}
@@ -148,7 +148,7 @@ func.func @readout_line_acquired_in_loop(%x: !pulse.waveform) {
   scf.for %i = %lb to %ub step %step {
     // expected-error @+1 {{a line cannot be acquired inside an scf.for}}
     %r0, %rt0 = pulse.get_readout_line %q : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
-    %r1, %rt1, %m = pulse.readout %r0, %x, %rt0, "iq" : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %r1, %rt1, %m = pulse.readout %r0, %x, %rt0, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   }
   return
 }

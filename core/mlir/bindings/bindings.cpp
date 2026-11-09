@@ -69,6 +69,7 @@
 #include <pthread.h>
 
 #include "cudaq-pulse/Dialect/Pulse/PulseDialect.h.inc"
+#include "cudaq-pulse/Dialect/Pulse/PulseEnums.h.inc"
 
 #define GET_TYPEDEF_CLASSES
 #include "cudaq-pulse/Dialect/Pulse/PulseTypes.h.inc"
@@ -4718,7 +4719,10 @@ pulse::ScheduleBlockOp buildScheduleBlock(mlir::OpBuilder &builder,
   for (mlir::Value output : outputs)
     types.push_back(output.getType());
   auto block = pulse::ScheduleBlockOp::create(
-      builder, loc, types, builder.getStringAttr(policy), inputs,
+      builder, loc, types,
+      policy == "alap" ? pulse::SchedulePolicy::ALAP
+                       : pulse::SchedulePolicy::ASAP,
+      inputs,
       callee.empty() ? mlir::StringAttr() : builder.getStringAttr(callee));
   block.getBody().push_back(body.release());
   mlir::Block *inner = &block.getBody().front();
@@ -5650,10 +5654,9 @@ public:
 
       case kOpReadout: {
         requirePayload(6);
-        auto mode = builder_->getStringAttr("iq");
-        auto roOp =
-            pulse::ReadoutOp::create(*builder_, loc, readoutTy, toneTy, measTy,
-                                     look(p[0]), look(p[1]), look(p[2]), mode);
+        auto roOp = pulse::ReadoutOp::create(
+            *builder_, loc, readoutTy, toneTy, measTy, look(p[0]), look(p[1]),
+            look(p[2]), pulse::ReadoutMode::IQ);
         bind(p[3], roOp.getUpdatedLine());
         bind(p[4], roOp.getUpdatedTone());
         bind(p[5], roOp.getResult());

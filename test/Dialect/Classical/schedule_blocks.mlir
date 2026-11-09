@@ -27,11 +27,11 @@ func.func @measure_and_submit() {
   %z = arith.constant 0.0 : f64
   %ro = pulse.square %c300, %a, %z : i64, f64, f64 -> !pulse.waveform
   %l0 = classical.get_link {device = 1 : i64} : !classical.link
-  %r1, %rt1, %l1, %f = pulse.schedule_block "alap" (%r0, %rt0, %l0)
+  %r1, %rt1, %l1, %f = pulse.schedule_block alap (%r0, %rt0, %l0)
       : (!pulse.readout_line, !pulse.tone, !classical.link)
       -> (!pulse.readout_line, !pulse.tone, !classical.link, !classical.future) {
   ^bb0(%r: !pulse.readout_line, %rt: !pulse.tone, %l: !classical.link):
-    %r2, %rt2, %m = pulse.readout %r, %ro, %rt, "iq" : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %r2, %rt2, %m = pulse.readout %r, %ro, %rt, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     %l2, %g = classical.submit %l, @decode_wide(%m) : (!pulse.measurement) -> (!classical.link, !classical.future)
     pulse.yield %r2, %rt2, %l2, %g : !pulse.readout_line, !pulse.tone, !classical.link, !classical.future
   }

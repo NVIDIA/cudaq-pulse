@@ -50,7 +50,7 @@ func.func @round() {
   %r0, %u0 = pulse.get_readout_line %q {frequency_hz = 5.0e9 : f64} : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
   %pi = pulse.square %c40, %amp, %z : i64, f64, f64 -> !pulse.waveform
   %pr = pulse.square %c200, %ro, %z : i64, f64, f64 -> !pulse.waveform
-  %r1, %u1, %m = pulse.readout %r0, %pr, %u0, "iq" : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r1, %u1, %m = pulse.readout %r0, %pr, %u0, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %l0 = classical.get_link {device = 0 : i64} : !classical.link
   %l1, %h = classical.submit %l0, @update(%m, %shape, %rate, %w0) {classical.eager} : (!pulse.measurement, f64, f64, f64) -> (!classical.link, !classical.future)
   %a:3 = classical.wait %h, @update : f64, f64, f64
@@ -68,7 +68,7 @@ func.func @round() {
   %len = pulse.duration_from_int %n : (i64) -> !pulse.duration
   %d2 = pulse.wait %d1, %len {classical.variable, pulse.variable_wait, pulse.min_cycles = 32 : i64, pulse.max_cycles = 4000 : i64} : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
   %s2:2 = pulse.sync %d2, %s#1 : !pulse.drive_line, !pulse.readout_line -> !pulse.drive_line, !pulse.readout_line
-  %r2, %u2, %m2 = pulse.readout %s2#1, %pr, %u1, "iq" : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r2, %u2, %m2 = pulse.readout %s2#1, %pr, %u1, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   return
 }
 

@@ -19,7 +19,7 @@ func.func @into_a_block(%x: !w) {
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qudit) -> (!d, !t)
   %phi = arith.constant 0.25 : f64
   %t1 = pulse.shift_phase %t0, %phi : !t, f64 -> !t
-  %d1, %t2 = pulse.schedule_block "asap" (%d0, %t1) : (!d, !t) -> (!d, !t) {
+  %d1, %t2 = pulse.schedule_block asap (%d0, %t1) : (!d, !t) -> (!d, !t) {
   ^bb0(%d: !d, %t: !t):
     %d2, %t3 = pulse.drive %d, %x, %t : !d, !w, !t -> !d, !t
     pulse.yield %d2, %t3 : !d, !t
@@ -39,7 +39,7 @@ func.func @into_a_block(%x: !w) {
 func.func @out_of_a_block(%x: !w) {
   %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qudit) -> (!d, !t)
-  %d1, %t1 = pulse.schedule_block "alap" (%d0, %t0) : (!d, !t) -> (!d, !t) {
+  %d1, %t1 = pulse.schedule_block alap (%d0, %t0) : (!d, !t) -> (!d, !t) {
   ^bb0(%d: !d, %t: !t):
     %d2, %t2 = pulse.drive %d, %x, %t : !d, !w, !t -> !d, !t
     %phi = arith.constant 0.5 : f64
@@ -62,7 +62,7 @@ func.func @through_a_block(%x: !w) {
   %b0, %tb0 = pulse.get_drive_line %qb : (!pulse.qudit) -> (!d, !t)
   %phi = arith.constant 0.75 : f64
   %tb1 = pulse.shift_phase %tb0, %phi : !t, f64 -> !t
-  %a1, %ta1, %tb2 = pulse.schedule_block "asap" (%a0, %ta0, %tb1) : (!d, !t, !t) -> (!d, !t, !t) {
+  %a1, %ta1, %tb2 = pulse.schedule_block asap (%a0, %ta0, %tb1) : (!d, !t, !t) -> (!d, !t, !t) {
   ^bb0(%a: !d, %ta: !t, %tb: !t):
     %a2, %ta2 = pulse.drive %a, %x, %ta : !d, !w, !t -> !d, !t
     pulse.yield %a2, %ta2, %tb : !d, !t, !t

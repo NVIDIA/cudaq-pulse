@@ -144,13 +144,6 @@ static bool isTimedValueType(Type type) {
          type.getDialect().getNamespace() == "classical";
 }
 
-LogicalResult ScheduleBlockOp::verify() {
-  if (getPolicy() != "asap" && getPolicy() != "alap")
-    return emitOpError("policy must be \"asap\" or \"alap\", got \"")
-           << getPolicy() << "\"";
-  return success();
-}
-
 LogicalResult ScheduleBlockOp::verifyRegions() {
   // RegionBranchOpInterface checks that the operands match the block
   // arguments and the yielded values the results.

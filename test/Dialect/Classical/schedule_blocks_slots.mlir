@@ -33,14 +33,14 @@ func.func @block_waits_for_a_slot() {
   %a = arith.constant 0.05 : f64
   %z = arith.constant 0.0 : f64
   %ro = pulse.square %c10, %a, %z : i64, f64, f64 -> !pulse.waveform
-  %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, "iq" : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %l0 = classical.get_link {device = 0 : i64} : !classical.link
   %l1, %f = classical.submit %l0, @decode(%m) : (!pulse.measurement) -> (!classical.link, !classical.future)
-  %r2, %rt2, %l2, %g, %h = pulse.schedule_block "asap" (%r1, %rt1, %l1)
+  %r2, %rt2, %l2, %g, %h = pulse.schedule_block asap (%r1, %rt1, %l1)
       : (!pulse.readout_line, !pulse.tone, !classical.link)
       -> (!pulse.readout_line, !pulse.tone, !classical.link, !classical.future, !classical.future) {
   ^bb0(%r: !pulse.readout_line, %rt: !pulse.tone, %l: !classical.link):
-    %r3, %rt3, %n = pulse.readout %r, %ro, %rt, "iq" : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %r3, %rt3, %n = pulse.readout %r, %ro, %rt, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     %l3, %g0 = classical.submit %l, @decode(%n) : (!pulse.measurement) -> (!classical.link, !classical.future)
     %l4, %h0 = classical.submit %l3, @decode(%n) : (!pulse.measurement) -> (!classical.link, !classical.future)
     pulse.yield %r3, %rt3, %l4, %g0, %h0 : !pulse.readout_line, !pulse.tone, !classical.link, !classical.future, !classical.future

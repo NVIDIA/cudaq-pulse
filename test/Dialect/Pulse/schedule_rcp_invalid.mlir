@@ -16,7 +16,7 @@ func.func @kernel_with_its_own_schedule(%d0: !pulse.drive_line, %t0: !pulse.tone
   %zero = arith.constant 0.0 : f64
   %x = pulse.square %c40, %amp, %zero : i64, f64, f64 -> !pulse.waveform
   // expected-error @+1 {{resource-constrained scheduling (rcp, alap_rcp) does not support kernels with their own schedule yet}}
-  %d1, %t1 = pulse.schedule_block "asap" (%d0, %t0) : (!pulse.drive_line, !pulse.tone) -> (!pulse.drive_line, !pulse.tone) {
+  %d1, %t1 = pulse.schedule_block asap (%d0, %t0) : (!pulse.drive_line, !pulse.tone) -> (!pulse.drive_line, !pulse.tone) {
   ^bb0(%db: !pulse.drive_line, %tb: !pulse.tone):
     %d2, %t2 = pulse.drive %db, %x, %tb : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
     pulse.yield %d2, %t2 : !pulse.drive_line, !pulse.tone

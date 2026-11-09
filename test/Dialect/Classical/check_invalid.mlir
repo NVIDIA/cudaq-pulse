@@ -163,7 +163,7 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
       latency_nominal_ns = 800.0, latency_max_ns = 800.0, mode = "bounded",
       submit = "eager", reaction_deadline_ns = 600.0}
   func.func @slow(%r0: !pulse.readout_line, %rt0: !pulse.tone, %ro: !pulse.waveform) {
-    %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, "iq" {start_cycles = 0 : i64, duration_cycles = 100 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, iq {start_cycles = 0 : i64, duration_cycles = 100 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     %l = classical.get_link {device = 0 : i64} : !classical.link
     // expected-error @+1 {{'f' cannot react in time: its answer is due 801 cycles after the readouts it carries end, but reaction_deadline_ns allows 600 (slack -201); submit it sooner, lower max_latency_ns, use a faster link or raise reaction_deadline_ns}}
     %l1, %h = classical.submit %l, @f(%m) {start_cycles = 100 : i64, duration_cycles = 1 : i64} : (!pulse.measurement) -> (!classical.link, !classical.future)
@@ -181,7 +181,7 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
       latency_nominal_ns = 100.0, latency_max_ns = 100.0, mode = "bounded",
       submit = "eager", reaction_deadline_ns = 400.0}
   func.func @drifting(%r0: !pulse.readout_line, %rt0: !pulse.tone, %ro: !pulse.waveform) {
-    %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, "iq" {start_cycles = 0 : i64, duration_cycles = 100 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, iq {start_cycles = 0 : i64, duration_cycles = 100 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     %l0 = classical.get_link {device = 0 : i64} : !classical.link
     %lb = arith.constant 0 : index
     %ub = arith.constant 8 : index
@@ -205,7 +205,7 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
       latency_nominal_ns = 100.0, latency_max_ns = 100.0, mode = "bounded",
       submit = "eager", reaction_deadline_ns = 200.0}
   func.func @stretched(%tau: f64, %d0: !pulse.drive_line, %r0: !pulse.readout_line, %rt0: !pulse.tone, %ro: !pulse.waveform) {
-    %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, "iq" {start_cycles = 0 : i64, duration_cycles = 100 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, iq {start_cycles = 0 : i64, duration_cycles = 100 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     %n = arith.fptosi %tau : f64 to i64
     %len = pulse.duration_from_int %n : (i64) -> !pulse.duration
     %d1 = pulse.wait %d0, %len {pulse.variable_wait, pulse.min_cycles = 0 : i64, pulse.max_cycles = 300 : i64, start_cycles = 100 : i64, duration_cycles = 0 : i64}
@@ -227,10 +227,10 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
       submit = "eager", reaction_deadline_ns = 2000.0}
   func.func @branch(%c: i1, %r0: !pulse.readout_line, %rt0: !pulse.tone, %ro: !pulse.waveform) {
     %r1, %rt1, %m = scf.if %c -> (!pulse.readout_line, !pulse.tone, !pulse.measurement) {
-      %r2, %rt2, %m2 = pulse.readout %r0, %ro, %rt0, "iq" {start_cycles = 0 : i64, duration_cycles = 100 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+      %r2, %rt2, %m2 = pulse.readout %r0, %ro, %rt0, iq {start_cycles = 0 : i64, duration_cycles = 100 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
       scf.yield %r2, %rt2, %m2 : !pulse.readout_line, !pulse.tone, !pulse.measurement
     } else {
-      %r3, %rt3, %m3 = pulse.readout %r0, %ro, %rt0, "iq" {start_cycles = 0 : i64, duration_cycles = 50 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+      %r3, %rt3, %m3 = pulse.readout %r0, %ro, %rt0, iq {start_cycles = 0 : i64, duration_cycles = 50 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
       scf.yield %r3, %rt3, %m3 : !pulse.readout_line, !pulse.tone, !pulse.measurement
     }
     %l = classical.get_link {device = 0 : i64} : !classical.link
@@ -339,7 +339,7 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
       latency_nominal_ns = 100.0, latency_max_ns = 100.0, mode = "bounded",
       submit = "eager"}
   func.func @early(%c: i1, %r0: !pulse.readout_line, %rt0: !pulse.tone, %ro: !pulse.waveform) {
-    %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, "iq" {start_cycles = 0 : i64, duration_cycles = 100 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, iq {start_cycles = 0 : i64, duration_cycles = 100 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     %l = classical.get_link {device = 0 : i64} : !classical.link
     // expected-error @+1 {{the call of 'f' starts at 90, before the readout it sends ends at 100}}
     %l1, %h = classical.submit %l, @f(%m) {start_cycles = 90 : i64, duration_cycles = 1 : i64} : (!pulse.measurement) -> (!classical.link, !classical.future)

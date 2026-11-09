@@ -42,7 +42,7 @@ func.func @tested_in_every_iteration() {
   %c200 = arith.constant 200 : i64
   %gap = pulse.duration_from_int %c200 : (i64) -> !pulse.duration
   %l0 = classical.get_link {device = 0 : i64} : !classical.link
-  %r1, %rt1, %m0 = pulse.readout %r0, %ro, %rt0, "iq" : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r1, %rt1, %m0 = pulse.readout %r0, %ro, %rt0, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %l1, %f = classical.submit %l0, @decode(%m0) : (!pulse.measurement) -> (!classical.link, !classical.future)
   %n = classical.wait %f, @decode : i1
   %lb = arith.constant 0 : index
@@ -51,7 +51,7 @@ func.func @tested_in_every_iteration() {
   %dn, %tn, %rn, %rtn = scf.for %i = %lb to %ub step %step
       iter_args(%d = %d0, %t = %t0, %r = %r1, %rt = %rt1)
       -> (!pulse.drive_line, !pulse.tone, !pulse.readout_line, !pulse.tone) {
-    %r2, %rt2, %m = pulse.readout %r, %ro, %rt, "iq" : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %r2, %rt2, %m = pulse.readout %r, %ro, %rt, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     %set = pulse.is_set %m : !pulse.measurement -> i1
     %d1, %t1 = scf.if %set -> (!pulse.drive_line, !pulse.tone) {
       %dd, %tt = pulse.drive %d, %x, %t : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone

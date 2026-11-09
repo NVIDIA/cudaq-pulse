@@ -58,6 +58,7 @@
 #include <numeric>
 
 #include "cudaq-pulse/Dialect/Pulse/PulseDialect.h.inc"
+#include "cudaq-pulse/Dialect/Pulse/PulseEnums.h.inc"
 
 #define GET_TYPEDEF_CLASSES
 #include "cudaq-pulse/Dialect/Pulse/PulseTypes.h.inc"
@@ -4866,9 +4867,10 @@ scheduleRegion(mlir::Region &region, mlir::Operation *root, Resources resources,
   if (mlir::failed(blocks))
     return mlir::failure();
   for (pulse::ScheduleBlockOp block : *blocks) {
-    if (mlir::failed(scheduleRegion(block.getBody(), block, Resources{},
-                                    block.getPolicy() == "alap", classical,
-                                    timelines, grid, controllers)))
+    if (mlir::failed(
+            scheduleRegion(block.getBody(), block, Resources{},
+                           block.getPolicy() == pulse::SchedulePolicy::ALAP,
+                           classical, timelines, grid, controllers)))
       return mlir::failure();
     writeShape(block);
     if (mlir::failed(checkBlockBudget(block)))

@@ -23,7 +23,7 @@ func.func @fuse_and_blocks() {
   %x = pulse.square %c40, %amp, %zero : i64, f64, f64 -> !w
   %d1, %t1 = pulse.drive %d0, %x, %t0 : !d, !w, !t -> !d, !t
   %d2, %t2 = pulse.drive %d1, %x, %t1 : !d, !w, !t -> !d, !t
-  %d3, %t3 = pulse.schedule_block "asap" (%d2, %t2) : (!d, !t) -> (!d, !t) {
+  %d3, %t3 = pulse.schedule_block asap (%d2, %t2) : (!d, !t) -> (!d, !t) {
   ^bb0(%d: !d, %t: !t):
     %d4, %t4 = pulse.drive %d, %x, %t : !d, !w, !t -> !d, !t
     %d5, %t5 = pulse.drive %d4, %x, %t4 : !d, !w, !t -> !d, !t

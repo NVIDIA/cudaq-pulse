@@ -40,7 +40,7 @@ func.func @feedback() {
   %z = arith.constant 0.0 : f64
   %ro = pulse.square %c300, %a, %z : i64, f64, f64 -> !pulse.waveform
   %x = pulse.square %c40, %a, %z : i64, f64, f64 -> !pulse.waveform
-  %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, "iq" : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %l0 = classical.get_link {device = 0 : i64} : !classical.link
   %l1, %f = classical.submit %l0, @decode(%m) : (!pulse.measurement) -> (!classical.link, !classical.future)
   %fix = classical.wait %f, @decode : i1
@@ -78,7 +78,7 @@ func.func @parameter() {
   %long = pulse.square %c5000, %a, %z : i64, f64, f64 -> !pulse.waveform
   %e1, %u1 = pulse.drive %e0, %long, %u0 : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
   %ro = pulse.square %c300, %a, %z : i64, f64, f64 -> !pulse.waveform
-  %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, "iq" : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %l0 = classical.get_link {device = 0 : i64} : !classical.link
   %l1, %f = classical.submit %l0, @est(%m) : (!pulse.measurement) -> (!classical.link, !classical.future)
   %amp = classical.wait %f, @est : f64
@@ -98,7 +98,7 @@ func.func @link_order() {
   %a = arith.constant 0.05 : f64
   %z = arith.constant 0.0 : f64
   %ro = pulse.square %c300, %a, %z : i64, f64, f64 -> !pulse.waveform
-  %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, "iq" : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %l0 = classical.get_link {device = 0 : i64} : !classical.link
   %l1, %f = classical.submit %l0, @decode(%m) : (!pulse.measurement) -> (!classical.link, !classical.future)
   %l2, %g = classical.submit %l1, @decode(%m) : (!pulse.measurement) -> (!classical.link, !classical.future)

@@ -44,7 +44,7 @@ func.func @t1(%tau: f64) {
       -> !pulse.drive_line, !pulse.readout_line
   // CHECK: = pulse.readout %
   // CHECK-SAME: start_cycles = 56
-  %r1, %rt1, %res = pulse.readout %s#1, %m, %rt0, "iq"
+  %r1, %rt1, %res = pulse.readout %s#1, %m, %rt0, iq
       : !pulse.readout_line, !pulse.waveform, !pulse.tone
       -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   return

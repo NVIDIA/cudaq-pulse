@@ -138,12 +138,12 @@ func.func @carried_unread() {
   %a = arith.constant 0.05 : f64
   %z = arith.constant 0.0 : f64
   %x = pulse.square %c40, %a, %z : i64, f64, f64 -> !pulse.waveform
-  %s1, %w1, %m0 = pulse.readout %s0, %x, %w0, "iq" : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %s1, %w1, %m0 = pulse.readout %s0, %x, %w0, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %lb = arith.constant 0 : index
   %ub = arith.constant 1 : index
   %step = arith.constant 1 : index
   %r2, %v2, %m = scf.for %i = %lb to %ub step %step iter_args(%r = %r0, %v = %v0, %mi = %m0) -> (!pulse.readout_line, !pulse.tone, !pulse.measurement) {
-    %r1, %v1, %m1 = pulse.readout %r, %x, %v, "iq" : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %r1, %v1, %m1 = pulse.readout %r, %x, %v, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     scf.yield %r1, %v1, %m1 : !pulse.readout_line, !pulse.tone, !pulse.measurement
   }
   %b = pulse.is_set %m : !pulse.measurement -> i1
@@ -177,12 +177,12 @@ func.func @carried_no_trips() {
   %a = arith.constant 0.05 : f64
   %z = arith.constant 0.0 : f64
   %x = pulse.square %c40, %a, %z : i64, f64, f64 -> !pulse.waveform
-  %s1, %w1, %m0 = pulse.readout %s0, %x, %w0, "iq" : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %s1, %w1, %m0 = pulse.readout %s0, %x, %w0, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %lb = arith.constant 0 : index
   %ub = arith.constant 0 : index
   %step = arith.constant 1 : index
   %r2, %v2, %m = scf.for %i = %lb to %ub step %step iter_args(%r = %r0, %v = %v0, %mi = %m0) -> (!pulse.readout_line, !pulse.tone, !pulse.measurement) {
-    %r1, %v1, %m1 = pulse.readout %r, %x, %v, "iq" : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %r1, %v1, %m1 = pulse.readout %r, %x, %v, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     scf.yield %r1, %v1, %m1 : !pulse.readout_line, !pulse.tone, !pulse.measurement
   }
   %b = pulse.is_set %m : !pulse.measurement -> i1

@@ -8,8 +8,9 @@
 !w = !pulse.waveform
 
 func.func @unknown_policy(%d0: !d) {
-  // expected-error @+1 {{policy must be "asap" or "alap", got "rcp"}}
-  %d1 = pulse.schedule_block "rcp" (%d0) : (!d) -> (!d) {
+  // expected-error @+2 {{expected one of [asap, alap] for schedule policy, got: rcp}}
+  // expected-error @+1 {{invalid value for property policy, expected schedule policy}}
+  %d1 = pulse.schedule_block rcp (%d0) : (!d) -> (!d) {
   ^bb0(%d: !d):
     pulse.yield %d : !d
   }
@@ -24,7 +25,7 @@ func.func @unknown_policy(%d0: !d) {
 
 // A line from outside the block must come in as an operand.
 func.func @captured_line(%d0: !d, %t0: !t, %x: !w) {
-  %t1 = pulse.schedule_block "asap" (%t0) : (!t) -> (!t) {
+  %t1 = pulse.schedule_block asap (%t0) : (!t) -> (!t) {
   ^bb0(%t: !t):
     // expected-error @+1 {{uses a line, tone, measurement or link from outside its pulse.schedule_block}}
     %d1, %t2 = pulse.drive %d0, %x, %t : !d, !w, !t -> !d, !t
@@ -41,7 +42,7 @@ func.func @captured_line(%d0: !d, %t0: !t, %x: !w) {
 func.func @argument_types(%d0: !d) {
   // expected-error @+2 {{successor operand type #0 '!pulse.drive_line' should match successor input type #0 '!pulse.tone'}}
   // expected-note @+1 {{region branch point}}
-  %d1 = pulse.schedule_block "asap" (%d0) : (!d) -> (!d) {
+  %d1 = pulse.schedule_block asap (%d0) : (!d) -> (!d) {
   ^bb0(%t: !t):
     pulse.yield %t : !t
   }
@@ -55,7 +56,7 @@ func.func @argument_types(%d0: !d) {
 
 func.func @result_types(%d0: !d, %t0: !t) {
   // expected-error @+1 {{region branch point has 2 operands, but region successor needs 1 inputs}}
-  %d1 = pulse.schedule_block "alap" (%d0, %t0) : (!d, !t) -> (!d) {
+  %d1 = pulse.schedule_block alap (%d0, %t0) : (!d, !t) -> (!d) {
   ^bb0(%d: !d, %t: !t):
     // expected-note @+1 {{region branch point}}
     pulse.yield %d, %t : !d, !t
@@ -71,7 +72,7 @@ func.func @result_types(%d0: !d, %t0: !t) {
 !w = !pulse.waveform
 
 func.func @captured_waveform(%d0: !d, %t0: !t, %x: !w) {
-  %d1, %t1 = pulse.schedule_block "alap" (%d0, %t0) : (!d, !t) -> (!d, !t) {
+  %d1, %t1 = pulse.schedule_block alap (%d0, %t0) : (!d, !t) -> (!d, !t) {
   ^bb0(%d: !d, %t: !t):
     %d2, %t2 = pulse.drive %d, %x, %t : !d, !w, !t -> !d, !t
     pulse.yield %d2, %t2 : !d, !t
@@ -84,7 +85,7 @@ func.func @captured_waveform(%d0: !d, %t0: !t, %x: !w) {
 // A classical link is timed like a line, so it crosses the boundary only as
 // an operand too.
 func.func @captured_link(%l: !classical.link, %d: !pulse.drive_line) -> (!pulse.drive_line, !classical.link) {
-  %d1, %l1 = pulse.schedule_block "asap" (%d) : (!pulse.drive_line) -> (!pulse.drive_line, !classical.link) {
+  %d1, %l1 = pulse.schedule_block asap (%d) : (!pulse.drive_line) -> (!pulse.drive_line, !classical.link) {
   ^bb0(%d_in: !pulse.drive_line):
     // expected-error @+1 {{uses a line, tone, measurement or link from outside its pulse.schedule_block; pass it as an operand}}
     pulse.yield %d_in, %l : !pulse.drive_line, !classical.link
@@ -96,7 +97,7 @@ func.func @captured_link(%l: !classical.link, %d: !pulse.drive_line) -> (!pulse.
 
 func.func @block_without_a_yield(%d: !pulse.drive_line) {
   // expected-error @+1 {{'pulse.schedule_block' op body must end in pulse.yield}}
-  %d1 = pulse.schedule_block "asap" (%d) : (!pulse.drive_line) -> (!pulse.drive_line) {
+  %d1 = pulse.schedule_block asap (%d) : (!pulse.drive_line) -> (!pulse.drive_line) {
   ^bb0(%d_in: !pulse.drive_line):
     llvm.unreachable
   }

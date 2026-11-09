@@ -12,7 +12,7 @@
 func.func @threaded(%x: !w) {
   %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qudit) -> (!d, !t)
-  %d1, %t1 = pulse.schedule_block "asap" (%d0, %t0) : (!d, !t) -> (!d, !t) {
+  %d1, %t1 = pulse.schedule_block asap (%d0, %t0) : (!d, !t) -> (!d, !t) {
   ^bb0(%d: !d, %t: !t):
     %d2, %t2 = pulse.drive %d, %x, %t : !d, !w, !t -> !d, !t
     pulse.yield %d2, %t2 : !d, !t
@@ -32,7 +32,7 @@ func.func @threaded(%x: !w) {
 func.func @used_after_block(%x: !w) {
   %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qudit) -> (!d, !t)
-  %d1, %t1 = pulse.schedule_block "asap" (%d0, %t0) : (!d, !t) -> (!d, !t) {
+  %d1, %t1 = pulse.schedule_block asap (%d0, %t0) : (!d, !t) -> (!d, !t) {
   ^bb0(%d: !d, %t: !t):
     %d2, %t2 = pulse.drive %d, %x, %t : !d, !w, !t -> !d, !t
     pulse.yield %d2, %t2 : !d, !t
@@ -52,7 +52,7 @@ func.func @used_after_block(%x: !w) {
 func.func @twice_in_block(%x: !w) {
   %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qudit) -> (!d, !t)
-  %d1, %t1 = pulse.schedule_block "asap" (%d0, %t0) : (!d, !t) -> (!d, !t) {
+  %d1, %t1 = pulse.schedule_block asap (%d0, %t0) : (!d, !t) -> (!d, !t) {
   ^bb0(%d: !d, %t: !t):
     %d2, %t2 = pulse.drive %d, %x, %t : !d, !w, !t -> !d, !t
     %d3, %t3 = pulse.drive %d, %x, %t2 : !d, !w, !t -> !d, !t

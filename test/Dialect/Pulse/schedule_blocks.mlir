@@ -48,7 +48,7 @@ func.func @asap_in_alap() {
   %x100 = pulse.square %c100, %amp, %zero : i64, f64, f64 -> !w
   %x40 = pulse.square %c40, %amp, %zero : i64, f64, f64 -> !w
   %a1, %ta1 = pulse.drive %a0, %x200, %ta0 : !d, !w, !t -> !d, !t
-  %b1, %tb1, %c1, %tc1 = pulse.schedule_block "asap" (%b0, %tb0, %c0, %tc0) : (!d, !t, !d, !t) -> (!d, !t, !d, !t) {
+  %b1, %tb1, %c1, %tc1 = pulse.schedule_block asap (%b0, %tb0, %c0, %tc0) : (!d, !t, !d, !t) -> (!d, !t, !d, !t) {
   ^bb0(%b: !d, %tb: !t, %c: !d, %tc: !t):
     %b2, %tb2 = pulse.drive %b, %x100, %tb : !d, !w, !t -> !d, !t
     %c2, %tc2 = pulse.drive %c, %x40, %tc : !d, !w, !t -> !d, !t
@@ -78,7 +78,7 @@ func.func @alap_in_asap() {
   %c40 = arith.constant 40 : i64
   %x100 = pulse.square %c100, %amp, %zero : i64, f64, f64 -> !w
   %x40 = pulse.square %c40, %amp, %zero : i64, f64, f64 -> !w
-  %b1, %tb1, %c1, %tc1 = pulse.schedule_block "alap" (%b0, %tb0, %c0, %tc0) : (!d, !t, !d, !t) -> (!d, !t, !d, !t) {
+  %b1, %tb1, %c1, %tc1 = pulse.schedule_block alap (%b0, %tb0, %c0, %tc0) : (!d, !t, !d, !t) -> (!d, !t, !d, !t) {
   ^bb0(%b: !d, %tb: !t, %c: !d, %tc: !t):
     %b2, %tb2 = pulse.drive %b, %x100, %tb : !d, !w, !t -> !d, !t
     %c2, %tc2 = pulse.drive %c, %x40, %tc : !d, !w, !t -> !d, !t
@@ -124,13 +124,13 @@ func.func @three_levels() {
   %w40 = pulse.square %c40, %amp, %zero : i64, f64, f64 -> !w
   %w20 = pulse.square %c20, %amp, %zero : i64, f64, f64 -> !w
   %z1, %tz1 = pulse.drive %z0, %w300, %tz0 : !d, !w, !t -> !d, !t
-  %x1, %tx1, %y1, %ty1 = pulse.schedule_block "asap" (%x0, %tx0, %y0, %ty0) : (!d, !t, !d, !t) -> (!d, !t, !d, !t) {
+  %x1, %tx1, %y1, %ty1 = pulse.schedule_block asap (%x0, %tx0, %y0, %ty0) : (!d, !t, !d, !t) -> (!d, !t, !d, !t) {
   ^bb0(%x: !d, %tx: !t, %y: !d, %ty: !t):
     %y2, %ty2 = pulse.drive %y, %w60, %ty : !d, !w, !t -> !d, !t
-    %x3, %tx3, %y3, %ty3 = pulse.schedule_block "alap" (%x, %tx, %y2, %ty2) : (!d, !t, !d, !t) -> (!d, !t, !d, !t) {
+    %x3, %tx3, %y3, %ty3 = pulse.schedule_block alap (%x, %tx, %y2, %ty2) : (!d, !t, !d, !t) -> (!d, !t, !d, !t) {
     ^bb0(%xx: !d, %txx: !t, %yy: !d, %tyy: !t):
       %x4, %tx4 = pulse.drive %xx, %w100, %txx : !d, !w, !t -> !d, !t
-      %x5, %tx5, %y5, %ty5 = pulse.schedule_block "asap" (%x4, %tx4, %yy, %tyy) : (!d, !t, !d, !t) -> (!d, !t, !d, !t) {
+      %x5, %tx5, %y5, %ty5 = pulse.schedule_block asap (%x4, %tx4, %yy, %tyy) : (!d, !t, !d, !t) -> (!d, !t, !d, !t) {
       ^bb0(%xxx: !d, %txxx: !t, %yyy: !d, %tyyy: !t):
         %x6, %tx6 = pulse.drive %xxx, %w40, %txxx : !d, !w, !t -> !d, !t
         %y6, %ty6 = pulse.drive %yyy, %w20, %tyyy : !d, !w, !t -> !d, !t
@@ -169,7 +169,7 @@ func.func @block_in_loop() {
   %step = arith.constant 1 : index
   %d1, %t1 = pulse.drive %d0, %x100, %t0 : !d, !w, !t -> !d, !t
   %d2, %t2 = scf.for %i = %lb to %ub step %step iter_args(%d = %d1, %t = %t1) -> (!d, !t) {
-    %d3, %t3 = pulse.schedule_block "asap" (%d, %t) : (!d, !t) -> (!d, !t) {
+    %d3, %t3 = pulse.schedule_block asap (%d, %t) : (!d, !t) -> (!d, !t) {
     ^bb0(%bd: !d, %bt: !t):
       %d4, %t4 = scf.for %j = %lb to %two step %step iter_args(%e = %bd, %u = %bt) -> (!d, !t) {
         %e1, %u1 = pulse.drive %e, %x40, %u : !d, !w, !t -> !d, !t
@@ -204,10 +204,10 @@ func.func @block_in_if() {
   %ro = pulse.square %c400, %amp, %zero : i64, f64, f64 -> !w
   %x100 = pulse.square %c100, %amp, %zero : i64, f64, f64 -> !w
   %x40 = pulse.square %c40, %amp, %zero : i64, f64, f64 -> !w
-  %r1, %tr1, %m = pulse.readout %r0, %ro, %tr0, "discriminate" : !r, !w, !t -> !r, !t, !m
+  %r1, %tr1, %m = pulse.readout %r0, %ro, %tr0, discriminated : !r, !w, !t -> !r, !t, !m
   %bit = pulse.is_set %m : !m -> i1
   %a1, %ta1, %b1, %tb1 = scf.if %bit -> (!d, !t, !d, !t) {
-    %a2, %ta2, %b2, %tb2 = pulse.schedule_block "alap" (%a0, %ta0, %b0, %tb0) : (!d, !t, !d, !t) -> (!d, !t, !d, !t) {
+    %a2, %ta2, %b2, %tb2 = pulse.schedule_block alap (%a0, %ta0, %b0, %tb0) : (!d, !t, !d, !t) -> (!d, !t, !d, !t) {
     ^bb0(%a: !d, %ta: !t, %b: !d, %tb: !t):
       %a3, %ta3 = pulse.drive %a, %x100, %ta : !d, !w, !t -> !d, !t
       %b3, %tb3 = pulse.drive %b, %x40, %tb : !d, !w, !t -> !d, !t
@@ -240,8 +240,8 @@ func.func @if_in_block() {
   %ro = pulse.square %c400, %amp, %zero : i64, f64, f64 -> !w
   %x100 = pulse.square %c100, %amp, %zero : i64, f64, f64 -> !w
   %x40 = pulse.square %c40, %amp, %zero : i64, f64, f64 -> !w
-  %r1, %tr1, %m = pulse.readout %r0, %ro, %tr0, "discriminate" : !r, !w, !t -> !r, !t, !m
-  %d1, %t1 = pulse.schedule_block "asap" (%m, %d0, %t0) : (!m, !d, !t) -> (!d, !t) {
+  %r1, %tr1, %m = pulse.readout %r0, %ro, %tr0, discriminated : !r, !w, !t -> !r, !t, !m
+  %d1, %t1 = pulse.schedule_block asap (%m, %d0, %t0) : (!m, !d, !t) -> (!d, !t) {
   ^bb0(%bm: !m, %d: !d, %t: !t):
     %d2, %t2 = pulse.drive %d, %x40, %t : !d, !w, !t -> !d, !t
     %bit = pulse.is_set %bm : !m -> i1
@@ -281,7 +281,7 @@ func.func @tones_across_blocks() {
   %cr = pulse.square %c300, %amp, %zero : i64, f64, f64 -> !w
   %x40 = pulse.square %c40, %amp, %zero : i64, f64, f64 -> !w
   %a1, %tb1 = pulse.drive %a0, %cr, %tb0 : !d, !w, !t -> !d, !t
-  %b1, %tb2, %tc1 = pulse.schedule_block "asap" (%b0, %tb1, %tc0) : (!d, !t, !t) -> (!d, !t, !t) {
+  %b1, %tb2, %tc1 = pulse.schedule_block asap (%b0, %tb1, %tc0) : (!d, !t, !t) -> (!d, !t, !t) {
   ^bb0(%b: !d, %tb: !t, %tc: !t):
     %b2, %tb3 = pulse.drive %b, %x40, %tb : !d, !w, !t -> !d, !t
     %tc2 = pulse.shift_phase %tc, %phi : !t, f64 -> !t
@@ -308,10 +308,10 @@ func.func @sync_in_block() {
   %x200 = pulse.square %c200, %amp, %zero : i64, f64, f64 -> !w
   %ro = pulse.square %c400, %amp, %zero : i64, f64, f64 -> !w
   %d1, %t1 = pulse.drive %d0, %x200, %t0 : !d, !w, !t -> !d, !t
-  %d2, %r2, %tr2, %m = pulse.schedule_block "alap" (%d1, %r0, %tr0) : (!d, !r, !t) -> (!d, !r, !t, !m) {
+  %d2, %r2, %tr2, %m = pulse.schedule_block alap (%d1, %r0, %tr0) : (!d, !r, !t) -> (!d, !r, !t, !m) {
   ^bb0(%d: !d, %r: !r, %tr: !t):
     %ds, %rs = pulse.sync %d, %r : !d, !r -> !d, !r
-    %r3, %tr3, %mm = pulse.readout %rs, %ro, %tr, "discriminate" : !r, !w, !t -> !r, !t, !m
+    %r3, %tr3, %mm = pulse.readout %rs, %ro, %tr, discriminated : !r, !w, !t -> !r, !t, !m
     pulse.yield %ds, %r3, %tr3, %mm : !d, !r, !t, !m
   }
   return

@@ -43,9 +43,9 @@ func.func @readouts() {
   %q1 = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qudit
   %r0, %t0 = pulse.get_readout_line %q0 : (!pulse.qudit) -> (!r, !t)
   %r1, %t1 = pulse.get_readout_line %q1 : (!pulse.qudit) -> (!r, !t)
-  %r0a, %t0a, %m0 = pulse.readout %r0, %ro, %t0, "discriminate" : !r, !w, !t -> !r, !t, !m
-  %r1a, %t1a, %m1 = pulse.readout %r1, %ro, %t1, "discriminate" : !r, !w, !t -> !r, !t, !m
-  %r0b, %t0b, %m2 = pulse.readout %r0a, %ro, %t0a, "discriminate" : !r, !w, !t -> !r, !t, !m
+  %r0a, %t0a, %m0 = pulse.readout %r0, %ro, %t0, discriminated : !r, !w, !t -> !r, !t, !m
+  %r1a, %t1a, %m1 = pulse.readout %r1, %ro, %t1, discriminated : !r, !w, !t -> !r, !t, !m
+  %r0b, %t0b, %m2 = pulse.readout %r0a, %ro, %t0a, discriminated : !r, !w, !t -> !r, !t, !m
   return
 }
 

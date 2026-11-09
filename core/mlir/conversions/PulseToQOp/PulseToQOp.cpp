@@ -676,17 +676,28 @@ struct PulseToQOpPass
 
     // Readouts are numbered in walk order for `pulse.path`.
     SmallVector<Operation *> readouts;
+    Operation *notIq = nullptr;
     module.walk([&](Operation *op) {
       if (isa<pulse::GetDriveLineOp>(op)) {
         if (int64_t qi = pulse::quditOf(op); qi >= 0)
           if (auto freqAttr = op->getAttrOfType<FloatAttr>("frequency_hz"))
             qubitFreqHz[qi] = freqAttr.getValueAsDouble();
       }
-      if (isa<pulse::ReadoutOp>(op))
+      if (auto readout = dyn_cast<pulse::ReadoutOp>(op)) {
+        if (readout.getMode() != pulse::ReadoutMode::IQ && !notIq)
+          notIq = op;
         readouts.push_back(op);
+      }
       if (op->getName().getStringRef() == "pulse.iq_acquire")
         readouts.push_back(op);
     });
+    if (notIq) {
+      notIq->emitError("readout mode ")
+          << pulse::stringifyReadoutMode(
+                 cast<pulse::ReadoutOp>(notIq).getMode())
+          << " is not simulated; only iq is";
+      return signalPassFailure();
+    }
     // The frequencies of the simulated qubits, where they differ from the
     // device the program was compiled for (NaN: as compiled).
     if (auto plant = module->getAttrOfType<DenseF64ArrayAttr>(

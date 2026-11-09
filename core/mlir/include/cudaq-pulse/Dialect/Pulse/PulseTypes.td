@@ -99,18 +99,21 @@ def IQDataType : PulseType<"IQData", "iq_data"> {
 }
 
 //===----------------------------------------------------------------------===//
-// Waveform enum attribute
+// Readout modes and scheduling policies
 //===----------------------------------------------------------------------===//
 
-def WaveformAttr : I32EnumAttr<"WaveformKind", "Type of pulse waveform",
-  [
-    I32EnumAttrCase<"Square", 0, "square">,
-    I32EnumAttrCase<"Gaussian", 1, "gaussian">,
-    I32EnumAttrCase<"GaussianSquare", 2, "gaussian_square">,
-    I32EnumAttrCase<"DRAG", 3, "drag">,
-    I32EnumAttrCase<"Cosine", 4, "cosine">,
-    I32EnumAttrCase<"TanhRamp", 5, "tanh_ramp">,
-    I32EnumAttrCase<"Custom", 6, "custom">
+def ReadoutMode : I32Enum<"ReadoutMode", "readout mode", [
+    I32EnumCase<"IQ", 0, "iq">,
+    I32EnumCase<"Discriminated", 1, "discriminated">,
+    I32EnumCase<"Trace", 2, "trace">,
+    I32EnumCase<"Counts", 3, "counts">
+  ]> {
+  let cppNamespace = "::pulse";
+}
+
+def SchedulePolicy : I32Enum<"SchedulePolicy", "schedule policy", [
+    I32EnumCase<"ASAP", 0, "asap">,
+    I32EnumCase<"ALAP", 1, "alap">
   ]> {
   let cppNamespace = "::pulse";
 }

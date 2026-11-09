@@ -90,7 +90,7 @@ func.func @active_reset() {
   %x = pulse.square %c40, %amp, %zero : i64, f64, f64 -> !pulse.waveform
   %c10 = arith.constant 10 : i64
   %w10 = pulse.duration_from_int %c10 : (i64) -> !pulse.duration
-  %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, "iq" : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %bit = pulse.is_set %m : !pulse.measurement -> i1
   %d1, %t1 = scf.if %bit -> (!pulse.drive_line, !pulse.tone) {
     %d, %t = pulse.drive %d0, %x, %t0 : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
@@ -122,7 +122,7 @@ func.func @feedback_in_loop() {
   %ub = arith.constant 5 : index
   %step = arith.constant 1 : index
   %d5, %t5, %r5, %rt5 = scf.for %i = %lb to %ub step %step iter_args(%d = %d0, %t = %t0, %r = %r0, %rt = %rt0) -> (!pulse.drive_line, !pulse.tone, !pulse.readout_line, !pulse.tone) {
-    %r1, %rt1, %m = pulse.readout %r, %ro, %rt, "iq" : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %r1, %rt1, %m = pulse.readout %r, %ro, %rt, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     %bit = pulse.is_set %m : !pulse.measurement -> i1
     %d1, %t1 = scf.if %bit -> (!pulse.drive_line, !pulse.tone) {
       %dd, %tt = pulse.drive %d, %x, %t : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
