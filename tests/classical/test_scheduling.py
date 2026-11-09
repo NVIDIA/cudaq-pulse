@@ -427,11 +427,11 @@ def _shots(n):
 @pytest.mark.slow
 def test_shots_that_branch_on_one_answer_schedule_in_linear_time():
     # Every shot of a round branches on the answer the round before sent its
-    # measurements to; the time, native, is the best of five.
+    # measurements to; the time, native, is the best of five compiles (a
+    # program lowers once, so lowering it again would time nothing).
     timings = {}
     for n in (100, 1600):
-        program = pulse.compile(_shots(n))
-        timings[n] = min(program.lower(Q[0]).metrics.schedule_ms for _ in range(5))
+        timings[n] = min(pulse.compile(_shots(n)).lower(Q[0]).metrics.schedule_ms for _ in range(5))
     # 16x the shots in well under 256x the time (quadratic would be 256x).
     assert timings[1600] < 48 * timings[100], timings
 

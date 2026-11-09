@@ -598,13 +598,16 @@ def _two_box_qpu():
 @pytest.mark.parametrize("schedule", ["asap", "alap", "rcp"])
 def test_rounds_on_two_controllers_that_branch_on_an_answer_schedule_in_linear_time(schedule):
     # The answer reaches the drive's controller apart from the readouts it
-    # comes from; the time, native, is the best of three.
+    # comes from; the time, native, is the best of three compiles (a
+    # program lowers once, so lowering it again would time nothing).
     qpu = _two_box_qpu()
     timings = {}
     for n in (100, 1600):
-        program = pulse.compile(_answered_rounds(n), device=qpu, schedule=schedule)
         timings[n] = min(
-            program.lower(qpu.qudits[0], qpu.qudits[2]).metrics.schedule_ms for _ in range(3)
+            pulse.compile(_answered_rounds(n), device=qpu, schedule=schedule)
+            .lower(qpu.qudits[0], qpu.qudits[2])
+            .metrics.schedule_ms
+            for _ in range(3)
         )
     # 16x the shots in well under 256x the time (quadratic would be 256x).
     assert timings[1600] < 48 * timings[100], timings
