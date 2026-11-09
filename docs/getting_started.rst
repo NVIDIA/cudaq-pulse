@@ -17,9 +17,10 @@ Installation
 
 cudaq-pulse requires Python 3.12 or newer and does not depend on CUDA-Q. Its
 wheels contain a statically linked MLIR, so ``pip`` is the only installer
-needed. Releases are published on the `GitHub releases page
-<https://github.com/NVIDIA/cudaq-pulse/releases>`_, not on PyPI; ``pip``
-picks the wheel for your platform from the release:
+needed. The wheels are attached to each release on the `GitHub releases page
+<https://github.com/NVIDIA/cudaq-pulse/releases>`_; cudaq-pulse is coming to
+PyPI. To install from a GitHub release, point ``pip`` at it, and ``pip`` picks
+the wheel for your platform:
 
 .. code-block:: bash
 

@@ -17,9 +17,10 @@ linked MLIR, so `pip` is the only installer you need.
 
 ## Install
 
-Releases are published on the
-[GitHub releases page](https://github.com/NVIDIA/cudaq-pulse/releases), not on
-PyPI. `pip` picks the wheel for your platform from the release:
+The wheels are attached to each release on the
+[GitHub releases page](https://github.com/NVIDIA/cudaq-pulse/releases);
+cudaq-pulse is coming to PyPI. To install from a GitHub release, point `pip`
+at it, and `pip` picks the wheel for your platform:
 
 ```bash
 python -m venv .venv && source .venv/bin/activate

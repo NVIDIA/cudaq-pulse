@@ -17,6 +17,11 @@ research and should not be treated as a production simulator.
 Installation
 ------------
 
+The wheels are attached to each release on the `GitHub releases page
+<https://github.com/NVIDIA/cudaq-pulse/releases>`_ (cudaq-pulse is coming to
+PyPI); ``pip`` installs the one for your platform from the release, as in
+:doc:`../getting_started`:
+
 .. code-block:: bash
 
    RELEASE=https://github.com/NVIDIA/cudaq-pulse/releases/expanded_assets/v0.1.0
