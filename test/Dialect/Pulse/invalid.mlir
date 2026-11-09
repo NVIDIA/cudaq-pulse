@@ -42,7 +42,7 @@ func.func @custom_samples_longer_than_an_i64() {
 
 func.func @qudit_without_an_index() {
   // expected-error @+1 {{'pulse.qudit_alloc' op requires attribute 'qudit'}}
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc : !pulse.qudit
   return
 }
 
@@ -50,22 +50,7 @@ func.func @qudit_without_an_index() {
 
 func.func @qudit_of_a_negative_index() {
   // expected-error @+1 {{'pulse.qudit_alloc' op attribute 'qudit' failed to satisfy constraint: 64-bit signless integer attribute whose value is non-negative}}
-  %q = pulse.qudit_alloc {qudit = -1 : i64} : !pulse.qref
-  return
-}
-
-// -----
-
-func.func @qvec_of_fewer_results_than_qudits() {
-  // expected-error @+1 {{'pulse.qvec_alloc' op allocates 3 qudits, but returns 1 references}}
-  %q = pulse.qvec_alloc 3 : !pulse.qref
-  return
-}
-
-// -----
-
-func.func @qvec_of_three_qudits() {
-  %q:3 = pulse.qvec_alloc 3 : !pulse.qref, !pulse.qref, !pulse.qref
+  %q = pulse.qudit_alloc {qudit = -1 : i64} : !pulse.qudit
   return
 }
 

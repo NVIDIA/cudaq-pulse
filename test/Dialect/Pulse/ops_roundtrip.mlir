@@ -17,8 +17,8 @@
 // CHECK: pulse.create_iq %[[I]], %[[Q]] : f64, f64 -> !pulse.iq_data
 // CHECK: pulse.iq_magnitude %[[IQ2]] : !pulse.iq_data -> f64
 // CHECK: pulse.iq_phase %[[IQ2]] : !pulse.iq_data -> f64
-func.func @iq_acquire_twice(%q: !pulse.qref, %w: !pulse.waveform) -> (!pulse.readout_line, !pulse.tone, !pulse.iq_data, f64, f64) {
-  %r, %t = pulse.get_readout_line %q : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
+func.func @iq_acquire_twice(%q: !pulse.qudit, %w: !pulse.waveform) -> (!pulse.readout_line, !pulse.tone, !pulse.iq_data, f64, f64) {
+  %r, %t = pulse.get_readout_line %q : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
   %r1, %t1, %iq1 = pulse.iq_acquire %r, %w, %t : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.iq_data
   %r2, %t2, %iq2 = pulse.iq_acquire %r1, %w, %t1 : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.iq_data
   %i, %qv = pulse.extract_iq %iq1 : !pulse.iq_data -> f64, f64

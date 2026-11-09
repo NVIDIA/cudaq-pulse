@@ -35,13 +35,6 @@ namespace pulse {
 // turn an op that verified into one that does not.
 // ===----------------------------------------------------------------------===//
 
-LogicalResult QvecAllocOp::verify() {
-  if (getSize() != static_cast<int64_t>(getQrefs().size()))
-    return emitOpError("allocates ") << getSize() << " qudits, but returns "
-                                     << getQrefs().size() << " references";
-  return success();
-}
-
 LogicalResult CustomSamplesOp::verify() {
   if (getSamples().empty())
     return emitOpError("samples array must not be empty");

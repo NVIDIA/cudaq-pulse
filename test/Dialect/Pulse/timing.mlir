@@ -5,10 +5,10 @@
 
 // CHECK-LABEL: func @test_timing
 func.func @test_timing() {
-  %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %q1 = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qref
-  %d0, %t0 = pulse.get_drive_line %q0 : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-  %d1, %t1 = pulse.get_drive_line %q1 : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %q1 = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qudit
+  %d0, %t0 = pulse.get_drive_line %q0 : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
+  %d1, %t1 = pulse.get_drive_line %q1 : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
 
   %c20 = arith.constant 20 : i64
   %dur = pulse.duration_from_int %c20 : (i64) -> !pulse.duration

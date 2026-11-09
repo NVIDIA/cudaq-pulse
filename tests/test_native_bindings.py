@@ -59,8 +59,8 @@ def test_pipeline_exposes_only_the_live_entry_points():
 def test_pass_failures_carry_the_diagnostics():
     text = (
         "func.func @main() {\n"
-        "  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref\n"
-        "  %d, %t = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)\n"
+        "  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit\n"
+        "  %d, %t = pulse.get_drive_line %q : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)\n"
         "  %c = arith.constant 40 : i64\n"
         "  %a = arith.constant 0.1 : f64\n"
         "  %w = pulse.square %c, %a, %a : i64, f64, f64 -> !pulse.waveform\n"

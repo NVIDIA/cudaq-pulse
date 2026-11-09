@@ -10,9 +10,9 @@
 // CHECK: qop.callback_scalar @drive_envelope_0_x {{.*}}array<f64: 3.000000e+02, 4.000000e+01
 module @excited attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.path = [array<i64: 0, 1>], qop.t_start = 3.000000e+02 : f64, qop.t_end = 3.400000e+02 : f64} {
   func.func @main() {
-    %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-    %d0, %t0 = pulse.get_drive_line %q {frequency_hz = 5.000000e+09 : f64} : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-    %r0, %rt0 = pulse.get_readout_line %q {frequency_hz = 7.000000e+09 : f64} : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
+    %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+    %d0, %t0 = pulse.get_drive_line %q {frequency_hz = 5.000000e+09 : f64} : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
+    %r0, %rt0 = pulse.get_readout_line %q {frequency_hz = 7.000000e+09 : f64} : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
     %c300 = arith.constant 300 : i64
     %c40 = arith.constant 40 : i64
     %amp = arith.constant 0.05 : f64
@@ -38,9 +38,9 @@ module @excited attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.path = [
 // CHECK-NOT: qop.callback_scalar
 module @ground attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.path = [array<i64: 0, 0>], qop.t_start = 3.000000e+02 : f64, qop.t_end = 3.400000e+02 : f64} {
   func.func @main() {
-    %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-    %d0, %t0 = pulse.get_drive_line %q {frequency_hz = 5.000000e+09 : f64} : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-    %r0, %rt0 = pulse.get_readout_line %q {frequency_hz = 7.000000e+09 : f64} : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
+    %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+    %d0, %t0 = pulse.get_drive_line %q {frequency_hz = 5.000000e+09 : f64} : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
+    %r0, %rt0 = pulse.get_readout_line %q {frequency_hz = 7.000000e+09 : f64} : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
     %c300 = arith.constant 300 : i64
     %c40 = arith.constant 40 : i64
     %amp = arith.constant 0.05 : f64
@@ -66,9 +66,9 @@ module @ground attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.path = [a
 // CHECK-NOT: qop.callback_scalar
 module @before attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.path = [], qop.t_start = 0.000000e+00 : f64, qop.t_end = 3.000000e+02 : f64} {
   func.func @main() {
-    %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-    %d0, %t0 = pulse.get_drive_line %q {frequency_hz = 5.000000e+09 : f64} : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-    %r0, %rt0 = pulse.get_readout_line %q {frequency_hz = 7.000000e+09 : f64} : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
+    %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+    %d0, %t0 = pulse.get_drive_line %q {frequency_hz = 5.000000e+09 : f64} : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
+    %r0, %rt0 = pulse.get_readout_line %q {frequency_hz = 7.000000e+09 : f64} : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
     %c300 = arith.constant 300 : i64
     %c40 = arith.constant 40 : i64
     %amp = arith.constant 0.05 : f64
@@ -92,9 +92,9 @@ module @before attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.path = []
 // After it, an outcome is needed.
 module @undecided attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.path = [], qop.t_start = 0.000000e+00 : f64, qop.t_end = 3.400000e+02 : f64} {
   func.func @main() {
-    %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-    %d0, %t0 = pulse.get_drive_line %q {frequency_hz = 5.000000e+09 : f64} : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-    %r0, %rt0 = pulse.get_readout_line %q {frequency_hz = 7.000000e+09 : f64} : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
+    %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+    %d0, %t0 = pulse.get_drive_line %q {frequency_hz = 5.000000e+09 : f64} : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
+    %r0, %rt0 = pulse.get_readout_line %q {frequency_hz = 7.000000e+09 : f64} : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
     %c300 = arith.constant 300 : i64
     %amp = arith.constant 0.05 : f64
     %zero = arith.constant 0.0 : f64
@@ -117,8 +117,8 @@ module @undecided attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.path =
 // Without a path, a program that measures cannot be one evolution.
 module @no_path attributes {pulse.clock_ghz = 1.000000e+00 : f64} {
   func.func @main(%x: !pulse.waveform) {
-    %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-    %r0, %rt0 = pulse.get_readout_line %q {frequency_hz = 7.000000e+09 : f64} : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
+    %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+    %r0, %rt0 = pulse.get_readout_line %q {frequency_hz = 7.000000e+09 : f64} : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
     // expected-error @+1 {{a program that measures evolves in segments between measurements; lower it along a measurement-outcome path (pulse.path), as pulse.simulate() does}}
     %r1, %rt1, %m = pulse.readout %r0, %x, %rt0, "iq" {start_cycles = 0 : i64, duration_cycles = 300 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     return

@@ -4,10 +4,10 @@
 // RUN: not cudaq-pulse-opt --pulse-verify %s 2>&1 | FileCheck %s
 
 func.func @invalid_linearity_and_timing() {
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
   %d0, %t0 = pulse.get_drive_line %q
       {qubit = 0 : i64, frequency_hz = 5.0e9 : f64}
-      : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+      : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %duration = arith.constant 40 : i64
   %real = arith.constant 0.3 : f64
   %imag = arith.constant 0.0 : f64
@@ -22,9 +22,9 @@ func.func @invalid_linearity_and_timing() {
       : !pulse.drive_line, !pulse.waveform, !pulse.tone
       -> !pulse.drive_line, !pulse.tone
 
-  %q_wait = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qref
+  %q_wait = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qudit
   %wait_line, %wait_tone = pulse.get_drive_line %q_wait
-      : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+      : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %wait_cycles = arith.constant 40 : i64
   %wait_duration = pulse.duration_from_int %wait_cycles
       : (i64) -> !pulse.duration

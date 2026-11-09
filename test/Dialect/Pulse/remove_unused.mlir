@@ -12,8 +12,8 @@
 // CHECK-NOT: pulse.gaussian
 // CHECK: pulse.drive
 func.func @unused() {
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %c40 = arith.constant 40 : i64
   %a = arith.constant 2.000000e-01 : f64
   %b = arith.constant 2.000000e-01 : f64

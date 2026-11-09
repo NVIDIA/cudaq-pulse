@@ -5,8 +5,8 @@
 
 // CHECK-LABEL: func.func @fold_shift_into_drive
 func.func @fold_shift_into_drive() {
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %d, %t = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %d, %t = pulse.get_drive_line %q : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %ph = arith.constant 0.785398163397448 : f64
   // The shift_phase should be folded into the drive as a persistent frame attr
   %t2 = pulse.shift_phase %t, %ph : !pulse.tone, f64 -> !pulse.tone

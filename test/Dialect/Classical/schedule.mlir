@@ -31,9 +31,9 @@ classical.callable @track {function_id = 2067622972 : i64, device = 1 : i64,
 // CHECK: classical.wait {{.*}}duration_cycles = 0 : i64, start_cycles = 3301 : i64}
 // CHECK: pulse.drive {{.*}}start_cycles = 3301 : i64
 func.func @feedback() {
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-  %r0, %rt0 = pulse.get_readout_line %q : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
+  %r0, %rt0 = pulse.get_readout_line %q : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
   %c300 = arith.constant 300 : i64
   %c40 = arith.constant 40 : i64
   %a = arith.constant 0.05 : f64
@@ -65,11 +65,11 @@ func.func @feedback() {
 // ASAP: pulse.drive {{.*}}start_cycles = 3301 : i64
 // ALAP: pulse.drive {{.*}}start_cycles = 4960 : i64
 func.func @parameter() {
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %p = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qref
-  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-  %e0, %u0 = pulse.get_drive_line %p : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-  %r0, %rt0 = pulse.get_readout_line %q : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %p = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qudit
+  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
+  %e0, %u0 = pulse.get_drive_line %p : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
+  %r0, %rt0 = pulse.get_readout_line %q : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
   %c300 = arith.constant 300 : i64
   %c40 = arith.constant 40 : i64
   %c5000 = arith.constant 5000 : i64
@@ -92,8 +92,8 @@ func.func @parameter() {
 // CHECK: classical.submit {{.*}}start_cycles = 300 : i64}
 // CHECK: classical.submit {{.*}}start_cycles = 301 : i64}
 func.func @link_order() {
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %r0, %rt0 = pulse.get_readout_line %q : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %r0, %rt0 = pulse.get_readout_line %q : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
   %c300 = arith.constant 300 : i64
   %a = arith.constant 0.05 : f64
   %z = arith.constant 0.0 : f64
@@ -117,17 +117,17 @@ func.func @link_order() {
 // CHECK: classical.wait {{.*}}classical.blocking{{.*}}start_cycles = 141 : i64}
 // CHECK: pulse.drive {{.*}}start_cycles = 141 : i64
 func.func @barrier() {
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %p = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qref
-  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-  %e0, %u0 = pulse.get_drive_line %p : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %p = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qudit
+  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
+  %e0, %u0 = pulse.get_drive_line %p : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %c40 = arith.constant 40 : i64
   %a = arith.constant 0.05 : f64
   %z = arith.constant 0.0 : f64
   %x = pulse.square %c40, %a, %z : i64, f64, f64 -> !pulse.waveform
   %e1, %u1 = pulse.drive %e0, %x, %u0 : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
-  %o = pulse.qudit_alloc {qudit = 2 : i64} : !pulse.qref
-  %g0, %v0 = pulse.get_drive_line %o : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %o = pulse.qudit_alloc {qudit = 2 : i64} : !pulse.qudit
+  %g0, %v0 = pulse.get_drive_line %o : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %g1, %v1 = pulse.drive %g0, %x, %v0 : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
   %l0 = classical.get_link {device = 1 : i64} : !classical.link
   %t = pulse.get_current_time %e1 : !pulse.drive_line -> !pulse.timepoint

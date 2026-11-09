@@ -14,10 +14,10 @@ classical.callable @f {function_id = 3809224601 : i64, device = 0 : i64,
 // CHECK-COUNT-2: pulse.drive
 // CHECK-NOT: fused
 func.func @across_a_variable_wait() {
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %p = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qref
-  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-  %e0, %u0 = pulse.get_drive_line %p : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %p = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qudit
+  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
+  %e0, %u0 = pulse.get_drive_line %p : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %c40 = arith.constant 40 : i64
   %a = arith.constant 0.05 : f64
   %z = arith.constant 0.0 : f64

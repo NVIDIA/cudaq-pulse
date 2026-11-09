@@ -12,9 +12,9 @@
 // UNBOUND: error: the length of this wait depends on the program's float arguments; bind them (specialize the module) before lowering it
 
 func.func @unmarked(%tau: f64) {
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
   %d0, %t0 = pulse.get_drive_line %q
-      : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+      : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %n = arith.fptosi %tau : f64 to i64
   %len = pulse.duration_from_int %n : (i64) -> !pulse.duration
   %d1 = pulse.wait %d0, %len : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
@@ -24,9 +24,9 @@ func.func @unmarked(%tau: f64) {
 // -----
 
 func.func @main(%tau: f64) {
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
   %d0, %t0 = pulse.get_drive_line %q
-      : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+      : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %c40 = arith.constant 40 : i64
   %amp = arith.constant 0.3 : f64
   %zero = arith.constant 0.0 : f64

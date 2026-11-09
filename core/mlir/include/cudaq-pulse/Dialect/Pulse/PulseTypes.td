@@ -16,11 +16,16 @@ class PulseType<string name, string typeMnemonic, list<Trait> traits = [],
 }
 
 //===----------------------------------------------------------------------===//
-// Qudit reference (opaque, default dim=2, future-proofed for d>2)
+// Qudit
 //===----------------------------------------------------------------------===//
 
-def QrefType : PulseType<"Qref", "qref"> {
-  let summary = "Opaque pulse-level qudit reference (dim defaults to 2)";
+def QuditType : PulseType<"Qudit", "qudit"> {
+  let summary = "A qudit of the quantum system";
+  let description = [{
+    A reference to one qudit, as `pulse.qudit_alloc` gives it or as a
+    function takes a runtime qudit. Its number of levels is the quantum
+    system's, not part of the type.
+  }];
 }
 
 //===----------------------------------------------------------------------===//

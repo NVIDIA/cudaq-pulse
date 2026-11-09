@@ -45,9 +45,9 @@ func.func @round() {
   %rate = arith.constant 900.0 : f64
   %w0 = arith.constant 300.0 : f64
   %half = arith.constant 0.5 : f64
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %d0, %t0 = pulse.get_drive_line %q {frequency_hz = 5.0e9 : f64} : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-  %r0, %u0 = pulse.get_readout_line %q {frequency_hz = 5.0e9 : f64} : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %d0, %t0 = pulse.get_drive_line %q {frequency_hz = 5.0e9 : f64} : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
+  %r0, %u0 = pulse.get_readout_line %q {frequency_hz = 5.0e9 : f64} : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
   %pi = pulse.square %c40, %amp, %z : i64, f64, f64 -> !pulse.waveform
   %pr = pulse.square %c200, %ro, %z : i64, f64, f64 -> !pulse.waveform
   %r1, %u1, %m = pulse.readout %r0, %pr, %u0, "iq" : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement

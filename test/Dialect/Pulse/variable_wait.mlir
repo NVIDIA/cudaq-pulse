@@ -10,11 +10,11 @@
 
 // CHECK-LABEL: func.func @t1(%arg0: f64)
 func.func @t1(%tau: f64) {
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
   %d0, %t0 = pulse.get_drive_line %q
-      : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+      : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %r0, %rt0 = pulse.get_readout_line %q
-      : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
+      : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
   %c40 = arith.constant 40 : i64
   %c200 = arith.constant 200 : i64
   %amp = arith.constant 0.3 : f64
@@ -55,12 +55,12 @@ func.func @t1(%tau: f64) {
 
 // CHECK-LABEL: func.func @two_lines(%arg0: f64)
 func.func @two_lines(%tau: f64) {
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %p = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %p = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qudit
   %a0, %at = pulse.get_drive_line %q
-      : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+      : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %b0, %bt = pulse.get_drive_line %p
-      : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+      : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %c20 = arith.constant 20 : i64
   %amp = arith.constant 0.3 : f64
   %zero = arith.constant 0.0 : f64
@@ -89,9 +89,9 @@ func.func @two_lines(%tau: f64) {
 
 // ROUNDTRIP-LABEL: func.func @bound()
 func.func @bound() {
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
   %d0, %t0 = pulse.get_drive_line %q
-      : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+      : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %c40 = arith.constant 40 : i64
   %amp = arith.constant 0.3 : f64
   %zero = arith.constant 0.0 : f64

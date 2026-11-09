@@ -33,12 +33,12 @@
 // FLAT-ALAP-LABEL: func.func @asap_in_alap
 // FLAT-ALAP: pulse.drive {{.*}}{duration_cycles = 40 : i64, start_cycles = 160 : i64}
 func.func @asap_in_alap() {
-  %qa = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %qb = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qref
-  %qc = pulse.qudit_alloc {qudit = 2 : i64} : !pulse.qref
-  %a0, %ta0 = pulse.get_drive_line %qa : (!pulse.qref) -> (!d, !t)
-  %b0, %tb0 = pulse.get_drive_line %qb : (!pulse.qref) -> (!d, !t)
-  %c0, %tc0 = pulse.get_drive_line %qc : (!pulse.qref) -> (!d, !t)
+  %qa = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %qb = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qudit
+  %qc = pulse.qudit_alloc {qudit = 2 : i64} : !pulse.qudit
+  %a0, %ta0 = pulse.get_drive_line %qa : (!pulse.qudit) -> (!d, !t)
+  %b0, %tb0 = pulse.get_drive_line %qb : (!pulse.qudit) -> (!d, !t)
+  %c0, %tc0 = pulse.get_drive_line %qc : (!pulse.qudit) -> (!d, !t)
   %amp = arith.constant 0.1 : f64
   %zero = arith.constant 0.0 : f64
   %c200 = arith.constant 200 : i64
@@ -68,10 +68,10 @@ func.func @asap_in_alap() {
 // FLAT-ASAP: pulse.drive {{.*}}{duration_cycles = 40 : i64, start_cycles = 0 : i64}
 // FLAT-ASAP: pulse.drive {{.*}}{duration_cycles = 40 : i64, start_cycles = 40 : i64}
 func.func @alap_in_asap() {
-  %qb = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %qc = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qref
-  %b0, %tb0 = pulse.get_drive_line %qb : (!pulse.qref) -> (!d, !t)
-  %c0, %tc0 = pulse.get_drive_line %qc : (!pulse.qref) -> (!d, !t)
+  %qb = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %qc = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qudit
+  %b0, %tb0 = pulse.get_drive_line %qb : (!pulse.qudit) -> (!d, !t)
+  %c0, %tc0 = pulse.get_drive_line %qc : (!pulse.qudit) -> (!d, !t)
   %amp = arith.constant 0.1 : f64
   %zero = arith.constant 0.0 : f64
   %c100 = arith.constant 100 : i64
@@ -105,12 +105,12 @@ func.func @alap_in_asap() {
 // ALAP: pulse.drive {{.*}}{duration_cycles = 40 : i64, start_cycles = 260 : i64}
 // ALAP: pulse.drive {{.*}}{duration_cycles = 20 : i64, start_cycles = 260 : i64}
 func.func @three_levels() {
-  %qx = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %qy = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qref
-  %qz = pulse.qudit_alloc {qudit = 2 : i64} : !pulse.qref
-  %x0, %tx0 = pulse.get_drive_line %qx : (!pulse.qref) -> (!d, !t)
-  %y0, %ty0 = pulse.get_drive_line %qy : (!pulse.qref) -> (!d, !t)
-  %z0, %tz0 = pulse.get_drive_line %qz : (!pulse.qref) -> (!d, !t)
+  %qx = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %qy = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qudit
+  %qz = pulse.qudit_alloc {qudit = 2 : i64} : !pulse.qudit
+  %x0, %tx0 = pulse.get_drive_line %qx : (!pulse.qudit) -> (!d, !t)
+  %y0, %ty0 = pulse.get_drive_line %qy : (!pulse.qudit) -> (!d, !t)
+  %z0, %tz0 = pulse.get_drive_line %qz : (!pulse.qudit) -> (!d, !t)
   %amp = arith.constant 0.1 : f64
   %zero = arith.constant 0.0 : f64
   %c300 = arith.constant 300 : i64
@@ -153,8 +153,8 @@ func.func @three_levels() {
 // CHECK-NEXT: pulse.drive {{.*}}{duration_cycles = 40 : i64, period_cycles = array<i64: 100, 40>, start_cycles = 100 : i64}
 // CHECK: pulse.wait {{.*}}{duration_cycles = 20 : i64, period_cycles = array<i64: 100>, start_cycles = 180 : i64}
 func.func @block_in_loop() {
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!d, !t)
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qudit) -> (!d, !t)
   %amp = arith.constant 0.1 : f64
   %zero = arith.constant 0.0 : f64
   %c100 = arith.constant 100 : i64
@@ -191,11 +191,11 @@ func.func @block_in_loop() {
 // CHECK: pulse.drive {{.*}}{duration_cycles = 100 : i64, start_cycles = 400 : i64}
 // CHECK: pulse.drive {{.*}}{duration_cycles = 40 : i64, start_cycles = 460 : i64}
 func.func @block_in_if() {
-  %qa = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %qb = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qref
-  %r0, %tr0 = pulse.get_readout_line %qa : (!pulse.qref) -> (!r, !t)
-  %a0, %ta0 = pulse.get_drive_line %qa : (!pulse.qref) -> (!d, !t)
-  %b0, %tb0 = pulse.get_drive_line %qb : (!pulse.qref) -> (!d, !t)
+  %qa = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %qb = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qudit
+  %r0, %tr0 = pulse.get_readout_line %qa : (!pulse.qudit) -> (!r, !t)
+  %a0, %ta0 = pulse.get_drive_line %qa : (!pulse.qudit) -> (!d, !t)
+  %b0, %tb0 = pulse.get_drive_line %qb : (!pulse.qudit) -> (!d, !t)
   %amp = arith.constant 0.1 : f64
   %zero = arith.constant 0.0 : f64
   %c400 = arith.constant 400 : i64
@@ -229,9 +229,9 @@ func.func @block_in_if() {
 // CHECK: scf.if
 // CHECK: pulse.drive {{.*}}{duration_cycles = 100 : i64, start_cycles = 400 : i64}
 func.func @if_in_block() {
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %r0, %tr0 = pulse.get_readout_line %q : (!pulse.qref) -> (!r, !t)
-  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!d, !t)
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %r0, %tr0 = pulse.get_readout_line %q : (!pulse.qudit) -> (!r, !t)
+  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qudit) -> (!d, !t)
   %amp = arith.constant 0.1 : f64
   %zero = arith.constant 0.0 : f64
   %c400 = arith.constant 400 : i64
@@ -267,12 +267,12 @@ func.func @if_in_block() {
 // ASAP: pulse.drive {{.*}}{duration_cycles = 40 : i64, start_cycles = 0 : i64}
 // ALAP: pulse.drive {{.*}}{duration_cycles = 40 : i64, start_cycles = 300 : i64}
 func.func @tones_across_blocks() {
-  %qa = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %qb = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qref
-  %qc = pulse.qudit_alloc {qudit = 2 : i64} : !pulse.qref
-  %a0, %ta0 = pulse.get_drive_line %qa : (!pulse.qref) -> (!d, !t)
-  %b0, %tb0 = pulse.get_drive_line %qb : (!pulse.qref) -> (!d, !t)
-  %c0, %tc0 = pulse.get_drive_line %qc : (!pulse.qref) -> (!d, !t)
+  %qa = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %qb = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qudit
+  %qc = pulse.qudit_alloc {qudit = 2 : i64} : !pulse.qudit
+  %a0, %ta0 = pulse.get_drive_line %qa : (!pulse.qudit) -> (!d, !t)
+  %b0, %tb0 = pulse.get_drive_line %qb : (!pulse.qudit) -> (!d, !t)
+  %c0, %tc0 = pulse.get_drive_line %qc : (!pulse.qudit) -> (!d, !t)
   %amp = arith.constant 0.1 : f64
   %zero = arith.constant 0.0 : f64
   %phi = arith.constant 0.5 : f64
@@ -298,9 +298,9 @@ func.func @tones_across_blocks() {
 // CHECK: pulse.drive {{.*}}{duration_cycles = 200 : i64, start_cycles = 0 : i64}
 // CHECK: pulse.readout {{.*}}{duration_cycles = 400 : i64, start_cycles = 200 : i64}
 func.func @sync_in_block() {
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!d, !t)
-  %r0, %tr0 = pulse.get_readout_line %q : (!pulse.qref) -> (!r, !t)
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qudit) -> (!d, !t)
+  %r0, %tr0 = pulse.get_readout_line %q : (!pulse.qudit) -> (!r, !t)
   %amp = arith.constant 0.1 : f64
   %zero = arith.constant 0.0 : f64
   %c200 = arith.constant 200 : i64

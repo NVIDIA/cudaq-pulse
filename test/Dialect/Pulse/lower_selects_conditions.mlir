@@ -28,11 +28,11 @@
 // TIME: pulse.readout {{.*}}start_cycles = 0
 // TIME: pulse.drive {{.*}}start_cycles = 100
 func.func @and_not() {
-  %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %q1 = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qref
-  %d, %t = pulse.get_drive_line %q0 : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-  %r0, %rt0 = pulse.get_readout_line %q0 : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
-  %r1, %rt1 = pulse.get_readout_line %q1 : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
+  %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %q1 = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qudit
+  %d, %t = pulse.get_drive_line %q0 : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
+  %r0, %rt0 = pulse.get_readout_line %q0 : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
+  %r1, %rt1 = pulse.get_readout_line %q1 : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
   %c40 = arith.constant 40 : i64
   %c100 = arith.constant 100 : i64
   %zero = arith.constant 0.0 : f64
@@ -73,11 +73,11 @@ func.func @and_not() {
 // CHECK-NOT: pulse.is_set
 // CHECK: return
 func.func @or() {
-  %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %q1 = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qref
-  %d, %t = pulse.get_drive_line %q0 : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-  %r0, %rt0 = pulse.get_readout_line %q0 : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
-  %r1, %rt1 = pulse.get_readout_line %q1 : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
+  %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %q1 = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qudit
+  %d, %t = pulse.get_drive_line %q0 : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
+  %r0, %rt0 = pulse.get_readout_line %q0 : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
+  %r1, %rt1 = pulse.get_readout_line %q1 : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
   %c40 = arith.constant 40 : i64
   %c100 = arith.constant 100 : i64
   %zero = arith.constant 0.0 : f64

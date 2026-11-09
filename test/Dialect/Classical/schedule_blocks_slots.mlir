@@ -27,8 +27,8 @@ classical.callable @decode {function_id = 1, device = 0 : i64,
 // CHECK: classical.submit {{.*}}start_cycles = 110 : i64}
 // CHECK: classical.submit {{.*}}start_cycles = 111 : i64}
 func.func @block_waits_for_a_slot() {
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %r0, %rt0 = pulse.get_readout_line %q : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %r0, %rt0 = pulse.get_readout_line %q : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
   %c10 = arith.constant 10 : i64
   %a = arith.constant 0.05 : f64
   %z = arith.constant 0.0 : f64

@@ -25,32 +25,19 @@ def Pulse_ToneResource : Resource<"::pulse::ToneResource">;
 //===----------------------------------------------------------------------===//
 
 def QuditAllocOp : PulseOp<"qudit_alloc", [Pure]> {
-  let summary = "Allocate a pulse-level qudit reference";
+  let summary = "A qudit of the quantum system, by its index";
   let description = [{
-    A reference to qudit `qudit` of the quantum system, by its index there.
-    Lines and tones are obtained from the reference with
-    `pulse.get_drive_line` and `pulse.get_readout_line`, which find the
-    qudit's index here.
+    Qudit `qudit` of the quantum system, by its index there. Lines and
+    tones are obtained from it with `pulse.get_drive_line` and
+    `pulse.get_readout_line`, which find the index here.
 
     ```mlir
-    %q = pulse.qudit_alloc {qudit = 3 : i64} : !pulse.qref
+    %q = pulse.qudit_alloc {qudit = 3 : i64} : !pulse.qudit
     ```
   }];
   let arguments = (ins ConfinedAttr<I64Attr, [IntNonNegative]>:$qudit);
-  let results = (outs QrefType:$qref);
-  let assemblyFormat = "attr-dict `:` type($qref)";
-}
-
-def QvecAllocOp : PulseOp<"qvec_alloc", [Pure]> {
-  let summary = "Allocate a vector of pulse-level qudit references";
-  let description = [{
-    `size` qudit references at once, one result each, as `size`
-    `pulse.qudit_alloc` ops would give.
-  }];
-  let arguments = (ins I64Attr:$size);
-  let results = (outs Variadic<QrefType>:$qrefs);
-  let assemblyFormat = "$size attr-dict `:` type($qrefs)";
-  let hasVerifier = 1;
+  let results = (outs QuditType:$result);
+  let assemblyFormat = "attr-dict `:` type($result)";
 }
 
 //===----------------------------------------------------------------------===//
@@ -63,7 +50,7 @@ def GetDriveLineOp : PulseOp<"get_drive_line", [Pure]> {
     Returns the drive line and native tone associated with a qudit.
     The returned drive line starts at time t=0.
   }];
-  let arguments = (ins QrefType:$qudit);
+  let arguments = (ins QuditType:$qudit);
   let results = (outs DriveLineType:$line, ToneType:$tone);
   let assemblyFormat = "$qudit attr-dict `:` functional-type(operands, results)";
 }
@@ -76,7 +63,7 @@ def GetReadoutLineOp : PulseOp<"get_readout_line", [Pure]> {
     value: each op that uses it returns the updated line, which the next
     op on the line consumes.
   }];
-  let arguments = (ins QrefType:$qudit);
+  let arguments = (ins QuditType:$qudit);
   let results = (outs ReadoutLineType:$line, ToneType:$tone);
   let assemblyFormat = "$qudit attr-dict `:` functional-type(operands, results)";
 }

@@ -31,7 +31,7 @@ pulses on a line is explicit in the IR and ``pulse-verify`` can check it.
 Waveforms are ordinary values. Durations are in clock cycles of the target,
 and scheduling records each timed op's ``start_cycles`` and ``duration_cycles``.
 
-- Types: ``!pulse.qref``, ``!pulse.drive_line``, ``!pulse.readout_line``,
+- Types: ``!pulse.qudit``, ``!pulse.drive_line``, ``!pulse.readout_line``,
   ``!pulse.tone``, ``!pulse.waveform``, ``!pulse.measurement``,
   ``!pulse.duration``, ``!pulse.timepoint``, ``!pulse.iq_data``.
 - Lines: ``pulse.qudit_alloc``, ``pulse.get_drive_line``,

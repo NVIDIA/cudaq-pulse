@@ -446,7 +446,7 @@ inline double i2f(int64_t bits) {
 /// only at run time: anything but a line, a tone or a link.
 static bool yieldsValue(mlir::Type type) {
   return !mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType,
-                    pulse::ToneType, pulse::QrefType, classical::LinkType>(
+                    pulse::ToneType, pulse::QuditType, classical::LinkType>(
       type);
 }
 
@@ -459,7 +459,7 @@ static int64_t nativeOffset(mlir::Operation *line) {
     return 0;
   auto function = line->getParentOfType<mlir::func::FuncOp>();
   return llvm::count_if(function.getArgumentTypes(), [](mlir::Type type) {
-    return mlir::isa<pulse::QrefType>(type);
+    return mlir::isa<pulse::QuditType>(type);
   });
 }
 
@@ -3947,7 +3947,7 @@ public:
           user->setAttr("pulse.slot", slot);
         }
       auto alloc = pulse::QuditAllocOp::create(
-          builder, funcOp.getLoc(), pulse::QrefType::get(module.getContext()),
+          builder, funcOp.getLoc(), pulse::QuditType::get(module.getContext()),
           qubit);
       arg.replaceAllUsesWith(alloc.getResult());
     }
@@ -3975,7 +3975,7 @@ public:
     auto funcOp = module.lookupSymbol<mlir::func::FuncOp>("main");
     llvm::BitVector qrefs(funcOp.getNumArguments());
     for (auto [i, type] : llvm::enumerate(funcOp.getArgumentTypes()))
-      if (mlir::isa<pulse::QrefType>(type))
+      if (mlir::isa<pulse::QuditType>(type))
         qrefs.set(i);
     (void)funcOp.eraseArguments(qrefs);
   }
@@ -4026,7 +4026,7 @@ public:
     if (placed)
       if (auto main = module_->lookupSymbol<mlir::func::FuncOp>("main"))
         for (mlir::Type type : main.getArgumentTypes())
-          numeric |= !mlir::isa<pulse::QrefType>(type);
+          numeric |= !mlir::isa<pulse::QuditType>(type);
     if (placed && !numeric) {
       // Carriers move no op: the schedule stands, and nothing folds.
       auto owning = mlir::OwningOpRef<mlir::ModuleOp>(module_->clone());
@@ -4060,7 +4060,7 @@ public:
     for (unsigned i = 0; i < entryBlock.getNumArguments(); ++i) {
       auto arg = entryBlock.getArgument(i);
       mlir::Value replacement;
-      if (mlir::isa<pulse::QrefType>(arg.getType())) {
+      if (mlir::isa<pulse::QuditType>(arg.getType())) {
         if (!arg.use_empty())
           throw std::invalid_argument(
               "specialize: runtime qudits need carriers");
@@ -4832,7 +4832,7 @@ public:
 
     // Runtime qudits follow the numeric parameters: qref arguments with
     // their slot, bound to carriers by specialize().
-    auto qrefTy = pulse::QrefType::get(ctx_.get());
+    auto qrefTy = pulse::QuditType::get(ctx_.get());
     const unsigned firstSlot = argTypes.size();
     argTypes.append(static_cast<size_t>(n_slots), qrefTy);
     auto funcType = builder_->getFunctionType(argTypes, {});

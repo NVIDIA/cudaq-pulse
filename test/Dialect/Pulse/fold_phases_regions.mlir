@@ -9,8 +9,8 @@
 // CHECK-NOT: pulse.shift_phase
 // CHECK: pulse.drive {{.*}}frame_phase_offset = 5.000000e-01
 func.func @inside_an_arm(%x: !pulse.waveform, %bit: i1) {
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %phi = arith.constant 0.5 : f64
   %d1, %t1 = scf.if %bit -> (!pulse.drive_line, !pulse.tone) {
     %t = pulse.shift_phase %t0, %phi : !pulse.tone, f64 -> !pulse.tone
@@ -29,8 +29,8 @@ func.func @inside_an_arm(%x: !pulse.waveform, %bit: i1) {
 // CHECK: scf.if
 // CHECK: pulse.drive {{.*}}frame_phase_offset = 5.000000e-01
 func.func @across_an_if(%x: !pulse.waveform, %w: !pulse.duration, %bit: i1) {
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %phi = arith.constant 0.5 : f64
   %t1 = pulse.shift_phase %t0, %phi : !pulse.tone, f64 -> !pulse.tone
   %d2, %t2 = scf.if %bit -> (!pulse.drive_line, !pulse.tone) {
@@ -51,8 +51,8 @@ func.func @across_an_if(%x: !pulse.waveform, %w: !pulse.duration, %bit: i1) {
 // CHECK: pulse.drive
 // CHECK-NOT: frame_phase_offset
 func.func @one_arm_only(%x: !pulse.waveform, %bit: i1) {
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %phi = arith.constant 0.5 : f64
   %t1 = scf.if %bit -> (!pulse.tone) {
     %t = pulse.shift_phase %t0, %phi : !pulse.tone, f64 -> !pulse.tone
@@ -72,8 +72,8 @@ func.func @one_arm_only(%x: !pulse.waveform, %bit: i1) {
 // CHECK-NOT: pulse.shift_phase
 // CHECK: pulse.drive {{.*}}frame_phase_offset = 2.500000e-01
 func.func @loops(%x: !pulse.waveform) {
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %phi = arith.constant 0.5 : f64
   %quarter = arith.constant 0.25 : f64
   %t1 = pulse.shift_phase %t0, %phi : !pulse.tone, f64 -> !pulse.tone

@@ -10,9 +10,9 @@ module @dissipator_test attributes {
 
 // CHECK-LABEL: func @main
 func.func @main() {
-  %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
+  %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
   %d0, %t0 = pulse.get_drive_line %q0 {frequency_hz = 5.0e9 : f64}
-      : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+      : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %duration = arith.constant 40 : i64
   %amplitude = arith.constant 0.3 : f64
   %sigma = arith.constant 10.0 : f64

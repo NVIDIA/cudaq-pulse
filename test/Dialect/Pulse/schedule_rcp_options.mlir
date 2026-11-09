@@ -19,12 +19,12 @@ func.func @main() {
   %a = arith.constant 1.000000e-01 : f64
   %z = arith.constant 0.000000e+00 : f64
   %w = pulse.square %c40, %a, %z : i64, f64, f64 -> !pulse.waveform
-  %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %q1 = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qref
-  %q2 = pulse.qudit_alloc {qudit = 2 : i64} : !pulse.qref
-  %d0, %t0 = pulse.get_drive_line %q0 : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-  %d1, %t1 = pulse.get_drive_line %q1 : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-  %d2, %t2 = pulse.get_drive_line %q2 : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %q1 = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qudit
+  %q2 = pulse.qudit_alloc {qudit = 2 : i64} : !pulse.qudit
+  %d0, %t0 = pulse.get_drive_line %q0 : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
+  %d1, %t1 = pulse.get_drive_line %q1 : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
+  %d2, %t2 = pulse.get_drive_line %q2 : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %e0, %u0 = pulse.drive %d0, %w, %t0 : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
   %e1, %u1 = pulse.drive %d1, %w, %t1 : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
   %e2, %u2 = pulse.drive %d2, %w, %t2 : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone

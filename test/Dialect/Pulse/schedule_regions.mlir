@@ -15,8 +15,8 @@
 // CHECK: pulse.wait {{.*}}{duration_cycles = 200 : i64, period_cycles = array<i64: 240>, start_cycles = 140 : i64}
 // CHECK: pulse.wait {{.*}}{duration_cycles = 10 : i64, start_cycles = 2020 : i64}
 func.func @dd_loop() {
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %c40 = arith.constant 40 : i64
   %amp = arith.constant 0.047 : f64
   %zero = arith.constant 0.0 : f64
@@ -49,10 +49,10 @@ func.func @dd_loop() {
 // ALAP: scf.for %{{.*}} = %c0 to %c6
 // ALAP: pulse.drive {{.*}}period_cycles = array<i64: 40>, start_cycles = 460 : i64
 func.func @transient(%x: !pulse.waveform) {
-  %qa = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %qb = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qref
-  %a0, %ta = pulse.get_drive_line %qa : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-  %b0, %tb = pulse.get_drive_line %qb : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %qa = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %qb = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qudit
+  %a0, %ta = pulse.get_drive_line %qa : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
+  %b0, %tb = pulse.get_drive_line %qb : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %c40 = arith.constant 40 : i64
   %amp = arith.constant 0.047 : f64
   %zero = arith.constant 0.0 : f64
@@ -79,9 +79,9 @@ func.func @transient(%x: !pulse.waveform) {
 // CHECK: pulse.drive {{.*}}{duration_cycles = 40 : i64, start_cycles = 300 : i64}
 // CHECK: pulse.wait {{.*}}{duration_cycles = 10 : i64, start_cycles = 340 : i64}
 func.func @active_reset() {
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-  %r0, %rt0 = pulse.get_readout_line %q : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
+  %r0, %rt0 = pulse.get_readout_line %q : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
   %c300 = arith.constant 300 : i64
   %c40 = arith.constant 40 : i64
   %amp = arith.constant 0.05 : f64
@@ -109,9 +109,9 @@ func.func @active_reset() {
 // ASAP: pulse.drive {{.*}}{duration_cycles = 40 : i64, period_cycles = array<i64: 300>, start_cycles = 300 : i64}
 // ALAP: pulse.drive {{.*}}{duration_cycles = 40 : i64, period_cycles = array<i64: 40>, start_cycles = 1340 : i64}
 func.func @feedback_in_loop() {
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-  %r0, %rt0 = pulse.get_readout_line %q : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
+  %r0, %rt0 = pulse.get_readout_line %q : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
   %c300 = arith.constant 300 : i64
   %c40 = arith.constant 40 : i64
   %amp = arith.constant 0.05 : f64

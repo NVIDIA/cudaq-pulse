@@ -39,10 +39,10 @@ func.func @readouts() {
   %a = arith.constant 5.000000e-02 : f64
   %z = arith.constant 0.000000e+00 : f64
   %ro = pulse.square %c400, %a, %z : i64, f64, f64 -> !w
-  %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %q1 = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qref
-  %r0, %t0 = pulse.get_readout_line %q0 : (!pulse.qref) -> (!r, !t)
-  %r1, %t1 = pulse.get_readout_line %q1 : (!pulse.qref) -> (!r, !t)
+  %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %q1 = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qudit
+  %r0, %t0 = pulse.get_readout_line %q0 : (!pulse.qudit) -> (!r, !t)
+  %r1, %t1 = pulse.get_readout_line %q1 : (!pulse.qudit) -> (!r, !t)
   %r0a, %t0a, %m0 = pulse.readout %r0, %ro, %t0, "discriminate" : !r, !w, !t -> !r, !t, !m
   %r1a, %t1a, %m1 = pulse.readout %r1, %ro, %t1, "discriminate" : !r, !w, !t -> !r, !t, !m
   %r0b, %t0b, %m2 = pulse.readout %r0a, %ro, %t0a, "discriminate" : !r, !w, !t -> !r, !t, !m
@@ -66,10 +66,10 @@ func.func @before_sync() {
   %z = arith.constant 0.000000e+00 : f64
   %short = pulse.square %c40, %a, %z : i64, f64, f64 -> !w
   %long = pulse.square %c80, %a, %z : i64, f64, f64 -> !w
-  %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %q1 = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qref
-  %d0, %u0 = pulse.get_drive_line %q0 : (!pulse.qref) -> (!pulse.drive_line, !t)
-  %d1, %u1 = pulse.get_drive_line %q1 : (!pulse.qref) -> (!pulse.drive_line, !t)
+  %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %q1 = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qudit
+  %d0, %u0 = pulse.get_drive_line %q0 : (!pulse.qudit) -> (!pulse.drive_line, !t)
+  %d1, %u1 = pulse.get_drive_line %q1 : (!pulse.qudit) -> (!pulse.drive_line, !t)
   %e0, %v0 = pulse.drive %d0, %short, %u0 : !pulse.drive_line, !w, !t -> !pulse.drive_line, !t
   %e1, %v1 = pulse.drive %d1, %long, %u1 : !pulse.drive_line, !w, !t -> !pulse.drive_line, !t
   %s0, %s1 = pulse.sync %e0, %e1 : !pulse.drive_line, !pulse.drive_line -> !pulse.drive_line, !pulse.drive_line

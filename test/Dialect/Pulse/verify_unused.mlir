@@ -10,10 +10,10 @@
 // CHECK-NOT: see current operation
 
 func.func @unused_lines() {
-  %q = pulse.qudit_alloc {qudit = 3 : i64} : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 3 : i64} : !pulse.qudit
   %d, %t = pulse.get_drive_line %q {frequency_hz = 5.0e9 : f64}
-      : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+      : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %r, %rt = pulse.get_readout_line %q {frequency_hz = 7.0e9 : f64}
-      : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
+      : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
   return
 }

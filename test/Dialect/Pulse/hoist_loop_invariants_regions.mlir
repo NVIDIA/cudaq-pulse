@@ -12,8 +12,8 @@
 // CHECK: pulse.shift_phase
 // CHECK: pulse.drive
 func.func @hoist_waveform() {
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %c50 = arith.constant 50 : i64
   %amp = arith.constant 2.000000e-01 : f64
   %zero = arith.constant 0.000000e+00 : f64

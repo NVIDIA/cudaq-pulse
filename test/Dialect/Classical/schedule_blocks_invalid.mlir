@@ -31,8 +31,8 @@ classical.callable @f {function_id = 3809224601 : i64, device = 0 : i64,
     submit = "eager"}
 
 func.func @variable_wait_in_block() {
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %l = classical.get_link {device = 0 : i64} : !classical.link
   %l1, %h = classical.submit %l, @f() : () -> (!classical.link, !classical.future)
   %n = classical.wait %h, @f : i64

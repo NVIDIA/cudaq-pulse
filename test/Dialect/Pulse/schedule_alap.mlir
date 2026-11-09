@@ -5,8 +5,8 @@
 
 // CHECK-LABEL: func.func @simple_schedule
 func.func @simple_schedule() {
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %d, %t = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %d, %t = pulse.get_drive_line %q : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %duration = arith.constant 40 : i64
   %amplitude = arith.constant 3.000000e-01 : f64
   %sigma = arith.constant 1.000000e+01 : f64

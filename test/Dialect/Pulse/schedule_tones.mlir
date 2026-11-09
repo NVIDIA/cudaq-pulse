@@ -14,10 +14,10 @@
 // CHECK: pulse.drive {{.*}}{duration_cycles = 200 : i64, start_cycles = 40 : i64}
 // CHECK: pulse.drive {{.*}}{duration_cycles = 40 : i64, start_cycles = 240 : i64}
 func.func @shared_tone() {
-  %qa = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %qb = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qref
-  %a0, %ta = pulse.get_drive_line %qa : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-  %b0, %tb = pulse.get_drive_line %qb : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %qa = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %qb = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qudit
+  %a0, %ta = pulse.get_drive_line %qa : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
+  %b0, %tb = pulse.get_drive_line %qb : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %c40 = arith.constant 40 : i64
   %c200 = arith.constant 200 : i64
   %amp = arith.constant 0.1 : f64
@@ -38,10 +38,10 @@ func.func @shared_tone() {
 // ASAP: pulse.drive {{.*}}{duration_cycles = 40 : i64, start_cycles = 0 : i64}
 // ALAP: pulse.drive {{.*}}{duration_cycles = 40 : i64, start_cycles = 280 : i64}
 func.func @phase_only_tone() {
-  %qa = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %qb = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qref
-  %a0, %ta = pulse.get_drive_line %qa : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-  %b0, %tb = pulse.get_drive_line %qb : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %qa = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %qb = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qudit
+  %a0, %ta = pulse.get_drive_line %qa : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
+  %b0, %tb = pulse.get_drive_line %qb : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %c40 = arith.constant 40 : i64
   %amp = arith.constant 0.1 : f64
   %zero = arith.constant 0.0 : f64

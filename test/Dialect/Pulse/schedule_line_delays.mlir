@@ -19,11 +19,11 @@ module attributes {pulse.line_delays = {drive = array<i64: 3, 0>, readout = arra
 // ALAP: pulse.wait {{.*}}{duration_cycles = 2 : i64, start_cycles = 11 : i64}
 // ALAP: pulse.readout {{.*}}{duration_cycles = 6 : i64, start_cycles = 15 : i64}
 func.func @delayed_lines() {
-  %qa = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %qb = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qref
-  %a0, %ta = pulse.get_drive_line %qa : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-  %b0, %tb = pulse.get_drive_line %qb : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-  %r0, %tr = pulse.get_readout_line %qb : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
+  %qa = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %qb = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qudit
+  %a0, %ta = pulse.get_drive_line %qa : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
+  %b0, %tb = pulse.get_drive_line %qb : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
+  %r0, %tr = pulse.get_readout_line %qb : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
   %c8 = arith.constant 8 : i64
   %c6 = arith.constant 6 : i64
   %c4 = arith.constant 4 : i64

@@ -31,9 +31,9 @@
 // TIME: pulse.readout {{.*}}start_cycles = 0
 // TIME: pulse.drive {{.*}}start_cycles = 100
 func.func @amplitude() {
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %d, %t = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-  %r, %rt = pulse.get_readout_line %q : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %d, %t = pulse.get_drive_line %q : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
+  %r, %rt = pulse.get_readout_line %q : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
   %c40 = arith.constant 40 : i64
   %c100 = arith.constant 100 : i64
   %zero = arith.constant 0.0 : f64
@@ -61,9 +61,9 @@ func.func @amplitude() {
 // TIME: pulse.readout {{.*}}start_cycles = 0
 // TIME: pulse.drive {{.*}}start_cycles = 100
 func.func @phase() {
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %d, %t = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-  %r, %rt = pulse.get_readout_line %q : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %d, %t = pulse.get_drive_line %q : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
+  %r, %rt = pulse.get_readout_line %q : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
   %c40 = arith.constant 40 : i64
   %c100 = arith.constant 100 : i64
   %zero = arith.constant 0.0 : f64
@@ -100,9 +100,9 @@ func.func @phase() {
 // TIME: pulse.drive {{.*}}duration_cycles = 88 : i64, start_cycles = 100
 // TIME: pulse.drive {{.*}}duration_cycles = 48 : i64
 func.func @duration() {
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %d, %t = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-  %r, %rt = pulse.get_readout_line %q : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %d, %t = pulse.get_drive_line %q : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
+  %r, %rt = pulse.get_readout_line %q : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
   %c8 = arith.constant 8 : i64
   %c40 = arith.constant 40 : i64
   %c80 = arith.constant 80 : i64
@@ -133,9 +133,9 @@ func.func @duration() {
 // KEEP-COUNT-2: arith.select
 // KEEP-NOT: scf.if
 func.func @elif() {
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %d, %t = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-  %r, %rt = pulse.get_readout_line %q : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %d, %t = pulse.get_drive_line %q : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
+  %r, %rt = pulse.get_readout_line %q : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
   %c40 = arith.constant 40 : i64
   %c100 = arith.constant 100 : i64
   %zero = arith.constant 0.0 : f64
@@ -163,8 +163,8 @@ func.func @none() {
   %amp = arith.constant 0.1 : f64
   %zero = arith.constant 0.0 : f64
   %x = pulse.square %c40, %amp, %zero : i64, f64, f64 -> !pulse.waveform
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %d, %t = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %d, %t = pulse.get_drive_line %q : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %d1, %t1 = pulse.drive %d, %x, %t : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
   return
 }
@@ -179,9 +179,9 @@ func.func @none() {
 // ARMS-NEXT: = pulse.tone %
 // ARMS-NEXT: = pulse.drive %
 func.func @selected_tone_frequency() {
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %d, %t = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-  %r, %rt = pulse.get_readout_line %q : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %d, %t = pulse.get_drive_line %q : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
+  %r, %rt = pulse.get_readout_line %q : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
   %c40 = arith.constant 40 : i64
   %c100 = arith.constant 100 : i64
   %zero = arith.constant 0.0 : f64

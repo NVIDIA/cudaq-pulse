@@ -15,8 +15,8 @@
 // CHECK: pulse.drive {{.*}}duration_cycles = 80 : i64, fused
 // CHECK-NEXT: pulse.yield
 func.func @fuse_and_blocks() {
-  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
-  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!d, !t)
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qudit) -> (!d, !t)
   %c40 = arith.constant 40 : i64
   %amp = arith.constant 0.1 : f64
   %zero = arith.constant 0.0 : f64
