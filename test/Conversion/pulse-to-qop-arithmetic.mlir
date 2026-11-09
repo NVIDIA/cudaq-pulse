@@ -17,8 +17,8 @@
 // CHECK: qop.callback_scalar @drive_envelope_1_y {cudm.callback_kind = 7
 // CHECK-NOT: qop.callback_scalar
 func.func @main() {
-  %q0 = pulse.qudit_alloc : !pulse.qref
-  %d0, %t0 = pulse.get_drive_line %q0 {qubit = 0 : i64, frequency_hz = 5.0e9 : f64}
+  %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
+  %d0, %t0 = pulse.get_drive_line %q0 {frequency_hz = 5.0e9 : f64}
       : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %duration = arith.constant 4 : i64
   %amplitude = arith.constant 0.3 : f64

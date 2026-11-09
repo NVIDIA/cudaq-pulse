@@ -7,13 +7,13 @@
 // A drive and a readout print as they parse, with every operand and result.
 
 // CHECK-LABEL: func @test_qudit_and_drive
-// CHECK: %[[Q:.*]] = pulse.qudit_alloc : !pulse.qref
+// CHECK: %[[Q:.*]] = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
 // CHECK: %[[D:.*]], %[[T:.*]] = pulse.get_drive_line %[[Q]] : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
 // CHECK: %[[WF:.*]] = pulse.gaussian
 // CHECK: %[[D1:.*]], %[[T1:.*]] = pulse.drive %[[D]], %[[WF]], %[[T]] : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
 // CHECK: return %[[D1]], %[[T1]]
 func.func @test_qudit_and_drive() -> (!pulse.drive_line, !pulse.tone) {
-  %q0 = pulse.qudit_alloc : !pulse.qref
+  %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %d0, %t0 = pulse.get_drive_line %q0 : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %duration = arith.constant 40 : i64
   %amplitude = arith.constant 0.3 : f64
@@ -25,13 +25,13 @@ func.func @test_qudit_and_drive() -> (!pulse.drive_line, !pulse.tone) {
 }
 
 // CHECK-LABEL: func @test_readout
-// CHECK: %[[Q:.*]] = pulse.qudit_alloc : !pulse.qref
+// CHECK: %[[Q:.*]] = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
 // CHECK: %[[R:.*]], %[[T:.*]] = pulse.get_readout_line %[[Q]] : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
 // CHECK: %[[WF:.*]] = pulse.square
 // CHECK: %[[R1:.*]], %[[T1:.*]], %[[M:.*]] = pulse.readout %[[R]], %[[WF]], %[[T]], "iq" : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
 // CHECK: return %[[R1]], %[[T1]], %[[M]]
 func.func @test_readout() -> (!pulse.readout_line, !pulse.tone, !pulse.measurement) {
-  %q0 = pulse.qudit_alloc : !pulse.qref
+  %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %r0, %rt0 = pulse.get_readout_line %q0 : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
   %duration = arith.constant 1000 : i64
   %amplitude = arith.constant 0.05 : f64

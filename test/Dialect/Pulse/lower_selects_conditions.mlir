@@ -28,8 +28,8 @@
 // TIME: pulse.readout {{.*}}start_cycles = 0
 // TIME: pulse.drive {{.*}}start_cycles = 100
 func.func @and_not() {
-  %q0 = pulse.qudit_alloc : !pulse.qref
-  %q1 = pulse.qudit_alloc : !pulse.qref
+  %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
+  %q1 = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qref
   %d, %t = pulse.get_drive_line %q0 : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %r0, %rt0 = pulse.get_readout_line %q0 : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
   %r1, %rt1 = pulse.get_readout_line %q1 : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
@@ -73,8 +73,8 @@ func.func @and_not() {
 // CHECK-NOT: pulse.is_set
 // CHECK: return
 func.func @or() {
-  %q0 = pulse.qudit_alloc : !pulse.qref
-  %q1 = pulse.qudit_alloc : !pulse.qref
+  %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
+  %q1 = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qref
   %d, %t = pulse.get_drive_line %q0 : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %r0, %rt0 = pulse.get_readout_line %q0 : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
   %r1, %rt1 = pulse.get_readout_line %q1 : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)

@@ -94,13 +94,12 @@ public:
     mlir::Operation *allocation = trace(line);
     if (!allocation)
       return fallback;
-    auto qubit = allocation->getAttrOfType<mlir::IntegerAttr>("qubit");
+    int64_t qudit = quditOf(allocation);
     mlir::DenseI64ArrayAttr grids =
         mlir::isa<GetDriveLineOp>(allocation) ? drive : readout;
-    if (!qubit || !grids || qubit.getInt() < 0 ||
-        qubit.getInt() >= static_cast<int64_t>(grids.size()))
+    if (!grids || qudit < 0 || qudit >= static_cast<int64_t>(grids.size()))
       return fallback;
-    int64_t g = grids[qubit.getInt()];
+    int64_t g = grids[qudit];
     return g > 0 ? g : fallback;
   }
 

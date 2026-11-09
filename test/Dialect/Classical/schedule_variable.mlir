@@ -28,8 +28,8 @@ classical.callable @tau {function_id = 1 : i64, device = 0 : i64,
 // CHECK: pulse.wait {{.*}}classical.variable{{.*}}duration_cycles = 16 : i64, {{.*}}start_cycles = 300 : i64}
 // CHECK: pulse.drive {{.*}}start_cycles = 316 : i64
 func.func @barrier() {
-  %q = pulse.qudit_alloc : !pulse.qref
-  %p = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
+  %p = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qref
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %e0, %u0 = pulse.get_drive_line %p : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %c40 = arith.constant 40 : i64
@@ -63,8 +63,8 @@ func.func @barrier() {
 // CHECK: pulse.wait {{.*}}classical.variable{{.*}}duration_cycles = 16 : i64, {{.*}}start_cycles = 101 : i64}
 // CHECK: pulse.drive {{.*}}start_cycles = 117 : i64
 func.func @independent() {
-  %q = pulse.qudit_alloc : !pulse.qref
-  %p = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
+  %p = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qref
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %e0, %u0 = pulse.get_drive_line %p : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %c40 = arith.constant 40 : i64
@@ -97,7 +97,7 @@ func.func @independent() {
 // ALAP: pulse.drive {{.*}}period_cycles = array<i64: 106>, start_cycles = 167 : i64}
 // ALAP: pulse.drive {{.*}}start_cycles = 424 : i64}
 func.func @rounds() {
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %c40 = arith.constant 40 : i64
   %a = arith.constant 0.05 : f64
@@ -129,8 +129,8 @@ func.func @rounds() {
 // CHECK: pulse.get_readout_line {{.*}}classical.timeline = 1 : i64
 
 func.func @carried_unread() {
-  %q = pulse.qudit_alloc : !pulse.qref
-  %p = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
+  %p = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qref
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %r0, %v0 = pulse.get_readout_line %q : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
   %s0, %w0 = pulse.get_readout_line %p : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
@@ -168,8 +168,8 @@ func.func @carried_unread() {
 // CHECK: return
 
 func.func @carried_no_trips() {
-  %q = pulse.qudit_alloc : !pulse.qref
-  %p = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
+  %p = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qref
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %r0, %v0 = pulse.get_readout_line %q : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
   %s0, %w0 = pulse.get_readout_line %p : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)

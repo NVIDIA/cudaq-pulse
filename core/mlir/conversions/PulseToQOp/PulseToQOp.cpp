@@ -677,12 +677,10 @@ struct PulseToQOpPass
     // Readouts are numbered in walk order for `pulse.path`.
     SmallVector<Operation *> readouts;
     module.walk([&](Operation *op) {
-      if (op->getName().getStringRef() == "pulse.get_drive_line") {
-        if (auto qubitAttr = op->getAttrOfType<IntegerAttr>("qubit")) {
-          int64_t qi = qubitAttr.getInt();
+      if (isa<pulse::GetDriveLineOp>(op)) {
+        if (int64_t qi = pulse::quditOf(op); qi >= 0)
           if (auto freqAttr = op->getAttrOfType<FloatAttr>("frequency_hz"))
             qubitFreqHz[qi] = freqAttr.getValueAsDouble();
-        }
       }
       if (isa<pulse::ReadoutOp>(op))
         readouts.push_back(op);
@@ -963,16 +961,13 @@ struct PulseToQOpPass
     for (Operation *op : driveOrder) {
       auto &occurrences = drives[op];
       auto *allocation = trace(op->getOperand(0));
-      auto qubitAttr = allocation
-                           ? allocation->getAttrOfType<IntegerAttr>("qubit")
-                           : IntegerAttr();
-      if (!qubitAttr) {
-        op->emitError("cannot determine the physical qubit for this drive; "
-                      "the line must originate from pulse.get_drive_line "
-                      "with a 'qubit' attribute");
+      int64_t qubitIdx = allocation ? pulse::quditOf(allocation) : -1;
+      if (qubitIdx < 0) {
+        op->emitError("cannot determine the qudit of this drive; the line "
+                      "must come from a pulse.get_drive_line of a "
+                      "pulse.qudit_alloc");
         return signalPassFailure();
       }
-      int64_t qubitIdx = qubitAttr.getInt();
       if (!ops.simulated(qubitIdx)) {
         op->emitError("drive on qudit ")
             << qubitIdx << ", which is not one of pulse.modes";

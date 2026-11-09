@@ -323,7 +323,7 @@ def test_bound_views_print_carriers():
 
     carrier = DEV.layout[4]
     text = pulse.compile(k, passes=()).lower(H[4]).mlir()
-    assert f"qubit = {carrier} : i64" in text
+    assert f"pulse.qudit_alloc {{qudit = {carrier} : i64}}" in text
     assert "pulse.slot" in text and "!pulse.qref" not in text.split("func.func")[1].split(")")[0]
 
 

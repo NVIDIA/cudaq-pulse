@@ -30,7 +30,7 @@ classical.callable @ask_lazy {function_id = 3 : i64, device = 1 : i64,
 // awaits: on one slot the second loop's first request waits for the first
 // loop's last answer to be due.
 func.func @answers_then_unawaited() {
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %r0, %rt0 = pulse.get_readout_line %q : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
   %c40 = arith.constant 40 : i64
@@ -75,7 +75,7 @@ func.func @answers_then_unawaited() {
 // loop is placed first, backward, and the requests before it need the
 // slots its first iterations leave them.
 func.func @unawaited_then_lazy() {
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %r0, %rt0 = pulse.get_readout_line %q : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
   %c40 = arith.constant 40 : i64

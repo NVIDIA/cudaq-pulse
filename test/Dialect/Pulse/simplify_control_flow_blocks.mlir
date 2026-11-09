@@ -13,7 +13,7 @@
 // CHECK: pulse.shift_phase
 // CHECK: pulse.drive
 func.func @untimed_block(%x: !w) {
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!d, !t)
   %phi = arith.constant 0.25 : f64
   %t1 = pulse.schedule_block "asap" (%t0) : (!t) -> (!t) {
@@ -29,7 +29,7 @@ func.func @untimed_block(%x: !w) {
 // CHECK-LABEL: func.func @timed_block
 // CHECK: pulse.schedule_block "alap"
 func.func @timed_block(%x: !w) {
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!d, !t)
   %d1, %t1 = pulse.schedule_block "alap" (%d0, %t0) : (!d, !t) -> (!d, !t) {
   ^bb0(%d: !d, %t: !t):

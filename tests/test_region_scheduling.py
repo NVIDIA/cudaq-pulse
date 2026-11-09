@@ -25,9 +25,9 @@ class _Writer:
         self.counter = 0
         self.text = ["func.func @main() {"]
         for i in range(n_lines):
-            self.emit(f"%q{i} = pulse.qudit_alloc {{qubit = {i} : i64}} : !pulse.qref")
+            self.emit(f"%q{i} = pulse.qudit_alloc {{qudit = {i} : i64}} : !pulse.qref")
             self.emit(
-                f"%d{i}_0, %t{i}_0 = pulse.get_drive_line %q{i} {{qubit = {i} : i64}} : "
+                f"%d{i}_0, %t{i}_0 = pulse.get_drive_line %q{i} : "
                 f"(!pulse.qref) -> ({_LINE}, {_TONE})"
             )
         self.tones = [f"%t{i}_0" for i in range(n_lines)]

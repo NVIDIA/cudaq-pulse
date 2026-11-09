@@ -12,7 +12,7 @@ func.func @drive_line_acquired_twice() {
   %am = arith.constant 0.1 : f64
   %z = arith.constant 0.0 : f64
   %x = pulse.square %c40, %am, %z : i64, f64, f64 -> !pulse.waveform
-  %q = pulse.qudit_alloc {qubit = 0 : i64} : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   // expected-note @+1 {{acquired first here}}
   %a, %ta = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   // expected-error @+1 {{this qudit's drive line is already acquired; use the line acquired first}}
@@ -54,7 +54,7 @@ func.func @overlap_across_acquisitions() {
   %am = arith.constant 0.1 : f64
   %z = arith.constant 0.0 : f64
   %x = pulse.square %c40, %am, %z : i64, f64, f64 -> !pulse.waveform
-  %q = pulse.qudit_alloc {qubit = 0 : i64} : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   // expected-note @+1 {{acquired first here}}
   %a, %ta = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   // expected-error @+1 {{this qudit's drive line is already acquired}}
@@ -73,7 +73,7 @@ func.func @loop_op_without_its_period() {
   %am = arith.constant 0.1 : f64
   %z = arith.constant 0.0 : f64
   %x = pulse.square %c40, %am, %z : i64, f64, f64 -> !pulse.waveform
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %d, %t = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %lb = arith.constant 0 : index
   %ub = arith.constant 8 : index
@@ -93,7 +93,7 @@ func.func @loop_op_before_time_zero() {
   %am = arith.constant 0.1 : f64
   %z = arith.constant 0.0 : f64
   %x = pulse.square %c40, %am, %z : i64, f64, f64 -> !pulse.waveform
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %d, %t = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %lb = arith.constant 0 : index
   %ub = arith.constant 8 : index
@@ -113,7 +113,7 @@ func.func @loop_op_with_a_negative_period() {
   %am = arith.constant 0.1 : f64
   %z = arith.constant 0.0 : f64
   %x = pulse.square %c40, %am, %z : i64, f64, f64 -> !pulse.waveform
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %d, %t = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %lb = arith.constant 0 : index
   %ub = arith.constant 8 : index
@@ -133,7 +133,7 @@ func.func @scheduled_loop_of_argument_trips(%n: index) {
   %am = arith.constant 0.1 : f64
   %z = arith.constant 0.0 : f64
   %x = pulse.square %c40, %am, %z : i64, f64, f64 -> !pulse.waveform
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %d, %t = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %lb = arith.constant 0 : index
   %step = arith.constant 1 : index
@@ -161,7 +161,7 @@ func.func @scheduled_drive_on_an_argument_line(%d: !pulse.drive_line, %t: !pulse
 
 // A function is scheduled as a whole or not at all.
 func.func @partly_scheduled() {
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %line, %tone = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %c40 = arith.constant 40 : i64
   %a = arith.constant 4.700000e-02 : f64
@@ -182,7 +182,7 @@ func.func @partly_scheduled() {
 // -----
 
 func.func @duration_that_is_not_the_pulse() {
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %line, %tone = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %c40 = arith.constant 40 : i64
   %a = arith.constant 4.700000e-02 : f64
@@ -196,7 +196,7 @@ func.func @duration_that_is_not_the_pulse() {
 // -----
 
 func.func @start_without_a_duration() {
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %line, %tone = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %c100 = arith.constant 100 : i64
   %w100 = pulse.duration_from_int %c100 : (i64) -> !pulse.duration
@@ -208,7 +208,7 @@ func.func @start_without_a_duration() {
 // -----
 
 func.func @duration_without_a_start() {
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %line, %tone = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %c100 = arith.constant 100 : i64
   %w100 = pulse.duration_from_int %c100 : (i64) -> !pulse.duration
@@ -220,7 +220,7 @@ func.func @duration_without_a_start() {
 // -----
 
 func.func @scheduled_pulse_of_unknown_length(%x: !pulse.waveform) {
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %line, %tone = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   // expected-error @+1 {{a scheduled operation needs a known length}}
   %l1, %t1 = pulse.drive %line, %x, %tone {duration_cycles = 0 : i64, start_cycles = 0 : i64} : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
@@ -231,7 +231,7 @@ func.func @scheduled_pulse_of_unknown_length(%x: !pulse.waveform) {
 
 // An op in a loop that never runs has a duration but no start.
 func.func @zero_trip_loop_in_a_scheduled_function() {
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %line, %tone = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %c40 = arith.constant 40 : i64
   %a = arith.constant 4.700000e-02 : f64

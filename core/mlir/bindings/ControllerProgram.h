@@ -853,10 +853,7 @@ struct ControllerWalk : ControllerExpressions {
 
   void timed(mlir::Operation *op) {
     mlir::Operation *allocation = trace(op->getOperand(0));
-    int64_t qubit = -1;
-    if (allocation)
-      if (auto attr = allocation->getAttrOfType<mlir::IntegerAttr>("qubit"))
-        qubit = attr.getInt();
+    int64_t qubit = allocation ? pulse::quditOf(allocation) : -1;
     auto start = pulse::scheduledStart(op, iteration);
     auto duration = pulse::scheduledDuration(op);
     double frequency = kUnknown, phase = kUnknown;
@@ -964,8 +961,7 @@ struct ControllerWalk : ControllerExpressions {
     if (mlir::isa_and_nonnull<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(
             root)) {
       line = lineOf(root);
-      if (auto attr = root->getAttrOfType<mlir::IntegerAttr>("qubit"))
-        qudit = attr.getInt();
+      qudit = pulse::quditOf(root);
     } else {
       // A tone of its own: the line it last played on.
       for (size_t i = result.size(); i-- > 0;)

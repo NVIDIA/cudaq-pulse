@@ -21,6 +21,15 @@ inline bool isClassicalType(mlir::Type type) {
   return type.getDialect().getNamespace() == "classical";
 }
 
+/// The index of the qudit whose line `acquisition` (a `pulse.get_drive_line`
+/// or `pulse.get_readout_line`) acquires, or -1 for a runtime qudit not bound
+/// yet (a function argument).
+inline int64_t quditOf(mlir::Operation *acquisition) {
+  if (auto alloc = acquisition->getOperand(0).getDefiningOp<QuditAllocOp>())
+    return alloc.getQuditAttr().getInt();
+  return -1;
+}
+
 inline bool isLinearPulseType(mlir::Type type) {
   return mlir::isa<DriveLineType, ReadoutLineType, ToneType>(type) ||
          isClassicalType(type);

@@ -13,7 +13,7 @@
 // ROUNDTRIP: } else {
 // ROUNDTRIP: scf.yield
 func.func @active_reset() {
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %r0, %rt0 = pulse.get_readout_line %q : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
   %c300 = arith.constant 300 : i64

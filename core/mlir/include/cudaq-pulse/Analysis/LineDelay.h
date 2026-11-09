@@ -41,13 +41,12 @@ inline void applyLineDelays(mlir::Operation *function,
     mlir::Operation *allocation = trace(op->getOperand(0));
     if (!allocation)
       return;
-    auto qubit = allocation->getAttrOfType<mlir::IntegerAttr>("qubit");
+    int64_t qudit = quditOf(allocation);
     mlir::DenseI64ArrayAttr shifts =
         mlir::isa<GetDriveLineOp>(allocation) ? drive : readout;
-    if (!qubit || !shifts || qubit.getInt() < 0 ||
-        qubit.getInt() >= static_cast<int64_t>(shifts.size()))
+    if (!shifts || qudit < 0 || qudit >= static_cast<int64_t>(shifts.size()))
       return;
-    int64_t shift = shifts[qubit.getInt()];
+    int64_t shift = shifts[qudit];
     if (shift != 0)
       op->setAttr("start_cycles",
                   mlir::IntegerAttr::get(i64, start.getInt() + shift));

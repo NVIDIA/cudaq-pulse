@@ -28,7 +28,7 @@ classical.callable @decode {function_id = 3007678287 : i64, device = 0 : i64,
 // PEELED: pulse.drive {{.*}}start_cycles = 501 : i64}
 // PEELED: scf.for
 func.func @tested_in_every_iteration() {
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %r0, %rt0 = pulse.get_readout_line %q : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
   %c100 = arith.constant 100 : i64

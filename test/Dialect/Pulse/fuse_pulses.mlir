@@ -5,7 +5,7 @@
 
 // CHECK-LABEL: func.func @fuse_adjacent_squares
 func.func @fuse_adjacent_squares() {
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %d, %t = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   // Two adjacent square pulses with same amplitude should fuse
   %duration = arith.constant 50 : i64
@@ -29,7 +29,7 @@ func.func @fuse_adjacent_squares() {
 // CHECK-COUNT-2: pulse.drive
 // CHECK-NOT: fused
 func.func @keep_folded_frame_change() {
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %d, %t = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %duration = arith.constant 50 : i64
   %amplitude = arith.constant 2.000000e-01 : f64
@@ -46,7 +46,7 @@ func.func @keep_folded_frame_change() {
 // CHECK: pulse.drive {{.*}}frame_phase_offset = 5.000000e-01
 // CHECK-SAME: fused
 func.func @fused_drive_keeps_leading_frame_change() {
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %d, %t = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %duration = arith.constant 50 : i64
   %amplitude = arith.constant 2.000000e-01 : f64

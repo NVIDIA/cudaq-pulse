@@ -13,7 +13,7 @@
 // TIME-LABEL: func.func @in_a_row
 // TIME: pulse.drive {{.*}}start_cycles = 350
 func.func @in_a_row() {
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %c100 = arith.constant 100 : i64
   %c50 = arith.constant 50 : i64
@@ -39,7 +39,7 @@ func.func @in_a_row() {
 // CHECK: pulse.drive
 // CHECK-COUNT-2: pulse.wait
 func.func @apart(%len: i64) {
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %c100 = arith.constant 100 : i64
   %w100 = pulse.duration_from_int %c100 : (i64) -> !pulse.duration

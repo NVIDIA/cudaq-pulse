@@ -11,8 +11,8 @@
 // CHECK-COUNT-1: pulse.sync
 // CHECK: } else {
 func.func @feedback(%x: !pulse.waveform) {
-  %qa = pulse.qudit_alloc : !pulse.qref
-  %qb = pulse.qudit_alloc : !pulse.qref
+  %qa = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
+  %qb = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qref
   %a0, %ta = pulse.get_drive_line %qa : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %b0, %tb = pulse.get_drive_line %qb : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %r0, %rt0 = pulse.get_readout_line %qa : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
@@ -37,7 +37,7 @@ func.func @feedback(%x: !pulse.waveform) {
 // CHECK-COUNT-1: pulse.drive %
 // CHECK: return
 func.func @trivial_loops(%x: !pulse.waveform) {
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index

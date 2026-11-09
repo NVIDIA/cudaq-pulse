@@ -276,7 +276,7 @@ def test_a_handle_binds_its_physical_target_index():
         wait(line, 10)
 
     compiled = pulse.compile(kernel, passes=()).lower(Q[4])
-    assert "qubit = 4 : i64" in compiled.mlir()
+    assert "qudit = 4 : i64" in compiled.mlir()
     # The test target puts qudit i at 5 GHz + i * 100 MHz.
     assert "frequency_hz = 5.400000e+09 : f64" in compiled.mlir()
 

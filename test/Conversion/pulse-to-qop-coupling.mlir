@@ -29,10 +29,10 @@
 // CUDM: cudm.append_elementary_product {{.*}} coeff_real = 6.283185307179587E-5 : f64, duality = array<i32: 0, 0>, modes_acted_on = array<i32: 0, 1>
 module attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.coupling_pairs = array<i64: 0, 1>, pulse.coupling_strength_hz = array<f64: 5.000000e+06>, pulse.static_terms = [#pulse.static_term<zz, qudits = [0, 1], rate_hz = 1.000000e+04>]} {
   func.func @main() {
-    %q0 = pulse.qudit_alloc {qubit = 0 : i64} : !pulse.qref
-    %q1 = pulse.qudit_alloc {qubit = 1 : i64} : !pulse.qref
-    %d0, %t0 = pulse.get_drive_line %q0 {qubit = 0 : i64, frequency_hz = 5.000000e+09 : f64} : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-    %d1, %t1 = pulse.get_drive_line %q1 {qubit = 1 : i64, frequency_hz = 5.100000e+09 : f64} : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+    %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
+    %q1 = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qref
+    %d0, %t0 = pulse.get_drive_line %q0 {frequency_hz = 5.000000e+09 : f64} : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+    %d1, %t1 = pulse.get_drive_line %q1 {frequency_hz = 5.100000e+09 : f64} : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
     %c40 = arith.constant 40 : i64
     %zero = arith.constant 0.0 : f64
     %x = pulse.square %c40, %zero, %zero : i64, f64, f64 -> !pulse.waveform
@@ -53,10 +53,10 @@ module attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.coupling_pairs = 
 // CHECK: qop.const_scalar {imag = 0.000000e+00 : f64, real = 0.015707963267948967 : f64}
 module attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.coupling_pairs = array<i64: 0, 1>, pulse.coupling_strength_hz = array<f64: 5.000000e+06>} {
   func.func @main() {
-    %q0 = pulse.qudit_alloc {qubit = 0 : i64} : !pulse.qref
-    %q1 = pulse.qudit_alloc {qubit = 1 : i64} : !pulse.qref
-    %d0, %t0 = pulse.get_drive_line %q0 {qubit = 0 : i64, frequency_hz = 5.000000e+09 : f64} : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-    %d1, %t1 = pulse.get_drive_line %q1 {qubit = 1 : i64, frequency_hz = 5.000000e+09 : f64} : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+    %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
+    %q1 = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qref
+    %d0, %t0 = pulse.get_drive_line %q0 {frequency_hz = 5.000000e+09 : f64} : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+    %d1, %t1 = pulse.get_drive_line %q1 {frequency_hz = 5.000000e+09 : f64} : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
     %c40 = arith.constant 40 : i64
     %zero = arith.constant 0.0 : f64
     %x = pulse.square %c40, %zero, %zero : i64, f64, f64 -> !pulse.waveform

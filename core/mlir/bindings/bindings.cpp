@@ -1064,10 +1064,7 @@ struct ControllerEventWalk : ControllerExpressions {
   template <bool RunTime>
   void timed(mlir::Operation *op) {
     mlir::Operation *allocation = trace(op->getOperand(0));
-    int64_t qubit = -1;
-    if (allocation)
-      if (auto attr = allocation->getAttrOfType<mlir::IntegerAttr>("qubit"))
-        qubit = attr.getInt();
+    int64_t qubit = allocation ? pulse::quditOf(allocation) : -1;
     auto start = pulse::scheduledStart(op, iteration);
     auto duration = pulse::scheduledDuration(op);
     std::vector<WaveformNode> nodes;
@@ -2483,11 +2480,7 @@ public:
         if (mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(op)) {
           mlir::Operation *allocation = trace(op.getOperand(0));
           int64_t line = allocation ? lineIndex.lookup(allocation) : -1;
-          int64_t qubit = -1;
-          if (allocation)
-            if (auto attr =
-                    allocation->getAttrOfType<mlir::IntegerAttr>("qubit"))
-              qubit = attr.getInt();
+          int64_t qubit = allocation ? pulse::quditOf(allocation) : -1;
           result.emplace_back(op.getName().stripDialect().str(), line, qubit,
                               pulse::scheduledStart(&op, iteration),
                               pulse::scheduledDuration(&op));
@@ -2583,11 +2576,7 @@ public:
                     op)) {
               mlir::Operation *allocation = trace(op.getOperand(0));
               int64_t line = allocation ? lineIndex.lookup(allocation) : -1;
-              int64_t qubit = -1;
-              if (allocation)
-                if (auto attr =
-                        allocation->getAttrOfType<mlir::IntegerAttr>("qubit"))
-                  qubit = attr.getInt();
+              int64_t qubit = allocation ? pulse::quditOf(allocation) : -1;
               out.append(
                   node(op, op.getName().stripDialect().str(), line, qubit));
             } else if (mlir::isa<classical::SubmitOp, classical::WaitOp>(op)) {
@@ -2759,9 +2748,7 @@ public:
                .try_emplace(op, static_cast<int64_t>(walk.lineIndex.size()))
                .second)
         return;
-      int64_t qubit = -1;
-      if (auto attr = op->getAttrOfType<mlir::IntegerAttr>("qubit"))
-        qubit = attr.getInt();
+      int64_t qubit = pulse::quditOf(op);
       lines.emplace_back(
           mlir::isa<pulse::GetDriveLineOp>(op) ? "drive" : "readout", qubit);
       if (slots)
@@ -2854,9 +2841,7 @@ public:
                .try_emplace(op, static_cast<int64_t>(walk.lineIndex.size()))
                .second)
         return;
-      int64_t qubit = -1;
-      if (auto attr = op->getAttrOfType<mlir::IntegerAttr>("qubit"))
-        qubit = attr.getInt();
+      int64_t qubit = pulse::quditOf(op);
       lines.emplace_back(
           mlir::isa<pulse::GetDriveLineOp>(op) ? "drive" : "readout", qubit);
       if (slots)
@@ -3570,8 +3555,7 @@ public:
           std::distance(readouts.begin(), llvm::find(readouts, occurrence.op));
       int64_t qubit = -1;
       if (auto *allocation = trace(occurrence.op->getOperand(0)))
-        if (auto attr = allocation->getAttrOfType<mlir::IntegerAttr>("qubit"))
-          qubit = attr.getInt();
+        qubit = pulse::quditOf(allocation);
       next = Measurement{index, key.iteration, qubit,
                          occurrence.startCycles / clockGHz, end};
       return false;
@@ -3673,14 +3657,14 @@ public:
       throw std::runtime_error(walker.error);
     std::vector<FinalTone> finals;
     for (auto &[root, tone] : walker.toneStates()) {
-      auto qudit = root ? root->getAttrOfType<mlir::IntegerAttr>("qubit")
-                        : mlir::IntegerAttr();
-      if (!qudit ||
-          !mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(root))
+      if (!mlir::isa_and_nonnull<pulse::GetDriveLineOp,
+                                 pulse::GetReadoutLineOp>(root))
+        continue;
+      int64_t qudit = pulse::quditOf(root);
+      if (qudit < 0)
         continue;
       finals.emplace_back(
-          qudit.getInt(),
-          mlir::isa<pulse::GetDriveLineOp>(root) ? "drive" : "readout",
+          qudit, mlir::isa<pulse::GetDriveLineOp>(root) ? "drive" : "readout",
           value(tone.frequencyHz), value(tone.phase), tone.timeNs);
     }
     std::sort(finals.begin(), finals.end());
@@ -3957,15 +3941,14 @@ public:
               : frequency;
       for (mlir::Operation *user : arg.getUsers())
         if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(user)) {
-          user->setAttr("qubit", qubit);
           user->setAttr("frequency_hz", mlir::isa<pulse::GetReadoutLineOp>(user)
                                             ? readoutFrequency
                                             : frequency);
           user->setAttr("pulse.slot", slot);
         }
       auto alloc = pulse::QuditAllocOp::create(
-          builder, funcOp.getLoc(), pulse::QrefType::get(module.getContext()));
-      alloc->setAttr("qubit", qubit);
+          builder, funcOp.getLoc(), pulse::QrefType::get(module.getContext()),
+          qubit);
       arg.replaceAllUsesWith(alloc.getResult());
     }
     module->setAttr("pulse.n_qubits", builder.getI64IntegerAttr(n));
@@ -4952,8 +4935,8 @@ public:
       mlir::OpBuilder::InsertionGuard guard(*builder_);
       if (!regions.empty())
         builder_->setInsertionPointToEnd(regions.front().parent);
-      auto alloc = pulse::QuditAllocOp::create(*builder_, loc, qrefTy);
-      alloc->setAttr("qubit", builder_->getI64IntegerAttr(q));
+      auto alloc = pulse::QuditAllocOp::create(*builder_, loc, qrefTy,
+                                               builder_->getI64IntegerAttr(q));
       auto v = alloc.getResult();
       qubitSSA[q] = v;
       return v;
@@ -5352,11 +5335,9 @@ public:
         auto qref = getQubit(p[0]);
         auto gdl = pulse::GetDriveLineOp::create(*builder_, loc, driveTy,
                                                  toneTy, qref);
-        if (p[0] >= 0) {
-          gdl->setAttr("qubit", builder_->getI64IntegerAttr(p[0]));
+        if (p[0] >= 0)
           gdl->setAttr("frequency_hz",
                        builder_->getF64FloatAttr(freqVec[p[0]]));
-        }
         bind(p[1], gdl.getLine());
         bind(p[2], gdl.getTone());
         break;
@@ -5368,7 +5349,6 @@ public:
         auto grl = pulse::GetReadoutLineOp::create(*builder_, loc, readoutTy,
                                                    toneTy, qref);
         if (p[0] >= 0) {
-          grl->setAttr("qubit", builder_->getI64IntegerAttr(p[0]));
           grl->setAttr(
               "frequency_hz",
               builder_->getF64FloatAttr(static_cast<size_t>(p[0]) < readoutLen

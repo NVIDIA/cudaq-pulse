@@ -15,7 +15,7 @@
 // CHECK-NOT: pulse.shift_phase
 // CHECK: pulse.drive {{.*}}frame_phase_offset = 2.500000e-01
 func.func @into_a_block(%x: !w) {
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!d, !t)
   %phi = arith.constant 0.25 : f64
   %t1 = pulse.shift_phase %t0, %phi : !t, f64 -> !t
@@ -37,7 +37,7 @@ func.func @into_a_block(%x: !w) {
 // CHECK-NOT: pulse.shift_phase
 // CHECK: pulse.drive {{.*}}frame_phase_offset = 5.000000e-01
 func.func @out_of_a_block(%x: !w) {
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!d, !t)
   %d1, %t1 = pulse.schedule_block "alap" (%d0, %t0) : (!d, !t) -> (!d, !t) {
   ^bb0(%d: !d, %t: !t):
@@ -56,8 +56,8 @@ func.func @out_of_a_block(%x: !w) {
 // CHECK-NOT: pulse.shift_phase
 // CHECK: pulse.drive {{.*}}frame_phase_offset = 7.500000e-01
 func.func @through_a_block(%x: !w) {
-  %qa = pulse.qudit_alloc : !pulse.qref
-  %qb = pulse.qudit_alloc : !pulse.qref
+  %qa = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
+  %qb = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qref
   %a0, %ta0 = pulse.get_drive_line %qa : (!pulse.qref) -> (!d, !t)
   %b0, %tb0 = pulse.get_drive_line %qb : (!pulse.qref) -> (!d, !t)
   %phi = arith.constant 0.75 : f64

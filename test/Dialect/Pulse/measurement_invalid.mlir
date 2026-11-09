@@ -28,7 +28,7 @@ func.func @outcome_not_from_a_readout(%b: i1) -> i64 {
 
 // Each arm reads out.
 func.func @from_a_readout_in_each_arm(%b: i1) -> i1 {
-  %q = pulse.qudit_alloc {qubit = 0 : i64} : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %r, %to = pulse.get_readout_line %q : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
   %c40 = arith.constant 40 : i64
   %amp = arith.constant 0.1 : f64
@@ -48,7 +48,7 @@ func.func @from_a_readout_in_each_arm(%b: i1) -> i1 {
 // -----
 
 func.func @from_a_cast_in_one_arm(%b: i1) -> i1 {
-  %q = pulse.qudit_alloc {qubit = 0 : i64} : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %r, %to = pulse.get_readout_line %q : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
   %c40 = arith.constant 40 : i64
   %amp = arith.constant 0.1 : f64

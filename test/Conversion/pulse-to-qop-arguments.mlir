@@ -18,8 +18,8 @@
 // The cuDensityMat runtime takes constant parameters.
 // UNBOUND: error: drive callback depends on the program's float arguments; bind them before lowering to cuDensityMat
 func.func @main(%f: f64, %phase: f64, %amp: f64) {
-  %q0 = pulse.qudit_alloc : !pulse.qref
-  %d0, %t0 = pulse.get_drive_line %q0 {qubit = 0 : i64, frequency_hz = 5.0e9 : f64}
+  %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
+  %d0, %t0 = pulse.get_drive_line %q0 {frequency_hz = 5.0e9 : f64}
       : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %duration = arith.constant 4 : i64
   %zero = arith.constant 0.0 : f64

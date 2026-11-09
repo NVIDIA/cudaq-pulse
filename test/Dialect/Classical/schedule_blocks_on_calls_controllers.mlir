@@ -43,12 +43,12 @@ func.func @held_where_used() {
   %ro = pulse.square %c10, %a, %z : i64, f64, f64 -> !pulse.waveform
   %x = pulse.square %c40, %a, %z : i64, f64, f64 -> !pulse.waveform
   %long = pulse.square %c400, %a, %z : i64, f64, f64 -> !pulse.waveform
-  %q0 = pulse.qudit_alloc {qubit = 0 : i64} : !pulse.qref
-  %r0, %rt0 = pulse.get_readout_line %q0 {qubit = 0 : i64} : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
-  %q1 = pulse.qudit_alloc {qubit = 1 : i64} : !pulse.qref
-  %d1, %dt1 = pulse.get_drive_line %q1 {qubit = 1 : i64} : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-  %q2 = pulse.qudit_alloc {qubit = 2 : i64} : !pulse.qref
-  %d2, %dt2 = pulse.get_drive_line %q2 {qubit = 2 : i64} : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
+  %r0, %rt0 = pulse.get_readout_line %q0 : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
+  %q1 = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qref
+  %d1, %dt1 = pulse.get_drive_line %q1 : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %q2 = pulse.qudit_alloc {qudit = 2 : i64} : !pulse.qref
+  %d2, %dt2 = pulse.get_drive_line %q2 : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %d1a, %dt1a = pulse.drive %d1, %x, %dt1 : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
   %r0a, %rt0a, %m0 = pulse.readout %r0, %ro, %rt0, "iq" : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %link = classical.get_link {device = 0 : i64} : !classical.link

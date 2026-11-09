@@ -286,7 +286,7 @@ def test_verify_does_constant_work_per_unused_line(tmp_path):
         ).stderr
         warnings = re.findall(r"^\S+: warning: (.*)$", stderr, re.M)
         assert warnings == [
-            f"drive line allocated but never used (qubit {q})" for q in range(1, n, 2)
+            f"drive line allocated but never used (qudit {q})" for q in range(1, n, 2)
         ]
         # The message, the source line and its caret: nothing attached.
         assert stderr.count("\n") == 3 * len(warnings), stderr[:2000]

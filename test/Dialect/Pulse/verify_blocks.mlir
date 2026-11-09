@@ -10,7 +10,7 @@
 // A line threaded through a block continues as the block's result.
 // CHECK-NOT: error
 func.func @threaded(%x: !w) {
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!d, !t)
   %d1, %t1 = pulse.schedule_block "asap" (%d0, %t0) : (!d, !t) -> (!d, !t) {
   ^bb0(%d: !d, %t: !t):
@@ -30,7 +30,7 @@ func.func @threaded(%x: !w) {
 // Passing a line to a block consumes it.
 // CHECK: error: linear pulse value is consumed more than once on one path
 func.func @used_after_block(%x: !w) {
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!d, !t)
   %d1, %t1 = pulse.schedule_block "asap" (%d0, %t0) : (!d, !t) -> (!d, !t) {
   ^bb0(%d: !d, %t: !t):
@@ -50,7 +50,7 @@ func.func @used_after_block(%x: !w) {
 // Inside the block, the block argument is consumed at most once.
 // CHECK: error: linear pulse value is consumed more than once on one path
 func.func @twice_in_block(%x: !w) {
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!d, !t)
   %d1, %t1 = pulse.schedule_block "asap" (%d0, %t0) : (!d, !t) -> (!d, !t) {
   ^bb0(%d: !d, %t: !t):

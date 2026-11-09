@@ -27,11 +27,16 @@ def Pulse_ToneResource : Resource<"::pulse::ToneResource">;
 def QuditAllocOp : PulseOp<"qudit_alloc", [Pure]> {
   let summary = "Allocate a pulse-level qudit reference";
   let description = [{
-    A reference to one qudit of the device. The frontend sets the `qubit`
-    attribute to the qudit's index on the target. Lines and tones are
-    obtained from the reference with `pulse.get_drive_line` and
-    `pulse.get_readout_line`.
+    A reference to qudit `qudit` of the quantum system, by its index there.
+    Lines and tones are obtained from the reference with
+    `pulse.get_drive_line` and `pulse.get_readout_line`, which find the
+    qudit's index here.
+
+    ```mlir
+    %q = pulse.qudit_alloc {qudit = 3 : i64} : !pulse.qref
+    ```
   }];
+  let arguments = (ins ConfinedAttr<I64Attr, [IntNonNegative]>:$qudit);
   let results = (outs QrefType:$qref);
   let assemblyFormat = "attr-dict `:` type($qref)";
 }

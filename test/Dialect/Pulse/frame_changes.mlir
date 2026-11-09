@@ -8,8 +8,8 @@
 
 // CHECK-LABEL: func.func @stamps
 func.func @stamps() {
-  %q = pulse.qudit_alloc {qubit = 0 : i64} : !pulse.qref
-  %d, %t = pulse.get_drive_line %q {qubit = 0 : i64} : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
+  %d, %t = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %f = arith.constant 1.000000e+06 : f64
   %ph = arith.constant 2.500000e-01 : f64
   %duration = arith.constant 16 : i64
@@ -37,8 +37,8 @@ func.func @stamps() {
 // CHECK-LABEL: func.func @persistent
 module attributes {pulse.persistent_frames} {
   func.func @persistent() {
-    %q = pulse.qudit_alloc {qubit = 0 : i64} : !pulse.qref
-    %d, %t = pulse.get_drive_line %q {qubit = 0 : i64} : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+    %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
+    %d, %t = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
     %ph = arith.constant 2.500000e-01 : f64
     %duration = arith.constant 16 : i64
     %amplitude = arith.constant 1.000000e-01 : f64
@@ -59,8 +59,8 @@ module attributes {pulse.persistent_frames} {
 
 // CHECK-LABEL: func.func @carried
 func.func @carried() {
-  %q = pulse.qudit_alloc {qubit = 0 : i64} : !pulse.qref
-  %d, %t = pulse.get_drive_line %q {qubit = 0 : i64} : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
+  %d, %t = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %ph = arith.constant 2.500000e-01 : f64
   %duration = arith.constant 16 : i64
   %amplitude = arith.constant 1.000000e-01 : f64
@@ -86,8 +86,8 @@ func.func @carried() {
 
 // CHECK-LABEL: func.func @one_arm
 func.func @one_arm(%m: i1) {
-  %q = pulse.qudit_alloc {qubit = 0 : i64} : !pulse.qref
-  %d, %t = pulse.get_drive_line %q {qubit = 0 : i64} : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
+  %d, %t = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %ph = arith.constant 2.500000e-01 : f64
   %duration = arith.constant 16 : i64
   %amplitude = arith.constant 1.000000e-01 : f64
@@ -112,10 +112,10 @@ func.func @one_arm(%m: i1) {
 
 // CHECK-LABEL: func.func @idle
 func.func @idle() {
-  %q = pulse.qudit_alloc {qubit = 0 : i64} : !pulse.qref
-  %r = pulse.qudit_alloc {qubit = 1 : i64} : !pulse.qref
-  %d, %t = pulse.get_drive_line %q {qubit = 0 : i64} : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-  %e, %u = pulse.get_drive_line %r {qubit = 1 : i64} : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
+  %r = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qref
+  %d, %t = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %e, %u = pulse.get_drive_line %r : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %ph = arith.constant 2.500000e-01 : f64
   %duration = arith.constant 16 : i64
   %amplitude = arith.constant 1.000000e-01 : f64

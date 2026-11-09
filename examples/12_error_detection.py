@@ -21,7 +21,7 @@ import subprocess
 import cudaq_pulse as pulse
 
 _PRELUDE = """
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %d, %t = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %amp = arith.constant 0.1 : f64
   %zero = arith.constant 0.0 : f64

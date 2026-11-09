@@ -480,7 +480,7 @@ struct PulseVerifyPass
     bool hadError = false;
 
     // Check 1: Linearity -- lines must be consumed. The warning names the
-    // qubit instead of attaching the op: printing an op numbers every value
+    // qudit instead of attaching the op: printing an op numbers every value
     // of its function, which is linear in the program per warning.
     auto warnUnused = [](mlir::Operation *op, mlir::Value line,
                          llvm::StringRef kind) {
@@ -488,8 +488,8 @@ struct PulseVerifyPass
         return;
       auto diagnostic = mlir::emitWarning(op->getLoc())
                         << kind << " line allocated but never used";
-      if (auto qubit = op->getAttrOfType<mlir::IntegerAttr>("qubit"))
-        diagnostic << " (qubit " << qubit.getInt() << ")";
+      if (int64_t qudit = pulse::quditOf(op); qudit >= 0)
+        diagnostic << " (qudit " << qudit << ")";
     };
     module.walk([&](pulse::GetDriveLineOp op) {
       warnUnused(op, op.getLine(), "drive");

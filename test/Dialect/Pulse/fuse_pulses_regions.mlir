@@ -10,7 +10,7 @@
 // CHECK: arith.constant 100
 // CHECK: pulse.drive {{.*}}fused
 func.func @inside_an_arm(%bit: i1) {
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %c50 = arith.constant 50 : i64
   %amp = arith.constant 2.000000e-01 : f64
@@ -32,7 +32,7 @@ func.func @inside_an_arm(%bit: i1) {
 // CHECK-COUNT-2: pulse.drive %
 // CHECK-NOT: fused
 func.func @across_an_if(%bit: i1) {
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %c50 = arith.constant 50 : i64
   %amp = arith.constant 2.000000e-01 : f64
@@ -57,7 +57,7 @@ func.func @across_an_if(%bit: i1) {
 // CHECK-NOT: pulse.drive %
 // CHECK: scf.yield
 func.func @loop_body() {
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %c50 = arith.constant 50 : i64
   %amp = arith.constant 2.000000e-01 : f64
@@ -79,7 +79,7 @@ func.func @loop_body() {
 // CHECK: pulse.drive
 // CHECK-NOT: fused
 func.func @single_pulse_loop() {
-  %q = pulse.qudit_alloc : !pulse.qref
+  %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %c50 = arith.constant 50 : i64
   %amp = arith.constant 2.000000e-01 : f64

@@ -69,13 +69,12 @@ public:
     mlir::Operation *allocation = trace(line);
     if (!allocation)
       return -1;
-    auto qubit = allocation->getAttrOfType<mlir::IntegerAttr>("qubit");
+    int64_t qudit = quditOf(allocation);
     mlir::DenseI64ArrayAttr owners =
         mlir::isa<GetDriveLineOp>(allocation) ? drive : readout;
-    if (!qubit || !owners || qubit.getInt() < 0 ||
-        qubit.getInt() >= static_cast<int64_t>(owners.size()))
+    if (!owners || qudit < 0 || qudit >= static_cast<int64_t>(owners.size()))
       return -1;
-    int64_t owner = owners[qubit.getInt()];
+    int64_t owner = owners[qudit];
     return owner >= 0 && owner < n ? owner : -1;
   }
 

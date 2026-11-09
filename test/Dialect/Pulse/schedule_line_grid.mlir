@@ -24,10 +24,10 @@ module attributes {pulse.line_grid = 1 : i64, pulse.drive_line_grid = array<i64:
 // ALAP: pulse.drive {{.*}}{duration_cycles = 8 : i64, start_cycles = 12 : i64}
 // ALAP: pulse.drive {{.*}}{duration_cycles = 3 : i64, start_cycles = 15 : i64}
 func.func @sync_on_common_grid() {
-  %qa = pulse.qudit_alloc : !pulse.qref
-  %qb = pulse.qudit_alloc : !pulse.qref
-  %a0, %ta = pulse.get_drive_line %qa {qubit = 0 : i64} : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-  %b0, %tb = pulse.get_drive_line %qb {qubit = 1 : i64} : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %qa = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
+  %qb = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qref
+  %a0, %ta = pulse.get_drive_line %qa : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %b0, %tb = pulse.get_drive_line %qb : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %c8 = arith.constant 8 : i64
   %c6 = arith.constant 6 : i64
   %c3 = arith.constant 3 : i64
@@ -49,8 +49,8 @@ func.func @sync_on_common_grid() {
 // CHECK: scf.for
 // CHECK: pulse.drive {{.*}}{duration_cycles = 6 : i64, period_cycles = array<i64: 8>, start_cycles = 0 : i64}
 func.func @loop_on_grid() {
-  %qa = pulse.qudit_alloc : !pulse.qref
-  %a0, %ta = pulse.get_drive_line %qa {qubit = 0 : i64} : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %qa = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
+  %a0, %ta = pulse.get_drive_line %qa : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %c6 = arith.constant 6 : i64
   %amp = arith.constant 0.1 : f64
   %zero = arith.constant 0.0 : f64
@@ -71,8 +71,8 @@ func.func @loop_on_grid() {
 // CHECK: pulse.drive {{.*}}{duration_cycles = 12 : i64, start_cycles = 0 : i64}
 // CHECK: pulse.drive {{.*}}{duration_cycles = 8 : i64, start_cycles = 12 : i64}
 func.func @samples_at_the_lines_rate() {
-  %qa = pulse.qudit_alloc : !pulse.qref
-  %a0, %ta = pulse.get_drive_line %qa {qubit = 0 : i64} : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %qa = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qref
+  %a0, %ta = pulse.get_drive_line %qa : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %w = pulse.custom_samples [0.1, 0.2, 0.3] {rate = array<i64: 1, 4>} : !pulse.waveform
   %c8 = arith.constant 8 : i64
   %amp = arith.constant 0.1 : f64
