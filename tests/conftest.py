@@ -1,7 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import importlib
 import os
+import weakref
 
 import pytest
 from cudaq_pulse.runtime.gpu import GpuRuntimeError, require_gpu_runtime
@@ -13,6 +15,33 @@ from tests._handles import ladder_target
 # ``device()`` without an argument returns the process target.
 register_target("ladder", lambda arg: ladder_target(int(arg) if arg else 64))
 os.environ[ENV_VAR] = "ladder:8192"
+
+
+@pytest.fixture(autouse=True)
+def _guard_forms_agree(monkeypatch):
+    """Every cache guard a test builds gives one verdict as closures and as
+    generated code, checked when the test ends (kernel/_guard.py)."""
+    kernel = importlib.import_module("cudaq_pulse.kernel._kernel")
+    guards = importlib.import_module("cudaq_pulse.kernel._guard")
+    built = weakref.WeakSet()
+    build = kernel.build_guard
+
+    def recorded(*args, **kwargs):
+        guard = build(*args, **kwargs)
+        built.add(guard)
+        return guard
+
+    monkeypatch.setattr(kernel, "build_guard", recorded)
+    yield
+    for guard in list(built):
+        if not guard.impure:
+            closures, generated = (
+                guards._closures(guard.plan, guard.registers)(),
+                guards._generated(guard.plan)(),
+            )
+            assert closures == generated, (
+                f"a guard holds {closures} as closures but {generated} as generated code"
+            )
 
 
 def pytest_addoption(parser):
