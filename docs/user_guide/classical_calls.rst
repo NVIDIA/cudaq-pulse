@@ -269,9 +269,9 @@ nanoseconds:
    wait(d, tau * pulse.ns, bounds=(shortest_wait, longest_wait))
 
 Such a variable wait is a barrier for the lines that depend on it, and it
-opens a new *epoch* for them. The static schedule places it at its lower
+opens a new *segment* for them. The static schedule places it at its lower
 bound, and what follows it on those lines shifts by the wait's actual length,
-which is clamped to the bounds. ``Lowered.epochs()`` lists the epochs. A
+which is clamped to the bounds. ``Lowered.segments()`` lists the segments. A
 variable wait may not be inside a ``schedule_block`` or a branch; a blocking
 wait is a barrier in the same way.
 
@@ -420,7 +420,7 @@ Emulation
 
 ``Lowered.export_emulation()`` writes what a controller or an emulator runs
 the program from, as JSON-ready data: the static schedule, each event's
-epoch, the epochs, the calls, the links and the call manifest (every
+segment, the segments, the calls, the links and the call manifest (every
 function's dispatch key, link, payload sizes, latency and slots).
 
 ``cudaq_pulse.classical.emulation.emulate`` runs the program shot by shot in
@@ -654,12 +654,12 @@ A controller that runs these programs needs, beyond its pulse sequencer: a
 way to send a request on a link at a scheduled time and to receive the
 answer into registers; branching on an answer; frequency, phase and
 amplitude updates from an answer; and, for variable waits, a wait whose
-length comes from a register, after which the rest of the epoch is released
-together. The emulation artifact gives every event its epoch and its time
-from the epoch's start for that purpose. An epoch holds the lines of its
-barrier's timeline, so epochs of different timelines move independently: an
-epoch's shift adds to that of the epoch it follows, which is the one before
-it unless the epoch names another in ``after``.
+length comes from a register, after which the rest of the segment is released
+together. The emulation artifact gives every event its segment and its time
+from the segment's start for that purpose. A segment holds the lines of its
+barrier's timeline, so segments of different timelines move independently: an
+segment's shift adds to that of the segment it follows, which is the one before
+it unless the segment names another in ``after``.
 
 Not available yet: a channel through the CUDA-Q Realtime host library
 (``emulation.RealtimeChannel``), exporting calls as CUDA-Q

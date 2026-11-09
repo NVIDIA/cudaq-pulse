@@ -185,7 +185,7 @@ _SIMULATED = [c for c in VALID if c.root in ("default", "asap", "alap") and c.li
 @pytest.mark.parametrize("case", _params(_SIMULATED))
 def test_simulation_matches_an_explicit_schedule(case):
     low = matrix.lower_case(case, Q)
-    shifts = matrix.epoch_shifts(case, low)
+    shifts = matrix.segment_shifts(case, low)
     reference = matrix.explicit_reference(low, shifts).lower(Q[0], Q[1])
     assert matrix.pulses(reference) == matrix.pulses(low, shifts)
     simulated, expected = pulse.simulate(low, levels=2), pulse.simulate(reference, levels=2)

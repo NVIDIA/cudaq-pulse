@@ -367,13 +367,13 @@ def _manifest(lowered: Any) -> dict[str, Any]:
 
 
 def _emulation_export(lowered: Any, controller: int | None = None) -> dict[str, Any]:
-    """A compiled kernel for a controller emulator: schedule, epochs, calls,
+    """A compiled kernel for a controller emulator: schedule, segments, calls,
     links and manifest, as JSON-serializable data. Times are in clock cycles
     of the controller, at ``clock_ghz`` (with ``program_clock_ghz`` when that
     is not the program clock, as in ``cudaq_pulse.controller``); each event's
-    ``epoch_start_cycles`` is the static start of its epoch, which moves at
+    ``segment_start_cycles`` is the static start of its segment, which moves at
     run time by the lengths of the run-time waits before it on its lines. An
-    epoch's shift adds to that of the epoch it follows, the one before it
+    segment's shift adds to that of the segment it follows, the one before it
     unless it names another in ``after``. On a control system of several
     controllers, the part of the one *controller* indexes, with only its
     events, calls, links and functions, and ``controller`` its index."""
@@ -415,9 +415,9 @@ def _export(lowered: Any, with_events: bool, part: _Part | None = None) -> dict[
     *part* (a controller's index and clock, the functions it calls or takes
     answers of, and whether it takes part in each scheduled event), only
     that controller's part, in its cycles."""
-    epochs, after = lowered._epochs()
-    starts = [e.start_cycles for e in epochs]
-    epoch_of = lowered._event_epochs(syncs=False) if with_events else None
+    segments, after = lowered._segments()
+    starts = [e.start_cycles for e in segments]
+    segment_of = lowered._event_segments(syncs=False) if with_events else None
     takes = None
     if part is not None:
         takes = part[3]
@@ -431,12 +431,12 @@ def _export(lowered: Any, with_events: bool, part: _Part | None = None) -> dict[
                 "qubit": event.qubit,
                 "start_cycles": event.start_cycles,
                 "duration_cycles": event.duration_cycles,
-                "epoch": (
-                    index := epoch_of[position]
-                    if epoch_of and event.start_cycles is not None
+                "segment": (
+                    index := segment_of[position]
+                    if segment_of and event.start_cycles is not None
                     else 0
                 ),
-                "epoch_start_cycles": starts[index],
+                "segment_start_cycles": starts[index],
             }
             for position, event in enumerate(lowered.schedule)
             if takes is None or takes[position]
@@ -456,9 +456,9 @@ def _export(lowered: Any, with_events: bool, part: _Part | None = None) -> dict[
             for fn in lowered.classical
             if part is None or fn.name in part[2]
         },
-        "epochs": [
+        "segments": [
             {**asdict(e), "after": a} if k and a != k - 1 else asdict(e)
-            for k, (e, a) in enumerate(zip(epochs, after, strict=False))
+            for k, (e, a) in enumerate(zip(segments, after, strict=False))
         ],
         "events": events,
         "calls": [
@@ -498,7 +498,7 @@ def _call_data(call: Any) -> dict[str, Any]:
         "taken_cycles": call.taken_cycles,
         "first_use_cycles": call.first_use_cycles,
         "deadline_cycles": call.deadline_cycles,
-        "epoch": call.epoch,
+        "segment": call.segment,
         "link_name": call.link_name,
         "exposed_cycles": call.exposed_cycles,
     }
@@ -514,7 +514,7 @@ def _in_own_clock(data: dict[str, Any], events: list[Any], clocks: Any, own: Any
 
     if own.ratio != 1:
         _clocks.to_own(events, _clocks.EMULATION_EVENT_TIMES, own)
-        _clocks.to_own(data["epochs"], _clocks.EPOCH_TIMES, own, _clocks.EPOCH_LOWER_BOUNDS)
+        _clocks.to_own(data["segments"], _clocks.SEGMENT_TIMES, own, _clocks.SEGMENT_LOWER_BOUNDS)
         _clocks.to_own(data["calls"], _clocks.CALL_TIMES, own)
         data["clock_ghz"] = own.clock_ghz
     return {

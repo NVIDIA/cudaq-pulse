@@ -742,9 +742,9 @@ EVENT_TIMES = ("start_cycles", "duration_cycles", "end_cycles")
 # A run-time wait's bounds, which only some events have.
 EVENT_BOUNDS = ("max_cycles",)
 EVENT_LOWER_BOUNDS = ("min_cycles",)
-EMULATION_EVENT_TIMES = ("start_cycles", "duration_cycles", "epoch_start_cycles")
-EPOCH_TIMES = ("start_cycles", "max_shift_cycles")
-EPOCH_LOWER_BOUNDS = ("min_shift_cycles",)
+EMULATION_EVENT_TIMES = ("start_cycles", "duration_cycles", "segment_start_cycles")
+SEGMENT_TIMES = ("start_cycles", "max_shift_cycles")
+SEGMENT_LOWER_BOUNDS = ("min_shift_cycles",)
 CALL_TIMES = (
     "submit_cycles",
     "submit_duration_cycles",

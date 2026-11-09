@@ -5,12 +5,12 @@
 # This source code and the accompanying materials are made available under     #
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
-"""Rolled loops whose body ends an epoch every iteration: a blocking wait for
+"""Rolled loops whose body ends a segment every iteration: a blocking wait for
 an answer, or a wait whose length is one.
 
-Such a loop repeats when every iteration opens as many epochs and moves each
-line's epoch as far: the check reasons about it once per body and the
-structured export keeps it rolled, each event's epoch stepping per iteration;
+Such a loop repeats when every iteration opens as many segments and moves each
+line's segment as far: the check reasons about it once per body and the
+structured export keeps it rolled, each event's segment stepping per iteration;
 what they give is what they give with every iteration walked.
 """
 
@@ -150,7 +150,7 @@ def _lowered(kernel: Any, schedule: str, **options: Any) -> Any:
 
 @pytest.mark.parametrize("name", list(_rounds(1)))
 @pytest.mark.parametrize("schedule", ["asap", "alap", "rcp"])
-def test_a_summarizing_walk_of_epoch_loops_has_every_iteration_s_events(name, schedule):
+def test_a_summarizing_walk_of_segment_loops_has_every_iteration_s_events(name, schedule):
     lowered = _lowered(_rounds(80)[name], schedule)
     events, repeats = _summarizing(lowered)
     assert repeats
@@ -161,7 +161,7 @@ def test_a_summarizing_walk_of_epoch_loops_has_every_iteration_s_events(name, sc
 @pytest.mark.parametrize("clock", [None, *range(len(OWN_CLOCKS))])
 @pytest.mark.parametrize("name", list(_rounds(1)))
 @pytest.mark.parametrize("schedule", ["asap", "alap", "rcp"])
-def test_an_epoch_loop_is_checked_as_every_iteration(monkeypatch, clock, name, schedule):
+def test_an_segment_loop_is_checked_as_every_iteration(monkeypatch, clock, name, schedule):
     lowered = _lowered(_rounds(100)[name], schedule)
     for limits in _CALL_LIMITS:
         if clock is not None:
@@ -185,15 +185,15 @@ def _loops(events: list[Any]) -> list[Any]:
 
 @pytest.mark.parametrize("name", list(_rounds(1)))
 @pytest.mark.parametrize("schedule", ["asap", "alap", "rcp"])
-def test_the_structured_export_keeps_an_epoch_loop_rolled_and_unrolls_to_every_iteration(
+def test_the_structured_export_keeps_an_segment_loop_rolled_and_unrolls_to_every_iteration(
     name, schedule
 ):
     lowered = _lowered(_rounds(80)[name], schedule)
     structured = lowered.export_controller(version=2)
     loops = _loops(structured["events"])
     assert any(loop["trips"] > 2 for loop in loops)
-    stepped = [e for loop in loops for e in loop["body"] if "epoch_step" in e]
-    assert stepped and all(len(e["epoch_step"]) >= 1 for e in stepped)
+    stepped = [e for loop in loops for e in loop["body"] if "segment_step" in e]
+    assert stepped and all(len(e["segment_step"]) >= 1 for e in stepped)
     assert unroll(structured)["events"] == lowered.export_controller()["events"]
 
 

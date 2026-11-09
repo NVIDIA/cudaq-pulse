@@ -161,10 +161,10 @@ def calls(low: Any) -> list[Call]:
     ]
 
 
-def epoch_starts(low: Any) -> list[tuple[str, int, int]]:
-    """Each epoch after the first: what opened it, on which line or link,
+def segment_starts(low: Any) -> list[tuple[str, int, int]]:
+    """Each segment after the first: what opened it, on which line or link,
     and when it starts in the static schedule."""
-    return [(e.opened_by, e.line, e.start_cycles) for e in low.epochs()[1:]]
+    return [(e.opened_by, e.line, e.start_cycles) for e in low.segments()[1:]]
 
 
 def line_timelines(low: Any) -> dict[int, int]:
@@ -179,25 +179,25 @@ def line_timelines(low: Any) -> dict[int, int]:
     return found
 
 
-def epoch_after(low: Any) -> list[int | None]:
-    """The epoch each epoch follows, from the export: the one its barrier
+def segment_after(low: Any) -> list[int | None]:
+    """The segment each segment follows, from the export: the one its barrier
     ends, on the lines it holds back (``None`` for the first). The export
     names it only where it is not the one before."""
-    epochs = low.export_emulation()["epochs"]
-    return [e.get("after", k - 1 if k else None) for k, e in enumerate(epochs)]
+    segments = low.export_emulation()["segments"]
+    return [e.get("after", k - 1 if k else None) for k, e in enumerate(segments)]
 
 
-def event_epochs(low: Any) -> list[int]:
-    """The epoch of each event of ``low.schedule``, from the export."""
-    return [e["epoch"] for e in low.export_emulation()["events"]]
+def event_segments(low: Any) -> list[int]:
+    """The segment of each event of ``low.schedule``, from the export."""
+    return [e["segment"] for e in low.export_emulation()["events"]]
 
 
-def _follows(after: Sequence[int | None], epoch: int | None, k: int) -> bool:
-    """Whether *epoch* is *k* or opens after it, through ``after``."""
-    while epoch is not None:
-        if epoch == k:
+def _follows(after: Sequence[int | None], segment: int | None, k: int) -> bool:
+    """Whether *segment* is *k* or opens after it, through ``after``."""
+    while segment is not None:
+        if segment == k:
             return True
-        epoch = after[epoch]
+        segment = after[segment]
     return False
 
 
@@ -563,14 +563,14 @@ def check_barriers(case: Case, low: Any) -> None:
     """A variable or blocking wait is a barrier on the lines that wait for
     it: every operation of theirs before it in program order ends by its
     start, every one after starts after it, and so does everything in the
-    epoch it opens; there is one per variable wait and blocking answer.
+    segment it opens; there is one per variable wait and blocking answer.
     With one timeline it holds back every line and call."""
     events = low.schedule
     timelines = line_timelines(low)
     single = len(set(timelines.values())) <= 1
-    epoch_of, after = event_epochs(low), epoch_after(low)
+    segment_of, after = event_segments(low), segment_after(low)
     barriers: list[tuple[int, int]] = []
-    for k, (opened_by, line, start) in enumerate(epoch_starts(low), 1):
+    for k, (opened_by, line, start) in enumerate(segment_starts(low), 1):
         for i, e in enumerate(events):
             if any(i == b for b, _ in barriers):
                 continue
@@ -580,10 +580,10 @@ def check_barriers(case: Case, low: Any) -> None:
                 barriers.append((i, k))
                 break
         else:
-            raise AssertionError(f"no barrier opens the epoch at {start}")
+            raise AssertionError(f"no barrier opens the segment at {start}")
     for i, k in barriers:
         barrier = events[i]
-        opened = [_follows(after, epoch, k) for epoch in epoch_of]
+        opened = [_follows(after, segment, k) for segment in segment_of]
         held = {
             timelines[e.line] for e, o in zip(events, opened, strict=True) if o and e.link is None
         }
@@ -644,7 +644,7 @@ def check_tight(case: Case, low: Any) -> None:
     may wait for ends (or at 0); under ALAP every pulse and wait ends when
     something that may wait for it starts (or at the end)."""
     events = low.schedule
-    barriers = {start for _, _, start in epoch_starts(low)}
+    barriers = {start for _, _, start in segment_starts(low)}
     if case.policy == "asap":
         ready = {0} | {e.end for e in events} | {c.due for c in calls(low)} | barriers
         for e in events:
@@ -721,13 +721,13 @@ def check_export(case: Case, low: Any, again: Any) -> None:
 # ── The explicit reference ───────────────────────────────────────────────────
 
 
-def epoch_shifts(case: Case, low: Any) -> list[int]:
-    """How much later each epoch starts at run time than in the static
+def segment_shifts(case: Case, low: Any) -> list[int]:
+    """How much later each segment starts at run time than in the static
     schedule, which places each variable wait at its lowest length."""
     runs = iter(barrier_lengths(case))
-    after = epoch_after(low)
+    after = segment_after(low)
     shifts = [0]
-    for k, (opened_by, _, _) in enumerate(epoch_starts(low), 1):
+    for k, (opened_by, _, _) in enumerate(segment_starts(low), 1):
         previous = shifts[after[k]] if after[k] is not None else 0
         shifts.append(previous + (next(runs) - TAU_BOUNDS[0] if opened_by == "wait" else 0))
     return shifts
@@ -738,7 +738,7 @@ def explicit_reference(low: Any, shifts: Sequence[int]) -> Any:
     schedule puts it, each after a wait, and branches on the readout a
     call's answer comes from instead (the functions answer their input).
 
-    *shifts* is how much later each epoch starts at run time.
+    *shifts* is how much later each segment starts at run time.
     """
     exported = low.export_controller()
     events = exported["events"]
@@ -767,7 +767,7 @@ def explicit_reference(low: Any, shifts: Sequence[int]) -> Any:
                 event["index"],
                 event["kind"],
                 qudits.index(lines[event["line"]]),
-                start + shifts[event["epoch"]],
+                start + shifts[event["segment"]],
                 duration,
                 event["waveform"]["params"]["amplitude"],
                 tuple(conditions),
@@ -785,10 +785,10 @@ def explicit_reference(low: Any, shifts: Sequence[int]) -> Any:
     tree = _hoist(_nest(timed, 0))
     # The program runs until its last operation ends at run time, a wait
     # perhaps: the reference waits as long. A variable wait ends where the
-    # epoch it opens starts.
+    # segment it opens starts.
     end = max(
-        max(e.end + shifts[k] for e, k in zip(low.schedule, event_epochs(low), strict=True)),
-        max(e.start_cycles + shifts[e.index] for e in low.epochs()),
+        max(e.end + shifts[k] for e, k in zip(low.schedule, event_segments(low), strict=True)),
+        max(e.start_cycles + shifts[e.index] for e in low.segments()),
     )
     last = max((cursor.get(key, 0), key) for key in cursor)
     if end > last[0]:
@@ -882,6 +882,6 @@ def pulses(low: Any, shifts: Sequence[int] = ()) -> list[tuple[str, int, int, in
     for event in exported["events"]:
         if event["kind"] in ("drive", "readout"):
             start, duration = _export_times(event)
-            shift = shifts[event["epoch"]] if shifts else 0
+            shift = shifts[event["segment"]] if shifts else 0
             found.append((event["kind"], lines[event["line"]], start + shift, duration))
     return sorted(found)

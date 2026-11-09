@@ -5,7 +5,7 @@
 # This source code and the accompanying materials are made available under     #
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
-"""Waits whose length comes from a classical answer: barriers and epochs."""
+"""Waits whose length comes from a classical answer: barriers and segments."""
 
 from __future__ import annotations
 
@@ -130,7 +130,7 @@ def test_a_variable_wait_cannot_be_in_a_block_or_a_branch_arm():
 
 @pytest.mark.parametrize("tied", [False, True])
 @pytest.mark.parametrize("policy", POLICIES)
-def test_epochs_and_their_shift_ranges(policy, tied):
+def test_segments_and_their_shift_ranges(policy, tied):
     @pulse.kernel
     def k(q, p):
         d = get_drive_line(q)
@@ -146,34 +146,36 @@ def test_epochs_and_their_shift_ranges(policy, tied):
         drive(e, square(40, 0.1))
 
     low = pulse.compile(k, schedule=policy).lower(Q[0], Q[1])
-    epochs = low.epochs()
-    assert [e.opened_by for e in epochs] == ["start", "wait", "wait"]
-    assert epochs[1].max_shift_cycles == 92 and epochs[2].max_shift_cycles is None
+    segments = low.segments()
+    assert [e.opened_by for e in segments] == ["start", "wait", "wait"]
+    assert segments[1].max_shift_cycles == 92 and segments[2].max_shift_cycles is None
     calls = low.classical_report()
-    assert [c.epoch for c in calls] == [0, 1]
+    assert [c.segment for c in calls] == [0, 1]
     spectator = [e for e in low.schedule if e.kind == "drive" and e.qubit == 1]
     if tied:
         # Synced with the 400-cycle drive on the other line, the first
         # barrier waits for it, and that line's next drive for the barriers.
-        assert epochs[1].start_cycles == 400 + 8
-        assert spectator[1].start >= epochs[2].start_cycles
+        assert segments[1].start_cycles == 400 + 8
+        assert spectator[1].start >= segments[2].start_cycles
     else:
         # Untied, it starts once its answer is due, and the other line
         # plays on without waiting for either barrier.
-        assert epochs[1].start_cycles == calls[0].due_cycles + 8 < 400
+        assert segments[1].start_cycles == calls[0].due_cycles + 8 < 400
         assert spectator[1].start == 400
 
 
-def test_a_program_without_variable_waits_has_one_epoch():
+def test_a_program_without_variable_waits_has_one_segment():
     @pulse.kernel
     def k(q):
         d = get_drive_line(q)
         drive(d, square(40, next_tau.submit(1.0).result()))
 
-    assert pulse.compile(k).lower(Q[0]).epochs() == [pulse.compiler.Epoch(0, "start", -1, 0, 0, 0)]
+    assert pulse.compile(k).lower(Q[0]).segments() == [
+        pulse.compiler.Segment(0, "start", -1, 0, 0, 0)
+    ]
 
 
-# ── Epoch invariants ─────────────────────────────────────────────────────────
+# ── Segment invariants ─────────────────────────────────────────────────────────
 
 _STEP = st.tuples(st.sampled_from(("drive", "readout", "variable_wait", "call")), st.integers(0, 2))
 
@@ -200,7 +202,7 @@ def _program(steps):
 
 @settings(max_examples=examples(40), deadline=None)
 @given(steps=st.lists(_STEP, min_size=1, max_size=20), policy=st.sampled_from(POLICIES))
-def test_epoch_invariants(steps, policy):
+def test_segment_invariants(steps, policy):
     low = pulse.compile(_program(steps), schedule=policy).lower(Q[0], Q[1], Q[2])
     events = low.schedule
     barriers = [
@@ -209,7 +211,7 @@ def test_epoch_invariants(steps, policy):
         if e.kind == "wait" and e.link is None and e.duration_cycles == 4
     ]
     variable = sum(1 for kind, _ in steps if kind == "variable_wait")
-    assert len(low.epochs()) == variable + 1
+    assert len(low.segments()) == variable + 1
     # A barrier holds back the lines of its timeline: with one timeline,
     # every line and call.
     timelines = line_timelines(low)
@@ -230,14 +232,14 @@ def test_epoch_invariants(steps, policy):
 
 @settings(max_examples=examples(40), deadline=None)
 @given(steps=st.lists(_STEP, min_size=1, max_size=20), policy=st.sampled_from(POLICIES))
-def test_the_check_walk_counts_the_epochs_of_the_export(steps, policy):
+def test_the_check_walk_counts_the_segments_of_the_export(steps, policy):
     from cudaq_pulse.controller import _AMPLITUDES, _PARAMETERS
 
     module = pulse.compile(_program(steps), schedule=policy).lower(Q[0], Q[1], Q[2])._concrete()
     _, checked = module.controller_events(_PARAMETERS, _AMPLITUDES)
     _, exported, _ = module.controller_program(_PARAMETERS, _AMPLITUDES, True, exportable=False)
-    assert [e["epoch"] for e in checked] == [
-        e["epoch"] for e in exported if e["kind"] != "frame_update"
+    assert [e["segment"] for e in checked] == [
+        e["segment"] for e in exported if e["kind"] != "frame_update"
     ]
 
 
@@ -262,7 +264,7 @@ def test_a_wait_from_a_float_parameter_beside_calls_is_no_barrier():
     assert "classical.variable" in waits[1] and "pulse.min_cycles = 8" in waits[1]
     drives = [e for e in low.schedule if e.kind == "drive" and e.line == 0]
     assert drives[0].start == 10
-    assert [e.opened_by for e in low.epochs()] == ["start", "wait"]
+    assert [e.opened_by for e in low.segments()] == ["start", "wait"]
     # One compilation for every length; a length outside its bounds is a call error.
     compiled.lower(Q[0], Q[1], 50.0)
     assert compiled.cache_info().compiled == 1
@@ -286,10 +288,10 @@ def test_a_wait_from_an_answer_and_a_float_compiles_once():
     for k in range(1000):
         low = compiled.lower(Q[0], Q[1], 0.5 * k)
     assert compiled.cache_info().compiled == 1
-    # The answer keeps the wait a barrier that opens an epoch, at its lowest
+    # The answer keeps the wait a barrier that opens a segment, at its lowest
     # length until it is known; it waits for the answer, not for the other
     # line's 400-cycle drive.
-    assert [e.opened_by for e in low.epochs()] == ["start", "wait"]
+    assert [e.opened_by for e in low.segments()] == ["start", "wait"]
     (wait_event,) = [e for e in low.schedule if e.kind == "wait" and e.link is None]
     (call,) = low.classical_report()
     assert wait_event.start == max(40, call.due_cycles) and wait_event.duration_cycles == 8
@@ -327,7 +329,7 @@ def test_a_float_part_below_the_lowest_length_is_clamped_with_the_answer(tau):
     # answer adds to it, and the run clamps the sum to the bounds.
     compiled = pulse.compile(k)
     low = compiled.lower(Q[0], tau)
-    assert [e.opened_by for e in low.epochs()] == ["start", "wait"]
+    assert [e.opened_by for e in low.segments()] == ["start", "wait"]
     with pytest.raises(ValueError, match="above its highest length 100"):
         compiled.lower(Q[0], 101.0)
     assert compiled.cache_info().compiled == 1
@@ -389,4 +391,4 @@ def test_pulses_either_side_of_a_barrier_are_not_fused(barrier):
     low = pulse.compile(k, unroll_threshold=0).lower(Q[0], Q[1])
     spectator = [e for e in low.schedule if e.kind == "drive" and e.qubit == 1]
     assert [e.end - e.start for e in spectator] == [400, 30]
-    assert spectator[1].start >= low.epochs()[-1].start_cycles
+    assert spectator[1].start >= low.segments()[-1].start_cycles

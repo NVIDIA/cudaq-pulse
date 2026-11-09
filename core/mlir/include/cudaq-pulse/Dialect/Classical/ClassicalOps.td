@@ -43,7 +43,7 @@ def Classical_CallableOp : ClassicalOp<"callable", [Symbol]> {
       `"timeout"` (wait gives a leading `i1` that is false when no answer
       came within `timeout_ns`, which is what scheduling then budgets), or
       `"blocking"` (the program stops until the answer arrives; the wait
-      starts a new timing epoch).
+      starts a new timing segment).
     - `submit`: `"eager"` (sent as soon as its arguments are known, under
       every scheduling policy) or `"lazy"` (placed by the policy like any
       timed op).

@@ -53,7 +53,7 @@ Reports
    :members:
    :undoc-members:
 
-.. autoclass:: cudaq_pulse.compiler.Epoch
+.. autoclass:: cudaq_pulse.compiler.Segment
    :members:
    :undoc-members:
 

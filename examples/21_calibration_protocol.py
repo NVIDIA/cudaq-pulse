@@ -515,7 +515,7 @@ if __name__ == "__main__":
     )
     print(
         f"  {sum(1 for e in lowered.schedule if e.kind == 'readout')} readouts, "
-        f"{len(lowered.classical_report())} calls, {len(lowered.epochs())} epochs; "
+        f"{len(lowered.classical_report())} calls, {len(lowered.segments())} segments; "
         f"compiled in {compile_s:.2f} s"
     )
     print(f"  the static schedule (every variable wait at its least) is {end_cycles / 2e3:.0f} us")

@@ -280,7 +280,7 @@ def test_timeout_budgets_the_timeout():
     assert call.due_cycles == READOUT + 1 + math.ceil(400 * CLOCK)
 
 
-def test_blocking_waits_start_epochs():
+def test_blocking_waits_start_segments():
     @pulse.kernel
     def k(q, p):
         d = get_drive_line(q)
@@ -294,7 +294,7 @@ def test_blocking_waits_start_epochs():
     for policy in ("asap", "alap"):
         low = pulse.compile(k, schedule=policy).lower(Q[0], Q[1])
         calls = low.classical_report()
-        assert [c.epoch for c in calls] == [0, 1]
+        assert [c.segment for c in calls] == [0, 1]
         # Nothing before the first answer ends after it.
         first_answer = calls[0].taken_cycles
         assert _events(low, "drive")[0].start_cycles + ARM <= first_answer

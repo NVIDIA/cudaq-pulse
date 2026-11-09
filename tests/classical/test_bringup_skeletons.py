@@ -105,7 +105,7 @@ def test_k11_adaptive_t1_tracks_its_posterior_per_path(target):
     lowered = pulse.compile(adaptive_t1, device=dev, control_system=MACHINE).lower(
         dev.qudit_handles[0], 2
     )
-    assert [e.opened_by for e in lowered.epochs()] == ["start", "wait", "wait"]
+    assert [e.opened_by for e in lowered.segments()] == ["start", "wait", "wait"]
     result = pulse.simulate(lowered, dt_ns=4.0, levels=2)
     assert sum(branch.probability for branch in result.branches) == pytest.approx(1.0)
     for branch in result.branches:
@@ -119,7 +119,7 @@ def test_k11_adaptive_t1_tracks_its_posterior_per_path(target):
     survived = sum(b.probability for b in result.branches if b.levels[0] == 1)
     assert survived == pytest.approx(math.exp(-(5000 + 200) / t1_ns), abs=0.02)
     artifact = json.loads(json.dumps(lowered.export_emulation()))
-    assert len(artifact["epochs"]) == 3
+    assert len(artifact["segments"]) == 3
     assert artifact["manifest"]["functions"][0]["link_name"] == "controller"
 
 

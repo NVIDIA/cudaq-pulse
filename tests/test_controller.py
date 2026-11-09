@@ -732,7 +732,7 @@ def test_export_carries_calls_with_their_measurements_and_waits():
     assert all(line["role"] in ("drive", "readout") for line in program["lines"])
 
 
-def test_events_after_a_variable_wait_are_in_its_epoch():
+def test_events_after_a_variable_wait_are_in_its_segment():
     @pulse.classical(max_latency_ns=100)
     def tau() -> float:
         return 8.0
@@ -746,8 +746,8 @@ def test_events_after_a_variable_wait_are_in_its_epoch():
 
     program = pulse.compile(k).lower(Q[0]).export_controller()
     drives = [e for e in program["events"] if e["kind"] == "drive"]
-    assert [e["epoch"] for e in drives] == [0, 1]
-    assert len(program["epochs"]) == 2
+    assert [e["segment"] for e in drives] == [0, 1]
+    assert len(program["segments"]) == 2
 
 
 def test_a_controller_without_timeouts_rejects_a_timed_wait():

@@ -42,7 +42,7 @@ once; pulses that do not need the answer keep playing. ``.result()`` is where
 the answer is taken: it is due the maximum latency after the request is sent,
 and the pulses whose amplitude, phase, frequency or branch condition come from
 it start no earlier. An answer sets a duration only through a variable
-wait, ``wait(line, answer, bounds=(lo, hi))``, which begins a new epoch of
+wait, ``wait(line, answer, bounds=(lo, hi))``, which begins a new segment of
 the timeline. Outside a kernel, calling the function runs its body, its
 reference implementation, directly.
 

@@ -31,7 +31,7 @@ class ClassicalCall:
     (``None`` if the kernel never takes it). ``first_use_cycles`` is the
     earliest start of a pulse whose amplitude, tone or branch comes from the
     answer, and ``deadline_cycles`` the latest due time the function's
-    ``deadline_ns`` allows. ``epoch`` is the epoch it is submitted in.
+    ``deadline_ns`` allows. ``segment`` is the segment it is submitted in.
     ``link_name`` is the link's name in the control system, if it has one.
     ``controller`` is the controller whose instance of a per-controller link
     runs the call (``Link(per_controller=True)``), else ``None``.
@@ -62,7 +62,7 @@ class ClassicalCall:
     taken_cycles: int | None
     first_use_cycles: int | None
     deadline_cycles: int | None
-    epoch: int
+    segment: int
     link_name: str | None = None
     exposed_cycles: int | None = None
     controller: int | None = None
@@ -319,7 +319,7 @@ def report(lowered: "Lowered") -> list[ClassicalCall]:
     }
     new = object.__new__
     entries: list[ClassicalCall] = []
-    for name, link, iteration, start, length, due, taken, use, limit, epoch, owner in calls:
+    for name, link, iteration, start, length, due, taken, use, limit, segment, owner in calls:
         head, label = by_name[name]
         call = new(ClassicalCall)
         call.__dict__.update(
@@ -335,7 +335,7 @@ def report(lowered: "Lowered") -> list[ClassicalCall]:
                     taken,
                     use,
                     limit,
-                    epoch,
+                    segment,
                     label,
                     None if use is None else exposed(start, use),
                     owner,

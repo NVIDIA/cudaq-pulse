@@ -409,8 +409,8 @@ def test_every_time_in_the_exports_is_converted():
         *_clocks.EVENT_BOUNDS,
         *_clocks.EVENT_LOWER_BOUNDS,
         *_clocks.EMULATION_EVENT_TIMES,
-        *_clocks.EPOCH_TIMES,
-        *_clocks.EPOCH_LOWER_BOUNDS,
+        *_clocks.SEGMENT_TIMES,
+        *_clocks.SEGMENT_LOWER_BOUNDS,
         *_clocks.CALL_TIMES,
     }
     found = set()

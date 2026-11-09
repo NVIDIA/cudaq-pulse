@@ -62,9 +62,9 @@ def test_export_and_manifest_are_json():
     low = pulse.compile(adaptive, control_system=machine).lower(Q[0])
     artifact = json.loads(json.dumps(low.export_emulation()))
     assert artifact["format"] == emulation.FORMAT
-    assert [e["opened_by"] for e in artifact["epochs"]] == ["start", "wait"]
-    after = [e for e in artifact["events"] if e["epoch"] == 1]
-    assert after and all(e["start_cycles"] >= e["epoch_start_cycles"] for e in after)
+    assert [e["opened_by"] for e in artifact["segments"]] == ["start", "wait"]
+    after = [e for e in artifact["events"] if e["segment"] == 1]
+    assert after and all(e["start_cycles"] >= e["segment_start_cycles"] for e in after)
     (entry,) = artifact["manifest"]["functions"]
     version = next_wait.specialize(bits=1)
     assert version.name == "next_wait__1"

@@ -1059,7 +1059,7 @@ def test_report_and_schedule_events():
     assert call.submit_cycles == 200 and call.submit_duration_cycles == 1
     assert call.due_cycles == 201 + math.ceil(500 * clock)
     assert call.taken_cycles == call.due_cycles == call.first_use_cycles
-    assert call.slack_cycles == 0 and call.deadline_cycles is None and call.epoch == 0
+    assert call.slack_cycles == 0 and call.deadline_cycles is None and call.segment == 0
     kinds = [(e.kind, e.link) for e in low.schedule if e.link is not None]
     assert kinds == [("submit", 0), ("answer", 0)]
     assert all(e.link is None for e in low.schedule if e.kind == "drive")

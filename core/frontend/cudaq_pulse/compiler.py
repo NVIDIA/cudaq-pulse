@@ -466,18 +466,18 @@ class ScheduledEvent:
 
 
 @dataclass(frozen=True)
-class Epoch:
-    """One epoch of a compiled kernel, from ``Lowered.epochs()``.
+class Segment:
+    """One segment of a compiled kernel, from ``Lowered.segments()``.
 
     A variable wait (its length computed from a classical answer) or a
     blocking classical wait is a barrier for the lines that depend on it:
     those it waits on or whose pulses use its answer, and every line tied to
     them by a ``sync``, a shared tone, a branch or a kernel with its own
     ``schedule=``. They sync before it, and what follows on them shifts with
-    its run-time length; other lines keep their time. Epoch 0 starts the
-    program; epoch k starts when the k-th barrier, in program order, ends.
-    ``start_cycles`` is the epoch's start in the static schedule, which places
-    every barrier at its lowest length. At run time the epoch starts
+    its run-time length; other lines keep their time. Segment 0 starts the
+    program; segment k starts when the k-th barrier, in program order, ends.
+    ``start_cycles`` is the segment's start in the static schedule, which places
+    every barrier at its lowest length. At run time the segment starts
     ``shift_cycles`` later, with ``min_shift_cycles <= shift_cycles <=
     max_shift_cycles`` (``None``: unbounded); the bound adds up the barriers
     before it on the same lines. ``opened_by`` is ``"start"``, ``"wait"`` (a
@@ -924,37 +924,37 @@ class Lowered:
 
         return Schedule(events[0], ScheduledEvent)
 
-    def epochs(self) -> list[Epoch]:
-        """The epochs of the program, separated by variable and blocking waits.
+    def segments(self) -> list[Segment]:
+        """The segments of the program, separated by variable and blocking waits.
 
-        A program without such waits has one epoch.
+        A program without such waits has one segment.
         """
-        return self._epochs()[0]
+        return self._segments()[0]
 
-    def _epochs(self) -> tuple[list[Epoch], list[int | None]]:
-        """The epochs, and the epoch each one follows (``None`` for the
+    def _segments(self) -> tuple[list[Segment], list[int | None]]:
+        """The segments, and the segment each one follows (``None`` for the
         first): the one its barrier ends, on the lines the barrier holds
-        back. Its shift adds to that epoch's."""
+        back. Its shift adds to that segment's."""
         module = self._module if self.scheduled else self._concrete()
         with self._lock:
-            boundaries = module.epoch_boundaries()
-        epochs = [Epoch(0, "start", -1, 0, 0, 0)]
+            boundaries = module.segment_boundaries()
+        segments = [Segment(0, "start", -1, 0, 0, 0)]
         after: list[int | None] = [None]
         for k, (kind, line, start, lowest, highest, before) in enumerate(boundaries, start=1):
-            most = epochs[before].max_shift_cycles
+            most = segments[before].max_shift_cycles
             extra = None if most is None or highest < 0 else most + highest - lowest
-            epochs.append(Epoch(k, kind, line, start + lowest, 0, extra))
+            segments.append(Segment(k, kind, line, start + lowest, 0, extra))
             after.append(before)
-        return epochs, after
+        return segments, after
 
-    def _event_epochs(self, syncs: bool) -> list[int]:
-        """The epoch of each event of ``schedule`` (with *syncs*, of the
+    def _event_segments(self, syncs: bool) -> list[int]:
+        """The segment of each event of ``schedule`` (with *syncs*, of the
         controller export), in the same order."""
         if not self.classical:
             return []
         module = self._concrete() if syncs or self._retimed else self._module
         with self._lock:
-            return list(module.event_epochs(syncs))
+            return list(module.event_segments(syncs))
 
     @property
     def controller_usage(self) -> UsageReport:
@@ -973,7 +973,7 @@ class Lowered:
         return (_report or _load_report())(self)
 
     def export_emulation(self, *, controller: int | None = None) -> dict[str, Any]:
-        """The program for a controller emulator: its schedule by epoch, its
+        """The program for a controller emulator: its schedule by segment, its
         calls and the manifest of its classical functions (see
         ``cudaq_pulse.classical.emulation``). On a control system of several
         controllers, that of the one *controller* indexes, in its cycles."""

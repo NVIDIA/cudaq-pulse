@@ -171,7 +171,7 @@ def export(lowered, name, directory):
     path.write_text(json.dumps(artifact, indent=1))
     print(
         f"  {artifact['format']}: events {len(artifact['events'])}, "
-        f"epochs {len(artifact['epochs'])}, calls {len(artifact['calls'])} "
+        f"segments {len(artifact['segments'])}, calls {len(artifact['calls'])} "
         f"({path.stat().st_size} bytes)"
     )
     for entry in artifact["manifest"]["functions"]:
@@ -218,10 +218,10 @@ if __name__ == "__main__":
         q, rounds, alpha0, beta0, first_wait
     )
     # The static schedule places each variable wait at its lower bound; every
-    # epoch after one shifts by the wait's actual length.
+    # segment after one shifts by the wait's actual length.
     print_report(tracker)
-    epochs = tracker.epochs()
-    print(f"  {len(epochs)} epochs, opened by: {[e.opened_by for e in epochs]}")
+    segments = tracker.segments()
+    print(f"  {len(segments)} segments, opened by: {[e.opened_by for e in segments]}")
     result = pulse.simulate(tracker, dt_ns=dt_ns)
     print(f"  {len(result.branches)} measurement branches")
     likeliest = max(result.branches, key=lambda branch: branch.probability)

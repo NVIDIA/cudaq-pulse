@@ -22,7 +22,7 @@
 //   iteration, with each phase's step per iteration; an iteration 0 that
 //   differs is peeled off first (format /2).
 //
-// A loop that does not repeat, and one holding an epoch boundary, is walked
+// A loop that does not repeat, and one holding a segment boundary, is walked
 // at every iteration in every way, so all three describe the same program.
 
 #pragma once
@@ -72,7 +72,7 @@ struct ControllerRecord {
   // expression of the walk.
   llvm::StringRef update;
   int32_t value = -1;
-  int64_t epoch = 0;
+  int64_t segment = 0;
   // What the event has that is known only at run time: its index in the
   // walk's `known`, else -1.
   int32_t known = -1;
@@ -80,13 +80,13 @@ struct ControllerRecord {
   // for its iteration 1, 2 for its last) for each sampled loop around it.
   int64_t weight = 1;
   std::vector<std::pair<int64_t, int8_t>> samples;
-  // Rolled: the phase's and the epoch's step per iteration of each rolled
+  // Rolled: the phase's and the segment's step per iteration of each rolled
   // loop around it, outermost first. A loop record has its iterations,
   // first iteration, period, the number of records of its body after it,
   // and the end of its last iteration.
   struct Step {
     double phase;
-    int64_t epoch;
+    int64_t segment;
   };
   std::vector<Step> steps;
   int64_t trips = 0;
@@ -271,11 +271,11 @@ struct ControllerWalk : ControllerExpressions {
   std::vector<std::pair<int64_t, int8_t>> sampling;
   int64_t nextInstance = 0;
   llvm::DenseMap<mlir::Operation *, bool> boundaries;
-  // The epoch of each event, when the program has classical calls. A loop
-  // holding an epoch boundary is sampled at every iteration, so that the
+  // The segment of each event, when the program has classical calls. A loop
+  // holding a segment boundary is sampled at every iteration, so that the
   // walk visits the boundaries in program order; one rolled counts the
-  // boundaries of the iterations it does not walk (EpochWalk::skip).
-  std::optional<EpochWalk> epochs;
+  // boundaries of the iterations it does not walk (SegmentWalk::skip).
+  std::optional<SegmentWalk> segments;
 
   static Frame initialFrame(mlir::Operation *root) {
     if (!root)
@@ -842,8 +842,8 @@ struct ControllerWalk : ControllerExpressions {
     r.conditions = branches;
     if (walk == Walk::Sampled)
       r.samples = sampling;
-    if (epochs)
-      r.epoch = epochs->visit(op, iteration);
+    if (segments)
+      r.segment = segments->visit(op, iteration);
     if (track) {
       dependencies.emplace_back();
       natives.push_back(-1);
@@ -1178,10 +1178,10 @@ struct ControllerWalk : ControllerExpressions {
       if (ids)
         for (int64_t id : ids.asArrayRef())
           sizes.push_back(carried[id].size());
-      // A sampled walk that counts epochs visits each boundary; a rolled one
+      // A sampled walk that counts segments visits each boundary; a rolled one
       // counts those of the iterations it does not walk.
       if (walk == Walk::Every || trips < 2 ||
-          (epochs && walk == Walk::Sampled && holdsBoundary(loop)))
+          (segments && walk == Walk::Sampled && holdsBoundary(loop)))
         everyIteration(loop, trips);
       else if (walk == Walk::Sampled)
         sampled(loop, trips);
@@ -1302,7 +1302,7 @@ struct ControllerWalk : ControllerExpressions {
     iteration.pop_back();
   }
 
-  /// Whether `loop` holds a variable or blocking wait, which ends an epoch
+  /// Whether `loop` holds a variable or blocking wait, which ends a segment
   /// in every iteration.
   bool holdsBoundary(mlir::scf::ForOp loop) {
     auto [it, inserted] = boundaries.try_emplace(loop, false);
@@ -1327,7 +1327,7 @@ struct ControllerWalk : ControllerExpressions {
     std::map<int64_t, std::vector<Carried>> carried;
     std::map<mlir::Operation *, FrameDependencies> frameDependencies;
     size_t boundaries = 0;
-    EpochWalk::Mark epochs;
+    SegmentWalk::Mark segments;
   };
 
   State save() const {
@@ -1342,9 +1342,9 @@ struct ControllerWalk : ControllerExpressions {
                 carried,
                 track ? frameDependencies
                       : std::map<mlir::Operation *, FrameDependencies>()};
-    if (epochs) {
-      state.boundaries = epochs->boundaries.size();
-      state.epochs = epochs->mark();
+    if (segments) {
+      state.boundaries = segments->boundaries.size();
+      state.segments = segments->mark();
     }
     return state;
   }
@@ -1364,11 +1364,11 @@ struct ControllerWalk : ControllerExpressions {
       natives.resize(state.size);
       frameDependencies = std::move(state.frameDependencies);
     }
-    if (epochs) {
-      epochs->boundaries.resize(state.boundaries);
-      epochs->skipped =
-          state.epochs.opened - static_cast<int64_t>(state.boundaries);
-      epochs->current = std::move(state.epochs.current);
+    if (segments) {
+      segments->boundaries.resize(state.boundaries);
+      segments->skipped =
+          state.segments.opened - static_cast<int64_t>(state.boundaries);
+      segments->current = std::move(state.segments.current);
     }
   }
 
@@ -1522,11 +1522,11 @@ struct ControllerWalk : ControllerExpressions {
     auto frames0 = frames;
     size_t a0 = result.size();
     block(*loop.getBody());
-    // The epochs at the start of each iteration walked, and after the last.
-    std::array<EpochWalk::Mark, 4> marks;
-    if (epochs) {
-      marks[0] = entry.epochs;
-      marks[1] = epochs->mark();
+    // The segments at the start of each iteration walked, and after the last.
+    std::array<SegmentWalk::Mark, 4> marks;
+    if (segments) {
+      marks[0] = entry.segments;
+      marks[1] = segments->mark();
     }
     // The states before and after the first iteration exported rolled.
     auto framesFirst = frames0, framesNext = frames;
@@ -1536,8 +1536,8 @@ struct ControllerWalk : ControllerExpressions {
     iteration.back() = 1;
     block(*loop.getBody());
     size_t a2 = result.size();
-    if (epochs)
-      marks[2] = epochs->mark();
+    if (segments)
+      marks[2] = segments->mark();
     int64_t first = 0;
     size_t a = a0, b = a1, e = a2;
     if (!sameFrequencies(framesFirst, framesNext)) {
@@ -1550,8 +1550,8 @@ struct ControllerWalk : ControllerExpressions {
         latestNext = latest;
         iteration.back() = 2;
         block(*loop.getBody());
-        if (epochs)
-          marks[3] = epochs->mark();
+        if (segments)
+          marks[3] = segments->mark();
         a = a1, b = a2, e = result.size();
       } else {
         e = 0;
@@ -1559,9 +1559,9 @@ struct ControllerWalk : ControllerExpressions {
     }
     std::optional<int64_t> period =
         e && !tracks() ? periodOf(a, b, e, false) : std::optional<int64_t>();
-    // The iterations exported rolled open as many epochs each.
-    if (period && epochs &&
-        !EpochWalk::steady(llvm::ArrayRef(marks).slice(first, 3)))
+    // The iterations exported rolled open as many segments each.
+    if (period && segments &&
+        !SegmentWalk::steady(llvm::ArrayRef(marks).slice(first, 3)))
       period.reset();
 
     std::vector<ControllerRecord::Step> steps;
@@ -1573,9 +1573,9 @@ struct ControllerWalk : ControllerExpressions {
         period.reset();
       for (size_t l = 0; period && l < x.steps.size(); ++l)
         if (!same(x.steps[l].phase, y.steps[l].phase) ||
-            x.steps[l].epoch != y.steps[l].epoch)
+            x.steps[l].segment != y.steps[l].segment)
           period.reset();
-      steps.push_back({step, epochs ? y.epoch - x.epoch : 0});
+      steps.push_back({step, segments ? y.segment - x.segment : 0});
     }
     if (!period) {
       iteration.pop_back();
@@ -1585,8 +1585,8 @@ struct ControllerWalk : ControllerExpressions {
     // The state after the last iteration: every number moves by the same
     // amount per iteration from the first exported one on.
     int64_t more = trips - first - 2;
-    if (epochs && !epochs->skip(more, marks[first + 1]))
-      throw std::overflow_error("a rolled loop opens more than 2**63 epochs");
+    if (segments && !segments->skip(more, marks[first + 1]))
+      throw std::overflow_error("a rolled loop opens more than 2**63 segments");
     auto framesAfter = frames;
     for (auto &[root, frame] : framesAfter) {
       auto found = framesNext.find(root);
@@ -2192,7 +2192,7 @@ class ControllerEvents {
 public:
   /// `compact` (format /2) leaves out what is derivable or the default: the
   /// index (an event's place in pre-order), the qudit (its line's), the end,
-  /// an empty iteration, epoch 0, empty conditions and lists, a sync's or
+  /// an empty iteration, segment 0, empty conditions and lists, a sync's or
   /// call's line, a timeout that is none and a first iteration of 0; its
   /// `waveform` returns (index into the program's waveforms, None).
   ControllerEvents(const ControllerWalk &walk,
@@ -2254,7 +2254,8 @@ private:
              *conditions = intern("conditions"), *constant = intern("const"),
              *controller = intern("controller"),
              *duration = intern("duration_cycles"), *end = intern("end_cycles"),
-             *epoch = intern("epoch"), *epochStep = intern("epoch_step"),
+             *segment = intern("segment"),
+             *segmentStep = intern("segment_step"),
              *expression = intern("expression"),
              *first = intern("first_iteration"),
              *frameUpdates = intern("frame_updates"),
@@ -2596,15 +2597,15 @@ private:
             r.iteration[i] < 0 ? none() : integer(r.iteration[i]));
       put(event, key.iteration, iteration);
     }
-    int64_t epoch = r.start ? r.epoch : 0;
-    if (!compact || epoch)
-      put(event, key.epoch, integer(epoch));
+    int64_t segment = r.start ? r.segment : 0;
+    if (!compact || segment)
+      put(event, key.segment, integer(segment));
     if (r.start &&
-        llvm::any_of(r.steps, [](const auto &s) { return s.epoch; })) {
+        llvm::any_of(r.steps, [](const auto &s) { return s.segment; })) {
       nb::list steps = list(r.steps.size());
       for (size_t i = 0; i < r.steps.size(); ++i)
-        set(steps, i, integer(r.steps[i].epoch));
-      put(event, key.epochStep, steps);
+        set(steps, i, integer(r.steps[i].segment));
+      put(event, key.segmentStep, steps);
     }
     if (!compact || !r.conditions.empty()) {
       nb::list conditions = list(r.conditions.size());

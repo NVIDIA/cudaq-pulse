@@ -8,7 +8,7 @@
 """Emulating a controller that calls classical services, in virtual time.
 
 ``export(lowered)`` writes what a controller needs to run a compiled kernel:
-its static schedule with each event's epoch, the epoch boundaries, its calls,
+its static schedule with each event's segment, the segment boundaries, its calls,
 and the **manifest** of the classical functions it calls (``manifest``): per
 function its dispatch key, link, handler schema and latency budget, which is
 what a CUDA-Q Realtime dispatcher's function table holds.
@@ -21,7 +21,7 @@ time. Its budget is what the compiled program allows: it is in time if it
 arrives the link's feedback time before it is due. A late answer, or a
 decoder's NOT_READY, takes the timeout arm of a wait with a timeout; a late
 answer is recorded as late otherwise. Answers are bound to the shot as in
-simulation, so variable waits get their real lengths and later epochs shift
+simulation, so variable waits get their real lengths and later segments shift
 accordingly.
 """
 

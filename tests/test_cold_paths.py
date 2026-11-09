@@ -82,7 +82,7 @@ def test_devices_and_a_classical_program_load_no_heavy_module(tmp_path):
         _PROGRAM
         + "p.device('transmon_generic:4')\n"
         + "p.device({'target': 'transmon_17q', 'clock_ghz': 1.0})\n"
-        + "low.mlir(); low.schedule; low.epochs; low.classical_report; str(low)\n"
+        + "low.mlir(); low.schedule; low.segments; low.classical_report; str(low)\n"
         + "low.generic.bind([])\n"
     )
     assert _loaded(code, tmp_path) == []

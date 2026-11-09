@@ -295,7 +295,7 @@ behavior may change in any 0.x release.
   `ValueError` at the call. A literal length must be a whole number of
   cycles. A length computed from the answer of a classical call makes the
   wait a variable region: it is rounded the same way, clamped to its
-  bounds, and opens a new epoch (below). A length from both, such as
+  bounds, and opens a new segment (below). A length from both, such as
   `wait(d, answer + tau)`, compiles once too: each call checks that its
   float part (the length with its answers at 0) is finite and at most the
   upper bound, and the whole length is clamped to the bounds at run time.
@@ -516,14 +516,14 @@ behavior may change in any 0.x release.
   verifies slots, deadlines and ordering. A wait whose length is an answer,
   and a blocking wait for an answer, are barriers for the lines that depend
   on them (through a `sync`, a measurement or answer, a branch or a shared
-  tone): those lines split into epochs (`Lowered.epochs()`) whose start
+  tone): those lines split into segments (`Lowered.segments()`) whose start
   shifts with the run-time lengths before them, and other lines keep their
   time, so qubits waiting on answers of their own run side by side.
 - **Simulating and emulating calls.** `pulse.simulate` binds answers per
   measurement path, with timeouts from the latency model, assignment errors
   and relaxation during readout, IQ points from a dispersive readout model,
   and `plant=` to simulate a drifted device without compiling again.
-  `Lowered.export_emulation()` writes the schedule, epochs and call manifest
+  `Lowered.export_emulation()` writes the schedule, segments and call manifest
   for a controller; `classical.emulation.emulate` runs a program in virtual
   time against real services, in process or over UDP. Requests and answers
   use the CUDA-Q real-time wire format (`classical.wire`);
@@ -546,7 +546,7 @@ behavior may change in any 0.x release.
   with their roles, and every drive, readout, wait, sync and classical call
   with its exact start and end, waveform and parameters (and, with
   `sample_rate_ghz=`, its samples), tone frequency and frame phase (including
-  the phase a detuned tone gains between drives), epoch and the
+  the phase a detuned tone gains between drives), segment and the
   measurement- or answer-conditioned branches it lies in. What is known only
   at run time is exported as an expression over readouts and answers: a
   waveform parameter (`runtime`, including a value a measurement selects),

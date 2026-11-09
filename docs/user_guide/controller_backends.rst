@@ -35,7 +35,7 @@ program uses, ``lines`` each line's index, ``role`` (``"drive"`` or
 see below), and ``limits`` the controller limits it was
 checked against (``null`` without). ``events`` lists every drive, readout,
 wait, sync, classical call and frame update in program order, once per loop
-iteration and both arms of a branch. ``epochs``, ``calls``, ``links`` and
+iteration and both arms of a branch. ``segments``, ``calls``, ``links`` and
 ``manifest`` are those of ``Lowered.export_emulation()`` (see
 :doc:`classical_calls`).
 
@@ -64,12 +64,12 @@ depends on that line's native frequency. Each event has:
     event at its start and does not schedule again.
 ``iteration``
     The iteration of each loop around it, outermost first.
-``epoch``
-    The epoch it starts in. A wait whose length is an answer, and a blocking
-    wait for an answer, end one epoch of the lines that wait for it and
-    start the next; an event shifts by the run-time lengths of its epoch's
-    barrier and of the barriers of the epochs it follows. Each epoch follows
-    the one before it, or the epoch its ``after`` names.
+``segment``
+    The segment it starts in. A wait whose length is an answer, and a blocking
+    wait for an answer, end one segment of the lines that wait for it and
+    start the next; an event shifts by the run-time lengths of its segment's
+    barrier and of the barriers of the segments it follows. Each segment follows
+    the one before it, or the segment its ``after`` names.
 ``conditions``
     The measurement-conditioned branches the event lies in, outermost
     first: the ``branch``, the ``arm`` (``true`` for the ``if`` arm), and
@@ -366,10 +366,10 @@ Played events and frame updates
     frame), each with its ``frequency_hz``, its ``phase_rad`` in the loops'
     first iterations, and ``phase_step_rad``, the phase added per iteration
     of each loop around it, outermost first.
-Epochs in a rolled loop
-    An event's ``epoch`` is that of the loops' first iterations; in a loop
-    whose body ends epochs (a blocking wait for an answer, or a wait whose
-    length is an answer), ``epoch_step`` is the epochs added per iteration
+Segments in a rolled loop
+    An event's ``segment`` is that of the loops' first iterations; in a loop
+    whose body ends segments (a blocking wait for an answer, or a wait whose
+    length is an answer), ``segment_step`` is the segments added per iteration
     of each loop around it, outermost first, omitted where every step is 0.
 Values known at run time
     As in ``/1``, and only where a value is computed from a readout or an
@@ -395,7 +395,7 @@ Left out
     What follows from the rest or is the default: an event's ``index`` (its
     place in a pre-order walk of the tree, loops included, which is what
     references give), its ``qudit`` (its line's), its ``end_cycles``, an
-    empty ``iteration`` (``null`` for a loop kept rolled), an ``epoch`` of
+    empty ``iteration`` (``null`` for a loop kept rolled), a ``segment`` of
     0, empty ``conditions``, ``readouts`` and ``answers``, the ``line`` of
     a sync or a classical call, a ``timeout_ns`` of ``null``, and the
     ``amplitude``, which follows from the waveform. A reference is to the
@@ -449,7 +449,7 @@ The export counts the controller's own cycles: ``clock_ghz`` is the
 controller's clock, and when that is not the program clock the export also
 gives ``program_clock_ghz``, converts every time to the controller's cycles
 (exactly for operations on its lines; rounded up for classical calls and
-epochs) and scales each waveform's time parameters (``duration``,
+segments) and scales each waveform's time parameters (``duration``,
 ``sigma``, ``beta``, ``risefall``) with them. A program for a controller at
 the program clock is unchanged. ``ControlSystem(reference_clock_ghz=...)``
 states a clock the controllers share; every controller's clock must be a

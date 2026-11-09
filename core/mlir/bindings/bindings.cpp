@@ -468,18 +468,18 @@ static int64_t nativeOffset(mlir::Operation *line) {
   });
 }
 
-/// The epochs of a scheduled program, in program order. A variable wait or a
-/// blocking wait ends the current epoch of its timeline (the lines it holds
-/// back) and opens the next one, which starts after it: epoch k > 0 is
-/// opened by the k-th such wait, and follows `after`, the epoch its timeline
-/// was in. Without timelines every epoch follows the one before.
-struct EpochWalk {
+/// The segments of a scheduled program, in program order. A variable wait or a
+/// blocking wait ends the current segment of its timeline (the lines it holds
+/// back) and opens the next one, which starts after it: segment k > 0 is
+/// opened by the k-th such wait, and follows `after`, the segment its timeline
+/// was in. Without timelines every segment follows the one before.
+struct SegmentWalk {
   /// (kind, line or link, start, lowest, highest, after) per boundary: see
-  /// PulseModule::epoch_boundaries().
+  /// PulseModule::segment_boundaries().
   using Boundary =
       std::tuple<std::string, int64_t, int64_t, int64_t, int64_t, int64_t>;
 
-  explicit EpochWalk(mlir::ModuleOp module) {
+  explicit SegmentWalk(mlir::ModuleOp module) {
     module.walk([&](mlir::Operation *op) {
       if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
         lineIndex.try_emplace(op, static_cast<int64_t>(lineIndex.size()));
@@ -491,15 +491,15 @@ struct EpochWalk {
   std::map<int64_t, int64_t> current;
   std::vector<Boundary> boundaries;
   /// The boundaries of the loop iterations a summarizing walk does not
-  /// visit, which number the epochs after them as if it did.
+  /// visit, which number the segments after them as if it did.
   int64_t skipped = 0;
 
-  /// The epochs opened so far.
+  /// The segments opened so far.
   int64_t count() const {
     return static_cast<int64_t>(boundaries.size()) + skipped;
   }
 
-  /// The epochs opened and each timeline's epoch at a point of the walk.
+  /// The segments opened and each timeline's segment at a point of the walk.
   struct Mark {
     int64_t opened = 0;
     std::map<int64_t, int64_t> current;
@@ -507,9 +507,9 @@ struct EpochWalk {
   Mark mark() const { return {count(), current}; }
 
   /// Whether the iterations of a loop from each of `marks` to the next each
-  /// open as many epochs and move each timeline's epoch as far: then, as
+  /// open as many segments and move each timeline's segment as far: then, as
   /// iterations that play alike visit the same boundaries, every later one
-  /// does too, and an event of copy j is in its first copy's epoch moved j
+  /// does too, and an event of copy j is in its first copy's segment moved j
   /// times as far.
   static bool steady(llvm::ArrayRef<Mark> marks) {
     auto at = [](const Mark &mark, int64_t timeline) {
@@ -521,7 +521,7 @@ struct EpochWalk {
       if (c.opened - b.opened != b.opened - a.opened)
         return false;
       for (const Mark *mark : {&a, &b, &c})
-        for (const auto &[timeline, epoch] : mark->current)
+        for (const auto &[timeline, segment] : mark->current)
           if (at(c, timeline) - at(b, timeline) !=
               at(b, timeline) - at(a, timeline))
             return false;
@@ -530,19 +530,19 @@ struct EpochWalk {
   }
 
   /// Count `times` more iterations of a loop as visited, each opening the
-  /// epochs and moving each timeline's epoch as much as the iteration
-  /// walked since `from` did; false past 2**63 epochs.
+  /// segments and moving each timeline's segment as much as the iteration
+  /// walked since `from` did; false past 2**63 segments.
   bool skip(int64_t times, const Mark &from) {
     std::optional<int64_t> more = checkedMul(times, count() - from.opened);
     if (!more || !checkedAdd(skipped, *more))
       return false;
-    for (auto &[timeline, epoch] : current) {
+    for (auto &[timeline, segment] : current) {
       auto found = from.current.find(timeline);
       int64_t was = found == from.current.end() ? 0 : found->second;
-      std::optional<int64_t> moved = checkedMul(times, epoch - was);
-      if (!moved || !checkedAdd(epoch, *moved))
+      std::optional<int64_t> moved = checkedMul(times, segment - was);
+      if (!moved || !checkedAdd(segment, *moved))
         return false;
-      epoch += *moved;
+      segment += *moved;
     }
     skipped += *more;
     return true;
@@ -562,18 +562,18 @@ struct EpochWalk {
     return 0;
   }
 
-  /// The epoch `op` runs in, in iteration `iteration`; a boundary opens the
-  /// next. A variable wait runs in the epoch it ends, a blocking wait's
+  /// The segment `op` runs in, in iteration `iteration`; a boundary opens the
+  /// next. A variable wait runs in the segment it ends, a blocking wait's
   /// answer is taken in the one it opens.
   int64_t visit(mlir::Operation *op, llvm::ArrayRef<int64_t> iteration) {
-    int64_t &epoch = current[timelineOf(op)];
+    int64_t &segment = current[timelineOf(op)];
     if (!op->hasAttr("classical.variable") &&
         !op->hasAttr("classical.blocking"))
-      return epoch;
+      return segment;
     auto start = pulse::scheduledStart(op, iteration);
     if (!start)
-      return epoch;
-    int64_t after = epoch;
+      return segment;
+    int64_t after = segment;
     if (mlir::isa<pulse::WaitOp>(op)) {
       mlir::Operation *allocation = trace(op->getOperand(0));
       boundaries.emplace_back(
@@ -585,12 +585,12 @@ struct EpochWalk {
                               classical::intAttr(op, "classical.device"),
                               *start, 0, -1, after);
     }
-    epoch = count();
-    return mlir::isa<pulse::WaitOp>(op) ? after : epoch;
+    segment = count();
+    return mlir::isa<pulse::WaitOp>(op) ? after : segment;
   }
 
   /// Visit every op of `block` once per loop iteration, both arms of each
-  /// branch, as the event listings do; `fn(op, epoch)` for each timed op,
+  /// branch, as the event listings do; `fn(op, segment)` for each timed op,
   /// call and sync.
   template <typename Fn>
   void run(mlir::Block &block, Fn &&fn) {
@@ -1140,7 +1140,7 @@ struct ControllerEventWalk : ControllerExpressions {
     if constexpr (RunTime)
       if (detail)
         runTime(op, nodes);
-    epochOf(op);
+    segmentOf(op);
     result.emplace_back(
         op->getName().stripDialect().str(), lineOf(allocation), qubit, start,
         duration, std::vector<int64_t>(iteration.begin(), iteration.end()),
@@ -1231,7 +1231,7 @@ struct ControllerEventWalk : ControllerExpressions {
       dependencies.emplace_back();
       natives.push_back(-1);
     }
-    epochOf(op);
+    segmentOf(op);
     result.emplace_back(
         "sync", -1, -1, time,
         time ? std::optional<int64_t>(0) : std::optional<int64_t>(),
@@ -1272,7 +1272,7 @@ struct ControllerEventWalk : ControllerExpressions {
     }
     // A call has no qudit: its slot holds the controller whose instance of
     // a per-controller link runs it (-1: none).
-    epochOf(op);
+    segmentOf(op);
     result.emplace_back(
         submit ? "submit" : "answer",
         classical::intAttr(op, "classical.device"),
@@ -1419,18 +1419,18 @@ struct ControllerEventWalk : ControllerExpressions {
     }
   }
 
-  /// With `epochWalk` (a module with classical calls): the epoch of each
+  /// With `segmentWalk` (a module with classical calls): the segment of each
   /// event, parallel to `result`.
-  std::optional<EpochWalk> epochWalk;
-  std::vector<int64_t> epochs;
+  std::optional<SegmentWalk> segmentWalk;
+  std::vector<int64_t> segments;
 
-  void epochOf(mlir::Operation *op) {
-    if (epochWalk)
-      epochs.push_back(epochWalk->visit(op, iteration));
+  void segmentOf(mlir::Operation *op) {
+    if (segmentWalk)
+      segments.push_back(segmentWalk->visit(op, iteration));
   }
 
-  EpochWalk::Mark epochsNow() const {
-    return epochWalk ? epochWalk->mark() : EpochWalk::Mark{};
+  SegmentWalk::Mark segmentsNow() const {
+    return segmentWalk ? segmentWalk->mark() : SegmentWalk::Mark{};
   }
 
   /// With `summarize` (for a check, which tracks no tone's frame changes): a
@@ -1474,34 +1474,35 @@ struct ControllerEventWalk : ControllerExpressions {
   template <bool RunTime>
   LLVM_ATTRIBUTE_NOINLINE void summarizeLoop(mlir::Block &body, int64_t trips) {
     Mark zero = mark();
-    std::array<EpochWalk::Mark, 4> epochStates;
-    epochStates[0] = epochsNow();
+    std::array<SegmentWalk::Mark, 4> segmentStates;
+    segmentStates[0] = segmentsNow();
     iteration.back() = 0;
     block<RunTime>(body);
     Mark one = mark();
-    epochStates[1] = epochsNow();
+    segmentStates[1] = segmentsNow();
     iteration.back() = 1;
     block<RunTime>(body);
     Mark two = mark();
-    epochStates[2] = epochsNow();
+    segmentStates[2] = segmentsNow();
     auto framesOne = frames;
     auto reachedOne = reached;
     auto latestOne = latest;
     iteration.back() = 2;
     block<RunTime>(body);
     Mark three = mark();
-    epochStates[3] = epochsNow();
+    segmentStates[3] = segmentsNow();
     std::map<int64_t, int64_t> periods;
     auto period = repeating(zero, one, two, three, framesOne, reachedOne,
                             latestOne, periods);
     if constexpr (RunTime)
       if (period && !sameRunTime(zero, one, two, three))
         period.reset();
-    if (period && epochWalk && !EpochWalk::steady(epochStates))
+    if (period && segmentWalk && !SegmentWalk::steady(segmentStates))
       period.reset();
-    // The epochs the copies after the first open, as if visited.
-    if (period && epochWalk && !epochWalk->skip(trips - 3, epochStates[2]))
-      throw std::overflow_error("a rolled loop opens more than 2**63 epochs");
+    // The segments the copies after the first open, as if visited.
+    if (period && segmentWalk &&
+        !segmentWalk->skip(trips - 3, segmentStates[2]))
+      throw std::overflow_error("a rolled loop opens more than 2**63 segments");
     if (period && *period < 0) {
       summarizeUnsynced(two, three, trips, reachedOne, periods);
       return;
@@ -1900,15 +1901,15 @@ public:
     // would only walk the heap.
     CollectorPause pause;
     this->walk = &walk;
-    const std::vector<int64_t> *epochs =
-        walk.epochWalk ? &walk.epochs : nullptr;
+    const std::vector<int64_t> *segments =
+        walk.segmentWalk ? &walk.segments : nullptr;
     nb::list out = list(walk.result.size());
     auto known = walk.known.begin();
     for (size_t i = 0; i < walk.result.size(); ++i) {
       const ControllerEventWalk::Known *extra = nullptr;
       if (known != walk.known.end() && known->event == static_cast<int64_t>(i))
         extra = &*known++;
-      set(out, i, event(i, walk.result[i], extra, epochs));
+      set(out, i, event(i, walk.result[i], extra, segments));
     }
     return out;
   }
@@ -1941,7 +1942,7 @@ private:
                branch = key("branch"), conditions = key("conditions"),
                constant = key("const"), controller = key("controller"),
                duration = key("duration_cycles"), end = key("end_cycles"),
-               epoch = key("epoch"), frameUpdates = key("frame_updates"),
+               segment = key("segment"), frameUpdates = key("frame_updates"),
                frequency = key("frequency_hz"), function = key("function"),
                id = key("id"), im = key("im"), index = key("index"),
                iteration = key("iteration"), kind = key("kind"),
@@ -2220,7 +2221,7 @@ private:
 
   nb::object event(size_t index, const ControllerEventWalk::Event &item,
                    const ControllerEventWalk::Known *extra,
-                   const std::vector<int64_t> *epochs) {
+                   const std::vector<int64_t> *segments) {
     const auto &[kind, line, qudit, start, duration, iteration, nodes,
                  frequency, phase, branches, joined, refs, callee, mode,
                  timeout] = item;
@@ -2236,7 +2237,8 @@ private:
     put(event, keys.end,
         start && duration ? integer(*start + *duration) : nb::none());
     put(event, keys.iteration, integers(iteration));
-    put(event, keys.epoch, integer(epochs && start ? (*epochs)[index] : 0));
+    put(event, keys.segment,
+        integer(segments && start ? (*segments)[index] : 0));
     put(event, keys.conditions, conditions(branches, false));
     if (kind == "drive" || kind == "readout") {
       llvm::ArrayRef<std::tuple<int64_t, int64_t, int32_t>> runtime;
@@ -2649,9 +2651,9 @@ public:
   /// Returned as controller.export() gives them: (lines, events), lists of
   /// dicts, with `parameters` the parameter names of each waveform shape and
   /// `amplitudes` the shapes with an overall amplitude; each event has its
-  /// epoch (all 0 without classical calls). A list `slots` gets each line's
+  /// segment (all 0 without classical calls). A list `slots` gets each line's
   /// runtime-qudit slot (-1 for none). With a list `repeats`, for a check, a
-  /// long rolled loop whose iterations repeat (and that holds no epoch
+  /// long rolled loop whose iterations repeat (and that holds no segment
   /// boundary) has its events once, no event has a tone id or frame
   /// changes, and `repeats` gets each such loop's ControllerEventWalk::Repeat;
   /// with a list `periods` too, its lines may repeat at periods of their
@@ -2727,7 +2729,7 @@ public:
     walk->unsynced = unsynced;
     walk->trackFrames = trackFrames;
     if (classical::declaresClassicalCalls(*module_))
-      walk->epochWalk.emplace(*module_);
+      walk->segmentWalk.emplace(*module_);
     if (runTime_)
       controllerEvents<true>(*walk, lines, slots);
     else
@@ -2877,11 +2879,11 @@ public:
   /// classical call once per loop iteration, or, with `rolled`, with each
   /// loop whose iterations repeat kept as one "loop" event holding its body,
   /// in the compact encoding of format /2, its lines as (role, qubit). With
-  /// `epochs`, each event is in the epoch of its timeline (see EpochWalk),
-  /// else in epoch 0; `waveform`, when given, turns a waveform's nodes (op
-  /// name without the dialect, its numbers with NaN where one is not a
-  /// number, the indices of its waveform operands; children before their
-  /// parent) into (expression, amplitude), once per distinct waveform;
+  /// `segments`, each event is in the segment of its timeline (see
+  /// SegmentWalk), else in segment 0; `waveform`, when given, turns a
+  /// waveform's nodes (op name without the dialect, its numbers with NaN where
+  /// one is not a number, the indices of its waveform operands; children before
+  /// their parent) into (expression, amplitude), once per distinct waveform;
   /// without it the expression is built here, its numbers named by
   /// `parameters`, and the amplitude is that of the shapes in `amplitudes`.
   /// What is known only at run time is an expression over readouts, answers
@@ -2901,8 +2903,8 @@ public:
   /// `exportable`, for a check, a value the export's vocabulary has no term
   /// for is {"unknown": what it is computed from} rather than an error.
   nb::tuple
-  controller_program(nb::handle parameters, nb::handle amplitudes, bool epochs,
-                     bool rolled, nb::object waveform,
+  controller_program(nb::handle parameters, nb::handle amplitudes,
+                     bool segments, bool rolled, nb::object waveform,
                      std::optional<std::tuple<int64_t, int64_t, int64_t>> own,
                      nb::object slots, bool exportable) {
     if (own && (rolled || std::get<0>(*own) < 1 || std::get<1>(*own) < 1 ||
@@ -2915,8 +2917,8 @@ public:
     walk.runTime = runTime_;
     walk.persistent =
         module_->getOperation()->hasAttr("pulse.persistent_frames");
-    if (epochs)
-      walk.epochs.emplace(*module_);
+    if (segments)
+      walk.segments.emplace(*module_);
     std::vector<ControllerLine> lines;
     ControllerWaveforms waveforms;
     std::vector<OffGridEvent> offGrid;
@@ -3202,11 +3204,11 @@ public:
   }
 
   /// (function, link, iteration, submit start, submit duration, due,
-  /// taken, first use, deadline, epoch) for every execution of a classical
+  /// taken, first use, deadline, segment) for every execution of a classical
   /// call, in program order; times in cycles. `taken` is the wait's start
   /// (absent for an answer never taken), `first use` the earliest start of a
   /// pulse computed from the answer, `deadline` the latest due time the
-  /// function's deadline allows, and `epoch` the epoch it is submitted in.
+  /// function's deadline allows, and `segment` the segment it is submitted in.
   using ClassicalCall =
       std::tuple<std::string, int64_t, std::vector<int64_t>, int64_t, int64_t,
                  int64_t, std::optional<int64_t>, std::optional<int64_t>,
@@ -3255,7 +3257,7 @@ public:
       at.resize(pulse::enclosingLoops(op).size(), 0);
       return pulse::scheduledStart(op, at);
     };
-    EpochWalk epochs(*module_);
+    SegmentWalk segments(*module_);
     llvm::SmallVector<int64_t, 2> iteration;
     llvm::DenseMap<mlir::Operation *, bool> busy;
     auto callsOrBoundaries = [&](mlir::scf::ForOp loop) {
@@ -3275,7 +3277,7 @@ public:
     std::function<void(mlir::Block &)> collect = [&](mlir::Block &block) {
       for (mlir::Operation &op : block) {
         if (auto submit = mlir::dyn_cast<classical::SubmitOp>(op)) {
-          int64_t epoch = epochs.visit(&op, iteration);
+          int64_t segment = segments.visit(&op, iteration);
           auto start = pulse::scheduledStart(&op, iteration);
           if (!start)
             continue;
@@ -3300,15 +3302,15 @@ public:
               submit.getCallee().str(),
               classical::intAttr(&op, "classical.device"),
               std::vector<int64_t>(iteration.begin(), iteration.end()), *start,
-              duration, due, taken, firstUse, deadline, epoch,
+              duration, due, taken, firstUse, deadline, segment,
               op.hasAttr(classical::kInstanceAttr)
                   ? std::optional<int64_t>(
                         classical::intAttr(&op, classical::kInstanceAttr))
                   : std::nullopt);
         } else if (mlir::isa<classical::WaitOp, pulse::WaitOp>(op)) {
-          epochs.visit(&op, iteration);
+          segments.visit(&op, iteration);
         } else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
-          // A loop without calls or epoch boundaries adds nothing.
+          // A loop without calls or segment boundaries adds nothing.
           if (!callsOrBoundaries(loop))
             continue;
           int64_t trips = pulse::constantTripCount(loop).value_or(0);
@@ -3329,33 +3331,33 @@ public:
     return calls;
   }
 
-  /// The boundaries between epochs, in program order, once per loop
+  /// The boundaries between segments, in program order, once per loop
   /// iteration: (kind, line or link, start, lowest, highest, after). A "wait"
   /// is a variable wait on a line, whose length lies in [lowest, highest]
   /// cycles (highest -1 if unbounded); an "answer" is a blocking wait on a
   /// link, whose length is the answer's latency (lowest 0, highest -1). The
-  /// k-th boundary starts epoch k when it ends; `after` is the epoch it
+  /// k-th boundary starts segment k when it ends; `after` is the segment it
   /// ends, of the lines it holds back.
-  std::vector<EpochWalk::Boundary> epoch_boundaries() {
+  std::vector<SegmentWalk::Boundary> segment_boundaries() {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
     if (!classical::declaresClassicalCalls(*module_))
       return {};
-    EpochWalk walk(*module_);
+    SegmentWalk walk(*module_);
     walk.run(*module_->getBody(), [](mlir::Operation *, int64_t) {});
     return std::move(walk.boundaries);
   }
 
-  /// The epoch of each event of `events()` (with `syncs`, of
+  /// The segment of each event of `events()` (with `syncs`, of
   /// `controller_program()` not rolled), in the same order.
-  std::vector<int64_t> event_epochs(bool syncs) {
+  std::vector<int64_t> event_segments(bool syncs) {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
-    std::vector<int64_t> epochs;
-    EpochWalk walk(*module_);
-    walk.run(*module_->getBody(), [&](mlir::Operation *op, int64_t epoch) {
+    std::vector<int64_t> segments;
+    SegmentWalk walk(*module_);
+    walk.run(*module_->getBody(), [&](mlir::Operation *op, int64_t segment) {
       if (syncs || !mlir::isa<pulse::SyncOp>(op))
-        epochs.push_back(epoch);
+        segments.push_back(segment);
     });
-    return epochs;
+    return segments;
   }
 
   // ── Simulating classical calls ──────────────────────────────────────
@@ -6362,7 +6364,7 @@ NB_MODULE(_cudaq_pulse_native, m) {
            "lowest lengths, the longest program, whether that is the "
            "controller's, the runs of each such wait)")
       .def("controller_program", &PulseModule::controller_program,
-           nb::arg("parameters"), nb::arg("amplitudes"), nb::arg("epochs"),
+           nb::arg("parameters"), nb::arg("amplitudes"), nb::arg("segments"),
            nb::arg("rolled") = false, nb::arg("waveform").none() = nb::none(),
            nb::arg("own") = nb::none(), nb::arg("slots").none() = nb::none(),
            nb::arg("exportable") = true,
@@ -6395,10 +6397,10 @@ NB_MODULE(_cudaq_pulse_native, m) {
            "This module with one call's answer bound, scheduled again")
       .def("placeholders", &PulseModule::placeholders,
            "This module with unbound answers set to zero")
-      .def("epoch_boundaries", &PulseModule::epoch_boundaries,
-           "The variable and blocking waits that start new epochs")
-      .def("event_epochs", &PulseModule::event_epochs, nb::arg("syncs"),
-           "The epoch of each event, in the order the events are listed")
+      .def("segment_boundaries", &PulseModule::segment_boundaries,
+           "The variable and blocking waits that start new segments")
+      .def("event_segments", &PulseModule::event_segments, nb::arg("syncs"),
+           "The segment of each event, in the order the events are listed")
       .def("classical_calls", &PulseModule::classical_calls,
            "Every execution of a classical call, with its timing")
       .def("readout_drives", &PulseModule::readout_drives, nb::arg("path"),

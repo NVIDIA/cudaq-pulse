@@ -13,7 +13,7 @@ format ``FORMAT`` (``cudaq-pulse.controller/1``): the lines and the qudits
 they belong to, and every drive, readout, wait, sync and classical call with
 its exact start and end, its waveform (the shape and its parameters, and
 optionally its samples), its tone's frequency and frame phase, the
-measurement-conditioned branches it lies in, and the epochs and calls of
+measurement-conditioned branches it lies in, and the segments and calls of
 ``Lowered.export_emulation()``. The schedule is final: a backend places each
 event at its ``start_cycles`` and does not schedule again.
 
@@ -929,7 +929,7 @@ def export(
         "qudits": list(lowered.qudits),
         "lines": lines,
         "events": events,
-        "epochs": base["epochs"],
+        "segments": base["segments"],
         "calls": base["calls"],
         "links": base["links"],
         "manifest": base["manifest"],
@@ -1107,7 +1107,7 @@ def _export_structured(
     if frames:
         names = {} if slots is None else {i: f"s{k}" for i, k in enumerate(slots) if k >= 0}
         program = _with_frames(program, frames, names)
-    program["epochs"] = base["epochs"]
+    program["segments"] = base["segments"]
     program["calls"] = base["calls"]
     program["links"] = base["links"]
     program["manifest"] = base["manifest"]
@@ -1354,11 +1354,11 @@ def unroll(program: Mapping[str, Any]) -> dict[str, Any]:
                 "duration_cycles": duration,
                 "end_cycles": None if start is None or duration is None else start + duration,
                 "iteration": iteration,
-                "epoch": item.get("epoch", 0)
+                "segment": item.get("segment", 0)
                 + sum(
                     j * step
                     for (_, _, j, _, _), step in zip(
-                        loops, item.get("epoch_step", ()), strict=False
+                        loops, item.get("segment_step", ()), strict=False
                     )
                 ),
                 "conditions": conditions,
@@ -1644,7 +1644,7 @@ def _export_part(
         "qudits": sorted({line["qudit"] for line in played}),
         "lines": played,
         "events": mine,
-        "epochs": base["epochs"],
+        "segments": base["segments"],
         "calls": base["calls"],
         "links": base["links"],
         "manifest": base["manifest"],

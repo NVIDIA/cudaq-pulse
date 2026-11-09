@@ -132,7 +132,7 @@ Each schedule assigns ``start_cycles`` and ``duration_cycles`` to every timed
 operation, respecting data dependencies, syncs, the order of pulses on each
 tone and the policies of schedule blocks. A wait for an answer or for a
 blocking call holds back only the lines of its timeline, which it opens a new
-epoch for; see :doc:`../user_guide/classical_calls`.
+segment for; see :doc:`../user_guide/classical_calls`.
 
 pulse-schedule-asap, pulse-schedule-alap
    Place each operation as early, or as late, as its dependencies allow.

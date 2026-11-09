@@ -44,6 +44,6 @@ def test_a_program_without_calls_has_no_classical_ir(name):
     text = lowered.mlir()
     assert "classical" not in text
     assert lowered.classical_report() == []
-    assert [e.opened_by for e in lowered.epochs()] == ["start"]
+    assert [e.opened_by for e in lowered.segments()] == ["start"]
     if name in BASELINE:
         assert lowered.metrics.op_count == BASELINE[name]["op_count"]

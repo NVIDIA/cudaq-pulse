@@ -137,7 +137,7 @@ def _views(program):
     shown = {
         "mlir": program.mlir(),
         "schedule": program.schedule,
-        "epochs": program.epochs(),
+        "segments": program.segments(),
         "metrics": program.metrics,
         "parameters": program.parameters,
         "arguments": program.arguments,

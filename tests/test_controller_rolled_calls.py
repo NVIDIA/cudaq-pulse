@@ -251,7 +251,7 @@ def _frames(n: int) -> dict[str, Any]:
 
     @pulse.kernel
     def waited(q, p, t):
-        # Each iteration's wait for an answer opens an epoch on one timeline.
+        # Each iteration's wait for an answer opens a segment on one timeline.
         d = get_drive_line(q)
         e = get_drive_line(t)
         ro = get_readout_line(q)
@@ -278,10 +278,10 @@ class _Expansion:
     repeat is its first moved by j times its difference from the copy before
     (each line's and call's own period, in a loop of several). A reference
     to an event of that copy or the one before moves by j copies (by the
-    last copy's from after the loop); starts, ends, epochs, iterations and
+    last copy's from after the loop); starts, ends, segments, iterations and
     branch ids move by j differences; all else is the same in every copy."""
 
-    _MOVING = frozenset({"start_cycles", "end_cycles", "epoch", "iteration", "branch"})
+    _MOVING = frozenset({"start_cycles", "end_cycles", "segment", "iteration", "branch"})
 
     def __init__(self, events: list[Any], repeats: list[Any]) -> None:
         self.events = events
