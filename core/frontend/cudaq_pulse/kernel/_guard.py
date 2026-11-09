@@ -5,10 +5,11 @@
 A kernel reads module globals, closure cells and attribute chains of either
 (``cfg.amp``, ``math.pi``) while it is traced, and the compiled IR bakes the
 values in. The guard records those reads, found statically in the decoded
-bytecode of the kernel and of every Python helper it can reach, and generates
-one Python function that re-reads them and compares with the values seen at
-trace time. A cache entry is used only while its guard holds, so rebinding a
-global or mutating a list a kernel reads is seen on the next call.
+bytecode of the kernel and of every Python helper it can reach, as a list of
+steps that re-read them, in order, and compare with the values seen at trace
+time; one loop runs the steps, so building a guard compiles no code. A cache
+entry is used only while its guard holds, so rebinding a global or mutating a
+list a kernel reads is seen on the next call.
 
 A mutable container is compared by its contents, copied when the guard is
 built. A dict the kernel only subscripts (``TABLE[key]`` at every read, and
@@ -21,18 +22,26 @@ from __future__ import annotations
 import builtins
 import copy
 import types
+import weakref
 from itertools import compress
 from operator import itemgetter
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from . import _bytecode_normalize as bc
 
 if TYPE_CHECKING:
+    import threading
     from collections.abc import Callable, Collection, Mapping
+    from typing import Any
 
     _Read = tuple[str, str, tuple[str, ...], bool]
+    # Bound by _load (below).
+    _generated: Callable[[tuple[tuple[Any, ...], ...]], Callable[[], bool]]
+    _CODE: dict[str, types.CodeType]
+    _CODE_LIMIT: int
+    _CODE_LOCK: threading.Lock
 
-_IMMUTABLE = (int, float, complex, str, bytes, bool, type(None), range)
+_IMMUTABLE = (int, float, complex, str, bytes, bool, types.NoneType, range)
 _SNAPSHOT = (list, dict, set, bytearray)
 _MAX_HELPER_DEPTH = 8
 
@@ -89,63 +98,242 @@ def _same_contents(value: Any, snapshot: Any) -> bool:
         return False
 
 
-# A code's canonical opcodes are read as bytes: 1 in _IS_READ at a global or
-# closure read; _END follows the last instruction.
-_IS_READ = bytearray(256)
-_IS_READ[bc.LOAD_GLOBAL] = _IS_READ[bc.LOAD_DEREF] = 1
-_END = b"\xff\xff"
-# Instructions that push one value and read nothing from the stack.
-_PUSH_ONE = frozenset({bc.LOAD_CONST, bc.LOAD_FAST, bc.LOAD_DEREF, bc.LOAD_GLOBAL})
-_OP = itemgetter(0)
-_ARG = itemgetter(1)
+# What finding reads and generating checks use is made when the first guard
+# is built, not at import: _reads is until then a stub that calls _load, which
+# binds _reads, _generated and the code cache. A guard upgrades only after it
+# was built, so _generated is always bound by then.
+def _load() -> None:
+    global _reads, _generated, _CODE, _CODE_LIMIT, _CODE_LOCK
+    import threading
 
-# The reads of each code object; equal code objects read the same names.
-_READS: dict[types.CodeType, list[_Read]] = {}
-_READS_LIMIT = 4096
+    # A code's canonical opcodes are read as bytes: 1 in is_read at a global
+    # or closure read; end_mark follows the last instruction.
+    is_read = bytearray(256)
+    is_read[bc.LOAD_GLOBAL] = is_read[bc.LOAD_DEREF] = 1
+    end_mark = b"\xff\xff"
+    # Instructions that push one value and read nothing from the stack.
+    push_one = frozenset({bc.LOAD_CONST, bc.LOAD_FAST, bc.LOAD_DEREF, bc.LOAD_GLOBAL})
+    op_of = itemgetter(0)
+    arg_of = itemgetter(1)
+    # The reads of each code object; equal code objects read the same names.
+    cache: dict[types.CodeType, list[_Read]] = {}
+    limit = 4096
+
+    def reads(code: types.CodeType) -> list[_Read]:
+        """``(kind, name, attribute chain, indexed)`` for each global or closure
+        read; *indexed* when the value read is subscripted at once with a key
+        pushed by one instruction, so nothing else ever holds it."""
+        if code in cache:
+            return cache[code]
+        try:
+            prog = bc.decode(code)
+        except Exception:
+            return []
+        instrs = prog.instrs
+        ops = bytes(map(op_of, instrs)) + end_mark
+        cellvars = code.co_cellvars
+        found: list[_Read] = []
+        for start in compress(range(len(instrs)), ops.translate(is_read)):
+            op, arg = instrs[start]
+            if op == bc.LOAD_GLOBAL:
+                kind = "g"
+            elif arg not in cellvars:
+                kind = "c"
+            else:
+                continue
+            end = start + 1
+            while ops[end] == bc.LOAD_ATTR:
+                end += 1
+            chain = () if end == start + 1 else tuple(map(arg_of, instrs[start + 1 : end]))
+            found.append((kind, arg, chain, ops[end] in push_one and ops[end + 1] == bc.SUBSCR))
+        if len(cache) >= limit:
+            cache.clear()
+        cache[code] = found
+        return found
+
+    def generated(plan: tuple[tuple[Any, ...], ...]) -> Callable[[], bool]:
+        """The guard's check as one generated function, its code compiled once
+        per source (a bounded cache, safe to share between threads)."""
+        src, env = _source(plan)
+        code = _CODE.get(src)
+        if code is None:
+            code = compile(src, "<pulse guard>", "exec")
+            with _CODE_LOCK:
+                if len(_CODE) >= _CODE_LIMIT:
+                    _CODE.clear()
+                code = _CODE.setdefault(src, code)
+        exec(code, env)
+        check: Callable[[], bool] = env["_make"]()
+        return check
+
+    _CODE, _CODE_LIMIT, _CODE_LOCK = {}, 256, threading.Lock()
+    _reads, _generated = reads, generated
 
 
 def _reads(code: types.CodeType) -> list[_Read]:
-    """``(kind, name, attribute chain, indexed)`` for each global or closure
-    read; *indexed* when the value read is subscripted at once with a key
-    pushed by one instruction, so nothing else ever holds it."""
-    if code in _READS:
-        return _READS[code]
-    try:
-        prog = bc.decode(code)
-    except Exception:
-        return []
-    instrs = prog.instrs
-    ops = bytes(map(_OP, instrs)) + _END
-    cellvars = code.co_cellvars
-    found: list[_Read] = []
-    for start in compress(range(len(instrs)), ops.translate(_IS_READ)):
-        op, arg = instrs[start]
-        if op == bc.LOAD_GLOBAL:
-            kind = "g"
-        elif arg not in cellvars:
-            kind = "c"
-        else:
+    _load()
+    return _reads(code)
+
+
+# Where a step reads its value from: a module global, a global that falls back
+# to the builtins, a closure cell, an attribute or an item of an earlier
+# step's value.
+_GLOBAL, _OR_BUILTIN, _CELL, _ATTR, _ITEM = 0, 1, 2, 3, 4
+# How a step compares the value it reads with the one seen at trace time.
+_SAME_OBJECT, _EQUAL_VALUE, _EQUAL_METHOD = 0, 1, 2
+
+
+# A guard runs as closures over its steps until it holds this many times;
+# then it runs as one generated function (as fast as the reads written out),
+# whose compiled code is shared by every guard of the same source.
+UPGRADE_AFTER = 2
+
+
+def _closures(
+    plan: tuple[tuple[Any, ...], ...],
+    registers: int,
+    upgrade: Callable[[], Callable[[], bool]] | None = None,
+) -> Callable[[], bool]:
+    """The guard's check as closures: runs *plan*, true while no step fails.
+
+    A step is ``(None, keys, names, -1, 0, globals, None)``, failing when a
+    name is bound in *globals* (whose ``keys()`` these are), or ``(source, a,
+    b, register, how, expected, snapshot)``: it reads a value (``a[b]``,
+    ``a[b]`` else the builtin ``b``, ``a.cell_contents``, or the attribute or
+    item ``b`` of the value in register ``a``), compares it with *expected*
+    (and its contents with *snapshot*) and keeps it in *register* (``-1``: no
+    later step reads it). Registers live in the call, so threads may check
+    one guard at once. With *upgrade*, the check counts its calls and, at
+    UPGRADE_AFTER, runs (and from then on is) the check *upgrade* returns.
+    """
+    builtin = vars(builtins)
+    same = _same_contents
+    calls = 0
+    upgraded: Callable[[], bool] | None = None
+
+    def check() -> bool:
+        nonlocal calls, upgraded
+        if upgrade is not None:
+            if upgraded is not None:
+                # Called through a reference taken before the upgrade.
+                return upgraded()
+            calls += 1
+            if calls >= UPGRADE_AFTER:
+                upgraded = upgrade()
+                return upgraded()
+        values: list[Any] = [None] * registers
+        try:
+            for source, a, b, register, how, expected, snapshot in plan:
+                if source is None:
+                    if not a.isdisjoint(b):
+                        return False
+                    continue
+                if source == _GLOBAL:
+                    value = a[b]
+                elif source == _ATTR:
+                    value = getattr(values[a], b)
+                elif source == _CELL:
+                    value = a.cell_contents
+                elif source == _ITEM:
+                    value = values[a][b]
+                else:
+                    value = a[b] if b in a else builtin[b]
+                if value is not expected:
+                    if how == _SAME_OBJECT:
+                        return False
+                    if how == _EQUAL_VALUE:
+                        if value.__class__ is not expected.__class__ or value != expected:
+                            return False
+                    elif value != expected:
+                        return False
+                if snapshot is not None and not same(value, snapshot):
+                    return False
+                if register >= 0:
+                    values[register] = value
+        except Exception:
+            return False
+        return True
+
+    return check
+
+
+def _source(plan: tuple[tuple[Any, ...], ...]) -> tuple[str, dict[str, Any]]:
+    """The generated form of *plan*: the same reads, in the same order, with
+    the same comparisons, as source and the values it names. The source
+    holds only the plan's shape and names, so guards of one kernel share it."""
+    env: dict[str, Any] = {"_B": vars(builtins), "_same": _same_contents}
+    lines: list[str] = []
+    for k, (source, a, b, register, how, expected, snapshot) in enumerate(plan):
+        if source is None:
+            env[f"_g{k}"] = expected
+            tests = " or ".join(f"{name!r} in _g{k}" for name in sorted(b))
+            lines.append(f"if {tests}: return False")
             continue
-        end = start + 1
-        while ops[end] == bc.LOAD_ATTR:
-            end += 1
-        chain = () if end == start + 1 else tuple(map(_ARG, instrs[start + 1 : end]))
-        found.append((kind, arg, chain, ops[end] in _PUSH_ONE and ops[end + 1] == bc.SUBSCR))
-    if len(_READS) >= _READS_LIMIT:
-        _READS.clear()
-    _READS[code] = found
-    return found
+        if source == _GLOBAL:
+            env[f"_a{k}"] = a
+            expr = f"_a{k}[{b!r}]"
+        elif source == _OR_BUILTIN:
+            env[f"_a{k}"] = a
+            expr = f"(_a{k}[{b!r}] if {b!r} in _a{k} else _B[{b!r}])"
+        elif source == _CELL:
+            env[f"_a{k}"] = a
+            expr = f"_a{k}.cell_contents"
+        elif source == _ATTR:
+            expr = f"r{a}.{b}"
+        else:
+            env[f"_b{k}"] = b
+            expr = f"r{a}[_b{k}]"
+        var = f"r{register}" if register >= 0 else "v"
+        env[f"_e{k}"] = expected
+        lines.append(f"{var} = {expr}")
+        if how == _EQUAL_VALUE:
+            lines.append(
+                f"if {var} is not _e{k} and ({var}.__class__ is not _e{k}.__class__"
+                f" or {var} != _e{k}): return False"
+            )
+        elif how == _EQUAL_METHOD:
+            lines.append(f"if {var} is not _e{k} and {var} != _e{k}: return False")
+        else:
+            lines.append(f"if {var} is not _e{k}: return False")
+        if snapshot is not None:
+            env[f"_s{k}"] = snapshot
+            lines.append(f"if not _same({var}, _s{k}): return False")
+    body = "".join(f"            {line}\n" for line in lines) or "            pass\n"
+    src = (
+        "def _make():\n"
+        "    def _guard():\n"
+        "        try:\n"
+        f"{body}"
+        "        except Exception:\n"
+        "            return False\n"
+        "        return True\n"
+        "    return _guard\n"
+    )
+    return src, env
 
 
 class Guard:
-    """Re-reads a kernel's globals and closures; true while none changed."""
+    """Re-reads a kernel's globals and closures; true while none changed.
 
-    __slots__ = ("check", "reads", "impure")
+    ``check`` starts as closures over the guard's steps and becomes generated
+    code once the guard has held UPGRADE_AFTER times.
+    """
 
-    def __init__(self, check: Callable[[], bool], reads: int, impure: bool) -> None:
+    __slots__ = ("check", "reads", "impure", "plan", "registers", "__weakref__")
+
+    def __init__(
+        self,
+        check: Callable[[], bool],
+        reads: int,
+        impure: bool,
+        plan: tuple[tuple[Any, ...], ...],
+        registers: int,
+    ) -> None:
         self.check = check
         self.reads = reads
         self.impure = impure
+        self.plan = plan
+        self.registers = registers
 
 
 def build_guard(
@@ -155,7 +343,7 @@ def build_guard(
     dict_items: Mapping[tuple[int, Any], tuple[dict[Any, Any], Any, Any]] | None = None,
     dict_whole: Collection[int] = (),
 ) -> Guard:
-    """Generate the guard for *fn* from the values its reads have right now.
+    """The guard for *fn*, from the values its reads have right now.
 
     *impure* marks a trace that evaluated a host call whose result may change
     between calls (``random.random()``); its guard never holds. *dict_items*
@@ -164,37 +352,33 @@ def build_guard(
     with ``in``; without *dict_items* every dict is compared whole.
     """
     if impure:
-        return Guard(_always_false, 0, True)
+        return Guard(_always_false, 0, True, (), 0)
 
-    env: dict[str, Any] = {"_B": vars(builtins), "_same": _same_contents}
-    # [var, expr, value, item] for each value to compare, rendered once every
-    # read is known; [None, line, None, False] for a guard line as it is.
+    # [register, source, a, b, value, item] for each value to compare,
+    # planned once every read is known; [None, globals, name] for a name
+    # unbound at trace time.
     lines: list[list[Any]] = []
-    slots: dict[tuple[Any, ...], str] = {}
-    scopes: dict[int, str] = {}
+    slots: dict[tuple[Any, ...], int] = {}
     visited: set[int] = set()
     # Values some read uses other than by an immediate subscript.
     escaped: set[int] = set()
+    # Registers a later step reads an attribute or item of.
+    parents: set[int] = set()
 
-    def scope_name(prefix: str, obj: Any) -> str:
-        key = id(obj)
-        name = scopes.get(key)
-        if name is None:
-            name = f"_{prefix}{len(scopes)}"
-            scopes[key] = name
-            env[name] = obj
-        return name
-
-    def bind(value: Any, expr: str, key: tuple[Any, ...], indexed: bool = False) -> str:
+    def bind(
+        value: Any, source: int, a: Any, b: Any, key: tuple[Any, ...], indexed: bool = False
+    ) -> int:
         if not indexed:
             escaped.add(id(value))
-        var = slots.get(key)
-        if var is not None:
-            return var
-        var = f"v{len(slots)}"
-        slots[key] = var
-        lines.append([var, expr, value, False])
-        return var
+        register = slots.get(key)
+        if register is not None:
+            return register
+        register = len(slots)
+        slots[key] = register
+        if source in (_ATTR, _ITEM):
+            parents.add(a)
+        lines.append([register, source, a, b, value, False])
+        return register
 
     def walk(func: types.FunctionType, depth: int) -> None:
         if id(func.__code__) in visited or depth > _MAX_HELPER_DEPTH:
@@ -205,18 +389,18 @@ def build_guard(
         cells = func.__closure__ or ()
         for kind, name, chain, indexed in _reads(func.__code__):
             if kind == "g":
-                g = scope_name("G", fn_globals)
                 if name in fn_globals:
                     value = fn_globals[name]
-                    expr = f"{g}[{name!r}]"
+                    source = _GLOBAL
                 elif name in vars(builtins):
                     value = vars(builtins)[name]
-                    expr = f"({g}[{name!r}] if {name!r} in {g} else _B[{name!r}])"
+                    source = _OR_BUILTIN
                 else:
                     # Unresolved at trace time: a later binding must retrace.
-                    lines.append([None, f"if {name!r} in {g}: return False", None, False])
+                    lines.append([None, fn_globals, name])
                     continue
-                root_key: tuple[Any, ...] = ("g", id(fn_globals), name)
+                key: tuple[Any, ...] = ("g", id(fn_globals), name)
+                register = bind(value, source, fn_globals, name, key, indexed and not chain)
             else:
                 if name not in freevars:
                     continue
@@ -225,18 +409,16 @@ def build_guard(
                     value = cell.cell_contents
                 except ValueError:
                     continue
-                expr = f"{scope_name('C', cell)}.cell_contents"
-                root_key = ("c", id(cell))
-            var = bind(value, expr, root_key, indexed and not chain)
+                key = ("c", id(cell))
+                register = bind(value, _CELL, cell, None, key, indexed and not chain)
             follow(value, depth)
-            key = root_key
             for n, attr in enumerate(chain, start=1):
                 try:
                     value = getattr(value, attr)
                 except Exception:
                     break
                 key = (*key, attr)
-                var = bind(value, f"{var}.{attr}", key, indexed and n == len(chain))
+                register = bind(value, _ATTR, register, attr, key, indexed and n == len(chain))
                 follow(value, depth)
 
     def follow(value: Any, depth: int) -> None:
@@ -253,57 +435,61 @@ def build_guard(
     if dict_items:
         for container, index, value in dict_items.values():
             items.setdefault(id(container), []).append((index, value))
-    rendered: list[str] = []
+    plan: list[tuple[Any, ...]] = []
+    # The globals of the step that tests unbound names, while it is the last.
+    unbound_in: dict[str, Any] | None = None
     # The items of a dict compared at the items read are appended to *lines*
-    # as it is rendered, and so rendered after it by this same loop.
+    # as it is planned, and so planned after it by this same loop.
     for line in lines:
-        var, expr, value, item = line
-        if var is None:
-            rendered.append(expr)
+        if line[0] is None:
+            _, fn_globals, name = line
+            # Unbound names in a row are tested together, each once.
+            if unbound_in is fn_globals:
+                _, keys, names, *rest = plan[-1]
+                plan[-1] = (None, keys, names | {name}, *rest)
+            else:
+                plan.append((None, fn_globals.keys(), frozenset((name,)), -1, 0, fn_globals, None))
+                unbound_in = fn_globals
             continue
-        n = len(env)
-        expected = f"_o{n}"
-        env[expected] = value
+        unbound_in = None
+        register, source, a, b, value, item = line
+        kept = register if register in parents else -1
         if _immutable(value):
-            rendered += (
-                f"{var} = {expr}",
-                f"if {var} is not {expected} and ({var}.__class__ is not "
-                f"{expected}.__class__ or {var} != {expected}): return False",
-            )
+            plan.append((source, a, b, kept, _EQUAL_VALUE, value, None))
         elif isinstance(value, (types.MethodType, types.BuiltinMethodType)):
             # A bound method is made anew on every attribute read; two are
             # equal when they bind the same function to the same object.
-            rendered += (f"{var} = {expr}", f"if {var} != {expected}: return False")
+            plan.append((source, a, b, kept, _EQUAL_METHOD, value, None))
+        elif (
+            value.__class__ is dict
+            and dict_items is not None
+            and id(value) not in escaped
+            and id(value) not in dict_whole
+        ):
+            # Only subscripted: the items read are all the trace used.
+            read_items = items.get(id(value), ())
+            if read_items:
+                parents.add(register)
+                kept = register
+            plan.append((source, a, b, kept, _SAME_OBJECT, value, None))
+            for index, read in read_items:
+                # What the trace did with an item is not known: compare it whole.
+                escaped.add(id(read))
+                lines.append([-1, _ITEM, register, index, read, True])
         else:
-            rendered += (f"{var} = {expr}", f"if {var} is not {expected}: return False")
-            if (
-                value.__class__ is dict
-                and dict_items is not None
-                and id(value) not in escaped
-                and id(value) not in dict_whole
-            ):
-                # Only subscripted: the items read are all the trace used.
-                for k, (index, read) in enumerate(items.get(id(value), ())):
-                    # What the trace did with an item is not known: compare it whole.
-                    escaped.add(id(read))
-                    env[f"_k{n}_{k}"] = index
-                    lines.append([f"{var}_{k}", f"{var}[_k{n}_{k}]", read, True])
-                continue
             snap = _item_snapshot(value) if item else _snapshot(value)
-            if snap is not None:
-                env[f"_s{n}"] = snap
-                rendered.append(f"if not _same({var}, _s{n}): return False")
-    body = "".join(f"            {line}\n" for line in rendered) or "            pass\n"
-    src = (
-        "def _make():\n"
-        "    def _guard():\n"
-        "        try:\n"
-        f"{body}"
-        "        except Exception:\n"
-        "            return False\n"
-        "        return True\n"
-        "    return _guard\n"
-    )
-    namespace = dict(env)
-    exec(compile(src, f"<pulse guard {fn.__qualname__}>", "exec"), namespace)
-    return Guard(namespace["_make"](), len(slots), False)
+            plan.append((source, a, b, kept, _SAME_OBJECT, value, snap))
+    guard = Guard(_always_false, len(slots), False, tuple(plan), max(parents, default=-1) + 1)
+    steps = guard.plan
+    ref = weakref.ref(guard)
+
+    def upgrade() -> Callable[[], bool]:
+        # Threads that upgrade one guard at once each set an equal check.
+        check = _generated(steps)
+        held = ref()
+        if held is not None:
+            held.check = check
+        return check
+
+    guard.check = _closures(steps, guard.registers, upgrade)
+    return guard

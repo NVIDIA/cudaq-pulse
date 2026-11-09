@@ -51,6 +51,8 @@ from tests.kernel.ir_corpus import (
     tone_list_loop,
 )
 
+_guard = importlib.import_module("cudaq_pulse.kernel._guard")
+
 pytestmark = pytest.mark.benchmark
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -304,7 +306,9 @@ def test_compiling_a_kernel_that_reads_a_dict_is_flat_in_its_size():
         )
         kernel = pulse.kernel(namespace["kernel"])
         compiled = pulse.compile(kernel)
-        compiled.lower(Q[0])
+        # Past the call that upgrades the guard: a call measures the steady state.
+        for _ in range(1 + _guard.UPGRADE_AFTER):
+            compiled.lower(Q[0])
         return lambda: pulse.compile(kernel).lower(Q[0]), lambda: compiled.lower(Q[0])
 
     # Copying a million entries, or hashing them, takes some 10 ms.
