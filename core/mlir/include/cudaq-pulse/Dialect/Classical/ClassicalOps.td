@@ -8,6 +8,7 @@
 include "cudaq-pulse/Dialect/Classical/ClassicalDialect.td"
 include "cudaq-pulse/Dialect/Classical/ClassicalTypes.td"
 include "mlir/IR/OpBase.td"
+include "cudaq-pulse/Dialect/Pulse/PulseTiming.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 
@@ -96,11 +97,12 @@ def Classical_SubmitOp : ClassicalOp<"submit",
     request takes to send. It returns the link and a future that becomes
     available when the answer is due.
   }];
-  let arguments = (ins
+  let arguments = !con((ins
     Classical_LinkType:$link,
     FlatSymbolRefAttr:$callee,
     Variadic<AnyType>:$args
-  );
+  ),
+                       PulseTimingArgs);
   let results = (outs Classical_LinkType:$updated_link,
                       Classical_FutureType:$future);
   let assemblyFormat = [{
@@ -122,8 +124,9 @@ def Classical_WaitOp : ClassicalOp<"wait",
     gives a leading `i1`, false when no answer came within the timeout;
     scheduling then budgets the timeout instead of the maximum latency.
   }];
-  let arguments = (ins Classical_FutureType:$future, FlatSymbolRefAttr:$callee,
-                       OptionalAttr<F64Attr>:$timeout_ns);
+  let arguments = !con((ins Classical_FutureType:$future, FlatSymbolRefAttr:$callee,
+                       OptionalAttr<F64Attr>:$timeout_ns),
+                       PulseTimingArgs);
   let results = (outs Variadic<AnyType>:$values);
   let assemblyFormat = "$future `,` $callee attr-dict `:` type($values)";
 }

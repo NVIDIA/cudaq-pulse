@@ -140,14 +140,13 @@ struct FuseAdjacentSquareDrives
     auto fusedDrive = pulse::DriveOp::create(
         rewriter, loc, firstDrive.getUpdatedLine().getType(),
         firstDrive.getUpdatedTone().getType(), firstDrive.getLine(),
-        fusedWf.getResult(), firstDrive.getTone());
+        fusedWf.getResult(), firstDrive.getTone(),
+        firstDrive.getStartCyclesAttr(), rewriter.getI64IntegerAttr(fusedDur),
+        firstDrive.getPeriodCyclesAttr());
 
-    for (llvm::StringRef name : {"start_cycles", "period_cycles",
-                                 "frame_phase_offset", "phase_offset"})
+    for (llvm::StringRef name : {"frame_phase_offset", "phase_offset"})
       if (auto a = firstDrive->getAttr(name))
         fusedDrive->setAttr(name, a);
-    fusedDrive->setAttr("duration_cycles",
-                        rewriter.getI64IntegerAttr(fusedDur));
     fusedDrive->setAttr("fused", rewriter.getUnitAttr());
 
     rewriter.replaceOp(secondDrive, fusedDrive->getResults());

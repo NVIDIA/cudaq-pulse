@@ -93,7 +93,8 @@ struct SinkShiftPhaseThroughIf
     });
     rewriter.setInsertionPointAfter(branch);
     auto moved = pulse::ShiftPhaseOp::create(
-        rewriter, op.getLoc(), op.getType(), result, op.getPhaseRad());
+        rewriter, op.getLoc(), op.getType(), result, op.getPhaseRad(),
+        /*start_cycles=*/{}, /*duration_cycles=*/{}, /*period_cycles=*/{});
     rewriter.replaceAllUsesExcept(result, moved.getResult(), moved);
     rewriter.eraseOp(op);
     return mlir::success();
@@ -120,7 +121,8 @@ struct SinkShiftPhaseIntoBlock
     mlir::BlockArgument arg = block.getBody().getArgument(index);
     rewriter.setInsertionPointToStart(&block.getBody().front());
     auto moved = pulse::ShiftPhaseOp::create(
-        rewriter, op.getLoc(), op.getType(), arg, op.getPhaseRad());
+        rewriter, op.getLoc(), op.getType(), arg, op.getPhaseRad(),
+        /*start_cycles=*/{}, /*duration_cycles=*/{}, /*period_cycles=*/{});
     rewriter.replaceAllUsesExcept(arg, moved.getResult(), moved);
     rewriter.modifyOpInPlace(block,
                              [&] { block->setOperand(index, op.getTone()); });
@@ -158,8 +160,9 @@ struct HoistShiftPhaseOutOfBlock
     if (block->isAncestor(constant))
       phase = rewriter.clone(*constant)->getResult(0);
     mlir::Value result = block.getResult(index);
-    auto moved = pulse::ShiftPhaseOp::create(rewriter, op.getLoc(),
-                                             op.getType(), result, phase);
+    auto moved = pulse::ShiftPhaseOp::create(
+        rewriter, op.getLoc(), op.getType(), result, phase,
+        /*start_cycles=*/{}, /*duration_cycles=*/{}, /*period_cycles=*/{});
     rewriter.replaceAllUsesExcept(result, moved.getResult(), moved);
     rewriter.eraseOp(op);
     return mlir::success();

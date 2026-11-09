@@ -114,8 +114,10 @@ struct MergeAdjacentWaits : public mlir::OpRewritePattern<pulse::WaitOp> {
         mlir::arith::ConstantIntOp::create(rewriter, loc, *a + *b, 64);
     auto duration = pulse::DurationFromIntOp::create(
         rewriter, loc, second.getDuration().getType(), cycles);
-    rewriter.replaceOpWithNewOp<pulse::WaitOp>(second, second.getType(),
-                                               first.getLine(), duration);
+    rewriter.replaceOpWithNewOp<pulse::WaitOp>(
+        second, second.getType(), first.getLine(), duration,
+        /*start_cycles=*/nullptr, /*duration_cycles=*/nullptr,
+        /*period_cycles=*/nullptr);
     rewriter.eraseOp(first);
     return mlir::success();
   }

@@ -54,6 +54,12 @@
 #define GET_OP_CLASSES
 #include "cudaq-pulse/Dialect/Pulse/PulseOps.h.inc"
 
+#include "cudaq-pulse/Dialect/Classical/ClassicalDialect.h.inc"
+#define GET_TYPEDEF_CLASSES
+#include "cudaq-pulse/Dialect/Classical/ClassicalTypes.h.inc"
+#define GET_OP_CLASSES
+#include "cudaq-pulse/Dialect/Classical/ClassicalOps.h.inc"
+
 #include "cudaq-pulse/Analysis/Execution.h"
 #include "cudaq-pulse/Analysis/Timing.h"
 #include "cudaq-pulse/Transforms/Passes.h"
@@ -103,17 +109,13 @@ bool passesThrough(mlir::scf::ForOp loop, unsigned index) {
 /// The names of the attributes the pass sets, interned once a run.
 struct Names {
   explicit Names(mlir::MLIRContext *context)
-      : start(mlir::StringAttr::get(context, "start_cycles")),
-        duration(mlir::StringAttr::get(context, "duration_cycles")),
-        period(mlir::StringAttr::get(context, "period_cycles")),
-        unconsumed(mlir::StringAttr::get(context, "pulse.unconsumed")),
+      : unconsumed(mlir::StringAttr::get(context, "pulse.unconsumed")),
         carried(mlir::StringAttr::get(context, "pulse.carried")),
         carriedIn(mlir::StringAttr::get(context, "pulse.carried_in")),
         exitUpdates(mlir::StringAttr::get(context, "pulse.exit_updates")),
         thenUpdates(mlir::StringAttr::get(context, "pulse.then_updates")),
         elseUpdates(mlir::StringAttr::get(context, "pulse.else_updates")) {}
 
-  mlir::StringAttr start, duration, period;
   /// The marks, which a run first removes.
   mlir::StringAttr unconsumed, carried, carriedIn, exitUpdates, thenUpdates,
       elseUpdates;
@@ -154,23 +156,17 @@ public:
         }
       }
     }
-    mlir::NamedAttrList attributes(change->getAttrDictionary());
-    attributes.set(names.start, mlir::IntegerAttr::get(i64, time->base));
-    attributes.set(names.duration, mlir::IntegerAttr::get(i64, 0));
-    if (time->periods.empty())
-      attributes.erase(names.period);
-    else
-      attributes.set(names.period,
-                     mlir::DenseI64ArrayAttr::get(context, time->periods));
-    change->setAttrs(attributes.getDictionary(context));
+    pulse::setTiming(change, mlir::IntegerAttr::get(i64, time->base),
+                     mlir::IntegerAttr::get(i64, 0),
+                     time->periods.empty() ? mlir::DenseI64ArrayAttr()
+                                           : mlir::DenseI64ArrayAttr::get(
+                                                 context, time->periods));
   }
 
 private:
   Time timeOf(mlir::Operation *op, int64_t offset) const {
-    Time time{op->getAttrOfType<mlir::IntegerAttr>(names.start).getInt() +
-                  offset,
-              {}};
-    if (auto periods = op->getAttrOfType<mlir::DenseI64ArrayAttr>(names.period))
+    Time time{pulse::startCyclesAttr(op).getInt() + offset, {}};
+    if (auto periods = pulse::periodCyclesAttr(op))
       time.periods.assign(periods.asArrayRef().begin(),
                           periods.asArrayRef().end());
     return time;
@@ -186,7 +182,7 @@ private:
     size_t level = pulse::enclosingLoops(loop).size();
     std::optional<Time> first;
     loop.getBody()->walk([&](mlir::Operation *op) {
-      if (isFrameChange(op) || !op->hasAttr(names.start))
+      if (isFrameChange(op) || !pulse::hasStart(op))
         return;
       Time time = timeOf(op, 0);
       if (time.periods.size() <= level)
@@ -303,12 +299,12 @@ private:
     }
     mlir::Operation *def = tone.getDefiningOp();
     if (isPulse(def)) {
-      if (!def->hasAttr(names.start))
+      if (!pulse::hasStart(def))
         return std::nullopt;
       return timeOf(def, pulse::scheduledDuration(def).value_or(0));
     }
     if (isFrameChange(def)) {
-      if (!def->hasAttr(names.start))
+      if (!pulse::hasStart(def))
         return std::nullopt;
       return timeOf(def, 0);
     }
@@ -357,7 +353,7 @@ private:
   /// whose result is `tone`, in iteration 0 of the loops inside `depth`.
   std::optional<Time> nextPulse(mlir::Value tone, size_t depth) {
     for (mlir::Operation *user : tone.getUsers()) {
-      if (isPulse(user) && toneOf(user) == tone && user->hasAttr(names.start)) {
+      if (isPulse(user) && toneOf(user) == tone && pulse::hasStart(user)) {
         Time time = timeOf(user, 0);
         time.periods.resize(depth, 0);
         return time;

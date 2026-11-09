@@ -3997,49 +3997,36 @@ static NotAffine peelAround(mlir::scf::ForOp loop,
           extended && after ? 0 : trips - 1 - line[last].first};
 }
 
-/// The names of the timing attributes, interned once per scheduling rather
-/// than once per op: every interning is a lookup in the context's uniquer.
-struct TimingNames {
-  mlir::StringAttr start, duration, period;
-  explicit TimingNames(mlir::MLIRContext *context)
-      : start(mlir::StringAttr::get(context, "start_cycles")),
-        duration(mlir::StringAttr::get(context, "duration_cycles")),
-        period(mlir::StringAttr::get(context, "period_cycles")) {}
-};
-
-static std::optional<NotAffine> writeTiming(
-    mlir::Operation *op, mlir::Operation *root, llvm::ArrayRef<Sample> samples,
-    llvm::ArrayRef<Extrapolation> extrapolations, const TimingNames &names) {
+static std::optional<NotAffine>
+writeTiming(mlir::Operation *op, mlir::Operation *root,
+            llvm::ArrayRef<Sample> samples,
+            llvm::ArrayRef<Extrapolation> extrapolations) {
   auto loops = pulse::enclosingLoops(op, root);
   mlir::MLIRContext *context = op->getContext();
   auto i64 = mlir::IntegerType::get(context, 64);
   int64_t duration = durationOf(op);
-  // One rebuild of the op's own (discardable) attributes, none when a later
-  // round writes what an earlier one did.
+  // The op's timing properties, with no new attribute where a later round
+  // writes what an earlier one did.
   auto write = [&](std::optional<int64_t> start,
                    llvm::ArrayRef<int64_t> periods) {
-    mlir::NamedAttrList attributes(op->getDiscardableAttrDictionary());
-    auto setCycles = [&](mlir::StringAttr name, int64_t value) {
-      auto old =
-          mlir::dyn_cast_or_null<mlir::IntegerAttr>(attributes.get(name));
-      if (!old || old.getType() != i64 || old.getInt() != value)
-        attributes.set(name, mlir::IntegerAttr::get(i64, value));
+    auto cycles = [&](mlir::IntegerAttr old, int64_t value) {
+      return old && old.getType() == i64 && old.getInt() == value
+                 ? old
+                 : mlir::IntegerAttr::get(i64, value);
     };
-    if (start)
-      setCycles(names.start, *start);
-    else
-      attributes.erase(names.start);
-    setCycles(names.duration, duration);
-    if (periods.empty()) {
-      attributes.erase(names.period);
-    } else {
-      auto old = mlir::dyn_cast_or_null<mlir::DenseI64ArrayAttr>(
-          attributes.get(names.period));
-      if (!old || old.asArrayRef() != periods)
-        attributes.set(names.period,
-                       mlir::DenseI64ArrayAttr::get(context, periods));
-    }
-    op->setDiscardableAttrs(attributes.getDictionary(context));
+    pulse::withTiming(op, 0, [&](auto timed) {
+      auto &properties = timed.getProperties();
+      properties.start_cycles =
+          start ? cycles(properties.start_cycles, *start) : mlir::IntegerAttr();
+      properties.duration_cycles = cycles(properties.duration_cycles, duration);
+      if (periods.empty())
+        properties.period_cycles = {};
+      else if (!properties.period_cycles ||
+               properties.period_cycles.asArrayRef() != periods)
+        properties.period_cycles =
+            mlir::DenseI64ArrayAttr::get(context, periods);
+      return 0;
+    });
   };
   if (samples.empty()) {
     // Never executed (inside a zero-trip loop).
@@ -4266,8 +4253,7 @@ static std::optional<NotAffine> periodMismatch(mlir::Region &region,
         problem = NotAffine{loop, 1};
     };
     forEachScheduled(loop.getRegion(), [&](mlir::Operation *timed) {
-      auto periods =
-          timed->getAttrOfType<mlir::DenseI64ArrayAttr>("period_cycles");
+      auto periods = pulse::periodCyclesAttr(timed);
       if (problem || !periods || static_cast<size_t>(periods.size()) <= level)
         return;
       if (mlir::isa<classical::WaitOp>(timed))
@@ -4342,7 +4328,7 @@ private:
   }
 
   void note(mlir::Operation *op) {
-    if (auto start = op->getAttrOfType<mlir::IntegerAttr>("start_cycles"))
+    if (auto start = pulse::startCyclesAttr(op))
       earliest = std::min(earliest, start.getInt());
   }
 
@@ -4558,33 +4544,29 @@ static void inlineBody(pulse::ScheduleBlockOp block) {
 /// it.
 static void inlineScheduleBlock(pulse::ScheduleBlockOp block) {
   mlir::MLIRContext *context = block.getContext();
-  auto start = block->getAttrOfType<mlir::IntegerAttr>("start_cycles");
+  auto start = pulse::startCyclesAttr(block);
   llvm::SmallVector<int64_t> outer;
-  if (auto periods =
-          block->getAttrOfType<mlir::DenseI64ArrayAttr>("period_cycles"))
+  if (auto periods = pulse::periodCyclesAttr(block))
     outer.assign(periods.asArrayRef().begin(), periods.asArrayRef().end());
   block.getBody().walk([&](mlir::Operation *op) {
     if (!isTimedOp(op))
       return;
-    auto local = op->getAttrOfType<mlir::IntegerAttr>("start_cycles");
+    auto local = pulse::startCyclesAttr(op);
     if (!start || !local) {
       // The block or this op never runs.
-      op->removeAttr("start_cycles");
-      op->removeAttr("period_cycles");
+      pulse::setStartCycles(op, {});
+      pulse::setPeriodCycles(op, {});
       return;
     }
-    op->setAttr("start_cycles",
-                mlir::IntegerAttr::get(local.getType(),
-                                       start.getInt() + local.getInt()));
+    pulse::setStartCycles(
+        op, mlir::IntegerAttr::get(local.getType(),
+                                   start.getInt() + local.getInt()));
     llvm::SmallVector<int64_t> periods = outer;
-    if (auto inner =
-            op->getAttrOfType<mlir::DenseI64ArrayAttr>("period_cycles"))
+    if (auto inner = pulse::periodCyclesAttr(op))
       periods.append(inner.asArrayRef().begin(), inner.asArrayRef().end());
-    if (periods.empty())
-      op->removeAttr("period_cycles");
-    else
-      op->setAttr("period_cycles",
-                  mlir::DenseI64ArrayAttr::get(context, periods));
+    pulse::setPeriodCycles(
+        op, periods.empty() ? mlir::DenseI64ArrayAttr()
+                            : mlir::DenseI64ArrayAttr::get(context, periods));
   });
   inlineBody(block);
 }
@@ -4696,7 +4678,7 @@ static int64_t programLength(mlir::func::FuncOp function) {
   function.walk([&](mlir::Operation *op) {
     if (!isTimedOp(op))
       return;
-    auto start = op->getAttrOfType<mlir::IntegerAttr>("start_cycles");
+    auto start = pulse::startCyclesAttr(op);
     if (!start)
       return;
     auto loops = pulse::enclosingLoops(op, function);
@@ -4708,8 +4690,7 @@ static int64_t programLength(mlir::func::FuncOp function) {
       last.push_back(trips - 1);
     }
     int64_t end = start.getInt();
-    if (auto periods =
-            op->getAttrOfType<mlir::DenseI64ArrayAttr>("period_cycles"))
+    if (auto periods = pulse::periodCyclesAttr(op))
       for (auto [k, period] : llvm::zip(last, periods.asArrayRef()))
         end += std::max<int64_t>(0, k * period);
     end += pulse::scheduledDuration(op).value_or(0);
@@ -4752,7 +4733,6 @@ scheduleRounds(mlir::Region &region, mlir::Operation *root, Resources resources,
   // terminates.
   int64_t widePeels = 0, regroups = 0, headPeels = 0;
   llvm::DenseMap<mlir::Operation *, int64_t> regroupedBy;
-  TimingNames names(region.getContext());
   while (true) {
     Scheduler<Gridded> scheduler(region, resources, classical, grid,
                                  controllers, &timelines);
@@ -4821,7 +4801,7 @@ scheduleRounds(mlir::Region &region, mlir::Operation *root, Resources resources,
       if (it != scheduler.samples.end())
         samples = it->second;
       if (auto problem =
-              writeTiming(op, root, samples, scheduler.extrapolations, names))
+              writeTiming(op, root, samples, scheduler.extrapolations))
         if (apart(problem->loop))
           problems.push_back(*problem);
     });

@@ -1,12 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// Schedule attributes of timed pulse ops inside structured control flow.
+// The schedule of timed ops inside structured control flow.
 //
-// A scheduled drive, readout or wait carries `start_cycles` and
-// `duration_cycles`. Inside `scf.for` loops it also carries `period_cycles`,
-// one entry per enclosing loop (outermost first): in iteration (k_0, ..., k_n)
-// of those loops the op starts at start_cycles + sum_l k_l * period_cycles[l].
+// A scheduled drive, readout, wait, frame change, schedule block or classical
+// submit or wait holds `start_cycles` and `duration_cycles` in its properties
+// (PulseTiming.td). Inside `scf.for` loops it also holds `period_cycles`, one
+// entry per enclosing loop (outermost first): in iteration (k_0, ..., k_n) of
+// those loops the op starts at start_cycles + sum_l k_l * period_cycles[l].
+//
+// Include after the Pulse and Classical dialect op headers.
 
 #pragma once
 
@@ -92,23 +95,101 @@ enclosingLoops(mlir::Operation *op, mlir::Operation *root = nullptr) {
   return loops;
 }
 
+/// `fn` applied to `op` as the op class that holds timing properties, or
+/// `otherwise` when `op` holds none. The classes are tried in the order they
+/// are most common in.
+template <typename R, typename Fn>
+inline R withTiming(mlir::Operation *op, R otherwise, Fn &&fn) {
+  if (auto timed = mlir::dyn_cast<DriveOp>(op))
+    return fn(timed);
+  if (auto timed = mlir::dyn_cast<WaitOp>(op))
+    return fn(timed);
+  if (auto timed = mlir::dyn_cast<ReadoutOp>(op))
+    return fn(timed);
+  if (auto timed = mlir::dyn_cast<classical::SubmitOp>(op))
+    return fn(timed);
+  if (auto timed = mlir::dyn_cast<classical::WaitOp>(op))
+    return fn(timed);
+  if (auto timed = mlir::dyn_cast<ShiftPhaseOp>(op))
+    return fn(timed);
+  if (auto timed = mlir::dyn_cast<SetPhaseOp>(op))
+    return fn(timed);
+  if (auto timed = mlir::dyn_cast<ShiftFrequencyOp>(op))
+    return fn(timed);
+  if (auto timed = mlir::dyn_cast<SetFrequencyOp>(op))
+    return fn(timed);
+  if (auto timed = mlir::dyn_cast<ScheduleBlockOp>(op))
+    return fn(timed);
+  return otherwise;
+}
+
+inline mlir::IntegerAttr startCyclesAttr(mlir::Operation *op) {
+  return withTiming(op, mlir::IntegerAttr(),
+                    [](auto timed) { return timed.getStartCyclesAttr(); });
+}
+
+inline mlir::IntegerAttr durationCyclesAttr(mlir::Operation *op) {
+  return withTiming(op, mlir::IntegerAttr(),
+                    [](auto timed) { return timed.getDurationCyclesAttr(); });
+}
+
+inline mlir::DenseI64ArrayAttr periodCyclesAttr(mlir::Operation *op) {
+  return withTiming(op, mlir::DenseI64ArrayAttr(),
+                    [](auto timed) { return timed.getPeriodCyclesAttr(); });
+}
+
+/// Whether `op` has a start: it is scheduled and runs.
+inline bool hasStart(mlir::Operation *op) {
+  return static_cast<bool>(startCyclesAttr(op));
+}
+
+/// Sets the timing of `op`, a timed op; a null attribute removes that part.
+inline void setTiming(mlir::Operation *op, mlir::IntegerAttr start,
+                      mlir::IntegerAttr duration,
+                      mlir::DenseI64ArrayAttr period) {
+  withTiming(op, 0, [&](auto timed) {
+    auto &properties = timed.getProperties();
+    properties.start_cycles = start;
+    properties.duration_cycles = duration;
+    properties.period_cycles = period;
+    return 0;
+  });
+}
+
+inline void setStartCycles(mlir::Operation *op, mlir::IntegerAttr start) {
+  withTiming(op, 0, [&](auto timed) {
+    timed.getProperties().start_cycles = start;
+    return 0;
+  });
+}
+
+inline void setPeriodCycles(mlir::Operation *op,
+                            mlir::DenseI64ArrayAttr period) {
+  withTiming(op, 0, [&](auto timed) {
+    timed.getProperties().period_cycles = period;
+    return 0;
+  });
+}
+
 /// The start of `op` in iteration `iteration` of its enclosing loops, if it
 /// is scheduled.
 inline std::optional<int64_t>
 scheduledStart(mlir::Operation *op, llvm::ArrayRef<int64_t> iteration) {
-  auto start = op->getAttrOfType<mlir::IntegerAttr>("start_cycles");
-  if (!start)
-    return std::nullopt;
-  int64_t time = start.getInt();
-  if (auto periods =
-          op->getAttrOfType<mlir::DenseI64ArrayAttr>("period_cycles"))
-    for (auto [k, period] : llvm::zip(iteration, periods.asArrayRef()))
-      time += k * period;
-  return time;
+  return withTiming(
+      op, std::optional<int64_t>(), [&](auto timed) -> std::optional<int64_t> {
+        mlir::IntegerAttr start = timed.getStartCyclesAttr();
+        if (!start)
+          return std::nullopt;
+        int64_t time = start.getInt();
+        if (auto periods = timed.getPeriodCyclesAttr())
+          for (auto [k, period] : llvm::zip(iteration, periods.asArrayRef()))
+            time += k * period;
+        return time;
+      });
 }
 
 inline std::optional<int64_t> scheduledDuration(mlir::Operation *op) {
-  if (auto duration = op->getAttrOfType<mlir::IntegerAttr>("duration_cycles"))
+  if (auto duration = durationCyclesAttr(op))
     return duration.getInt();
   return std::nullopt;
 }

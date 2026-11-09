@@ -6,6 +6,7 @@ add_mlir_conversion_library(CudaqPulsePulseToQOp
 
   DEPENDS
   CudaqPulsePulseIncGen
+  CudaqPulseClassicalIncGen
   CudaqPulseQOpIncGen
 
   LINK_LIBS PUBLIC

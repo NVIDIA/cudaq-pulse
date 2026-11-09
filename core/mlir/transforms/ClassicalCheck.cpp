@@ -259,7 +259,7 @@ private:
                                         llvm::ArrayRef<int64_t> iteration) {
     if (!iteration.empty())
       return pulse::scheduledStart(op, iteration);
-    if (auto start = op->getAttrOfType<mlir::IntegerAttr>("start_cycles"))
+    if (auto start = pulse::startCyclesAttr(op))
       return start.getInt();
     return std::nullopt;
   }
@@ -698,7 +698,7 @@ static bool checkReaction(classical::SubmitOp submit,
                           classical::CallableOp callable,
                           mlir::func::FuncOp function, double clock,
                           Stretches &stretches) {
-  if (!submit->hasAttr("start_cycles"))
+  if (!pulse::hasStart(submit))
     return true;
   double reactionNs = callable.getReactionDeadlineNs()->convertToDouble();
   int64_t limit = static_cast<int64_t>(std::floor(reactionNs * clock + 1e-9));
@@ -733,7 +733,7 @@ static bool checkReaction(classical::SubmitOp submit,
   llvm::SmallVector<int64_t, 2> iteration(depth, 0);
   for (mlir::Operation *reference : references) {
     size_t own = pulse::enclosingLoops(reference, function).size();
-    if (!reference->hasAttr("start_cycles") || own > depth)
+    if (!pulse::hasStart(reference) || own > depth)
       continue;
     int64_t stretch = reference == submit.getOperation()
                           ? 0
@@ -899,7 +899,7 @@ static mlir::LogicalResult checkClassicalCalls(mlir::ModuleOp module,
         }
         return;
       }
-      if (!submit->hasAttr("start_cycles") || !wait->hasAttr("start_cycles"))
+      if (!pulse::hasStart(submit) || !pulse::hasStart(wait))
         return;
       auto loops = pulse::enclosingLoops(wait, function);
       if (loops != pulse::enclosingLoops(submit, function)) {

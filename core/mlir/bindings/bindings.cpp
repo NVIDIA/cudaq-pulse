@@ -4723,7 +4723,8 @@ pulse::ScheduleBlockOp buildScheduleBlock(mlir::OpBuilder &builder,
       policy == "alap" ? pulse::SchedulePolicy::ALAP
                        : pulse::SchedulePolicy::ASAP,
       inputs,
-      callee.empty() ? mlir::StringAttr() : builder.getStringAttr(callee));
+      callee.empty() ? mlir::StringAttr() : builder.getStringAttr(callee),
+      /*start_cycles=*/{}, /*duration_cycles=*/{}, /*period_cycles=*/{});
   block.getBody().push_back(body.release());
   mlir::Block *inner = &block.getBody().front();
   for (mlir::Value input : inputs) {
@@ -5638,14 +5639,13 @@ public:
 
       case kOpDrive: {
         requirePayload(7);
-        auto driveOp =
-            pulse::DriveOp::create(*builder_, loc, driveTy, toneTy, look(p[0]),
-                                   look(p[1]), look(p[2]));
-        if (p[5] != -1)
-          driveOp->setAttr("start_cycles", builder_->getI64IntegerAttr(p[5]));
-        if (p[6] != -1)
-          driveOp->setAttr("duration_cycles",
-                           builder_->getI64IntegerAttr(p[6]));
+        auto driveOp = pulse::DriveOp::create(
+            *builder_, loc, driveTy, toneTy, look(p[0]), look(p[1]), look(p[2]),
+            p[5] != -1 ? builder_->getI64IntegerAttr(p[5])
+                       : mlir::IntegerAttr(),
+            p[6] != -1 ? builder_->getI64IntegerAttr(p[6])
+                       : mlir::IntegerAttr(),
+            /*period_cycles=*/{});
         bind(p[3], driveOp.getUpdatedLine());
         bind(p[4], driveOp.getUpdatedTone());
         lengthen(waveformCycles(driveOp.getPulse()), cur);
@@ -5656,7 +5656,8 @@ public:
         requirePayload(6);
         auto roOp = pulse::ReadoutOp::create(
             *builder_, loc, readoutTy, toneTy, measTy, look(p[0]), look(p[1]),
-            look(p[2]), pulse::ReadoutMode::IQ);
+            look(p[2]), pulse::ReadoutMode::IQ, /*start_cycles=*/{},
+            /*duration_cycles=*/{}, /*period_cycles=*/{});
         bind(p[3], roOp.getUpdatedLine());
         bind(p[4], roOp.getUpdatedTone());
         bind(p[5], roOp.getResult());
@@ -5694,8 +5695,9 @@ public:
                   .getResult();
         auto durOp =
             pulse::DurationFromIntOp::create(*builder_, loc, durTy, durCycles);
-        auto waitOp = pulse::WaitOp::create(*builder_, loc, lineVal.getType(),
-                                            lineVal, durOp.getResult());
+        auto waitOp = pulse::WaitOp::create(
+            *builder_, loc, lineVal.getType(), lineVal, durOp.getResult(),
+            /*start_cycles=*/{}, /*duration_cycles=*/{}, /*period_cycles=*/{});
         bind(p[1], waitOp.getResult());
         lengthen((pmask & (1 << 2))
                      ? pulse::constantIndex(durCycles).value_or(0)
@@ -5711,8 +5713,9 @@ public:
         auto dur =
             pulse::DurationFromIntOp::create(*builder_, loc, durTy, look(p[2]));
         mlir::Value line = look(p[0]);
-        auto waitOp = pulse::WaitOp::create(*builder_, loc, line.getType(),
-                                            line, dur.getResult());
+        auto waitOp = pulse::WaitOp::create(
+            *builder_, loc, line.getType(), line, dur.getResult(),
+            /*start_cycles=*/{}, /*duration_cycles=*/{}, /*period_cycles=*/{});
         waitOp->setAttr("pulse.variable_wait", builder_->getUnitAttr());
         waitOp->setAttr("pulse.min_cycles", builder_->getI64IntegerAttr(p[3]));
         if (p[4] >= 0)
@@ -5761,8 +5764,9 @@ public:
       case kOpShiftPhase: {
         requirePayload(3);
         mlir::Value phaseVal = finite(2, "shift_phase phase");
-        auto spOp = pulse::ShiftPhaseOp::create(*builder_, loc, toneTy,
-                                                look(p[0]), phaseVal);
+        auto spOp = pulse::ShiftPhaseOp::create(
+            *builder_, loc, toneTy, look(p[0]), phaseVal, /*start_cycles=*/{},
+            /*duration_cycles=*/{}, /*period_cycles=*/{});
         bind(p[1], spOp.getResult());
         runTime |= openIfs > 0;
         break;
@@ -5771,8 +5775,9 @@ public:
       case kOpSetPhase: {
         requirePayload(3);
         mlir::Value phaseVal = finite(2, "set_phase phase");
-        auto spOp = pulse::SetPhaseOp::create(*builder_, loc, toneTy,
-                                              look(p[0]), phaseVal);
+        auto spOp = pulse::SetPhaseOp::create(
+            *builder_, loc, toneTy, look(p[0]), phaseVal, /*start_cycles=*/{},
+            /*duration_cycles=*/{}, /*period_cycles=*/{});
         bind(p[1], spOp.getResult());
         runTime |= openIfs > 0;
         break;
@@ -5781,8 +5786,9 @@ public:
       case kOpShiftFreq: {
         requirePayload(3);
         mlir::Value fVal = finite(2, "shift_frequency frequency");
-        auto sfOp = pulse::ShiftFrequencyOp::create(*builder_, loc, toneTy,
-                                                    look(p[0]), fVal);
+        auto sfOp = pulse::ShiftFrequencyOp::create(
+            *builder_, loc, toneTy, look(p[0]), fVal, /*start_cycles=*/{},
+            /*duration_cycles=*/{}, /*period_cycles=*/{});
         bind(p[1], sfOp.getResult());
         runTime |= openIfs > 0;
         break;
@@ -5791,8 +5797,9 @@ public:
       case kOpSetFreq: {
         requirePayload(3);
         mlir::Value fVal = finite(2, "set_frequency frequency");
-        auto sfOp = pulse::SetFrequencyOp::create(*builder_, loc, toneTy,
-                                                  look(p[0]), fVal);
+        auto sfOp = pulse::SetFrequencyOp::create(
+            *builder_, loc, toneTy, look(p[0]), fVal, /*start_cycles=*/{},
+            /*duration_cycles=*/{}, /*period_cycles=*/{});
         bind(p[1], sfOp.getResult());
         runTime |= openIfs > 0;
         break;
@@ -5860,7 +5867,8 @@ public:
         auto submit = classical::SubmitOp::create(
             *builder_, loc, classical::LinkType::get(ctx_.get()),
             classical::FutureType::get(ctx_.get()), linkOf(device),
-            mlir::FlatSymbolRefAttr::get(callable.getSymNameAttr()), args);
+            mlir::FlatSymbolRefAttr::get(callable.getSymNameAttr()), args,
+            /*start_cycles=*/{}, /*duration_cycles=*/{}, /*period_cycles=*/{});
         links[device] = submit.getUpdatedLink();
         bind(p[1], submit.getFuture());
         runTime = true;
@@ -5880,7 +5888,8 @@ public:
         auto wait = classical::WaitOp::create(
             *builder_, loc, types, look(p[1]),
             mlir::FlatSymbolRefAttr::get(callable.getSymNameAttr()),
-            p[2] ? builder_->getF64FloatAttr(i2f(p[3])) : mlir::FloatAttr());
+            p[2] ? builder_->getF64FloatAttr(i2f(p[3])) : mlir::FloatAttr(),
+            /*start_cycles=*/{}, /*duration_cycles=*/{}, /*period_cycles=*/{});
         for (int64_t i = 0; i < p[4]; ++i)
           bind(p[5 + i], wait.getValues()[i]);
         break;

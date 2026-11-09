@@ -8,6 +8,7 @@
 include "cudaq-pulse/Dialect/Pulse/PulseDialect.td"
 include "cudaq-pulse/Dialect/Pulse/PulseAttrs.td"
 include "cudaq-pulse/Dialect/Pulse/PulseTypes.td"
+include "cudaq-pulse/Dialect/Pulse/PulseTiming.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/IR/OpBase.td"
@@ -243,11 +244,12 @@ def DriveOp : PulseOp<"drive", []> {
     line and tone. The tone's frame is as the frame changes before the drive
     on that tone left it: a change takes effect at the next pulse.
   }];
-  let arguments = (ins
+  let arguments = !con((ins
     DriveLineType:$line,
     WaveformType:$pulse,
     ToneType:$tone
-  );
+  ),
+                       PulseTimingArgs);
   let results = (outs DriveLineType:$updated_line, ToneType:$updated_tone);
   let assemblyFormat = [{
     $line `,` $pulse `,` $tone attr-dict `:` qualified(type($line))
@@ -272,12 +274,13 @@ def ReadoutOp : PulseOp<"readout", []> {
     %r1, %t1, %m = pulse.readout %r0, %w, %t0, iq : ...
     ```
   }];
-  let arguments = (ins
+  let arguments = !con((ins
     ReadoutLineType:$line,
     WaveformType:$pulse,
     ToneType:$tone,
     EnumProp<ReadoutMode>:$mode
-  );
+  ),
+                       PulseTimingArgs);
   let results = (outs
     ReadoutLineType:$updated_line,
     ToneType:$updated_tone,
@@ -364,10 +367,11 @@ def WaitOp : PulseOp<"wait", [AllTypesMatch<["line", "updated_line"]>]> {
     length to a constant within the bounds, and scheduling again gives the
     exact schedule.
   }];
-  let arguments = (ins
+  let arguments = !con((ins
     AnyLineType:$line,
     DurationType:$duration
-  );
+  ),
+                       PulseTimingArgs);
   let results = (outs AnyLineType:$updated_line);
   let assemblyFormat = "$line `,` $duration attr-dict `:` functional-type(operands, results)";
   let hasVerifier = 1;
@@ -453,7 +457,8 @@ def ShiftFrequencyOp : PulseOp<"shift_frequency", []> {
     Adds `frequency_hz` to the tone's carrier frequency. The frame phase
     stays continuous. It takes no time.
   }];
-  let arguments = (ins ToneType:$tone, F64:$frequency_hz);
+  let arguments = !con((ins ToneType:$tone, F64:$frequency_hz),
+                       PulseTimingArgs);
   let results = (outs ToneType:$updated_tone);
   let assemblyFormat = "$tone `,` $frequency_hz attr-dict `:` qualified(type($tone)) `,` type($frequency_hz) `->` qualified(type($updated_tone))";
   let hasFolder = 1;
@@ -469,7 +474,8 @@ def ShiftPhaseOp : PulseOp<"shift_phase", []> {
     no time and takes effect at the next pulse on the tone, and
     `pulse-fold-phases` folds it into the next drive.
   }];
-  let arguments = (ins ToneType:$tone, F64:$phase_rad);
+  let arguments = !con((ins ToneType:$tone, F64:$phase_rad),
+                       PulseTimingArgs);
   let results = (outs ToneType:$updated_tone);
   let assemblyFormat = "$tone `,` $phase_rad attr-dict `:` qualified(type($tone)) `,` type($phase_rad) `->` qualified(type($updated_tone))";
   let hasFolder = 1;
@@ -482,7 +488,8 @@ def SetPhaseOp : PulseOp<"set_phase", []> {
     Sets the tone's frame phase to `phase_rad`, with the sign of
     `pulse.shift_phase`. It takes no time.
   }];
-  let arguments = (ins ToneType:$tone, F64:$phase_rad);
+  let arguments = !con((ins ToneType:$tone, F64:$phase_rad),
+                       PulseTimingArgs);
   let results = (outs ToneType:$updated_tone);
   let assemblyFormat = "$tone `,` $phase_rad attr-dict `:` qualified(type($tone)) `,` type($phase_rad) `->` qualified(type($updated_tone))";
   let hasFolder = 1;
@@ -495,7 +502,8 @@ def SetFrequencyOp : PulseOp<"set_frequency", []> {
     Sets the tone's carrier frequency to `frequency_hz`. The frame phase
     stays continuous. It takes no time.
   }];
-  let arguments = (ins ToneType:$tone, F64:$frequency_hz);
+  let arguments = !con((ins ToneType:$tone, F64:$frequency_hz),
+                       PulseTimingArgs);
   let results = (outs ToneType:$updated_tone);
   let assemblyFormat = "$tone `,` $frequency_hz attr-dict `:` qualified(type($tone)) `,` type($frequency_hz) `->` qualified(type($updated_tone))";
   let hasFolder = 1;
@@ -619,9 +627,10 @@ def ScheduleBlockOp : PulseOp<"schedule_block", [
     it passes through unchanged. With `max_duration_cycles`, scheduling fails
     if the block can take longer than that many cycles.
   }];
-  let arguments = (ins EnumProp<SchedulePolicy>:$policy,
+  let arguments = !con((ins EnumProp<SchedulePolicy>:$policy,
                        Variadic<AnyTimedType>:$inputs,
-                       OptionalAttr<StrAttr>:$callee);
+                       OptionalAttr<StrAttr>:$callee),
+                       PulseTimingArgs);
   let results = (outs Variadic<AnyTimedType>:$outputs);
   let regions = (region SizedRegion<1>:$body);
   let assemblyFormat = [{

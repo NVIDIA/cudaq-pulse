@@ -39,6 +39,12 @@
 #define GET_OP_CLASSES
 #include "cudaq-pulse/Dialect/Pulse/PulseOps.h.inc"
 
+#include "cudaq-pulse/Dialect/Classical/ClassicalDialect.h.inc"
+#define GET_TYPEDEF_CLASSES
+#include "cudaq-pulse/Dialect/Classical/ClassicalTypes.h.inc"
+#define GET_OP_CLASSES
+#include "cudaq-pulse/Dialect/Classical/ClassicalOps.h.inc"
+
 #include "cudaq-pulse/Dialect/QOp/QOpDialect.h.inc"
 #include "cudaq-pulse/Dialect/QOp/QOpEnums.h.inc"
 #define GET_ATTRDEF_CLASSES

@@ -141,7 +141,7 @@ private:
             << *duration << ", but the operation takes " << *cycles
             << " cycles";
     }
-    auto periods = op->getAttrOfType<mlir::DenseI64ArrayAttr>("period_cycles");
+    auto periods = pulse::periodCyclesAttr(op);
     if (static_cast<size_t>(periods ? periods.size() : 0) != iteration.size()) {
       error(op,
             "scheduled operation needs one period_cycles entry per enclosing "
@@ -172,7 +172,7 @@ private:
     auto trips = pulse::constantTripCount(loop);
     if (!trips) {
       for (mlir::Operation &inner : loop.getBody()->without_terminator())
-        if (isTimedOp(&inner) && inner.hasAttr("start_cycles")) {
+        if (isTimedOp(&inner) && pulse::hasStart(&inner)) {
           error(&inner, "a scheduled loop needs constant bounds");
           return;
         }
@@ -200,8 +200,7 @@ private:
     loop.getBody()->walk([&](mlir::Operation *op) {
       if (!isTimedOp(op))
         return;
-      auto periods =
-          op->getAttrOfType<mlir::DenseI64ArrayAttr>("period_cycles");
+      auto periods = pulse::periodCyclesAttr(op);
       if (!periods || periods.size() <= level)
         return;
       int64_t period = periods[level];

@@ -10,11 +10,12 @@
 // give each line's delay. A wait whose length comes from a classical answer is
 // a barrier of every line and keeps its time.
 //
-// Include after the Pulse dialect op and type headers and LineTrace.h.
+// Include after the Pulse and Classical dialect op headers.
 
 #pragma once
 
 #include "cudaq-pulse/Analysis/LineTrace.h"
+#include "cudaq-pulse/Analysis/Timing.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
 
@@ -35,7 +36,7 @@ inline void applyLineDelays(mlir::Operation *function,
     if (!mlir::isa<DriveOp, ReadoutOp, WaitOp>(op) ||
         op->hasAttr("classical.variable"))
       return;
-    auto start = op->getAttrOfType<mlir::IntegerAttr>("start_cycles");
+    auto start = startCyclesAttr(op);
     if (!start)
       return;
     mlir::Operation *allocation = trace(op->getOperand(0));
@@ -48,8 +49,7 @@ inline void applyLineDelays(mlir::Operation *function,
       return;
     int64_t shift = shifts[qudit];
     if (shift != 0)
-      op->setAttr("start_cycles",
-                  mlir::IntegerAttr::get(i64, start.getInt() + shift));
+      setStartCycles(op, mlir::IntegerAttr::get(i64, start.getInt() + shift));
   });
 }
 
