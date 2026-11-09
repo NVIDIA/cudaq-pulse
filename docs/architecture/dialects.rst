@@ -47,6 +47,35 @@ and scheduling records each timed op's ``start_cycles`` and ``duration_cycles``.
 - Measurements: ``pulse.is_set`` and ``pulse.outcome``, which feedback
   branches on with ``scf.if``.
 
+Frames
+~~~~~~
+
+A tone is a frame: a carrier frequency and a frame phase, threaded from op
+to op like a line.
+
+- A frame change (``pulse.shift_phase``, ``pulse.set_phase``,
+  ``pulse.shift_frequency``, ``pulse.set_frequency``) takes no time and takes
+  effect at the next pulse played on the tone. A change after the last pulse
+  on a tone plays nothing; the controller export still lists it as a frame
+  update.
+- A wait does not advance a tone's frame phase, unlike OpenPulse, where a
+  delay advances the frame. The carrier runs on through the wait: a tone off
+  its qudit's frequency by a detuning is that detuning times the elapsed time
+  further round in the qudit's frame, whether the time passed in a wait or in
+  pulses.
+- A frame rotates through ``pulse.sync``: a change made before a sync
+  applies to the next pulse on the tone after it, however long the sync holds
+  the line.
+- ``pulse.readout`` plays its pulse and gives a measurement (the level
+  ``pulse.is_set`` and ``pulse.outcome`` read); ``pulse.iq_acquire`` gives the
+  raw IQ point instead. Both return their line and tone, so a frame change
+  before either applies to it. Only ``pulse.readout`` is scheduled: the
+  scheduler gives ``pulse.iq_acquire`` no start or duration, and the
+  controller export has no event for it.
+
+``test/Conversion/pulse-to-qop-frames.mlir`` and
+``test/Dialect/Pulse/readout_iq_acquire.mlir`` show each rule.
+
 Classical
 ---------
 

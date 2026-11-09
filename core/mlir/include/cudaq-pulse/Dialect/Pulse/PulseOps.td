@@ -240,7 +240,8 @@ def DriveOp : PulseOp<"drive", []> {
   let description = [{
     Applies a waveform to a drive line at the specified tone's frequency and
     phase. Advances line time by pulse duration. Returns the updated drive
-    line and tone.
+    line and tone. The tone's frame is as the frame changes before the drive
+    on that tone left it: a change takes effect at the next pulse.
   }];
   let arguments = (ins
     DriveLineType:$line,
@@ -350,7 +351,10 @@ def WaitOp : PulseOp<"wait", [AllTypesMatch<["line", "updated_line"]>]> {
   let description = [{
     Idles a drive or readout line for `duration` and returns the updated
     line, of the same kind. The scheduler reads the length from a
-    `pulse.duration_from_int` of a constant.
+    `pulse.duration_from_int` of a constant. A wait does not change any
+    tone's frame phase (unlike an OpenPulse delay, which advances the
+    frame); the carrier runs on, so a detuned tone's phase in its qudit's
+    frame advances with the elapsed time as it does during pulses.
 
     A wait marked `pulse.variable_wait` takes its length from a value computed
     from the function's float arguments, so it is known only when they are
@@ -375,7 +379,8 @@ def SyncOp : PulseOp<"sync", []> {
   let summary = "Synchronize multiple lines to the same time";
   let description = [{
     Aligns time state of multiple lines. All returned lines will have
-    time = max(T1, ..., Tk).
+    time = max(T1, ..., Tk). Tones pass through unchanged: a frame change
+    made before a sync applies to the next pulse on its tone after it.
   }];
   let arguments = (ins Variadic<AnyLineType>:$lines);
   let results = (outs Variadic<AnyLineType>:$synced_lines);
@@ -461,7 +466,8 @@ def ShiftPhaseOp : PulseOp<"shift_phase", []> {
     Advances the tone's frame phase by `phase_rad`: a virtual Z rotation,
     in the convention of McKay et al., PRA 96, 022330 (2017). A pulse
     played after it turns about an axis rotated by `-phase_rad`. It takes
-    no time, and `pulse-fold-phases` folds it into the next drive.
+    no time and takes effect at the next pulse on the tone, and
+    `pulse-fold-phases` folds it into the next drive.
   }];
   let arguments = (ins ToneType:$tone, F64:$phase_rad);
   let results = (outs ToneType:$updated_tone);
@@ -635,7 +641,9 @@ def IQAcquireOp : PulseOp<"iq_acquire", []> {
     Plays `pulse` on a readout line at `tone` and returns the raw
     demodulated IQ point instead of a discriminated measurement. Like
     `pulse.readout`, it returns the updated line and tone, so one tone can
-    be acquired with again.
+    be acquired with again. Unlike `pulse.readout`, it is not scheduled: it
+    gets no start or duration, and the controller export has no event for
+    it.
   }];
   let arguments = (ins
     ReadoutLineType:$line,

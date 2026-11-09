@@ -33,7 +33,7 @@ def QuditType : PulseType<"Qudit", "qudit"> {
 //===----------------------------------------------------------------------===//
 
 def MeasurementType : PulseType<"Measurement", "measurement"> {
-  let summary = "Classical bit produced by a readout operation";
+  let summary = "The level a readout observed";
 }
 
 //===----------------------------------------------------------------------===//
