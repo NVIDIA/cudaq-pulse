@@ -273,7 +273,7 @@ def test_verify_does_constant_work_per_unused_line(tmp_path):
     opt = shutil.which("cudaq-pulse-opt", path=str(_BUILD_BIN)) or shutil.which("cudaq-pulse-opt")
     if opt is None:
         missing("cudaq-pulse-opt", "cudaq-pulse-opt is not built or on PATH")
-    wide = pulse.quantum_system(ladder_target(2000)).qudits
+    wide = ladder_target(2000).qudits
     for n in (500, 2000):
         module = tmp_path / f"half_unused_{n}.mlir"
         module.write_text(pulse.compile(_half_unused(n), passes=()).lower(wide[0:n]).mlir())
@@ -319,7 +319,7 @@ def test_compiling_a_kernel_that_reads_a_dict_is_flat_in_its_size():
 
 @pytest.mark.scaling
 def test_a_wide_sync_traces_in_linear_time():
-    wide = pulse.quantum_system(ladder_target(4000)).qudits
+    wide = ladder_target(4000).qudits
 
     def program(n: int):
         @pulse.kernel
@@ -716,7 +716,7 @@ def test_a_long_idle_simulates_in_constant_time():
         drive(d, square(40, 0.157))
         wait(d, wait_cycles)
 
-    dev = pulse.quantum_system(ladder_target(1))
+    dev = ladder_target(1)
     compiled = pulse.compile(idle, quantum_system=dev)
     q = dev.qudits[0]
     short, long = compiled.lower(q, 2_000), compiled.lower(q, 400_000)
@@ -752,7 +752,7 @@ def test_an_adaptive_loop_of_fifty_rounds_simulates_one_path_per_shot():
             wait(d, w, bounds=(40, 200_000))
 
     machine = ControlSystem(links={"controller": Link(fixed_ns=4, feedback_ns=8)})
-    dev = pulse.quantum_system(ladder_target(1))
+    dev = ladder_target(1)
     lowered = pulse.compile(rounds, quantum_system=dev, control_system=machine).lower(
         dev.qudits[0], 50
     )

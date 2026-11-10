@@ -14,15 +14,12 @@ import numpy as np
 import pytest
 from cudaq_pulse.classical import emulation
 from cudaq_pulse.kernel.ir_builder import CompilationError
-from cudaq_pulse.quantum_systems import DeviceDescription, PhysicalQudit
+from cudaq_pulse.quantum_systems import PhysicalQudit
 
 PI_AMP = math.pi / 20  # square(40, PI_AMP) is a pi pulse
 
 _DEVICE = pulse.quantum_system(
-    DeviceDescription(
-        name="three",
-        qudits={i: PhysicalQudit(i, 5e9 + 1e8 * i, -2e8, 0.0, 0.0) for i in range(3)},
-    )
+    name="three", qudits={i: PhysicalQudit(i, 5e9 + 1e8 * i, -2e8, 0.0, 0.0) for i in range(3)}
 )
 
 

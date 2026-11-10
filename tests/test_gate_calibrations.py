@@ -15,7 +15,6 @@ import pytest
 from cudaq_pulse.gates import CZ, READOUT, X90, Y90, Gate, X, Y
 from cudaq_pulse.quantum_systems import (
     Coupling,
-    DeviceDescription,
     DispersiveReadout,
     DragPulse,
     FluxCZ,
@@ -38,8 +37,8 @@ def _device(**fields):
     qudits = {0: _qudit(0, **fields), 1: _qudit(1)}
     cz = FluxCZ(duration_ns=60.0, buffer_ns=10.0, interaction_frequency_hz=4.4e9)
     couplings = [Coupling((0, 1), 5.0e6, calibrations={CZ: cz})]
-    target = DeviceDescription(name="gates", qudits=qudits, couplings=couplings)
-    return pulse.quantum_system(target)
+    target = pulse.quantum_system(name="gates", qudits=qudits, couplings=couplings)
+    return target
 
 
 def _mlir(lowered, name):
@@ -318,7 +317,7 @@ def test_calibrations_and_metadata_round_trip_through_a_system_file():
         readout=DispersiveReadout(frequency_hz=7e9, dispersive_shift_hz=1e6, linewidth_hz=2e6),
     )
     data = dev.as_dict()
-    qudit = data["quantum_system"]["qudits"][0]
+    qudit = data["qudits"][0]
     assert qudit["calibrations"] == [
         {"gate": "x", "duration_ns": 40.0, "sigma_ns": 10.0, "amplitude": None, "beta_ns": 0.0,
          "phase_rad": 0.0},
@@ -328,7 +327,7 @@ def test_calibrations_and_metadata_round_trip_through_a_system_file():
          "integration_ns": 400.0, "photon_number": 4.0},
     ]  # fmt: skip
     assert qudit["metadata"] == {"fridge": "B"}
-    assert "calibrations" in data["quantum_system"]["couplings"][0]
+    assert "calibrations" in data["couplings"][0]
     back = pulse.QuantumSystem.from_dict(json.loads(json.dumps(data)))
     assert back == dev and back.physical_qudits[0].metadata == {"fridge": "B"}
     assert back.physical_qudits[0].get_calibration(X, (1, 2)) == x12
@@ -336,7 +335,7 @@ def test_calibrations_and_metadata_round_trip_through_a_system_file():
 
 def test_a_system_file_names_a_calibration_of_the_wrong_kind(tmp_path):
     data = _device().as_dict()
-    data["quantum_system"]["qudits"][0]["calibrations"] = [
+    data["qudits"][0]["calibrations"] = [
         {"gate": "cz", "duration_ns": 60.0},
         {"gate": "x", "duration": 40.0, "sigma_ns": 10.0},
         {"duration_ns": 40.0},
@@ -346,7 +345,7 @@ def test_a_system_file_names_a_calibration_of_the_wrong_kind(tmp_path):
     with pytest.raises(pulse.QuantumSystemDefinitionError) as raised:
         pulse.QuantumSystem.load(path)
     found = [(p.path, p.message) for p in raised.value.problems]
-    where = "quantum_system.qudits[0].calibrations"
+    where = "qudits[0].calibrations"
     assert found[:3] == [
         (f"{where}[0].gate", "is not a gate of a qudit"),
         (f"{where}[1].duration", "is not a known key"),

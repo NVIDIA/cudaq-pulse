@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """GPU integration tests: 8-qubit ladder system.
 
-The ladder connectivity is a ``DeviceDescription``; the tests check a
+The ladder connectivity is a ``QuantumSystem``; the tests check a
 256-dimensional GPU evolution on it.
 
     q0 -- q1 -- q2 -- q3
@@ -15,7 +15,7 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.quantum_systems import Coupling, DeviceDescription, MicrowaveDrive, PhysicalQudit
+from cudaq_pulse.quantum_systems import Coupling, MicrowaveDrive, PhysicalQudit
 
 from tests._handles import Q
 from tests.runtime._lowering import evolve, on
@@ -41,7 +41,7 @@ def _ladder_8q_target(coupling_hz=1.0e6):
         for i in range(8)
     }
     couplings = [Coupling((a, b), strength_hz=coupling_hz) for a, b in _LADDER_EDGES]
-    return DeviceDescription(name="ladder-8q", qudits=qudits, couplings=couplings)
+    return pulse.quantum_system(name="ladder-8q", qudits=qudits, couplings=couplings)
 
 
 def test_ladder_topology_structure():

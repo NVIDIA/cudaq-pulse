@@ -12,7 +12,6 @@ import sys
 import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse.quantum_systems import (
-    DeviceDescription,
     DispersiveReadout,
     DragPulse,
     Drive,
@@ -45,7 +44,7 @@ class _Optical(Drive):
 
 
 def _target(**members):
-    return DeviceDescription(
+    return pulse.quantum_system(
         name="c", qudits={0: PhysicalQudit(0, 5e9, -2e8, 10.0, 5.0, **members)}
     )
 
@@ -105,7 +104,7 @@ def test_the_depletion_comes_from_the_readout():
 
 
 def test_the_shipped_target_describes_its_drive_and_readout():
-    qudit = transmon_17q().qudits[0]
+    qudit = transmon_17q().physical_qudits[0]
     assert isinstance(qudit.drive, MicrowaveDrive) and isinstance(qudit.readout, DispersiveReadout)
     x = qudit.calibrations[pulse.gates.X]
     assert (x.duration_ns, x.sigma_ns, x.amplitude) == (40.0, 10.0, None)
@@ -131,23 +130,25 @@ def test_the_drive_strength_comes_from_the_drive():
 def test_a_readout_no_model_knows_is_refused():
     target = _target(readout=_Fluorescence())
     with pytest.raises(pulse.UnsupportedError, match="no readout model for _Fluorescence"):
-        IQModel(target, (0,), decay=False)
+        IQModel(target._description, (0,), decay=False)
     with pytest.raises(pulse.UnsupportedError, match="no readout model for _Fluorescence"):
-        ReadoutModel(target, (0,), (2,), decay=False)
+        ReadoutModel(target._description, (0,), (2,), decay=False)
     # Without a readout, ideal reports, and no IQ points.
-    assert ReadoutModel(_target(), (0,), (2,), decay=True).reports(0, 1) == [(1, 1.0)]
+    assert ReadoutModel(_target()._description, (0,), (2,), decay=True).reports(0, 1) == [(1, 1.0)]
     with pytest.raises(
         pulse.UnsupportedError, match="qudit 0 has no readout: IQ points are synthesized"
     ):
-        IQModel(_target(), (0,), decay=False)
+        IQModel(_target()._description, (0,), decay=False)
 
 
 def test_the_iq_model_needs_the_dispersive_shift_and_the_linewidth():
     given = DispersiveReadout(frequency_hz=7e9, dispersive_shift_hz=1e6, linewidth_hz=2e6)
-    IQModel(_target(readout=given), (0,), decay=False)
+    IQModel(_target(readout=given)._description, (0,), decay=False)
     message = r"qudit 0 need its DispersiveReadout's linewidth_hz, which it does not give"
     with pytest.raises(pulse.UnsupportedError, match=message):
-        IQModel(_target(readout=given.replace(linewidth_hz=None)), (0,), decay=False)
+        IQModel(_target(readout=given.replace(linewidth_hz=None))._description, (0,), decay=False)
     both = r"dispersive_shift_hz and linewidth_hz"
     with pytest.raises(pulse.UnsupportedError, match=both):
-        IQModel(_target(readout=DispersiveReadout(frequency_hz=7e9)), (0,), decay=False)
+        IQModel(
+            _target(readout=DispersiveReadout(frequency_hz=7e9))._description, (0,), decay=False
+        )

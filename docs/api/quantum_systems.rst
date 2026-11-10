@@ -55,7 +55,7 @@ One nanosecond, microsecond, millisecond and second:
 .. autodata:: cudaq_pulse.s
    :no-value:
 
-Errors are on :doc:`errors`; the targets a quantum system is built from are on
+Errors are on :doc:`errors`; what a quantum system is built from is on
 :doc:`descriptions`.
 
 Control systems

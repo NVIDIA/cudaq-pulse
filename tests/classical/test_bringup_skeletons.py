@@ -40,7 +40,7 @@ def _generic():
     # The generic target has no readout parameters; give it a dispersive
     # readout so the readout skeletons have something to optimize.
     target = transmon_generic(1)
-    qudit = target.qudits[0].replace(
+    qudit = target.physical_qudits[0].replace(
         readout=DispersiveReadout(
             frequency_hz=7.0e9,
             dispersive_shift_hz=-1.5e6,
@@ -50,7 +50,15 @@ def _generic():
         ),
         calibrations={pulse.gates.READOUT: ReadoutPulse(integration_ns=400.0)},
     )
-    return dataclasses.replace(target, qudits={0: qudit})
+    return pulse.quantum_system(
+        name=target.name,
+        qudits={0: qudit},
+        couplings=target.couplings,
+        residual_zz=target.residual_zz,
+        model=target.model,
+        attribution=target.attribution,
+        clock_ghz=target.clock_ghz,
+    )
 
 
 TARGETS = {"generic": _generic, "transmon_17q": transmon_17q}
@@ -62,7 +70,7 @@ def target(request):
 
 
 def _device(target):
-    return pulse.quantum_system(target)
+    return target
 
 
 # ── K11: adaptive T1 with a variable wait ───────────────────────────────────
@@ -114,7 +122,7 @@ def test_k11_adaptive_t1_tracks_its_posterior_per_path(target):
             assert call.answer == pytest.approx((alpha, beta, tau))
     # The first shot survives the 5 us wait (plus the 200 ns readout) at
     # exp(-t / T1).
-    t1_ns = target.qudits[0].t1_us * 1e3
+    t1_ns = target.physical_qudits[0].t1_us * 1e3
     survived = sum(b.probability for b in result.branches if b.levels[0] == 1)
     assert survived == pytest.approx(math.exp(-(5000 + 200) / t1_ns), abs=0.02)
     artifact = json.loads(json.dumps(lowered.export_to_emulator()))
@@ -170,12 +178,19 @@ def test_k12_frequency_binary_search_follows_a_detuned_plant(target):
     dev = _device(target)
     offset = 300e3
     plant = DriftingPlant(target, frequency=OrnsteinUhlenbeck(1.0, 1.0), seed=0)
-    detuned = dataclasses.replace(
-        target,
+    detuned = pulse.quantum_system(
+        name=target.name,
         qudits={
-            **target.qudits,
-            0: target.qudits[0].replace(frequency_hz=target.qudits[0].frequency_hz + offset),
+            **target.physical_qudits,
+            0: target.physical_qudits[0].replace(
+                frequency_hz=target.physical_qudits[0].frequency_hz + offset
+            ),
         },
+        couplings=target.couplings,
+        residual_zz=target.residual_zz,
+        model=target.model,
+        attribution=target.attribution,
+        clock_ghz=target.clock_ghz,
     )
     lowered = pulse.compile(binary_search, quantum_system=dev, control_system=MACHINE).lower(
         dev.qudits[0], 1
@@ -227,15 +242,22 @@ def test_k13_three_point_decay_and_phase_recover_the_device(target):
         for k in range(3)
     ]
     t1_us = cal.three_point_decay(*p, spacing=spacing_cycles / CLOCK) / 1e3
-    assert t1_us == pytest.approx(target.qudits[0].t1_us, rel=0.02)
+    assert t1_us == pytest.approx(target.physical_qudits[0].t1_us, rel=0.02)
     # A detuned plant puts a phase 2 pi d T on the Ramsey fringe.
     offset = 250e3
-    detuned = dataclasses.replace(
-        target,
+    detuned = pulse.quantum_system(
+        name=target.name,
         qudits={
-            **target.qudits,
-            0: target.qudits[0].replace(frequency_hz=target.qudits[0].frequency_hz + offset),
+            **target.physical_qudits,
+            0: target.physical_qudits[0].replace(
+                frequency_hz=target.physical_qudits[0].frequency_hz + offset
+            ),
         },
+        couplings=target.couplings,
+        residual_zz=target.residual_zz,
+        model=target.model,
+        attribution=target.attribution,
+        clock_ghz=target.clock_ghz,
     )
     ramsey = pulse.compile(ramsey_shot, quantum_system=dev)
     wait_cycles, theta, delta = 600, math.pi / 2, 0.5
@@ -269,12 +291,19 @@ def test_k14_golden_section_finds_the_qudit_frequency(target):
     dev = _device(target)
     q = dev.qudits[0]
     offset = 1.3e6
-    detuned = dataclasses.replace(
-        target,
+    detuned = pulse.quantum_system(
+        name=target.name,
         qudits={
-            **target.qudits,
-            0: target.qudits[0].replace(frequency_hz=target.qudits[0].frequency_hz + offset),
+            **target.physical_qudits,
+            0: target.physical_qudits[0].replace(
+                frequency_hz=target.physical_qudits[0].frequency_hz + offset
+            ),
         },
+        couplings=target.couplings,
+        residual_zz=target.residual_zz,
+        model=target.model,
+        attribution=target.attribution,
+        clock_ghz=target.clock_ghz,
     )
     compiled = pulse.compile(spectroscopy, quantum_system=dev)
     state = cal.GoldenSection.start(-4e6, 4e6, tolerance=2e4)
@@ -295,9 +324,9 @@ def test_k14_golden_section_finds_the_qudit_frequency(target):
 def test_k14_nelder_mead_optimizes_readout_frequency_and_amplitude(target):
     # The cost of a readout setting: minus the separation of the |0> and |1>
     # points, plus a penalty on photons (amplitude squared).
-    model = IQModel(target, (0,), decay=False)
-    resonator = target.qudits[0].readout.frequency_hz
-    tau = target.qudits[0].get_calibration(pulse.gates.READOUT).integration_ns
+    model = IQModel(target._description, (0,), decay=False)
+    resonator = target.physical_qudits[0].readout.frequency_hz
+    tau = target.physical_qudits[0].get_calibration(pulse.gates.READOUT).integration_ns
 
     def cost(point):
         offset_mhz, amplitude = point
@@ -405,7 +434,9 @@ def test_k15_the_closed_loop_runs_ten_thousand_iterations_on_one_compile(target)
 def test_k16_tracking_a_drifting_plant_against_its_truth(target):
     plant = DriftingPlant(
         target,
-        t1=TelegraphT1(target.qudits[0].t1_us / 4, target.qudits[0].t1_us, rate_hz=0.5),
+        t1=TelegraphT1(
+            target.physical_qudits[0].t1_us / 4, target.physical_qudits[0].t1_us, rate_hz=0.5
+        ),
         frequency=OrnsteinUhlenbeck(100e3, correlation_s=5.0),
         seed=21,
     )
@@ -441,14 +472,19 @@ def test_k16_tracking_a_drifting_plant_against_its_truth(target):
 
 
 def test_k17_latency_within_depletion_is_hidden(target):
-    depleting = dataclasses.replace(
-        target,
+    depleting = pulse.quantum_system(
+        name=target.name,
         qudits={
-            **target.qudits,
-            0: target.qudits[0].replace(
-                readout=target.qudits[0].readout.replace(depletion_ns=250.0),
+            **target.physical_qudits,
+            0: target.physical_qudits[0].replace(
+                readout=target.physical_qudits[0].readout.replace(depletion_ns=250.0),
             ),
         },
+        couplings=target.couplings,
+        residual_zz=target.residual_zz,
+        model=target.model,
+        attribution=target.attribution,
+        clock_ghz=target.clock_ghz,
     )
     dev = _device(depleting)
     for latency_ns, exposed_ns in ((200.0, 0.0), (400.0, 150.0)):
@@ -475,15 +511,23 @@ def test_k17_latency_within_depletion_is_hidden(target):
 
 
 def test_k18_readout_models_on_the_target(target):
-    qudit = target.qudits[0]
+    qudit = target.physical_qudits[0]
     given = qudit.readout
     params = given.replace(error_0to1=given.error_0to1 or 0.02, error_1to0=given.error_1to0 or 0.05)
     pulses = qudit.calibrations
     window = (pulses.get(pulse.gates.READOUT) or ReadoutPulse()).replace(duration_ns=400.0)
     calibrations = {**pulses, pulse.gates.READOUT: window}
-    modelled = dataclasses.replace(
-        target,
-        qudits={**target.qudits, 0: qudit.replace(readout=params, calibrations=calibrations)},
+    modelled = pulse.quantum_system(
+        name=target.name,
+        qudits={
+            **target.physical_qudits,
+            0: qudit.replace(readout=params, calibrations=calibrations),
+        },
+        couplings=target.couplings,
+        residual_zz=target.residual_zz,
+        model=target.model,
+        attribution=target.attribution,
+        clock_ghz=target.clock_ghz,
     )
     dev = _device(modelled)
 
@@ -508,7 +552,7 @@ def test_k18_readout_models_on_the_target(target):
     )
     assert reported_zero(decay) > reported_zero(model)
     # The dispersive IQ model separates the states on this target.
-    iq = IQModel(modelled, (0,), decay=False)
+    iq = IQModel(modelled._description, (0,), decay=False)
     c0, c1 = (iq.center(0, k, params.frequency_hz, 1.0, 400.0) for k in (0, 1))
     assert abs(c1 - c0) > 1.0
     assert iq.depletion_ns(0) > 0

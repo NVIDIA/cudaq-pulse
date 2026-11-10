@@ -16,7 +16,7 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.quantum_systems import DeviceDescription, MicrowaveDrive, PhysicalQudit
+from cudaq_pulse.quantum_systems import MicrowaveDrive, PhysicalQudit
 from cudaq_pulse.runtime import _jit as jit
 from cudaq_pulse.runtime import simulate as simulate_module
 
@@ -55,7 +55,7 @@ def gpu_on_cpu(monkeypatch):
 
 
 def _target(n, t1_us=0.0):
-    return DeviceDescription(
+    return pulse.quantum_system(
         name="gpu-logic",
         qudits={
             q: PhysicalQudit(

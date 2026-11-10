@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """A drifting quantum system to calibrate against, with its true parameters recorded.
 
-``DriftingPlant`` wraps one qudit of a device description and moves its
+``DriftingPlant`` wraps one qudit of a quantum system and moves its
 parameters as time advances:
 
 - ``TelegraphT1``: T1 switches between two values at random, at a rate, as
@@ -11,7 +11,7 @@ parameters as time advances:
   time, for the qubit's frequency offset (Hz) and its drive amplitude scale
   (relative, around 1).
 
-``drifting.now()`` is the device description at the current time; simulate
+``drifting.now()`` is the quantum system at the current time; simulate
 a compiled program on it with ``pulse.simulate(lowered, quantum_system=...)``, which
 keeps the program as compiled. ``drifting.truth`` records every state the system
 has been in, for checking what a tracker estimated against what was true.
@@ -23,14 +23,16 @@ excite, wait, measure), ``p_ramsey`` and ``p_rabi``.
 
 from __future__ import annotations
 
-import dataclasses
 import math
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from .._errors import InvalidValueError
+
+if TYPE_CHECKING:
+    from .._device import QuantumSystem
 
 __all__ = ["DriftingPlant", "OrnsteinUhlenbeck", "PlantState", "TelegraphT1"]
 
@@ -70,11 +72,11 @@ class PlantState:
 
 
 class DriftingPlant:
-    """One qudit of *target* whose T1, frequency and drive amplitude drift."""
+    """One qudit of *quantum_system* whose T1, frequency and drive amplitude drift."""
 
     def __init__(
         self,
-        target: Any,
+        quantum_system: QuantumSystem,
         qudit: int = 0,
         *,
         t1: TelegraphT1 | None = None,
@@ -82,15 +84,15 @@ class DriftingPlant:
         amplitude: OrnsteinUhlenbeck | None = None,
         seed: int | None = None,
     ) -> None:
-        if qudit not in target.qudits:
-            raise InvalidValueError(f"the target has no qudit {qudit}")
-        self._target = target
+        if qudit not in quantum_system.physical_qudits:
+            raise InvalidValueError(f"the quantum system has no qudit {qudit}")
+        self._system = quantum_system
         self.qudit = qudit
         self.t1 = t1
         self.frequency = frequency
         self.amplitude = amplitude
         self._rng = np.random.default_rng(seed)
-        base = target.qudits[qudit]
+        base = quantum_system.physical_qudits[qudit]
         self._high = t1 is None or bool(self._rng.integers(2))
         self.state = PlantState(
             0.0,
@@ -123,21 +125,31 @@ class DriftingPlant:
         self.truth.append(self.state)
         return self.state
 
-    def now(self) -> Any:
-        """The device description with the qudit's current true parameters."""
+    def now(self) -> QuantumSystem:
+        """The quantum system with the qudit's current true parameters."""
+        from .._device import quantum_system
         from ..quantum_systems.base import MicrowaveDrive
 
-        base = self._target.qudits[self.qudit]
-        scale = self._target.drive_amplitude_scale(self.qudit) * self.state.amplitude_scale
+        system = self._system
+        base = system.physical_qudits[self.qudit]
+        scale = system.drive_amplitude_scale(self.qudit) * self.state.amplitude_scale
         drive = base.drive if base.drive is not None else MicrowaveDrive()
         qudit = base.replace(
             t1_us=self.state.t1_us,
             frequency_hz=base.frequency_hz + self.state.frequency_offset_hz,
             drive=drive.replace(amplitude_scale_rad_per_ns=scale),
         )
-        qudits = dict(self._target.qudits)
+        qudits = dict(system.physical_qudits)
         qudits[self.qudit] = qudit
-        return dataclasses.replace(self._target, qudits=qudits)
+        return quantum_system(
+            name=system.name,
+            qudits=qudits,
+            couplings=system.couplings,
+            residual_zz=system.residual_zz,
+            model=system.model,
+            attribution=system.attribution,
+            clock_ghz=system.clock_ghz,
+        )
 
     def truth_trace(self) -> dict[str, list[float]]:
         """Every recorded state, as columns (JSON-ready)."""

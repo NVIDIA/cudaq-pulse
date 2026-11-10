@@ -11,13 +11,12 @@ from __future__ import annotations
 
 import math
 import threading
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .._errors import InvalidValueError
 from . import _transmon_17q as _k
 from .base import (
     Coupling,
-    DeviceDescription,
     DispersiveReadout,
     DragPulse,
     FluxCZ,
@@ -25,7 +24,11 @@ from .base import (
     PhysicalQudit,
     ReadoutPulse,
     _Calibrations,
+    _Description,
 )
+
+if TYPE_CHECKING:
+    from .._device import QuantumSystem
 
 #: The CZs of one error correction cycle of ``transmon_17q``, layer by layer
 #: (Fig. 3a and the edge labels of Fig. 6c): each layer is three CZs on
@@ -43,7 +46,7 @@ CZ_LAYERS: tuple[tuple[tuple[int, int], ...], ...] = (
 )
 
 
-def transmon_17q(calibration: Any = "transmon_17q") -> DeviceDescription:
+def transmon_17q(calibration: Any = "transmon_17q") -> QuantumSystem:
     """17-qubit surface-code quantum system of Krinner et al., Nature 605, 669 (2022).
 
     Qudits 0-16 are D1-D9, X1-X4, Z1-Z4, the column order of the paper's
@@ -81,18 +84,31 @@ def transmon_17q(calibration: Any = "transmon_17q") -> DeviceDescription:
     or more levels, the couplings produce it; ``transmon_17q_idle_zz_hz`` gives
     the charge model's value, -4.5 to -7.3 kHz with ``transmon_17q``.
     """
+    if calibration is None:
+        from .._device import _calibrated
+
+        return _calibrated(_published_17q(), None, "transmon_17q(calibration=None)", None, None)
+    from .._device import quantum_system
+
+    if calibration == "transmon_17q":
+        return quantum_system("transmon_17q")
+    return quantum_system("transmon_17q", calibration=calibration)
+
+
+def _described_17q(calibration: Any = "transmon_17q") -> _Description:
+    """The description ``transmon_17q(calibration)`` is built from."""
     if isinstance(calibration, str):
         return _calibrated_17q(calibration)
     target = _published_17q()
-    return target if calibration is None else calibration.apply(target)
+    return target if calibration is None else calibration._apply(target)
 
 
-_BUILT: dict[str | None, DeviceDescription] = {}
+_BUILT: dict[str | None, _Description] = {}
 # Reentrant: building a calibrated target builds the published one.
 _BUILT_LOCK = threading.RLock()
 
 
-def _calibrated_17q(name: str) -> DeviceDescription:
+def _calibrated_17q(name: str) -> _Description:
     from .calibration import shipped_calibration
 
     built = _BUILT.get(name)
@@ -100,11 +116,11 @@ def _calibrated_17q(name: str) -> DeviceDescription:
         with _BUILT_LOCK:
             built = _BUILT.get(name)
             if built is None:
-                built = _BUILT[name] = shipped_calibration(name).apply(_published_17q())
+                built = _BUILT[name] = shipped_calibration(name)._apply(_published_17q())
     return built
 
 
-def _published_17q() -> DeviceDescription:
+def _published_17q() -> _Description:
     built = _BUILT.get(None)
     if built is None:
         with _BUILT_LOCK:
@@ -114,7 +130,7 @@ def _published_17q() -> DeviceDescription:
     return built
 
 
-def _build_published_17q() -> DeviceDescription:
+def _build_published_17q() -> _Description:
     qudits = {}
     drive = MicrowaveDrive()
     x = DragPulse(duration_ns=_k.DRIVE_DURATION_NS, sigma_ns=_k.DRIVE_SIGMA_NS)
@@ -167,7 +183,7 @@ def _build_published_17q() -> DeviceDescription:
         )
         for e in _k.EDGES
     ]
-    return DeviceDescription(
+    return _Description(
         name="transmon_17q",
         qudits=qudits,
         couplings=couplings,
@@ -206,8 +222,8 @@ def transmon_generic(
     t1_us: float = 25.0,
     t2_star_us: float = 15.0,
     topology: str = "linear",
-) -> DeviceDescription:
-    """Build a generic transmon target with configurable parameters.
+) -> QuantumSystem:
+    """A generic transmon quantum system with configurable parameters.
 
     Parameters
     ----------
@@ -227,6 +243,33 @@ def transmon_generic(
         ``"linear"`` (chain), ``"ring"``, or ``"grid"`` (square lattice
         with side length = ceil(sqrt(qudit_count))).
     """
+    from .._device import _calibrated
+
+    built = _described_generic(
+        qudit_count,
+        base_frequency_hz=base_frequency_hz,
+        frequency_spread_hz=frequency_spread_hz,
+        anharmonicity_hz=anharmonicity_hz,
+        coupling_strength_hz=coupling_strength_hz,
+        t1_us=t1_us,
+        t2_star_us=t2_star_us,
+        topology=topology,
+    )
+    return _calibrated(built, None, f"transmon_generic({qudit_count})", None, None)
+
+
+def _described_generic(
+    qudit_count: int,
+    *,
+    base_frequency_hz: float = 5.0e9,
+    frequency_spread_hz: float = 100e6,
+    anharmonicity_hz: float = -330e6,
+    coupling_strength_hz: float = 3.0e6,
+    t1_us: float = 25.0,
+    t2_star_us: float = 15.0,
+    topology: str = "linear",
+) -> _Description:
+    """The description ``transmon_generic(...)`` is built from."""
     if qudit_count < 1:
         raise InvalidValueError(f"qudit_count must be >= 1, got {qudit_count}")
 
@@ -261,7 +304,7 @@ def transmon_generic(
 
     couplings = [Coupling((a, b), coupling_strength_hz) for a, b in edges]
 
-    return DeviceDescription(
+    return _Description(
         name=f"transmon_generic_{qudit_count}q_{topology}",
         qudits=qudits,
         couplings=couplings,

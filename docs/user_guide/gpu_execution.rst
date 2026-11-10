@@ -171,9 +171,9 @@ To execute on a GPU (requires cuDensityMat runtime):
 
    import math
    import cudaq_pulse as pulse
-   from cudaq_pulse.quantum_systems import MicrowaveDrive, PhysicalQudit, DeviceDescription
+   from cudaq_pulse.quantum_systems import MicrowaveDrive, PhysicalQudit
 
-   target = DeviceDescription(
+   qs = pulse.quantum_system(
        name="one-qubit-demo",
        qudits={
            0: PhysicalQudit(
@@ -192,7 +192,6 @@ To execute on a GPU (requires cuDensityMat runtime):
        drive_line = get_drive_line(qubit)
        drive(drive_line, square(duration, math.pi / 20.0))
 
-   qs = pulse.quantum_system(target)
    pi_time = 20 * pulse.ns
    compiled = x_gate.lower(qs.qudits[0], pi_time)
    result = pulse.simulate(compiled, backend="gpu", t_end=20.0, dt_ns=0.1, integrator="rk4")

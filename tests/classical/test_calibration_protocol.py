@@ -44,9 +44,8 @@ def _two_chains(q, p, t1_guess_cycles: float):
     _calibration_chain(p, t1_guess_cycles)
 
 
-def _device(target):
-    dev = pulse.quantum_system(target)
-    return dev, dev.qudits[0]
+def _device(quantum_system):
+    return quantum_system, quantum_system.qudits[0]
 
 
 @pytest.mark.slow
@@ -70,7 +69,7 @@ def test_the_pi_train_corrects_a_drive_amplitude_error():
 @pytest.mark.slow
 def test_adaptive_t1_tracks_the_papers_device_on_the_controller():
     base = transmon_17q()
-    qudit = base.qudits[0]
+    qudit = base.physical_qudits[0]
     device_qudit = qudit.replace(
         frequency_hz=4.13e9,
         anharmonicity_hz=-210e6,
@@ -79,7 +78,15 @@ def test_adaptive_t1_tracks_the_papers_device_on_the_controller():
         thermal_population=0.0,
         readout=qudit.readout.replace(error_1to0=0.11, error_0to1=0.14),
     )
-    target = dataclasses.replace(base, qudits={**base.qudits, 0: device_qudit})
+    target = pulse.quantum_system(
+        name=base.name,
+        qudits={**base.physical_qudits, 0: device_qudit},
+        couplings=base.couplings,
+        residual_zz=base.residual_zz,
+        model=base.model,
+        attribution=base.attribution,
+        clock_ghz=base.clock_ghz,
+    )
     dev, q = _device(target)
     lowered = pulse.compile(
         _adaptive_t1, quantum_system=dev, control_system=P["control_system"]

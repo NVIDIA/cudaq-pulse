@@ -25,8 +25,8 @@ quantum systems with different clocks. ``pulse.round_duration(line, n)`` rounds 
 length to whole timesteps of the line, for controllers that start
 operations only every few program cycles.
 Compiler types (``CompileMetrics``, ``ScheduledEvent``,
-``DEFAULT_PASSES``) are in ``cudaq_pulse.compiler``, device descriptions and
-calibrations in ``cudaq_pulse.quantum_systems``. ``pulse.classical`` declares the
+``DEFAULT_PASSES``) are in ``cudaq_pulse.compiler``, the shipped quantum systems,
+their parts and calibrations in ``cudaq_pulse.quantum_systems``. ``pulse.classical`` declares the
 classical functions a kernel calls while the QPU runs; ``pulse.Bits`` and
 ``pulse.Length`` (``typing.Annotated``, for a fixed list length) type their
 parameters and results. ``pulse.gates`` names the gates a quantum system is

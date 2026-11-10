@@ -30,15 +30,14 @@ _CHILD = r"""
 import inspect, json, resource, sys, time
 import cudaq_pulse as pulse
 from cudaq_pulse import Controller, ControlSystem
-from cudaq_pulse.quantum_systems import PhysicalQudit, DeviceDescription
+from cudaq_pulse.quantum_systems import PhysicalQudit
 
 name, lines, rounds, trips = sys.argv[1], *map(int, sys.argv[2:5])
-target = DeviceDescription(
+dev = pulse.quantum_system(
     name="export-bench",
     clock_ghz=1.0,
     qudits={i: PhysicalQudit(i, 5.0e9 + 1.0e6 * i, -2.0e8, 50.0, 30.0) for i in range(lines)},
 )
-dev = pulse.quantum_system(target)
 readers = lines // 2
 limits = Controller(
     clock_ghz=1.0,

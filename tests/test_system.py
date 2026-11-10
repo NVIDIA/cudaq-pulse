@@ -24,7 +24,6 @@ from cudaq_pulse.classical import Link
 from cudaq_pulse.controller import ControllerLimitError, DriveLine, ReadoutLine
 from cudaq_pulse.quantum_systems.base import (
     Coupling,
-    DeviceDescription,
     DispersiveReadout,
     MicrowaveDrive,
     PhysicalQudit,
@@ -66,7 +65,7 @@ def corrected(q, r):
 def _qpu(*controllers, links=None, layout=(0, 1, 2, 3), **config):
     system = pulse.ControlSystem(controllers=list(controllers), links=links or {})
     return pulse.QuantumSystem.from_dict(
-        {"quantum_system": TRANSMON_17Q, "layout": list(layout), "control_system": system, **config}
+        {"name": TRANSMON_17Q, "layout": list(layout), "control_system": system, **config}
     )
 
 
@@ -706,7 +705,7 @@ def test_a_qpu_round_trips_through_its_system_file():
         a, b, links={"feedback": pulse.Link(fixed_ns=40.0, controllers=[b])}, layout=range(6)
     )
     data = _round_trip(qpu)
-    assert data["quantum_system"] == TRANSMON_17Q and data["calibration"] == "transmon_17q"
+    assert data["name"] == TRANSMON_17Q and data["calibration"] == "transmon_17q"
     system = data["control_system"]
     assert system["links"]["feedback"]["controllers"] == [1]
     assert system["controllers"][1]["peer_latency_cycles"] == {"0": 12}
@@ -727,22 +726,22 @@ def test_a_qudit_s_drive_and_readout_round_trip_through_the_system_file():
         ),
         1: PhysicalQudit(1, 5.1e9, -2e8, 50.0, 30.0),
     }
-    dev = pulse.quantum_system(DeviceDescription(name="ro", qudits=qudits))
-    written = _round_trip(dev)["quantum_system"]["qudits"]
+    dev = pulse.quantum_system(name="ro", qudits=qudits)
+    written = _round_trip(dev)["qudits"]
     assert written[0]["readout"]["kind"] == "dispersive"
     assert written[0]["readout"]["frequency_hz"] == 7.1e9
     assert written[0]["drive"] == {"kind": "microwave", "amplitude_scale_rad_per_ns": 0.3}
     assert written[1]["readout"] is None and written[1]["drive"] is None
     other = PhysicalQudit(0, 5.0e9, -2e8, 50.0, 30.0, readout=readout.replace(linewidth_hz=2e6))
-    moved = pulse.quantum_system(DeviceDescription(name="ro", qudits={**qudits, 0: other}))
+    moved = pulse.quantum_system(name="ro", qudits={**qudits, 0: other})
     assert moved.fingerprint != dev.fingerprint
 
 
 def test_a_system_file_refuses_an_unknown_component_kind_or_field():
     data = pulse.quantum_system(
-        DeviceDescription(name="ro", qudits={0: PhysicalQudit(0, 5.0e9, -2e8, 50.0, 30.0)})
+        name="ro", qudits={0: PhysicalQudit(0, 5.0e9, -2e8, 50.0, 30.0)}
     ).as_dict()
-    qudit = data["quantum_system"]["qudits"][0]
+    qudit = data["qudits"][0]
     qudit["readout"] = {"kind": "fluorescence"}
     qudit["drive"] = {"kind": "microwave", "amplitude_scale": 0.2}
     with pytest.raises(QuantumSystemDefinitionError) as found:
@@ -782,15 +781,14 @@ def test_a_program_clock_round_trips_through_the_system_file():
 
 
 def test_a_custom_quantum_system_is_written_inline_with_the_new_key_names():
-    target = DeviceDescription(
+    qpu = pulse.quantum_system(
         name="pair",
         qudits={i: PhysicalQudit(i, 5e9 + i * 1e8, -2.5e8, 50.0, 40.0) for i in range(2)},
         couplings=[Coupling((0, 1), 3e6)],
     )
-    qpu = pulse.quantum_system(target)
     data = _round_trip(qpu)
-    assert data["quantum_system"]["couplings"] == [{"qudits": [0, 1], "strength_hz": 3e6}]
-    assert [q["index"] for q in data["quantum_system"]["qudits"]] == [0, 1]
+    assert data["couplings"] == [{"qudits": [0, 1], "strength_hz": 3e6}]
+    assert [q["index"] for q in data["qudits"]] == [0, 1]
     assert "control_system" not in data
 
 
@@ -816,11 +814,9 @@ def test_a_system_file_reports_every_problem_with_its_line(tmp_path):
 
 def test_a_newer_system_file_format_is_refused():
     with pytest.raises(QuantumSystemDefinitionError, match="newer than this cudaq-pulse reads"):
-        pulse.QuantumSystem.from_dict(
-            {"format": "cudaq-pulse.system/2", "quantum_system": TRANSMON_17Q}
-        )
+        pulse.QuantumSystem.from_dict({"format": "cudaq-pulse.system/2", "name": TRANSMON_17Q})
     with pytest.raises(QuantumSystemDefinitionError, match="not a system file format"):
-        pulse.QuantumSystem.from_dict({"format": "something/1", "quantum_system": TRANSMON_17Q})
+        pulse.QuantumSystem.from_dict({"format": "something/1", "name": TRANSMON_17Q})
 
 
 # ── Controller descriptions ──────────────────────────────────────────────────
@@ -932,16 +928,15 @@ def test_doctor_checks_a_system_file(tmp_path):
 
 
 def test_a_system_file_keeps_the_simulation_model():
-    target = DeviceDescription(
+    qpu = pulse.quantum_system(
         name="other-pair",
         qudits={i: PhysicalQudit(i, 5e9 + i * 1e8, 0.0, 50.0, 40.0) for i in range(2)},
         model=SimulationModel(levels={1: 3}),
     )
-    qpu = pulse.quantum_system(target)
     data = qpu.as_dict()
-    assert data["quantum_system"]["model"] == {"kind": "generic", "levels": {"1": 3}}
+    assert data["model"] == {"kind": "generic", "levels": {"1": 3}}
     again = pulse.QuantumSystem.from_dict(json.loads(json.dumps(data)))
-    assert again.model == target.model and again == qpu
+    assert again.model == qpu.model and again == qpu
 
     @pulse.kernel
     def nothing(q):
@@ -951,9 +946,9 @@ def test_a_system_file_keeps_the_simulation_model():
     with pytest.raises(UnsupportedError, match="SimulationModel has no simulator"):
         pulse.simulate(pulse.compile(nothing).lower(again.qudits[0]))
 
-    data["quantum_system"]["model"] = None
+    data["model"] = None
     assert pulse.QuantumSystem.from_dict(data).model is None
-    data["quantum_system"]["model"] = {"kind": "fluxonium"}
+    data["model"] = {"kind": "fluxonium"}
     with pytest.raises(
         QuantumSystemDefinitionError, match="model.kind: must be one of transmon, generic"
     ):
@@ -964,10 +959,10 @@ def test_a_system_file_names_a_model_it_cannot_hold():
     class Custom(SimulationModel):
         pass
 
-    target = DeviceDescription(
+    target = pulse.quantum_system(
         name="custom-pair",
         qudits={i: PhysicalQudit(i, 5e9 + i * 1e8, 0.0, 50.0, 40.0) for i in range(2)},
         model=Custom,
     )
     with pytest.raises(InvalidValueError, match="Custom is not one"):
-        pulse.quantum_system(target).as_dict()
+        target.as_dict()

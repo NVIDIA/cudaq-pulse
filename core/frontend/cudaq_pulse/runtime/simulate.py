@@ -225,7 +225,7 @@ def simulate(
         values, in the order of ``program.parameters``.
     levels:
         Levels per qudit. By default each qudit has the levels its target's
-        simulation model declares for it (``DeviceDescription.model``; 3 for
+        simulation model declares for it (``QuantumSystem.model``; 3 for
         a ``TransmonModel``); an int sets every qudit's, and a dict by quantum system
         qudit index sets those it names. A transmon with three or more
         levels includes its anharmonicity.
@@ -291,8 +291,8 @@ def simulate(
         ``shots_count``, and each shot from the call on is simulated as its own
         trajectory.
     quantum_system:
-        A device description to simulate instead of the quantum system the program
-        was compiled for: its qubits' frequencies, T1, T2, thermal
+        A ``QuantumSystem`` to simulate instead of the one the program
+        was compiled for: its qudits' frequencies, T1, T2, thermal
         populations, drive strength and readout parameters apply, while the
         program (its tones and pulses) stays as compiled. This is how a
         drifting quantum system is simulated without compiling again; see
@@ -547,19 +547,14 @@ def _simulation_model(target: Any) -> Callable[..., SimulationResult]:
 
 
 def _check_quantum_system(lowered: ScheduledKernel, quantum_system: Any) -> Any:
-    """The description of *quantum_system*, a quantum system or a quantum system
-    description, which defines every qudit of *lowered*."""
-    from ..quantum_systems import DeviceDescription
+    """The description of *quantum_system*, which defines every qudit of *lowered*."""
+    from .._device import QuantumSystem
 
-    if not isinstance(quantum_system, DeviceDescription):
-        from .._device import QuantumSystem
-
-        if not isinstance(quantum_system, QuantumSystem):
-            raise InvalidTypeError(
-                "quantum_system must be a QuantumSystem or a DeviceDescription, "
-                f"got {type(quantum_system).__name__}"
-            )
-        quantum_system = quantum_system._description
+    if not isinstance(quantum_system, QuantumSystem):
+        raise InvalidTypeError(
+            f"quantum_system must be a QuantumSystem, got {type(quantum_system).__name__}"
+        )
+    quantum_system = quantum_system._description
     missing = [q for q in lowered.qudits if q not in quantum_system.qudits]
     if missing:
         raise InvalidValueError(

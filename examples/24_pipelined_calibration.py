@@ -24,7 +24,7 @@ default too.
 What is simulated: the QPU is a stand-in process. It takes a prepared batch,
 spends a fixed time on it (an assumed 50 us per shot), and returns counts
 drawn from ``pulse.simulate`` of each program against a "true" qudit whose
-frequency is 1.5 MHz off the device description's. A real controller would
+frequency is 1.5 MHz off the quantum system's. A real controller would
 load the export; the stand-in only checks that it has events. The compile,
 the pickling, the hand-offs between processes, the workers' binding and
 exporting and the optimizer's run time are real. The best detuning is not
@@ -35,7 +35,6 @@ settings, written in NumPy.
 """
 
 import concurrent.futures
-import dataclasses
 import math
 import multiprocessing
 import pickle
@@ -43,15 +42,15 @@ import time
 
 import cudaq_pulse as pulse
 import numpy as np
-from cudaq_pulse.quantum_systems import DeviceDescription, transmon_17q
+from cudaq_pulse.quantum_systems import transmon_17q
 
-target = transmon_17q()
+quantum_system = transmon_17q()
 pulse_duration = 40 * pulse.ns
 pulse_sigma = 10 * pulse.ns
 # A pi pulse rotates by pi: the Gaussian's area (ns) times the drive's rad/ns
 # per unit amplitude.
 area_ns = (pulse_sigma / pulse.ns) * math.sqrt(2 * math.pi) * math.erf(2 / math.sqrt(2))
-pi_amplitude = math.pi / (area_ns * target.drive_amplitude_scale(0))
+pi_amplitude = math.pi / (area_ns * quantum_system.drive_amplitude_scale(0))
 
 # An odd number of pi pulses ends in |1>; amplitude and frequency errors add up along it.
 repetitions = 9
@@ -144,7 +143,7 @@ def prepare(setting):
 
 # ── The stand-in QPU ─────────────────────────────────────────────────────────
 
-qpu_state: dict[str, DeviceDescription] = {}
+qpu_state: dict[str, pulse.QuantumSystem] = {}
 
 
 def power_on(true_system):
@@ -228,10 +227,17 @@ def true_p1(program, true_system, index):
 
 
 if __name__ == "__main__":
-    quantum_system = pulse.quantum_system(target)
-    nominal = target.qudits[0]
+    nominal = quantum_system.physical_qudits[0]
     true_qudit = nominal.replace(frequency_hz=nominal.frequency_hz + hidden_offset_hz)
-    true_system = dataclasses.replace(target, qudits={**target.qudits, 0: true_qudit})
+    true_system = pulse.quantum_system(
+        name=quantum_system.name,
+        qudits={**quantum_system.physical_qudits, 0: true_qudit},
+        couplings=quantum_system.couplings,
+        residual_zz=quantum_system.residual_zz,
+        model=quantum_system.model,
+        attribution=quantum_system.attribution,
+        clock_ghz=quantum_system.clock_ghz,
+    )
 
     print("=== The program, compiled once ===")
     started = time.perf_counter()

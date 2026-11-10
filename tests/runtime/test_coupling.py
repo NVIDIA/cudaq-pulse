@@ -11,7 +11,6 @@ second-order perturbation theory. A residual ZZ entry adds exactly its rate.
 from __future__ import annotations
 
 import cmath
-import dataclasses
 import math
 import re
 
@@ -21,21 +20,20 @@ import pytest
 from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline, evaluate_callback
 from cudaq_pulse.quantum_systems import (
     Coupling,
-    DeviceDescription,
     MicrowaveDrive,
     PhysicalQudit,
     ResidualZZ,
     SimulationModel,
 )
 
-from tests._handles import Q
+from tests._handles import Q, rebuilt
 from tests.runtime._lowering import on
 
 _TWO_PI_GHZ = 2.0 * math.pi * 1.0e-9
 
 
 def _pair(f0, f1, *, g_hz=0.0, zz_hz=0.0, alphas=(-200.0e6, -180.0e6)):
-    return DeviceDescription(
+    return pulse.quantum_system(
         name="coupled-pair",
         qudits={
             q: PhysicalQudit(
@@ -190,10 +188,18 @@ def test_residual_zz_is_the_conditional_frequency_shift(levels):
 
 @pytest.mark.parametrize("backend", ["cpu", "gpu"])
 def test_systems_without_a_simulation_model_are_refused(backend):
-    target = dataclasses.replace(_pair(5.0e9, 5.5e9, g_hz=10.0e6), model=None)
+    target = rebuilt(_pair(5.0e9, 5.5e9, g_hz=10.0e6), model=None)
     with pytest.raises(NotImplementedError, match=r"has no simulation model \(its model is None\)"):
         pulse.simulate(_lowered(target), backend=backend)
-    target = dataclasses.replace(target, model=SimulationModel)
+    target = pulse.quantum_system(
+        name=target.name,
+        qudits=target.physical_qudits,
+        couplings=target.couplings,
+        residual_zz=target.residual_zz,
+        model=SimulationModel,
+        attribution=target.attribution,
+        clock_ghz=target.clock_ghz,
+    )
     with pytest.raises(NotImplementedError, match="SimulationModel has no simulator"):
         pulse.simulate(_lowered(target), backend=backend)
 

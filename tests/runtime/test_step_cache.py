@@ -15,7 +15,7 @@ import weakref
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse.quantum_systems import Coupling, DeviceDescription, PhysicalQudit
+from cudaq_pulse.quantum_systems import Coupling, PhysicalQudit
 from cudaq_pulse.quantum_systems._registry import _registry, _resolved, register_quantum_system
 from cudaq_pulse.quantum_systems.models import SimulationModel, TransmonModel
 from cudaq_pulse.runtime import simulate as simulate_module
@@ -24,11 +24,12 @@ from tests._handles import Q
 from tests.runtime._lowering import on
 
 
-def _target(alpha_hz=-200.0e6, couplings=()):
-    return DeviceDescription(
+def _target(alpha_hz=-200.0e6, couplings=(), **parts):
+    return pulse.quantum_system(
         name="step-cache",
         qudits={q: PhysicalQudit(q, 5.0e9 + 2.0e9 * q, alpha_hz, 0.0, 0.0) for q in range(2)},
         couplings=list(couplings),
+        **parts,
     )
 
 
@@ -78,7 +79,7 @@ def test_a_recalibrated_plant_changes_the_step_and_the_warning(steps):
     calibrated, recalibrated = _target(), _target(alpha_hz=-400.0e6)
     for plant in (calibrated, recalibrated, calibrated, recalibrated):
         pulse.simulate(lowered, levels=5, quantum_system=plant)
-        assert steps[-1] == _STEP_5[plant.qudits[0].anharmonicity_hz]
+        assert steps[-1] == _STEP_5[plant.physical_qudits[0].anharmonicity_hz]
     spreads = [
         _coarse(lambda p=plant: pulse.simulate(lowered, levels=3, dt_ns=0.25, quantum_system=p))
         for plant in (calibrated, recalibrated, calibrated, recalibrated)
@@ -94,7 +95,7 @@ def test_a_recalibrated_device_changes_the_step_and_the_warning(steps):
     assert _coarse(lambda: pulse.simulate(lowered, levels=3, dt_ns=0.25)) == []
     # A quantum system is read-only by contract, not enforced: a target set on it in
     # place is the one simulated, and the one its step is kept for.
-    lowered.quantum_system._description = _target(alpha_hz=-400.0e6)
+    lowered.quantum_system._description = _target(alpha_hz=-400.0e6)._description
     assert _coarse(lambda: pulse.simulate(lowered, levels=3, dt_ns=0.25)) == ["400 MHz"]
     pulse.simulate(lowered, levels=5)
     assert steps[-1] == _STEP_5[-400.0e6]
@@ -132,7 +133,7 @@ def test_a_target_registered_again_under_its_name_changes_the_step(steps):
 
 
 def test_what_a_kept_step_depends_on_cannot_change_in_place():
-    target = _target()
+    target = _target()._description
     qudit = target.qudits[0]
     with pytest.raises(dataclasses.FrozenInstanceError):
         qudit.anharmonicity_hz = -400.0e6
@@ -170,7 +171,7 @@ def test_a_subclass_of_a_model_may_change(steps):
     Fine.levels = 5
     Fine.levels_of = lambda self, qudit: 2
     del Fine.levels_of
-    lowered = on(dataclasses.replace(_target(), model=Fine()), _flip, Q[0])
+    lowered = on(_target(model=Fine()), _flip, Q[0])
     pulse.simulate(lowered)
     assert steps[-1] == 0.5 / 12
     Fine.levels = 2
@@ -186,7 +187,7 @@ def test_a_model_pickles_and_copies_whole(model, move):
     assert [moved.levels_of(q) for q in range(3)] == [model.levels_of(q) for q in range(3)]
     with pytest.raises(AttributeError):
         moved._levels = {0: 6}
-    target = dataclasses.replace(_target(), model=model)
+    target = _target(model=model)
     for again in (pickle.loads(pickle.dumps(target)), copy.deepcopy(target)):
         assert repr(again.model) == repr(model)
 
@@ -201,13 +202,13 @@ def test_a_model_of_the_user_s_own_is_not_kept(steps):
             return [k * qudit.frequency_hz + k * (k - 1) / 2 * self.alpha_hz for k in range(levels)]
 
     model = Spread(-200.0e6)
-    target = dataclasses.replace(_target(), model=model)
+    target = _target(model=model)
     lowered = on(target, _flip, Q[0])
     pulse.simulate(lowered, levels=5)
     model.alpha_hz = -400.0e6
     pulse.simulate(lowered, levels=5)
     assert steps[-2:] == [0.5 / 12, 0.5 / 24]
-    assert not [k for k in simulate_module._STEPS if id(target) in k[:2]]
+    assert not [k for k in simulate_module._STEPS if id(target._description) in k[:2]]
 
 
 def test_a_step_by_qudit_levels_is_resolved_like_one_for_all(steps):
@@ -224,7 +225,7 @@ def test_kept_steps_hold_no_target_and_go_with_it(steps):
     lowered = on(target, _flip, Q[0])
     pulse.simulate(lowered, levels=5)
     pulse.simulate(lowered, levels=5, quantum_system=plant)
-    ids = {id(target), id(plant)}
+    ids = {id(target._description), id(plant._description)}
     assert len([k for k in simulate_module._STEPS if ids & set(k[:2])]) == 2
     assert ids <= simulate_module._WATCHED.keys()
     refs = [weakref.ref(target), weakref.ref(plant), weakref.ref(lowered.quantum_system)]

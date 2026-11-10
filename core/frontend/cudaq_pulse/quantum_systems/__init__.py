@@ -5,7 +5,6 @@
 from ._registry import UnknownQuantumSystemError, available_quantum_systems, register_quantum_system
 from .base import (
     Coupling,
-    DeviceDescription,
     DispersiveReadout,
     DragPulse,
     Drive,
@@ -21,7 +20,6 @@ from .models import SimulationModel, TransmonModel
 from .transmon import transmon_17q, transmon_generic
 
 __all__ = [
-    "DeviceDescription",
     "PhysicalQudit",
     "Readout",
     "DispersiveReadout",

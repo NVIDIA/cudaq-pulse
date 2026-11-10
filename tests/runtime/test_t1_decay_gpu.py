@@ -7,7 +7,7 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.quantum_systems import DeviceDescription, MicrowaveDrive, PhysicalQudit
+from cudaq_pulse.quantum_systems import MicrowaveDrive, PhysicalQudit
 
 from tests._handles import Q
 from tests.runtime._lowering import evolve, on, pulse_mlir
@@ -39,7 +39,7 @@ def test_t1_mlir_structure():
 def test_t1_decay_gpu():
     """T1 decay: after exciting to |1> and waiting, population decays."""
 
-    target = DeviceDescription(
+    target = pulse.quantum_system(
         name="fast-decay-test",
         qudits={
             0: PhysicalQudit(

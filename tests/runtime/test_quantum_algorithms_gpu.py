@@ -11,7 +11,7 @@ import math
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse.quantum_systems import DeviceDescription, MicrowaveDrive, PhysicalQudit
+from cudaq_pulse.quantum_systems import MicrowaveDrive, PhysicalQudit
 
 from tests._handles import Q
 from tests.runtime._lowering import evolve, on, pulse_mlir
@@ -31,7 +31,7 @@ def _unitary_qudit(index, frequency_hz):
 
 
 def _single_qudit_target():
-    return DeviceDescription(name="algo-1q", qudits={0: _unitary_qudit(0, 5.0e9)})
+    return pulse.quantum_system(name="algo-1q", qudits={0: _unitary_qudit(0, 5.0e9)})
 
 
 def _evolve_1q(kernel):

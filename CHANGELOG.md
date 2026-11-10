@@ -173,7 +173,9 @@ behavior may change in any 0.x release.
   description installed with cudaq-pulse (or one given by path), parsed
   once, with the installation's wiring. `reference.controller` ships.
 - **System files.** `QuantumSystem.as_dict()` writes a QPU as one mapping, format
-  `cudaq-pulse.system/1`, which `pulse.QuantumSystem.from_dict(data)` reads back,
+  `cudaq-pulse.system/1`, with the keys of `pulse.quantum_system`'s keywords
+  (`"name"`, and `"qudits"`, `"couplings"`, ... for one not registered),
+  which `pulse.QuantumSystem.from_dict(data)` reads back,
   and `pulse.QuantumSystem.load(path)` from a JSON file, reporting each problem
   with its line. A file written from
   another version of an installed description is noticed once
@@ -418,7 +420,7 @@ behavior may change in any 0.x release.
   program runs as a `pulse.Time`, `ScheduledKernel.metrics` the compile
   times (`cudaq_pulse.compiler.CompileMetrics`), and `ScheduledKernel.timeline()` a
   plot (with the `[viz]` extra). `QuantumSystem.qudit(label)` finds a qudit by
-  its label and `DeviceDescription.coupling(a, b)` the coupling of two.
+  its label and `QuantumSystem.coupling(a, b)` the coupling of two.
 - **Optimization passes.** `passes=` takes members of `pulse.Pass`, a
   string enum, or their names, in any order and combination: `VERIFY`,
   `FOLD_CONSTANTS` (constant arithmetic computed at compile time),
@@ -441,27 +443,28 @@ behavior may change in any 0.x release.
   `pulse-hoist-loop-invariants`), as well as `pulse-unroll-classical-loops`
   and `pulse-schedule-rcp` with the control system's lanes as options (`max-drives`,
   `max-readouts`, `readout-latency`, `switch-penalty`, `alap`).
-- **Quantum systems and targets.** `pulse.quantum_system` is the one quantum system getter: it
-  describes a machine as a target plus a qudit layout, from a registered
-  target name (`pulse.quantum_system("transmon_17q")`) or a `DeviceDescription`,
-  with `layout=`, `calibration=`, `cooldown=`, `control_system=` and
-  `clock_ghz=` keywords, or, with no argument, the process quantum system; a string
-  is always a name, and `QuantumSystem.load` / `QuantumSystem.from_dict` read system
-  files. Quantum systems compare by
+- **Quantum systems.** `pulse.quantum_system` is the one quantum system getter: it
+  describes a machine's physics and a qudit layout, from a registered
+  name (`pulse.quantum_system("transmon_17q")`) or built directly
+  (`pulse.quantum_system(name="chip", qudits={...}, couplings=[...],
+  model=...)`), with `layout=`, `calibration=`, `cooldown=`,
+  `control_system=` and `clock_ghz=` keywords, or, with no argument, the
+  process quantum system; a string is always a name, and
+  `QuantumSystem.load` / `QuantumSystem.from_dict` read system files.
+  Quantum systems compare by
   content and share compiled kernels, but handles of two quantum systems, even
   equal ones, do not mix in one call or in a kernel compiled for one
   (`QuantumSystemMismatchError`), and an empty `layout` is a
-  `QuantumSystemDefinitionError`. Target descriptions are
-  `cudaq_pulse.quantum_systems.DeviceDescription`; the shipped target,
+  `QuantumSystemDefinitionError`. The shipped quantum system,
   `"transmon_17q"`, is a 17-qubit transmon quantum system built from
   Krinner et al., Nature 605, 669 (2022).
-  A target's `model` (`cudaq_pulse.quantum_systems.TransmonModel` by default, a
+  A quantum system's `model` (`cudaq_pulse.quantum_systems.TransmonModel` by default, a
   `SimulationModel` class or instance, or `None`) says how the simulator
   treats its qudits and which operator its couplings are (the exchange
   g (a^dagger b + a b^dagger), in the rotating-wave approximation, for
   `TransmonModel`); each model class declares its levels (3 for
   transmons), and `TransmonModel(levels={0: 4})` sets a qudit's own. No
-  label changes the physics: targets have no `architecture`.
+  label changes the physics: quantum systems have no `architecture`.
   A coupling is `Coupling(qudits=(a, b), strength_hz, calibrations={})`: the
   qudits it couples, in order (two in this release), the strength in Hz of
   the model's operator (g / 2 pi of the exchange), or `None` when it

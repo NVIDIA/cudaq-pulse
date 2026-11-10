@@ -20,19 +20,19 @@ import pytest
 from cudaq_pulse import Controller, ControlSystem, _validation
 from cudaq_pulse.compiler import DEFAULT_PASSES, Pass
 from cudaq_pulse.controller import unroll
-from cudaq_pulse.quantum_systems import DeviceDescription, PhysicalQudit
+from cudaq_pulse.quantum_systems import PhysicalQudit
 
 from tests import _child
 from tests._work import python_work
 
 _FREQUENCY_HZ = 5.0e9
 _CLOCK_GHZ = 2.0
-_TARGET = DeviceDescription(
+_TARGET = pulse.quantum_system(
     name="frames",
     clock_ghz=_CLOCK_GHZ,
     qudits={i: PhysicalQudit(i, _FREQUENCY_HZ + 1.0e7 * i, -2.0e8, 50.0, 30.0) for i in range(2)},
 )
-_DEV = pulse.quantum_system(_TARGET)
+_DEV = _TARGET
 Q = _DEV.qudits
 _PERSISTENT = ControlSystem(controllers=[Controller(persistent_frames=True)])
 

@@ -17,21 +17,16 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse.kernel.ir_builder import CompilationError
-from cudaq_pulse.quantum_systems import (
-    DeviceDescription,
-    MicrowaveDrive,
-    PhysicalQudit,
-    TransmonModel,
-)
+from cudaq_pulse.quantum_systems import MicrowaveDrive, PhysicalQudit, TransmonModel
 from cudaq_pulse.quantum_systems._registry import ENV_VAR
 
-from tests._handles import Q
+from tests._handles import Q, rebuilt
 
 _PI_AMPLITUDE = np.pi / 20.0  # a square pulse of 40 cycles (20 ns) at this rate is a pi pulse
 
 
 def _device(n=4, **kwargs):
-    target = DeviceDescription(
+    return pulse.quantum_system(
         name="call-test",
         qudits={
             i: PhysicalQudit(
@@ -44,8 +39,8 @@ def _device(n=4, **kwargs):
             )
             for i in range(n)
         },
+        **kwargs,
     )
-    return pulse.quantum_system(target, **kwargs)
 
 
 @pulse.kernel
@@ -426,7 +421,7 @@ def test_device_values_are_read_only():
 
 def test_a_device_from_a_system_file(tmp_path: Path):
     path = tmp_path / "dev.json"
-    path.write_text(json.dumps({"quantum_system": "transmon_17q", "layout": [4, 5]}))
+    path.write_text(json.dumps({"name": "transmon_17q", "layout": [4, 5]}))
     dev = pulse.QuantumSystem.load(path)
     assert [q.index for q in dev.qudits] == [4, 5]
     assert dev == pulse.quantum_system("transmon_17q", layout=[4, 5])
@@ -434,9 +429,9 @@ def test_a_device_from_a_system_file(tmp_path: Path):
     with pytest.raises(
         pulse.QuantumSystemDefinitionError, match="lattice: is not a key of a system"
     ):
-        pulse.QuantumSystem.from_dict({"quantum_system": "transmon_17q", "lattice": []})
+        pulse.QuantumSystem.from_dict({"name": "transmon_17q", "lattice": []})
     with pytest.raises(pulse.QuantumSystemDefinitionError, match="zones: is reserved"):
-        pulse.QuantumSystem.from_dict({"quantum_system": "transmon_17q", "zones": []})
+        pulse.QuantumSystem.from_dict({"name": "transmon_17q", "zones": []})
 
 
 def test_a_waveform_as_a_frequency_is_reserved():
@@ -487,8 +482,7 @@ def test_calling_a_kernel_runs_it_and_returns_none_without_a_return():
 def test_a_returned_measurement_is_its_outcome():
     # A call samples its outcome unseeded. On three levels this pi pulse
     # leaves 0.5% outside level 1; on two, outcome 1 is certain.
-    target = dataclasses.replace(_device()._description, model=TransmonModel(levels={0: 2}))
-    q = pulse.quantum_system(target).qudits[0]
+    q = rebuilt(_device(), model=TransmonModel(levels={0: 2})).qudits[0]
     assert [b.levels for b in pulse.simulate(flip_and_measure.lower(q)).branches] == [(1,)]
     assert flip_and_measure(q) == 1
     assert pulse.compile(flip_and_measure)(q) == 1

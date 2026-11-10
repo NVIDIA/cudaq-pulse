@@ -11,7 +11,7 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.quantum_systems import DeviceDescription, MicrowaveDrive, PhysicalQudit
+from cudaq_pulse.quantum_systems import MicrowaveDrive, PhysicalQudit
 
 from tests._handles import Q
 from tests.runtime._lowering import evolve, on, pulse_mlir
@@ -42,7 +42,7 @@ def test_rabi_mlir_structure():
 def test_rabi_gpu_execution():
     """Single-qubit Rabi oscillation on GPU."""
 
-    target = DeviceDescription(
+    target = pulse.quantum_system(
         name="unitary-rabi-test",
         qudits={
             0: PhysicalQudit(
@@ -81,7 +81,7 @@ def test_rabi_gpu_integrator_parity(integrator):
     confirms they agree on a closed-system Rabi flip while preserving norm.
     """
 
-    target = DeviceDescription(
+    target = pulse.quantum_system(
         name="unitary-rabi-parity",
         qudits={
             0: PhysicalQudit(

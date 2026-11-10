@@ -36,7 +36,7 @@ def _system(*clocks, tolerance=0, **kwargs):
 
 def _device(*clocks, system=None, **config):
     control = system or _system(*clocks)
-    return pulse.quantum_system(ladder_target(4), control_system=control, **config)
+    return ladder_target(4, control_system=control, **config)
 
 
 # ── The program clock ────────────────────────────────────────────────────────
@@ -73,7 +73,7 @@ def test_a_declared_program_clock_has_a_whole_cycle_ratio_to_every_controller():
 
 
 def test_a_device_built_directly_derives_its_program_clock_too():
-    target = ladder_target(4)
+    target = ladder_target(4)._description
     assert pulse.QuantumSystem(target, name="t", control_system=_system(1.0, 0.5)).clock_ghz == 1.0
     with pytest.raises(QuantumSystemDefinitionError, match="do not divide evenly"):
         pulse.QuantumSystem(target, name="t", control_system=_system(2.4, 1.0))

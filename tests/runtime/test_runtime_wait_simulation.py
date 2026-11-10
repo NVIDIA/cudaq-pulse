@@ -15,7 +15,7 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.quantum_systems import DeviceDescription, MicrowaveDrive, PhysicalQudit
+from cudaq_pulse.quantum_systems import MicrowaveDrive, PhysicalQudit
 from cudaq_pulse.runtime import _jit as jit
 from cudaq_pulse.runtime import simulate as simulate_module
 
@@ -31,7 +31,7 @@ _T1_US = 0.2
 _DT_NS = 0.25
 TOLERANCE = 1e-12
 
-_TARGET = DeviceDescription(
+_TARGET = pulse.quantum_system(
     name="wait-sweep",
     qudits={
         0: PhysicalQudit(
@@ -45,7 +45,7 @@ _TARGET = DeviceDescription(
         )
     },
 )
-Q = pulse.quantum_system(_TARGET).qudits
+Q = _TARGET.qudits
 
 
 def t1(q, tau: float):

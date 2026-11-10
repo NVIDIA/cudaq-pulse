@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import cudaq_pulse as pulse
 import numpy as np
-from cudaq_pulse.quantum_systems import DeviceDescription, PhysicalQudit
+from cudaq_pulse.quantum_systems import PhysicalQudit
 from cudaq_pulse.runtime.simulate import _simulate_lowered
 
 EVOLVE_PASSES = (
@@ -33,10 +33,9 @@ def _handles(dev, args):
     return out
 
 
-def on(target, kernel, *args, passes=EVOLVE_PASSES):
-    """The module of ``kernel(*args)`` on a quantum system of *target*."""
-    dev = pulse.quantum_system(target)
-    return pulse.compile(kernel, passes=passes).lower(*_handles(dev, args))
+def on(quantum_system, kernel, *args, passes=EVOLVE_PASSES):
+    """The module of ``kernel(*args)`` on *quantum_system*."""
+    return pulse.compile(kernel, passes=passes).lower(*_handles(quantum_system, args))
 
 
 def evolve(lowered, *, t_start, t_end, step_count, integrator="rk4", levels=2, initial_state=None):
@@ -62,7 +61,7 @@ def evolve(lowered, *, t_start, t_end, step_count, integrator="rk4", levels=2, i
 
 
 def frequency_target(qudit_freq_hz, clock_ghz=2.0):
-    return DeviceDescription(
+    return pulse.quantum_system(
         name="frequencies",
         qudits={q: PhysicalQudit(q, f, -300e6, 50.0, 30.0) for q, f in qudit_freq_hz.items()},
         clock_ghz=clock_ghz,

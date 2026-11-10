@@ -22,10 +22,10 @@ target = transmon_17q()
 qs = pulse.quantum_system("transmon_17q")
 qudit_idx = 4  # D5 -- central data qubit
 
-qudit_d5 = target.qudits[qudit_idx]
+qudit_d5 = target.physical_qudits[qudit_idx]
 clock_ghz = qs.clock_ghz  # the program clock the schedule counts cycles of
 
-print(f"Target: {target.name} ({target.qudit_count} qubits)")
+print(f"Target: {target.name} ({len(target.physical_qudits)} qudits)")
 print(f"Qubit {qudit_d5.label} (idx {qudit_idx}):")
 print(f"  frequency = {qudit_d5.frequency_hz / 1e9:.3f} GHz")
 print(f"  anharmonicity = {qudit_d5.anharmonicity_hz / 1e6:.1f} MHz")

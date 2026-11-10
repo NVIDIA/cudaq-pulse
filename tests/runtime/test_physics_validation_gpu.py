@@ -12,7 +12,7 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.quantum_systems import Coupling, DeviceDescription, MicrowaveDrive, PhysicalQudit
+from cudaq_pulse.quantum_systems import Coupling, MicrowaveDrive, PhysicalQudit
 
 from tests._handles import Q
 from tests.runtime._lowering import evolve, on, pulse_mlir
@@ -32,7 +32,7 @@ def _unitary_qudit(index, frequency_hz=5.0e9):
 
 
 def _single_qudit_target():
-    return DeviceDescription(name="physics-1q", qudits={0: _unitary_qudit(0)})
+    return pulse.quantum_system(name="physics-1q", qudits={0: _unitary_qudit(0)})
 
 
 def test_physics_validation_mlir_structure():
@@ -111,7 +111,7 @@ def test_rabi_pi_pulse():
 @gpu
 def test_two_qudit_selective_drive():
     """Driving q0 excites only q0; q1 remains in its ground state."""
-    target = DeviceDescription(
+    target = pulse.quantum_system(
         name="physics-2q",
         qudits={0: _unitary_qudit(0), 1: _unitary_qudit(1, 5.2e9)},
     )
@@ -145,7 +145,7 @@ def test_two_qudit_selective_drive():
 @gpu
 def test_xx_coupling_transfers_excitation():
     """An XX coupling exchanges excitation between neighboring qubits."""
-    target = DeviceDescription(
+    target = pulse.quantum_system(
         name="physics-xx",
         qudits={0: _unitary_qudit(0), 1: _unitary_qudit(1, 5.0e9)},
         couplings=[Coupling((0, 1), strength_hz=25.0e6)],

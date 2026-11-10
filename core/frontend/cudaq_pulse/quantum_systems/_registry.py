@@ -19,7 +19,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from .._errors import InvalidTypeError, InvalidValueError, NotFoundError, PulseError, _closest
-from .base import DeviceDescription
+from .base import _Description
 
 if TYPE_CHECKING:
     from .._device import QuantumSystem
@@ -59,11 +59,11 @@ def _count(name: str, factory: Callable[[int], Any]) -> QuantumSystemFactory:
 
 
 def _builtin_factories() -> dict[str, QuantumSystemFactory]:
-    from .transmon import transmon_17q, transmon_generic
+    from .transmon import _described_17q, _described_generic
 
     return {
-        "transmon_17q": _no_argument("transmon_17q", transmon_17q),
-        "transmon_generic": _count("transmon_generic", transmon_generic),
+        "transmon_17q": _no_argument("transmon_17q", _described_17q),
+        "transmon_generic": _count("transmon_generic", _described_generic),
     }
 
 
@@ -85,8 +85,10 @@ def register_quantum_system(name: str, factory: QuantumSystemFactory) -> None:
     ``CUDAQ_PULSE_QUANTUM_SYSTEM=name[:arg]``.
 
     *factory* receives the text after the colon, or ``None``, and returns a
-    ``DeviceDescription`` (or an object with ``to_quantum_system()``). Registering only adds a
-    name: which target a process uses is still chosen by the environment.
+    ``QuantumSystem`` (or an object with ``to_quantum_system()``), as
+    ``pulse.quantum_system(name=..., qudits=...)`` builds one; the name gives
+    its qudits, couplings and model. Registering only adds a name: which
+    quantum system a process uses is still chosen by the environment.
     """
     if not name or ":" in name or name != name.strip():
         raise InvalidValueError(f"invalid target name {name!r}")
@@ -104,8 +106,8 @@ def available_quantum_systems() -> list[str]:
         return sorted(registry)
 
 
-def make_quantum_system(spec: str) -> DeviceDescription:
-    """A fresh target from a registered name with its optional argument."""
+def make_quantum_system(spec: str) -> _Description:
+    """The description of a registered name with its optional argument."""
     name, colon, arg = spec.partition(":")
     factory = _registry().get(name)
     if factory is None:
@@ -116,13 +118,17 @@ def make_quantum_system(spec: str) -> DeviceDescription:
             f"no registered target {spec!r}; {hint}the registered targets are {', '.join(names)}"
         )
     target = factory(arg if colon else None)
-    if not isinstance(target, DeviceDescription) and hasattr(target, "to_quantum_system"):
+    if target.__class__ is _Description:
+        return target
+    if hasattr(target, "to_quantum_system"):
         target = target.to_quantum_system()
-    if not isinstance(target, DeviceDescription):
+    from .._device import QuantumSystem
+
+    if not isinstance(target, QuantumSystem):
         raise InvalidTypeError(
-            f"target factory {name!r} returned {type(target).__name__}, not a DeviceDescription"
+            f"quantum system factory {name!r} returned {type(target).__name__}, not a QuantumSystem"
         )
-    return target
+    return target._description
 
 
 def current_quantum_system() -> QuantumSystem:

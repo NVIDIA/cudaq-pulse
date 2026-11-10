@@ -140,7 +140,7 @@ def test_concurrent_first_loads_build_each_target_and_calibration_once(monkeypat
         return found
 
     monkeypatch.setattr(calibration, "_indexed", counted)
-    targets = _together(16, lambda i: transmon.transmon_17q())
+    targets = _together(16, lambda i: transmon._described_17q())
     assert len(loads) == 1
     assert all(t is targets[0] for t in targets)
 

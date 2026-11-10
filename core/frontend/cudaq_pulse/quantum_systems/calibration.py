@@ -265,7 +265,7 @@ class Calibration:
 
     # ── Targets ─────────────────────────────────────────────────────────
 
-    def apply(self, target: Any) -> Any:
+    def _apply(self, target: Any) -> Any:
         """*target* with each calibrated pair's coupling set to its exchange
         at the qubits' frequencies in the target. A coupling matches the
         pair of its qudits' labels in either order.

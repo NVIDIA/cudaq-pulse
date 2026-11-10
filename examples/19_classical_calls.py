@@ -37,7 +37,7 @@ from pathlib import Path
 import cudaq_pulse as pulse
 from cudaq_pulse import ControlSystem
 from cudaq_pulse.classical import Link, emulation
-from cudaq_pulse.quantum_systems import DeviceDescription, PhysicalQudit
+from cudaq_pulse.quantum_systems import PhysicalQudit
 
 # A 20 ns pi pulse: with H = amplitude * X / 2, this amplitude (rad/ns)
 # rotates by pi.
@@ -179,7 +179,7 @@ def export(compiled, name, directory):
 
 if __name__ == "__main__":
     # A single transmon with T1 = 10 us, for simulation.
-    target = DeviceDescription(
+    qs = pulse.quantum_system(
         name="classical-demo",
         qudits={
             0: PhysicalQudit(
@@ -187,7 +187,6 @@ if __name__ == "__main__":
             )
         },
     )
-    qs = pulse.quantum_system(target)
     q = qs.qudits[0]
     # A 0.25 ns step resolves the third level's 200 MHz anharmonicity, with
     # 20 steps per period.

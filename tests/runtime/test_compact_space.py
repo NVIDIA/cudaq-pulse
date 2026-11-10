@@ -11,7 +11,6 @@ import dataclasses
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.quantum_systems import DeviceDescription
 
 _TRANSMON_17Q = pulse.quantum_system("transmon_17q")
 
@@ -19,7 +18,7 @@ _TRANSMON_17Q = pulse.quantum_system("transmon_17q")
 def _slice(indices):
     """A quantum system of the transmon_17q qudits *indices*, renumbered 0, 1, ... in
     increasing order, with the couplings and residual ZZ between them."""
-    target = _TRANSMON_17Q._description
+    target = _TRANSMON_17Q
     new = {q: i for i, q in enumerate(sorted(indices))}
 
     def renumbered(entries):
@@ -29,14 +28,14 @@ def _slice(indices):
             if all(q in new for q in e.qudits)
         ]
 
-    sliced = DeviceDescription(
+    sliced = pulse.quantum_system(
         name="transmon-17q-slice",
-        qudits={i: target.qudits[q].replace(index=i) for q, i in new.items()},
+        qudits={i: target.physical_qudits[q].replace(index=i) for q, i in new.items()},
         couplings=renumbered(target.couplings),
         residual_zz=renumbered(target.residual_zz),
         clock_ghz=target.clock_ghz,
     )
-    return pulse.quantum_system(sliced).qudits, new
+    return sliced.qudits, new
 
 
 @pulse.kernel

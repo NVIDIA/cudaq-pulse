@@ -235,7 +235,7 @@ _PAIRS = [
 
 
 def _lower(kernel, n, schedule):
-    quantum_system = pulse.quantum_system(_target(n))
+    quantum_system = _target(n)
     compiled = pulse.compile(kernel, passes=EVOLVE_PASSES, schedule=schedule)
     return compiled.lower(*_handles(quantum_system, [Q[i] for i in range(n)]))
 

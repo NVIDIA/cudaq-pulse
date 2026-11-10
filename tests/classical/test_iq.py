@@ -9,12 +9,7 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.quantum_systems import (
-    DeviceDescription,
-    DispersiveReadout,
-    PhysicalQudit,
-    ReadoutPulse,
-)
+from cudaq_pulse.quantum_systems import DispersiveReadout, PhysicalQudit, ReadoutPulse
 from cudaq_pulse.runtime._calls import IQModel
 
 PI_AMP = math.pi / 20
@@ -34,7 +29,7 @@ def _device(t1_us=0.0, **readout):
         readout=DispersiveReadout(**fields),
         calibrations={pulse.gates.READOUT: ReadoutPulse(**tuned)},
     )
-    return pulse.quantum_system(DeviceDescription(name="sim", qudits={0: qudit}))
+    return pulse.quantum_system(name="sim", qudits={0: qudit})
 
 
 def _centers(dev, amplitude=0.05, duration_ns=None):
@@ -259,11 +254,10 @@ def test_the_17_qudit_twin_separates_its_readout_states():
     from cudaq_pulse.classical import emulation
     from cudaq_pulse.quantum_systems import transmon_17q
 
-    dev = pulse.quantum_system(transmon_17q())
+    dev = transmon_17q()
     q = dev.qudits[0]
-    target = dev._description
-    model = IQModel(target, (0,), decay=False)
-    given = target.qudits[0].readout
+    model = IQModel(dev._description, (0,), decay=False)
+    given = dev.physical_qudits[0].readout
     tau = float(dev.qudits[0].get_calibration(pulse.gates.READOUT).integration_ns)
     c0, c1 = (model.center(0, k, given.frequency_hz, 1.0, tau) for k in (0, 1))
     assert abs(c1 - c0) > 3  # a high-fidelity single-shot readout

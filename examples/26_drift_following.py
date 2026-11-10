@@ -33,7 +33,6 @@ shots, inside a running controller program, needs runtime support that
 does not exist yet.
 """
 
-import dataclasses
 import math
 import multiprocessing
 import queue
@@ -74,10 +73,16 @@ def fringe_top(qudit):
 
 def calibrated_system(offset_hz):
     """The quantum system whose qudit frequency is the nominal one plus *offset_hz*."""
-    nominal = target.qudits[qudit_index]
+    nominal = target.physical_qudits[qudit_index]
     qudit = nominal.replace(frequency_hz=nominal.frequency_hz + offset_hz)
     return pulse.quantum_system(
-        dataclasses.replace(target, qudits={**target.qudits, qudit_index: qudit})
+        name=target.name,
+        qudits={**target.physical_qudits, qudit_index: qudit},
+        couplings=target.couplings,
+        residual_zz=target.residual_zz,
+        model=target.model,
+        attribution=target.attribution,
+        clock_ghz=target.clock_ghz,
     )
 
 

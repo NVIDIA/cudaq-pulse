@@ -21,7 +21,6 @@ NOTE: Requires cudaq-pulse native C++ bindings (see README for build
 instructions).
 """
 
-import dataclasses
 import math
 
 import cudaq_pulse as pulse
@@ -111,19 +110,23 @@ def t1_shot(q, wait_ns: int):
 
 
 if __name__ == "__main__":
-    target = transmon_17q()
-    qs = pulse.quantum_system(target)
+    qs = transmon_17q()
     q = qs.qudits[0]
-    qudit = target.qudits[0]
+    qudit = qs.physical_qudits[0]
 
     print("=== 1. Frequency binary search in one shot (2 rounds) ===")
     offset_hz = 400e3
-    detuned = dataclasses.replace(
-        target,
+    detuned = pulse.quantum_system(
+        name=qs.name,
         qudits={
-            **target.qudits,
+            **qs.physical_qudits,
             0: qudit.replace(frequency_hz=qudit.frequency_hz + offset_hz),
         },
+        couplings=qs.couplings,
+        residual_zz=qs.residual_zz,
+        model=qs.model,
+        attribution=qs.attribution,
+        clock_ghz=qs.clock_ghz,
     )
     scheduled = pulse.compile(
         binary_search, quantum_system=qs, control_system=control_system
@@ -145,7 +148,7 @@ if __name__ == "__main__":
     print("\n=== 2. Tracking a drifting quantum system between shots ===")
     telegraph = TelegraphT1(qudit.t1_us / 4, qudit.t1_us, rate_hz=0.5)
     drifting = DriftingPlant(
-        target,
+        qs,
         t1=telegraph,
         frequency=OrnsteinUhlenbeck(100e3, correlation_s=5.0),
         seed=21,

@@ -7,7 +7,7 @@ import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse import _build_config
 from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline
-from cudaq_pulse.quantum_systems.base import DeviceDescription, PhysicalQudit
+from cudaq_pulse.quantum_systems.base import PhysicalQudit
 from cudaq_pulse.runtime import gpu
 
 from tests._handles import Q
@@ -45,7 +45,7 @@ def test_evolve_on_compiler_only_build_raises_not_built():
         d0 = get_drive_line(q0)
         drive(d0, gaussian(40, 0.3, 10.0))
 
-    target = DeviceDescription(
+    target = pulse.quantum_system(
         name="guard",
         qudits={
             0: PhysicalQudit(

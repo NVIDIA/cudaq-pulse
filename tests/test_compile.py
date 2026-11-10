@@ -10,7 +10,7 @@ import math
 import cudaq_pulse as pulse
 import pytest
 
-from tests._handles import Q
+from tests._handles import Q, rebuilt
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -90,10 +90,10 @@ def test_compile_single_qudit():
 
 
 def _sparse_device():
-    from cudaq_pulse.quantum_systems import DeviceDescription, PhysicalQudit
+    from cudaq_pulse.quantum_systems import PhysicalQudit
 
     qudits = {i: PhysicalQudit(i, 5.0e9 + 1e8 * i, -300e6, 50.0, 30.0) for i in (0, 2)}
-    return pulse.quantum_system(DeviceDescription(name="sparse", qudits=qudits))
+    return pulse.quantum_system(name="sparse", qudits=qudits)
 
 
 @pulse.kernel
@@ -115,7 +115,7 @@ def test_a_qudit_the_target_lacks_is_refused_however_its_tables_were_made():
     from cudaq_pulse.compiler import CompileOptions, build
 
     options = CompileOptions.make()
-    dense = pulse.quantum_system(pulse.quantum_system("transmon_17q")._description)
+    dense = rebuilt(pulse.quantum_system("transmon_17q"))
     for dev, lacking in ((_sparse_device(), (1, 5)), (dense, (17, 30))):
         kernel = pulse.kernel(_drive_one.__wrapped__)
         handles = dev.qudits

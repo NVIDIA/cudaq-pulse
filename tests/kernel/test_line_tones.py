@@ -11,14 +11,13 @@ from typing import ClassVar
 import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse.quantum_systems import (
-    DeviceDescription,
     MicrowaveDrive,
     PhysicalQudit,
     SimulationModel,
     TransmonModel,
 )
 
-from tests._handles import Q
+from tests._handles import Q, rebuilt
 
 
 def _same_program(a, b, *args):
@@ -140,7 +139,7 @@ def test_tones_lists_the_transitions_of_the_qudit_s_levels():
 
 
 def _target(model):
-    return DeviceDescription(
+    return pulse.quantum_system(
         name="tones-test",
         qudits={0: PhysicalQudit(0, 5.0e9, -200e6, 50.0, 30.0)},
         model=model,
@@ -155,7 +154,7 @@ def test_a_missing_transition_is_a_key_error_listing_the_qudit_s():
 
     with pytest.raises(KeyError, match=r"no transition \(0, 3\).*\(0, 1\), \(0, 2\), \(1, 2\)"):
         pulse.compile(missing).lower(Q[0])
-    dev = pulse.quantum_system(_target(TransmonModel(levels={0: 2})))
+    dev = _target(TransmonModel(levels={0: 2}))
     with pytest.raises(pulse.NotFoundError, match=r"no transition \(0, 3\).*levels \(0, 1\), the"):
         pulse.compile(missing).lower(dev.qudits[0])
 
@@ -205,7 +204,7 @@ def test_a_readout_line_plays_at_the_readout_frequency():
 
 
 def test_a_readout_line_without_a_readout_frequency_plays_at_the_qudit_s():
-    dev = pulse.quantum_system(_target(TransmonModel))
+    dev = _target(TransmonModel)
     q = dev.qudits[0]
     for kernel in (read_static, read_runtime):
         assert _readout_frequencies(kernel.lower(q, 1e6)) == [5.0e9, 5.0e9 + 1e6]
@@ -216,7 +215,7 @@ def test_the_frequency_tables_hold_the_program_s_qudits_not_the_device_s():
     # highest; a later program on a higher qudit, static or runtime, extends
     # the tables, and one on a lower qudit reads them. New kernels, on a
     # quantum system of its own: no compile is shared with another test.
-    dev = pulse.quantum_system(pulse.quantum_system("transmon_17q")._description)
+    dev = rebuilt(pulse.quantum_system("transmon_17q"))
     static, runtime = (pulse.kernel(k.__wrapped__) for k in (read_static, read_runtime))
     resonator = {i: dev.physical_qudits[i].readout.frequency_hz for i in (0, 4, 9)}
     for kernel, index, count in (
@@ -262,7 +261,7 @@ def test_the_default_transition_comes_from_the_model():
         drive(d, square(40, 0.1), tone=d.tones[(1, 2)])
         drive(d, square(40, 0.1), tone=d.tones[(0, 1)])
 
-    dev = pulse.quantum_system(_target(_UpperQudit))
+    dev = _target(_UpperQudit)
     lowered = pulse.compile(both).lower(dev.qudits[0])
     # (1, 2) is the line's own tone; (0, 1) is made, at the model's evenly
     # spaced 0-1 frequency.
@@ -286,7 +285,7 @@ def test_a_rolled_loop_that_reads_a_transition_s_tone_still_drives_it_each_time(
 def test_driving_the_second_transition_moves_the_qudit_to_level_two():
     # 400 cycles at 2 GHz is 200 ns; H = amp X / 2 rotates 0-1 by amp * 200
     # and 1-2, whose matrix element is sqrt(2), by sqrt(2) times that.
-    target = DeviceDescription(
+    dev = pulse.quantum_system(
         name="tones-test",
         qudits={
             0: PhysicalQudit(
@@ -307,7 +306,6 @@ def test_driving_the_second_transition_moves_the_qudit_to_level_two():
         drive(d, square(400, one))
         drive(d, square(400, one / math.sqrt(2.0)), tone=d.tones[(1, 2)])
 
-    dev = pulse.quantum_system(target)
     rho = pulse.simulate(ladder, dev.qudits[0], levels=3).density_matrix
     assert rho[2, 2].real > 0.97
 

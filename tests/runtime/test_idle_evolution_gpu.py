@@ -12,7 +12,7 @@ import math
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse.quantum_systems import DeviceDescription, MicrowaveDrive, PhysicalQudit
+from cudaq_pulse.quantum_systems import MicrowaveDrive, PhysicalQudit
 
 from tests._handles import Q
 from tests.runtime._lowering import evolve, on, pulse_mlir
@@ -27,7 +27,7 @@ _CLOCK_GHZ = 2.0  # 2 clock cycles per nanosecond
 
 
 def _target():
-    return DeviceDescription(
+    return pulse.quantum_system(
         name="idle-evolution-test",
         qudits={
             0: PhysicalQudit(

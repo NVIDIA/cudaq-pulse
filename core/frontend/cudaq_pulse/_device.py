@@ -2,14 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """Quantum systems and qudit handles.
 
-A ``QuantumSystem`` is a read-only description of one machine: its target (the
-calibrated physics) and its layout, which maps the user's qudit numbering to
-the target's carriers. ``qs.qudits[i]`` is a ``Qudit``: a handle that
+A ``QuantumSystem`` is a read-only description of one machine: its calibrated
+physics and its layout, which maps the user's qudit numbering to its
+carriers. ``qs.qudits[i]`` is a ``Qudit``: a handle that
 names one carrier of that quantum system. A kernel called with handles runs on their
 quantum system, so one compiled kernel serves every quantum system it is called with.
 
 Quantum systems compare by content: two quantum systems built from the same values are equal
-and share compiled kernels. The content is the target, layout and
+and share compiled kernels. The content is the physics, layout and
 calibration (a shipped one by name, cooldown and file, any other by its
 values); ``name`` and ``source`` are labels, and equal quantum systems may differ
 in them.
@@ -40,7 +40,7 @@ from .quantum_systems._registry import (
     _registry,
     make_quantum_system,
 )
-from .quantum_systems.base import DeviceDescription
+from .quantum_systems.base import _TRANSMON, _Description
 from .quantum_systems.models import SimulationModel
 
 try:
@@ -83,13 +83,20 @@ _CARRIER = "qudit"
 _CONFIG_KEYS = (
     "format",
     "written_by",
-    "quantum_system",
+    "name",
+    "qudits",
+    "couplings",
+    "residual_zz",
+    "model",
+    "attribution",
     "layout",
     "calibration",
     "cooldown",
     "control_system",
     "clock_ghz",
 )
+# The keys that build a quantum system rather than name a registered one.
+_BUILT_KEYS = ("qudits", "couplings", "residual_zz", "model", "attribution")
 # Reserved for a model of where carriers are and how they move.
 _RESERVED_CONFIG = frozenset({"zones", "sites", "moves", "transport"})
 
@@ -99,7 +106,7 @@ def _read_only(array: Any) -> Any:
     return array
 
 
-def _fingerprint(target: DeviceDescription, layout: tuple[int, ...], calibration: Any) -> str:
+def _fingerprint(target: _Description, layout: tuple[int, ...], calibration: Any) -> str:
     """Content hash of everything a compiled kernel depends on, and of the
     calibration the quantum system holds: quantum systems of one fingerprint are one quantum
     system."""
@@ -336,7 +343,7 @@ class QuantumSystem:
 
     def __init__(
         self,
-        target: DeviceDescription,
+        target: _Description,
         *,
         name: str,
         layout: Sequence[int] | None = None,
@@ -664,13 +671,11 @@ def _from_spec(
     calibration: Any = None,
     control_system: ControlSystem | None = None,
 ) -> QuantumSystem:
-    from .quantum_systems._registry import make_quantum_system
-
     return _calibrated(make_quantum_system(spec), spec, source, layout, calibration, control_system)
 
 
 def _calibrated(
-    target: DeviceDescription,
+    target: _Description,
     spec: str | None,
     source: str,
     layout: Sequence[int] | None,
@@ -679,11 +684,11 @@ def _calibrated(
     clock_ghz: float | None = None,
 ) -> QuantumSystem:
     """The quantum system of *target*, registered as *spec* (``None`` for a
-    ``DeviceDescription``), with *calibration* applied and *clock_ghz* (if
+    ``_Description``), with *calibration* applied and *clock_ghz* (if
     given) its program clock."""
     base = target
     if calibration is not None:
-        target = calibration.apply(target)
+        target = calibration._apply(target)
     elif spec == "transmon_17q":
         from .quantum_systems.calibration import shipped_calibration
 
@@ -703,29 +708,25 @@ def _calibrated(
     return made
 
 
-def _target(
-    spec: Any, problems: list[Problem], key: str = "quantum_system"
-) -> DeviceDescription | None:
+def _target(spec: Any, problems: list[Problem], key: str = "name") -> _Description | None:
+    """The description of the registered quantum system *spec* names."""
     from .quantum_systems._registry import available_quantum_systems, make_quantum_system
 
-    if isinstance(spec, DeviceDescription):
-        return spec
     if spec is None:
         problems.append(
             Problem(
                 "is missing",
                 path=key,
-                fix="give a registered target name ("
+                fix="give a registered name ("
                 + ", ".join(available_quantum_systems())
-                + ") or a DeviceDescription",
+                + '), or "qudits" to build one',
             )
         )
         return None
     if not isinstance(spec, str):
         problems.append(
             Problem(
-                f"must be a registered target name or a DeviceDescription, "
-                f"got {type(spec).__name__}",
+                f"must be a registered name, got {type(spec).__name__}",
                 path=key,
                 value=spec,
             )
@@ -739,7 +740,7 @@ def _target(
 
 
 def _layout(
-    layout: Any, target: DeviceDescription | None, name: str, problems: list[Problem]
+    layout: Any, target: _Description | None, name: str, problems: list[Problem]
 ) -> tuple[int, ...] | None:
     """*layout* as carrier indices, checked against *target* when it is known."""
     if isinstance(layout, (str, bytes)) or not isinstance(layout, Sequence):
@@ -769,7 +770,8 @@ def _layout(
         if known is not None and carrier not in known:
             problems.append(
                 Problem(
-                    f"carrier {carrier} is not in target {name!r} (it has {_ranges(known)})",
+                    f"carrier {carrier} is not in quantum system {name!r} (it has "
+                    f"{_ranges(known)})",
                     path=path,
                     value=carrier,
                 )
@@ -797,7 +799,7 @@ def _empty(layout: Sequence[Any], problems: list[Problem]) -> tuple[int, ...] | 
                 "must name at least one carrier, got an empty list",
                 path="layout",
                 value=layout,
-                fix="leave layout out for every carrier of the target",
+                fix="leave layout out for every carrier",
             )
         )
     return None
@@ -870,7 +872,8 @@ def _calibration(config: Mapping[str, Any], problems: list[Problem]) -> Any:
 
 def _definition(config: Mapping[str, Any], source: str, problems: list[Problem]) -> _MaybeSystem:
     """The quantum system of *config*, or ``None`` after adding its problems in the
-    order of the config's keys."""
+    order of the config's keys. ``pulse.quantum_system`` gives the system it built
+    from its keywords as the config's ``"name"``."""
     found = len(problems)
     quantum_system = _checked(config, source, problems)
     order = {str(key): i for i, key in enumerate(config)}
@@ -902,19 +905,31 @@ def _checked(config: Mapping[str, Any], source: str, problems: list[Problem]) ->
                 else "the keys are " + ", ".join(_CONFIG_KEYS),
             )
         )
-    key = "quantum_system"
-    spec = config.get(key)
+    spec = config.get("name")
+    described = spec if spec.__class__ is _Description else None
+    built = described is not None or "qudits" in config
+    if not built and config.keys() & _BUILT_KEYS:
+        for key in sorted(config.keys() & _BUILT_KEYS):
+            problems.append(
+                Problem(
+                    'builds a quantum system, with "qudits"; a registered name gives its own',
+                    path=key,
+                    fix='give "qudits" to build one, or remove ' + repr(key),
+                )
+            )
+    if built:
+        spec = None
     control = config.get("control_system")
-    # A target by name or as a DeviceDescription, without a format or a
+    # A quantum system by name or built from keywords, without a format or a
     # control system, needs none of the system file machinery.
-    if "format" in config or isinstance(spec, Mapping) or control is not None:
+    if described is not None and control is None:
+        target: _Description | None = described
+    elif "format" in config or built or control is not None:
         from ._system import _config_systems
 
-        target, control = _config_systems(config, key, source, problems)
-        if isinstance(spec, Mapping):
-            spec = target
+        target, control = _config_systems(config, source, problems, described)
     else:
-        target = _target(spec, problems, key)
+        target = _target(spec, problems)
     name = spec if isinstance(spec, str) else getattr(target, "name", "")
     layout = config.get("layout")
     if layout is not None:
@@ -941,7 +956,10 @@ def _checked(config: Mapping[str, Any], source: str, problems: list[Problem]) ->
         )
     except (KeyError, ValueError) as error:
         problems.append(
-            Problem(f"does not fit target {name!r}: {Exception.__str__(error)}", path="calibration")
+            Problem(
+                f"does not fit quantum system {name!r}: {Exception.__str__(error)}",
+                path="calibration",
+            )
         )
         return None
 
@@ -1004,46 +1022,90 @@ def _located(problems: list[Problem], file: str, text: str) -> list[Problem]:
 
 
 def quantum_system(
-    description: DeviceDescription | str | None = None,
-    /,
+    name: str | None = None,
     *,
+    qudits: Mapping[int, PhysicalQudit] | None = None,
+    couplings: Sequence[Coupling] = (),
+    residual_zz: Sequence[ResidualZZ] = (),
+    model: SimulationModel | type[SimulationModel] | None = _TRANSMON,
+    attribution: str = "",
     layout: Sequence[int] | None = None,
     calibration: Calibration | str | os.PathLike[str] | None = None,
     cooldown: str | None = None,
     control_system: ControlSystem | None = None,
     clock_ghz: float | None = None,
 ) -> QuantumSystem:
-    """The quantum system of a quantum system: a registered target name or a
-    ``DeviceDescription``.
+    """A quantum system: a registered one by name, or one built from its qudits.
 
-    ``quantum_system("transmon_17q")`` is the quantum system of a registered target,
-    with every carrier in order (a name takes its argument after a colon, as
-    in ``"transmon_generic:4"``); ``cudaq_pulse.quantum_systems.available_quantum_systems()``
+    ``quantum_system("transmon_17q")`` is a registered quantum system, with
+    every carrier in order (a name takes its argument after a colon, as in
+    ``"transmon_generic:4"``); ``cudaq_pulse.quantum_systems.available_quantum_systems()``
     lists the names. A string is always a name: ``QuantumSystem.load(path)`` reads
     a system file, and ``QuantumSystem.from_dict(data)`` its data. ``quantum_system()`` is
     the process quantum system, named by ``CUDAQ_PULSE_QUANTUM_SYSTEM`` (``python -m
     cudaq_pulse --quantum-system NAME`` sets it); without one it raises
     ``NoProcessQuantumSystemError``.
 
+    ``quantum_system(name="chip", qudits={0: PhysicalQudit(...), ...})`` builds
+    one: ``qudits`` are its ``PhysicalQudit`` carriers by index, ``couplings``
+    and ``residual_zz`` its ``Coupling`` and ``ResidualZZ`` entries, ``model``
+    how the simulator treats its qudits and how many levels each has (a
+    ``SimulationModel`` class or instance, ``TransmonModel`` by default,
+    ``TransmonModel(levels={0: 4})`` to give qudit 0 four levels, or ``None``
+    for a system with no simulation model) and ``attribution`` where its
+    values come from. Its couplings and residual ZZ entries are checked, and
+    a problem is at its path (``couplings[3].qudits[1]``). These keywords
+    build a system, so a registered name takes none of them.
+
     ``layout[i]`` is the carrier that qudit ``i`` names; by default every
     carrier of the quantum system, in order. ``calibration`` is a
     ``Calibration``, the name of a shipped one or the path of a calibration
     file, and ``cooldown`` one of its cooldowns; the calibration's couplings
     replace the system's, and ``QuantumSystem.calibration`` holds it. The
-    ``transmon_17q`` target uses the shipped ``transmon_17q`` calibration by
+    ``transmon_17q`` quantum system uses the shipped ``transmon_17q`` calibration by
     default. ``control_system`` is a ``ControlSystem``, whose lines must be
     carriers of the quantum system. ``clock_ghz`` is the program clock
     kernels count cycles of (``QuantumSystem.clock_ghz``); by default the fastest
-    controller clock when the others divide it, else the quantum system's.
+    controller clock when the others divide it, else the quantum system's
+    (2 GHz for one built here).
     Controller clocks that do not divide evenly into one need it, and the
     problem lists the clocks that work.
 
     Arguments with problems raise ``QuantumSystemDefinitionError`` listing all of
     them, each at the argument it is in.
     """
-    if description.__class__ is str:
-        if description.partition(":")[0] not in _registry():
-            _unknown_target(description)
+    described: _Description | None = None
+    if qudits is not None:
+        if name.__class__ is not str:
+            raise InvalidTypeError(
+                "pulse.quantum_system(qudits=...) builds a quantum system and needs its name=, "
+                f"got {type(name).__name__}"
+            )
+        described = _Description(
+            name=name,
+            qudits=qudits,
+            couplings=couplings,
+            residual_zz=residual_zz,
+            model=model,
+            attribution=attribution,
+            # A clock that is no positive number is the program clock's problem.
+            **(
+                {"clock_ghz": clock_ghz}
+                if isinstance(clock_ghz, (int, float))
+                and not isinstance(clock_ghz, bool)
+                and 0 < clock_ghz < float("inf")
+                else {}
+            ),
+        )
+    elif name.__class__ is str and name.partition(":")[0] not in _registry():
+        _unknown_target(name)
+    elif couplings or residual_zz or attribution or model is not _TRANSMON:
+        given = "couplings" if couplings else "residual_zz" if residual_zz else "attribution"
+        raise InvalidTypeError(
+            f"pulse.quantum_system's {'model' if model is not _TRANSMON else given} builds a "
+            "quantum system with qudits=; a registered name gives its own"
+        )
+    elif name.__class__ is str:
         if (
             layout is None
             and calibration is None
@@ -1051,8 +1113,8 @@ def quantum_system(
             and control_system is None
             and clock_ghz is None
         ):
-            return _from_spec(description, f"target {description}")
-    elif description is None:
+            return _from_spec(name, f"quantum system {name}")
+    elif name is None:
         if (
             layout is None
             and calibration is None
@@ -1065,33 +1127,33 @@ def quantum_system(
             return current_quantum_system()
         from .quantum_systems._registry import ENV_VAR, _no_quantum_system_message
 
-        description = os.environ.get(ENV_VAR)
-        if not description:
+        name = os.environ.get(ENV_VAR)
+        if not name:
             raise NoProcessQuantumSystemError(_no_quantum_system_message())
-        if description.partition(":")[0] not in _registry():
-            _unknown_target(description)
-    elif isinstance(description, str):
-        if description.partition(":")[0] not in _registry():
-            _unknown_target(description)
-    elif not isinstance(description, DeviceDescription):
+        if name.partition(":")[0] not in _registry():
+            _unknown_target(name)
+    elif isinstance(name, str):
+        if name.partition(":")[0] not in _registry():
+            _unknown_target(name)
+    else:
         fix = (
             "; QuantumSystem.from_dict(data) reads a system file's data"
-            if isinstance(description, Mapping)
+            if isinstance(name, Mapping)
             else ""
         )
         raise InvalidTypeError(
-            "pulse.quantum_system takes a registered target name or a DeviceDescription, got "
-            f"{type(description).__name__}{fix}"
+            "pulse.quantum_system takes a registered name, or name= and qudits= to build "
+            f"one, got {type(name).__name__}{fix}"
         )
     if isinstance(control_system, Mapping) or isinstance(calibration, Mapping):
-        name = "control_system" if isinstance(control_system, Mapping) else "calibration"
+        given = "control_system" if isinstance(control_system, Mapping) else "calibration"
         raise InvalidTypeError(
-            f"pulse.quantum_system's {name} is a "
-            + ("ControlSystem" if name == "control_system" else "Calibration, a name or a path")
+            f"pulse.quantum_system's {given} is a "
+            + ("ControlSystem" if given == "control_system" else "Calibration, a name or a path")
             + ", not data; QuantumSystem.from_dict(data) reads a system file's data"
         )
-    given = {
-        "quantum_system": description,
+    arguments = {
+        "name": name if described is None else described,
         "layout": layout,
         "calibration": calibration,
         "cooldown": cooldown,
@@ -1099,7 +1161,9 @@ def quantum_system(
         "clock_ghz": clock_ghz,
     }
     problems: list[Problem] = []
-    found = _definition({k: v for k, v in given.items() if v is not None}, "arguments", problems)
+    found = _definition(
+        {k: v for k, v in arguments.items() if v is not None}, "arguments", problems
+    )
     if found is None:
         raise QuantumSystemDefinitionError(
             f"{_count(len(problems), 'problem')} in pulse.quantum_system()", problems=problems

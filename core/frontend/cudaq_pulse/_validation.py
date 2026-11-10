@@ -42,7 +42,7 @@ from .ops import (
     sync,
     wait,
 )
-from .quantum_systems import DeviceDescription, PhysicalQudit
+from .quantum_systems import PhysicalQudit
 
 if TYPE_CHECKING:
     from .compiler import ScheduledKernel
@@ -279,12 +279,11 @@ def _one(system: ControlSystem) -> Controller | None:
 def _device(system: ControlSystem) -> Any:
     limits = _one(system)
     clock = limits.clock_ghz if limits is not None and limits.clock_ghz else 1.0
-    target = DeviceDescription(
+    return pulse.quantum_system(
         name="validation",
-        clock_ghz=clock,
         qudits={i: PhysicalQudit(i, 5.0e9 + 1.5e8 * i, -2.5e8, 50.0, 30.0) for i in range(_QUDITS)},
+        clock_ghz=clock,
     )
-    return pulse.quantum_system(target)
 
 
 def _formats(backend: Backend) -> list[str]:

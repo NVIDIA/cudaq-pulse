@@ -3,7 +3,7 @@
 """Quantum systems and runs in the reference conventions: amplitudes are Rabi rates."""
 
 import cudaq_pulse as pulse
-from cudaq_pulse.quantum_systems import Coupling, DeviceDescription, MicrowaveDrive, PhysicalQudit
+from cudaq_pulse.quantum_systems import Coupling, MicrowaveDrive, PhysicalQudit
 
 PASSES = (
     "verify",
@@ -25,7 +25,7 @@ def cycles(ns: float) -> int:
 
 
 def quantum_system(freqs_hz, alphas_hz, couplings=(), t1_us=0.0, t2_us=0.0, **qudit):
-    target = DeviceDescription(
+    return pulse.quantum_system(
         name="reference",
         qudits={
             i: PhysicalQudit(
@@ -41,7 +41,6 @@ def quantum_system(freqs_hz, alphas_hz, couplings=(), t1_us=0.0, t2_us=0.0, **qu
         },
         couplings=[Coupling((i, j), g) for i, j, g in couplings],
     )
-    return pulse.quantum_system(target)
 
 
 def run(dev, kernel, *args, n=None, backend="cpu", levels=2, **simulate):

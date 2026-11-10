@@ -21,9 +21,9 @@ import sys
 import time
 
 import cudaq_pulse as pulse
-from cudaq_pulse.quantum_systems import DeviceDescription, MicrowaveDrive, PhysicalQudit
+from cudaq_pulse.quantum_systems import MicrowaveDrive, PhysicalQudit
 
-TARGET = DeviceDescription(
+TARGET = pulse.quantum_system(
     name="one",
     qudits={
         0: PhysicalQudit(
@@ -31,7 +31,7 @@ TARGET = DeviceDescription(
         )
     },
 )
-Q = pulse.quantum_system(TARGET).qudits[0]
+Q = TARGET.qudits[0]
 UNROLL_ALL = 10**9
 
 

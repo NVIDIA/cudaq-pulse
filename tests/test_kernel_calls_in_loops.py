@@ -23,7 +23,7 @@ import numpy as np
 import pytest
 from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline
 from cudaq_pulse.kernel.ir_builder import CompilationError
-from cudaq_pulse.quantum_systems import DeviceDescription, MicrowaveDrive, PhysicalQudit
+from cudaq_pulse.quantum_systems import MicrowaveDrive, PhysicalQudit
 
 from tests._handles import Q
 from tests._ir import python_ir
@@ -47,7 +47,7 @@ def _qudits(n, qvec, dev=None):
 
 
 def _device(n):
-    return pulse.quantum_system(_target(n))
+    return _target(n)
 
 
 def _trace(kernel, n=1, qvec=False, args=()):
@@ -83,7 +83,7 @@ def _simulate(kernel, n=1, qvec=False, args=(), levels=2, **kwargs):
 
 
 def _target(n):
-    return DeviceDescription(
+    return pulse.quantum_system(
         name="loop-calls",
         qudits={
             q: PhysicalQudit(

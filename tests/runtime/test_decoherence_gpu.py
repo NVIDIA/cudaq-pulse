@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """GPU integration tests: T1 amplitude damping and multi-qubit decoherence.
 
-Uses ``DeviceDescription`` T1 Lindblad terms to check T1 decay, its
+Uses a ``QuantumSystem``'s T1 Lindblad terms to check T1 decay, its
 monotonicity, ground-state stability, trace preservation, and independent
 decay of several qubits.
 """
@@ -12,7 +12,7 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.quantum_systems import DeviceDescription, MicrowaveDrive, PhysicalQudit
+from cudaq_pulse.quantum_systems import MicrowaveDrive, PhysicalQudit
 
 from tests._handles import Q
 from tests.runtime._lowering import evolve, on, pulse_mlir
@@ -21,7 +21,7 @@ gpu = pytest.mark.gpu
 
 
 def _single_qudit_target(*, t1_us, t2_star_us=0.0, frequency_hz=5.0e9):
-    return DeviceDescription(
+    return pulse.quantum_system(
         name="decoherence-test",
         qudits={
             0: PhysicalQudit(
@@ -122,7 +122,7 @@ def test_decoherence_preserves_trace():
 @gpu
 def test_multiqudit_independent_decay():
     """Two qubits with distinct T1 both damp; the whole state stays physical."""
-    target = DeviceDescription(
+    target = pulse.quantum_system(
         name="two-qubit-decoherence",
         qudits={
             0: PhysicalQudit(

@@ -444,24 +444,32 @@ def binary_search(q, rounds: int):
 # ── Quantum systems ─────────────────────────────────────────────────────────────────
 
 
-def chain_system(target, t1_us=18.3, offset_hz=60e3, amplitude_scale=1.015):
+def chain_system(qs, t1_us=18.3, offset_hz=60e3, amplitude_scale=1.015):
     """Qubit 0 of *target* as the chain's quantum system: its T1, a detuning from
     the drive, a drive-amplitude error and small readout errors."""
-    qudit = target.qudits[0]
-    scale = target.drive_amplitude_scale(0) * amplitude_scale
+    qudit = qs.physical_qudits[0]
+    scale = qs.drive_amplitude_scale(0) * amplitude_scale
     true_system = qudit.replace(
         t1_us=t1_us,
         frequency_hz=qudit.frequency_hz + offset_hz,
         drive=qudit.drive.replace(amplitude_scale_rad_per_ns=scale),
         readout=qudit.readout.replace(error_1to0=0.03, error_0to1=0.02),
     )
-    return dataclasses.replace(target, qudits={**target.qudits, 0: true_system})
+    return pulse.quantum_system(
+        name=qs.name,
+        qudits={**qs.physical_qudits, 0: true_system},
+        couplings=qs.couplings,
+        residual_zz=qs.residual_zz,
+        model=qs.model,
+        attribution=qs.attribution,
+        clock_ghz=qs.clock_ghz,
+    )
 
 
-def search_system(target, offset_hz):
+def search_system(qs, offset_hz):
     """A quantum system like the binary-search paper's: T2* 12 us, T1 80 us, and
     readout errors that give its fringe contrast of 0.6 between shots."""
-    qudit = target.qudits[0]
+    qudit = qs.physical_qudits[0]
     true_system = qudit.replace(
         t1_us=80.0,
         t2_star_us=12.0,
@@ -469,7 +477,15 @@ def search_system(target, offset_hz):
         frequency_hz=qudit.frequency_hz + offset_hz,
         readout=qudit.readout.replace(error_1to0=0.115, error_0to1=0.105),
     )
-    return dataclasses.replace(target, qudits={**target.qudits, 0: true_system})
+    return pulse.quantum_system(
+        name=qs.name,
+        qudits={**qs.physical_qudits, 0: true_system},
+        couplings=qs.couplings,
+        residual_zz=qs.residual_zz,
+        model=qs.model,
+        attribution=qs.attribution,
+        clock_ghz=qs.clock_ghz,
+    )
 
 
 def chain_results(branch):
@@ -491,10 +507,9 @@ if __name__ == "__main__":
         "The millisecond calibration chain of Marciniak et al., arXiv:2602.11912 (2026),\n"
         "with the adaptive T1 tracker of Berritta et al., arXiv:2506.09576 (2025).\n"
     )
-    target = transmon_17q()
-    qs = pulse.quantum_system(target)
+    qs = transmon_17q()
     q = qs.qudits[0]
-    true_system = chain_system(target)
+    true_system = chain_system(qs)
 
     print("=== 1. The calibration chain, on the controller ===")
     start = time.perf_counter()
@@ -540,7 +555,7 @@ if __name__ == "__main__":
         offset = (seed - 1.5) * 300e3
         found = pulse.simulate(
             scheduled,
-            quantum_system=search_system(target, offset),
+            quantum_system=search_system(qs, offset),
             shots_count=1,
             seed=seed,
             branches="sampled",

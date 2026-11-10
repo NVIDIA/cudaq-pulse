@@ -57,7 +57,7 @@ def two_readouts(q, r):
 
 
 def _device():
-    return pulse.quantum_system(ladder_target(4), clock_ghz=1.0)
+    return ladder_target(4, clock_ghz=1.0)
 
 
 def test_an_installed_backend_is_listed_without_being_imported(installed):

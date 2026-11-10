@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 from cudaq_pulse import ControlSystem
 from cudaq_pulse.classical import Link
-from cudaq_pulse.quantum_systems import DeviceDescription, MicrowaveDrive, PhysicalQudit
+from cudaq_pulse.quantum_systems import MicrowaveDrive, PhysicalQudit
 from cudaq_pulse.runtime import _propagate
 from cudaq_pulse.runtime import simulate as simulate_module
 
@@ -29,7 +29,7 @@ _PI = math.pi / 20.0
 
 
 def _target(t1_us=30.0, t2_us=20.0, thermal=0.02, offset_hz=0.0):
-    return DeviceDescription(
+    return pulse.quantum_system(
         name="propagation-test",
         qudits={
             0: PhysicalQudit(
@@ -211,8 +211,7 @@ def _adaptive_loop(q0, rounds: int):
 
 
 def test_a_long_adaptive_loop_follows_one_path_per_shot():
-    target = _target(t1_us=5.0)
-    dev = pulse.quantum_system(target)
+    dev = _target(t1_us=5.0)
     lowered = pulse.compile(_adaptive_loop, quantum_system=dev, control_system=_MACHINE).lower(
         dev.qudits[0], 60
     )

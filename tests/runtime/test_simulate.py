@@ -14,7 +14,7 @@ import warnings
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.quantum_systems import Coupling, DeviceDescription, MicrowaveDrive, PhysicalQudit
+from cudaq_pulse.quantum_systems import Coupling, MicrowaveDrive, PhysicalQudit
 
 from tests._handles import Q
 from tests.runtime._lowering import on
@@ -26,7 +26,7 @@ _HALF_PI = math.pi / 40.0
 
 
 def _target(n=1, t1_us=0.0):
-    return DeviceDescription(
+    return pulse.quantum_system(
         name="simulate-test",
         qudits={
             q: PhysicalQudit(
@@ -102,7 +102,7 @@ def test_simulate_takes_the_kernel_and_its_arguments():
         d0 = get_drive_line(q0)
         drive(d0, square(40, amplitude))
 
-    dev = pulse.quantum_system(_target())
+    dev = _target()
     q = dev.qudits[0]
     expected = pulse.simulate(rabi.lower(q, _PI), levels=2).density_matrix
     np.testing.assert_array_equal(pulse.simulate(rabi, q, _PI, levels=2).density_matrix, expected)
@@ -126,7 +126,7 @@ def _rabi_with_amplitude(q0, amplitude: float):
 
 @pytest.mark.parametrize("kind", ["kernel", "compiled", "with_parameters", "bound", "call"])
 def test_simulate_takes_a_kernel_or_a_program_compiled_already(kind):
-    dev = pulse.quantum_system(_target())
+    dev = _target()
     q = dev.qudits[0]
     compiled = pulse.compile(_rabi_with_amplitude)
     generic = compiled.lower(q, _PI).generic
@@ -149,7 +149,7 @@ def test_simulate_binds_a_program_s_parameters_as_bind_does():
         wait(d0, gap, bounds=(0, 100))
         drive(d0, square(40, _PI))
 
-    dev = pulse.quantum_system(_target())
+    dev = _target()
     q = dev.qudits[0]
     generic = pulse.compile(wait_for).lower(q, 10.0).generic
     assert generic is not None
@@ -272,8 +272,8 @@ def test_each_qudit_has_its_model_s_levels_unless_simulate_sets_them():
 
     lowered = on(_target(1), measure, Q[0])
     assert pulse.simulate(lowered).dims == (TransmonModel.levels,) == (3,)
-    target = DeviceDescription(
-        name="simulate-test", qudits=_target(2).qudits, model=TransmonModel(levels={1: 4})
+    target = pulse.quantum_system(
+        name="simulate-test", qudits=_target(2).physical_qudits, model=TransmonModel(levels={1: 4})
     )
     lowered = on(target, conditional_flip, Q[0], Q[1])
     assert pulse.simulate(lowered).dims == (3, 4)
@@ -358,7 +358,7 @@ def test_a_step_that_resolves_the_simulation_does_not_warn(options, recwarn):
 
 def test_the_check_follows_the_model_s_levels_not_a_transmon_s():
     # Evenly spaced levels (no anharmonicity) all turn with the frame.
-    harmonic = DeviceDescription(
+    harmonic = pulse.quantum_system(
         name="harmonic",
         qudits={0: PhysicalQudit(0, 5.0e9, 0.0, 0.0, 0.0)},
     )
@@ -381,8 +381,8 @@ def test_the_default_step_takes_20_steps_per_period_of_the_levels_spread(levels,
 
     target = _target()
     lowered = on(target, _shaped, Q[0])
-    assert _default_step(lowered, target, levels) == step
-    assert _default_step(lowered, target, {0: levels}) == step
+    assert _default_step(lowered, target._description, levels) == step
+    assert _default_step(lowered, target._description, {0: levels}) == step
 
 
 @pytest.mark.parametrize("levels", [3, {0: 3}])
@@ -480,7 +480,7 @@ def test_a_gpu_result_that_is_not_finite_raises(monkeypatch):
 
 
 def test_a_step_too_coarse_for_coupled_qudits_names_their_detuning():
-    pair = DeviceDescription(
+    pair = pulse.quantum_system(
         name="pair",
         qudits={q: PhysicalQudit(q, 5.0e9 + 2.0e9 * q, -200.0e6, 0.0, 0.0) for q in range(2)},
         couplings=[Coupling((0, 1), 5.0e6)],

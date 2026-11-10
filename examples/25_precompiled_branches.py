@@ -30,7 +30,6 @@ lookup times are real.
 """
 
 import concurrent.futures
-import dataclasses
 import itertools
 import math
 import multiprocessing
@@ -41,7 +40,7 @@ import cudaq_pulse as pulse
 import numpy as np
 from cudaq_pulse.quantum_systems import MicrowaveDrive, transmon_17q
 
-target = transmon_17q()
+quantum_system = transmon_17q()
 qudit_indices = (0, 1, 2, 3)
 repetitions = 9
 pulse_duration = 40 * pulse.ns
@@ -57,7 +56,9 @@ sample_rate_ghz = 2.0
 # The amplitude of a pi pulse: a rotation of pi from the Gaussian's area (ns)
 # and the drive's rad/ns per unit amplitude.
 area_ns = (pulse_sigma / pulse.ns) * math.sqrt(2 * math.pi) * math.erf(2 / math.sqrt(2))
-pi_amplitudes = tuple(math.pi / (area_ns * target.drive_amplitude_scale(q)) for q in qudit_indices)
+pi_amplitudes = tuple(
+    math.pi / (area_ns * quantum_system.drive_amplitude_scale(q)) for q in qudit_indices
+)
 
 
 @pulse.kernel
@@ -104,14 +105,22 @@ def compile_branch(kernel: pulse.Kernel[...], qudits: pulse.Register, trained: t
 
 def drifted(factors):
     """The target with each qudit's drive strength multiplied by its factor."""
-    qudits = dict(target.qudits)
+    qudits = dict(quantum_system.physical_qudits)
     for q, factor in zip(qudit_indices, factors, strict=True):
-        strength = target.drive_amplitude_scale(q) * factor
+        strength = quantum_system.drive_amplitude_scale(q) * factor
         given = qudits[q].drive
         assert isinstance(given, MicrowaveDrive)
         stronger = given.replace(amplitude_scale_rad_per_ns=strength)
         qudits[q] = qudits[q].replace(drive=stronger)
-    return dataclasses.replace(target, qudits=qudits)
+    return pulse.quantum_system(
+        name=quantum_system.name,
+        qudits=qudits,
+        couplings=quantum_system.couplings,
+        residual_zz=quantum_system.residual_zz,
+        model=quantum_system.model,
+        attribution=quantum_system.attribution,
+        clock_ghz=quantum_system.clock_ghz,
+    )
 
 
 def populations(program, true_system):
@@ -140,7 +149,6 @@ def median_s(operation, repeat):
 
 
 if __name__ == "__main__":
-    quantum_system = pulse.quantum_system(target)
     qudits = quantum_system.qudits[list(qudit_indices)]
     outcomes = every_outcome()
     compile_branch(pi_trains, qudits, outcomes[-1])  # compile once here before timing anything

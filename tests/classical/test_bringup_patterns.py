@@ -12,7 +12,7 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse.classical import emulation, random_index
-from cudaq_pulse.quantum_systems import DeviceDescription, DispersiveReadout, PhysicalQudit
+from cudaq_pulse.quantum_systems import DispersiveReadout, PhysicalQudit
 
 PI_AMP = math.pi / 20
 
@@ -26,7 +26,7 @@ def _device(**readout):
         t2_star_us=0.0,
         readout=DispersiveReadout(**readout),
     )
-    return pulse.quantum_system(DeviceDescription(name="sim", qudits={0: qudit}))
+    return pulse.quantum_system(name="sim", qudits={0: qudit})
 
 
 @pulse.classical(max_latency_ns=100)

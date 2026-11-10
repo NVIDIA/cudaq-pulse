@@ -81,7 +81,7 @@ def test_a_loaded_calibration_keeps_the_values_it_parsed():
         cal.circuit(qudit), cal.idle_flux(qudit), cal.charge_coupling_hz(pair)
         cal.pair(pair), cal.exchange_hz(pair), cal.idle_zz_hz(pair)
         cal.flux_for_detuning(qudit, cal.detuning_for_flux(qudit, 0.1))
-        cal.apply(transmon_17q()), cal.fingerprint, cal.quantum_system
+        cal._apply(transmon_17q()._description), cal.fingerprint, cal.quantum_system
         assert cal._data == parsed
     assert shipped._data is not parsed
 
@@ -147,7 +147,7 @@ def test_flux_quanta_and_detuning_convert_both_ways(cal):
 def test_the_17_qudit_device_carries_the_shipped_calibration(cal):
     dev = pulse.quantum_system("transmon_17q")
     assert dev.calibration == cal
-    assert dev._description is transmon_17q()
+    assert dev._description is transmon_17q()._description
 
 
 def _index_entry(name):
@@ -185,7 +185,7 @@ def test_a_device_of_the_shipped_calibration_does_not_read_its_file(monkeypatch)
     monkeypatch.setattr(transmon, "_BUILT", {})
     monkeypatch.setattr(calibration, "_LOADED", {})
     monkeypatch.setattr(calibration, "_read", lambda path: pytest.fail(f"read {path}"))
-    assert transmon_17q() == read
+    assert transmon._described_17q() == read._description
     assert pulse.quantum_system("transmon_17q").fingerprint == read_device.fingerprint
     shipped = calibration.shipped_calibration("transmon_17q")
     digest = CALIBRATIONS["transmon_17q"]

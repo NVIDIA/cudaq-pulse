@@ -2,20 +2,20 @@
    SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
    SPDX-License-Identifier: Apache-2.0
 
-Quantum systems and Targets
-===========================
+Quantum systems
+===============
 
-A *target* is the calibrated physics of a machine: qudit frequencies and
-anharmonicities, couplings, residual ZZ, T1/T2, the pulses its gates are
-calibrated for, and the pulse clock. A *quantum_system* is a target together with a *layout*, which maps
-the qudit numbering a program uses to the target's carriers. Both are
-read-only.
+A *quantum system* is the calibrated physics of a machine (qudit
+frequencies and anharmonicities, couplings, residual ZZ, T1/T2, the pulses
+its gates are calibrated for, and the pulse clock) together with a
+*layout*, which maps the qudit numbering a program uses to its carriers.
+It is read-only.
 
 .. code-block:: python
 
    import cudaq_pulse as pulse
 
-   qs = pulse.quantum_system("transmon_17q")                  # shipped target
+   qs = pulse.quantum_system("transmon_17q")                  # shipped quantum system
    chip = pulse.quantum_system("transmon_17q", layout=[4, 5, 6])
    chip = pulse.QuantumSystem.load("chip.json")              # the same, from a system file
 
@@ -27,28 +27,28 @@ read-only.
    chip.transition_freq[0, 1, 2]      # 1-2 frequency of qudit 0
    chip.qudit_freq[0] = 5.01e9        # ValueError: assignment destination is read-only
 
-``pulse.quantum_system`` takes the quantum system, a registered target name or a
-``cudaq_pulse.quantum_systems.DeviceDescription``, and optionally ``layout=``,
+``pulse.quantum_system`` takes a registered name, or builds a quantum system
+from ``name=`` and its ``qudits=``, ``couplings=``, ``residual_zz=``,
+``model=`` and ``attribution=``; either way optionally ``layout=``,
 ``calibration=`` and ``cooldown=``, ``control_system=`` and ``clock_ghz=``.
 A string is always a name: ``pulse.QuantumSystem.load(path)`` reads a system file
 (as ``QuantumSystem.as_dict()`` writes one, and ``json.dumps`` saves), and
-``pulse.QuantumSystem.from_dict(data)`` its data. ``layout[i]`` is the carrier
-that qudit ``i`` names; by default every carrier of the target, in order.
-A ``DeviceDescription``'s
-``model`` (``TransmonModel`` by default) decides the operator of its
-couplings, for transmons the exchange g (a^dagger b + a b^dagger):
+``pulse.QuantumSystem.from_dict(data)`` its data, with the same keys.
+``layout[i]`` is the carrier that qudit ``i`` names; by default every
+carrier, in order. The ``model`` (``TransmonModel`` by default) decides the
+operator of the couplings, for transmons the exchange
+g (a^dagger b + a b^dagger):
 
 .. code-block:: python
 
-   from cudaq_pulse.quantum_systems import Coupling, FluxCZ, PhysicalQudit, DeviceDescription
+   from cudaq_pulse.quantum_systems import Coupling, FluxCZ, PhysicalQudit
 
    cz = FluxCZ(duration_ns=98.0)
-   pair = DeviceDescription(
+   qpu = pulse.quantum_system(
        name="pair",
        qudits={i: PhysicalQudit(i, f, -2.0e8, 50.0, 30.0) for i, f in enumerate([4.8e9, 6.9e9])},
        couplings=[Coupling((0, 1), strength_hz=5.7e6, calibrations={pulse.gates.CZ: cz})],
    )
-   qpu = pulse.quantum_system(pair)
 
 A coupling's ``strength_hz`` is g / 2 pi; ``None`` says it is not measured
 yet, and such a system compiles, schedules and exports while
@@ -67,7 +67,7 @@ the offending value and a fix; for a file, the line and column too:
 .. code-block:: text
 
    QuantumSystemDefinitionError: 2 problems in quantum system file lab.json:
-     lab.json:3:20: layout[2]: carrier 99 is not in target 'transmon_17q' (it has 0..16)
+     lab.json:3:20: layout[2]: carrier 99 is not in quantum system 'transmon_17q' (it has 0..16)
      lab.json:4:15: cooldown: 'x' is given without a calibration; add "calibration", a shipped name or a file path, or remove "cooldown"
 
 ``python -m cudaq_pulse.doctor --system lab.json`` runs the same checks
@@ -87,7 +87,7 @@ Quantum systems compare by content: two quantum systems built from the same valu
 equal and share compiled kernels, but each is its own quantum system, so their
 handles do not mix in one call. A layout is part of the content, and an
 empty one is a ``QuantumSystemDefinitionError``: leave ``layout`` out for every
-carrier of the target.
+carrier.
 
 To change a frequency, edit the quantum system, or pass the frequency to the kernel
 as a ``float`` argument and set it on the tone with ``set_frequency``; the
@@ -168,8 +168,8 @@ The idle ZZ of the charge-coupled pairs is -4.5 to -7.3 kHz
 (``cudaq_pulse.quantum_systems.transmon.transmon_17q_idle_zz_hz``), below the
 paper's "below about 8 kHz"; simulated with three levels, the couplings
 reproduce it within a few percent. Each qubit also records its Hahn-echo T2
-and thermal excited-state population from Tab. I (``DeviceDescription.t2_echo_times``,
-``DeviceDescription.thermal_populations``): a simulation starts each qubit in its
+and thermal excited-state population from Tab. I (``QuantumSystem.t2_echo_times``,
+``QuantumSystem.thermal_populations``): a simulation starts each qubit in its
 thermal mixture and relaxes it there, and dephases at the Hahn-echo T2 with
 ``simulate(..., dephasing="t2_echo")``.
 
@@ -177,7 +177,7 @@ Calibrations
 ------------
 
 A calibration holds the values that are fitted rather than published, apart
-from the target: for the ``transmon_17q`` quantum system, the shipped
+from the quantum system: for the ``transmon_17q`` quantum system, the shipped
 ``transmon_17q`` calibration holds each qubit's circuit (E_C, E_J,max and the SQUID asymmetry d, fitted to Tab. I and the
 other sweet spot of Fig. 1c), each pair's charge coupling, the flux-line
 model of Hellings et al., the in-model CZ knobs of all 24 pairs, crosstalk,
@@ -196,9 +196,9 @@ defect bands and feedline groups. Every value records its
    cal.flux_for_detuning("D4", 500e6)     # flux quanta for a +500 MHz detuning
    cal.detuning_for_flux("X2", 0.25)
 
-``"calibration"`` is a shipped name, the path of a calibration file or a
-``cudaq_pulse.quantum_systems.Calibration``; the ``transmon_17q`` target uses the
-``transmon_17q`` calibration by default. Its couplings replace the target's, so quantum systems with different
+``calibration=`` is a shipped name, the path of a calibration file or a
+``cudaq_pulse.quantum_systems.Calibration``; the ``transmon_17q`` quantum system uses the
+``transmon_17q`` calibration by default. Its couplings replace the system's, so quantum systems with different
 calibrations compile separately. Detunings are in Hz; for qubits whose
 circuit, including d, is calibrated (``Calibration.flux_qudits``, all 17
 here) ``flux_for_detuning`` and ``detuning_for_flux`` convert to and from

@@ -230,11 +230,12 @@ def test_invalid_kernel_settings_fail(monkeypatch, name, value):
 
 def test_system_lists_every_problem_of_a_device_file(tmp_path):
     path = tmp_path / "lab.json"
-    path.write_text('{"quantum_system": "transmon_17q",\n "layout": [4, 99], "cooldown": "x"}\n')
+    path.write_text('{"name": "transmon_17q",\n "layout": [4, 99], "cooldown": "x"}\n')
     code, output = _run("--system", str(path))
     assert code == 1
     assert output.splitlines() == [
-        f"{path}:2:16: error: layout[1]: carrier 99 is not in target 'transmon_17q' (it has 0..16)",
+        f"{path}:2:16: error: layout[1]: carrier 99 is not in quantum system 'transmon_17q' (it "
+        "has 0..16)",
         f"{path}:2:33: error: cooldown: 'x' is given without a calibration; add "
         '"calibration", a shipped name or a file path, or remove "cooldown"',
         f"{path}: 2 problems",
@@ -245,23 +246,23 @@ def test_system_json_report(tmp_path):
     import json
 
     path = tmp_path / "lab.json"
-    path.write_text('{"quantum_system": "transmon_17q", "layout": [4, 99]}')
+    path.write_text('{"name": "transmon_17q", "layout": [4, 99]}')
     code, output = _run("--system", str(path), "--json")
     assert code == 1
     report = json.loads(output)
     assert report["ok"] is False and report["quantum_system"] is None
     assert report["problems"] == [
         {
-            "message": "carrier 99 is not in target 'transmon_17q' (it has 0..16)",
+            "message": "carrier 99 is not in quantum system 'transmon_17q' (it has 0..16)",
             "path": "layout[1]",
             "value": 99,
             "fix": "",
             "file": str(path),
             "line": 1,
-            "column": 50,
+            "column": 40,
         }
     ]
-    path.write_text('{"quantum_system": "transmon_17q", "layout": [4, 5]}')
+    path.write_text('{"name": "transmon_17q", "layout": [4, 5]}')
     code, output = _run("--system", str(path), "--json")
     assert code == 0
     assert json.loads(output) == {
@@ -274,7 +275,7 @@ def test_system_json_report(tmp_path):
 
 def test_system_reports_a_good_or_unreadable_file(tmp_path):
     path = tmp_path / "lab.json"
-    path.write_text('{"quantum_system": "transmon_17q", "layout": [4, 5]}')
+    path.write_text('{"name": "transmon_17q", "layout": [4, 5]}')
     assert _run("--system", str(path)) == (
         0,
         f"{path}: ok, quantum system transmon_17q with 2 qudits\n",

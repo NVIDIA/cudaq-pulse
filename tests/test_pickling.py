@@ -26,7 +26,6 @@ from cudaq_pulse.kernel import _kernel
 from cudaq_pulse.kernel.ir_builder import SymbolicValueError
 from cudaq_pulse.quantum_systems import (
     Coupling,
-    DeviceDescription,
     DragPulse,
     FluxCZ,
     MicrowaveDrive,
@@ -37,7 +36,7 @@ from cudaq_pulse.quantum_systems import (
 from cudaq_pulse.quantum_systems._registry import make_quantum_system
 from cudaq_pulse.quantum_systems.calibration import Calibration
 
-from tests._handles import LADDER, Q, ladder_target
+from tests._handles import LADDER, Q, ladder_target, rebuilt
 
 # The shipped target and the calibration it carries by default.
 _SHIPPED_TARGET = "transmon_17q"
@@ -180,9 +179,9 @@ def test_targets_and_their_parts_unpickle_equal_with_equal_hashes():
 
 
 def test_targets_compare_by_content():
-    a = DeviceDescription(name="t", qudits={0: PhysicalQudit(0, 5e9, -3e8, 50.0, 30.0)})
-    b = DeviceDescription(name="t", qudits={0: PhysicalQudit(0, 5e9, -3e8, 50.0, 30.0)})
-    c = DeviceDescription(name="t", qudits={0: PhysicalQudit(0, 5.1e9, -3e8, 50.0, 30.0)})
+    a = pulse.quantum_system(name="t", qudits={0: PhysicalQudit(0, 5e9, -3e8, 50.0, 30.0)})
+    b = pulse.quantum_system(name="t", qudits={0: PhysicalQudit(0, 5e9, -3e8, 50.0, 30.0)})
+    c = pulse.quantum_system(name="t", qudits={0: PhysicalQudit(0, 5.1e9, -3e8, 50.0, 30.0)})
     assert a == b and hash(a) == hash(b)
     assert a != c and a != "t"
 
@@ -214,7 +213,7 @@ def test_a_device_unpickles_equal_and_is_built_once_per_process(make, monkeypatc
 
 def _shipped_and_uncalibrated():
     shipped = pulse.quantum_system(_SHIPPED_TARGET)
-    uncalibrated = pulse.quantum_system(make_quantum_system(_SHIPPED_TARGET))
+    uncalibrated = rebuilt(pulse.quantum_system(_SHIPPED_TARGET))
     assert shipped.calibration is not None and uncalibrated.calibration is None
     return shipped, uncalibrated
 
@@ -291,7 +290,7 @@ def test_a_shipped_calibration_of_another_file_is_refused(monkeypatch):
 def test_a_calibration_of_its_own_values_pickles_by_value_once_per_pickle():
     shipped = pulse.quantum_system(_SHIPPED_TARGET).calibration
     mine = Calibration(shipped._data, name="mine")
-    quantum_system = pulse.quantum_system(make_quantum_system(_SHIPPED_TARGET), calibration=mine)
+    quantum_system = rebuilt(pulse.quantum_system(_SHIPPED_TARGET), calibration=mine)
     back = _round_trip(mine)
     assert back is not mine and back == mine and back.name == "mine"
     one = len(pickle.dumps(rabi.lower(quantum_system.qudits[0], 0.1)))
@@ -306,10 +305,10 @@ def test_a_calibration_of_other_values_makes_another_device():
     same = Calibration(data, name="mine")
     data["cooldowns"]["2022-main"] = "edited"
     other = Calibration(data, name="mine")
-    target = make_quantum_system(_SHIPPED_TARGET)
-    quantum_systems = [pulse.quantum_system(target, calibration=c) for c in (same, other)]
+    target = pulse.quantum_system(_SHIPPED_TARGET)
+    quantum_systems = [rebuilt(target, calibration=c) for c in (same, other)]
     assert quantum_systems[0] != quantum_systems[1]
-    again = pulse.quantum_system(target, calibration=Calibration(shipped._data, name="m"))
+    again = rebuilt(target, calibration=Calibration(shipped._data, name="m"))
     assert again == quantum_systems[0]
 
 
@@ -733,7 +732,7 @@ def _qpu(slots=1, **processor):
     system = pulse.ControlSystem(
         controllers=[*controllers, pulse.Controller()], links={"decoder": link}
     )
-    return pulse.quantum_system(ladder_target(4), control_system=system)
+    return ladder_target(4, control_system=system)
 
 
 _QPU = _qpu()
@@ -745,7 +744,7 @@ def _declared_clock():
         for k, clock in enumerate((2.4, 1.0))
     ]
     system = pulse.ControlSystem(controllers=controllers)
-    return pulse.quantum_system(ladder_target(2), control_system=system, clock_ghz=12.0)
+    return ladder_target(2, control_system=system, clock_ghz=12.0)
 
 
 def _multi_controller_programs():

@@ -7,7 +7,7 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.quantum_systems import Coupling, DeviceDescription, PhysicalQudit
+from cudaq_pulse.quantum_systems import Coupling, PhysicalQudit
 
 from tests._handles import Q
 from tests.runtime._lowering import evolve, on, pulse_mlir
@@ -57,7 +57,7 @@ def test_bell_gpu_execution():
         )
         for index in range(2)
     }
-    target = DeviceDescription(
+    target = pulse.quantum_system(
         name="xx-bell-test",
         qudits=qudits,
         couplings=[Coupling((0, 1), strength_hz=5.0e6)],

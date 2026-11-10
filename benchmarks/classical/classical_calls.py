@@ -27,7 +27,7 @@ import tracemalloc
 
 import cudaq_pulse as pulse
 from cudaq_pulse.classical import emulation
-from cudaq_pulse.quantum_systems import DeviceDescription, PhysicalQudit
+from cudaq_pulse.quantum_systems import PhysicalQudit
 
 PI_AMP = math.pi / 20
 
@@ -36,7 +36,7 @@ def _device(t1_us: float = 0.0) -> pulse.QuantumSystem:
     qudit = PhysicalQudit(
         index=0, frequency_hz=5e9, anharmonicity_hz=-2e8, t1_us=t1_us, t2_star_us=0.0
     )
-    return pulse.quantum_system(DeviceDescription(name="bench", qudits={0: qudit}))
+    return pulse.quantum_system(name="bench", qudits={0: qudit})
 
 
 def many_calls(n: int, links: int):

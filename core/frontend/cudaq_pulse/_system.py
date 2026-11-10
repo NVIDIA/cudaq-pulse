@@ -64,7 +64,7 @@ if TYPE_CHECKING:
     from ._op_tables import OpCycles
     from .compiler import ScheduledKernel, _MachineModel
     from .controller import WaveformMemoryScope
-    from .quantum_systems.base import DeviceDescription
+    from .quantum_systems.base import _Description
 else:
     from ._errors import _dataclass_when_used
 
@@ -2083,7 +2083,7 @@ def _placement(system: ControlSystem) -> dict[int, dict[int, int]]:
     return found
 
 
-def _wiring_problems(system: ControlSystem, target: DeviceDescription) -> list[Problem]:
+def _wiring_problems(system: ControlSystem, target: _Description) -> list[Problem]:
     """The lines and detectors of *system* that name carriers *target* lacks."""
     carriers = set(target.qudits)
     problems: list[Problem] = []
@@ -2316,15 +2316,6 @@ _COUPLING_REQUIRED = MappingProxyType(
 _RESIDUAL_ZZ_REQUIRED = MappingProxyType(
     {"qudits": _QUDITS_FIX, "rate_hz": "give the ZZ rate in Hz"}
 )
-_SYSTEM_KEYS = (
-    "name",
-    "model",
-    "attribution",
-    "clock_ghz",
-    "qudits",
-    "couplings",
-    "residual_zz",
-)
 _CONTROL_KEYS = (
     "controllers",
     "links",
@@ -2425,12 +2416,10 @@ def _model_data(model: Any) -> dict[str, Any] | None:
     return data
 
 
-def _quantum_data(target: DeviceDescription) -> dict[str, Any]:
+def _quantum_data(target: _Description) -> dict[str, Any]:
     return {
-        "name": target.name,
         "model": _model_data(target.model),
         "attribution": target.attribution,
-        "clock_ghz": target.clock_ghz,
         "qudits": [_qudit_data(q) for q in sorted(target.qudits.values(), key=lambda q: q.index)],
         "couplings": [
             {"qudits": list(c.qudits), "strength_hz": c.strength_hz}
@@ -2452,11 +2441,12 @@ def _device_data(quantum_system: QuantumSystem) -> dict[str, Any]:
 
     data: dict[str, Any] = {"format": SYSTEM_FORMAT, "written_by": f"cudaq-pulse {__version__}"}
     spec = quantum_system._spec
-    data["quantum_system"] = (
-        spec if spec is not None else _quantum_data(quantum_system._base_target)
-    )
+    base = quantum_system._base_target
+    data["name"] = spec if spec is not None else base.name
+    if spec is None:
+        data |= _quantum_data(base)
     data["layout"] = list(quantum_system.layout)
-    if quantum_system.clock_ghz != quantum_system._base_target.clock_ghz:
+    if spec is None or quantum_system.clock_ghz != base.clock_ghz:
         data["clock_ghz"] = quantum_system.clock_ghz
     calibration = quantum_system.calibration
     if calibration is not None:
@@ -2477,19 +2467,24 @@ def _device_data(quantum_system: QuantumSystem) -> dict[str, Any]:
 
 
 def _config_systems(
-    config: Mapping[str, Any], key: str, source: str, problems: list[Problem]
-) -> tuple[DeviceDescription | None, ControlSystem | None]:
+    config: Mapping[str, Any],
+    source: str,
+    problems: list[Problem],
+    described: _Description | None = None,
+) -> tuple[_Description | None, ControlSystem | None]:
     """The quantum and control systems of a quantum system config that is a system
-    file or gives a control system, each ``None`` with *problems* noted."""
+    file, builds its quantum system or gives a control system, each ``None``
+    with *problems* noted; *described* is one ``pulse.quantum_system`` built."""
     from ._device import _target
 
     problems.extend(_check_format(config))
     reader = _Reader(source if source.startswith("file ") else None)
-    spec = config.get(key)
-    if isinstance(spec, Mapping):
-        target = reader.quantum_system(spec, key)
+    if described is not None:
+        target: _Description | None = described
+    elif "qudits" in config:
+        target = reader.quantum_system(config)
     else:
-        target = _target(spec, problems, key)
+        target = _target(config.get("name"), problems)
     control = config.get("control_system")
     if isinstance(control, Mapping):
         control = reader.control_system(control, "control_system")
@@ -2562,15 +2557,17 @@ class _Reader:
             self.problem(path, str(error))
             return None
 
-    def quantum_system(self, data: Any, path: str) -> DeviceDescription | None:
-        from .quantum_systems.base import Coupling, DeviceDescription, PhysicalQudit, ResidualZZ
+    def quantum_system(self, system: Mapping[str, Any]) -> _Description | None:
+        """The quantum system a system file builds, from its top-level keys."""
+        from .quantum_systems.base import Coupling, PhysicalQudit, ResidualZZ, _Description
 
-        system = self.mapping(data, path, _SYSTEM_KEYS)
-        if system is None:
-            return None
         qudits: dict[int, Any] = {}
-        for i, item in enumerate(system.get("qudits", ())):
-            where = f"{path}.qudits[{i}]"
+        given = system.get("qudits")
+        if not isinstance(given, Sequence) or isinstance(given, (str, bytes)):
+            self.problem("qudits", f"must be a list of qudits, got {type(given).__name__}", given)
+            given = ()
+        for i, item in enumerate(given):
+            where = f"qudits[{i}]"
             entry = self.mapping(item, where, (*_QUDIT_FIELDS, *_QUDIT_EXTRAS))
             if entry is not None:
                 entry = {
@@ -2581,13 +2578,13 @@ class _Reader:
                     else value
                     for key, value in entry.items()
                 }
-                qudit = self.build(f"{path}.qudits[{i}]", PhysicalQudit, **entry)
+                qudit = self.build(where, PhysicalQudit, **entry)
                 if qudit is not None:
                     qudits[qudit.index] = qudit
         # The entries read, each with its index in the file.
         entries: dict[str, list[tuple[int, Any]]] = {"couplings": [], "residual_zz": []}
         for i, item in enumerate(system.get("couplings", ())):
-            where = f"{path}.couplings[{i}]"
+            where = f"couplings[{i}]"
             entry = self.mapping(item, where, _COUPLING_FIELDS)
             if entry is None or self.missing(entry, where, _COUPLING_REQUIRED):
                 continue
@@ -2600,7 +2597,7 @@ class _Reader:
             if coupling is not None:
                 entries["couplings"].append((i, coupling))
         for i, item in enumerate(system.get("residual_zz", ())):
-            where = f"{path}.residual_zz[{i}]"
+            where = f"residual_zz[{i}]"
             entry = self.mapping(item, where, _RESIDUAL_ZZ_FIELDS)
             if entry is None or self.missing(entry, where, _RESIDUAL_ZZ_REQUIRED):
                 continue
@@ -2609,13 +2606,13 @@ class _Reader:
             if residual is not None:
                 entries["residual_zz"].append((i, residual))
         if "name" not in system:
-            self.problem(path, "has no 'name'")
+            self.problem("name", "is missing", fix="give the quantum system's name")
             return None
         rest = {k: system[k] for k in ("attribution", "clock_ghz") if k in system}
         if "model" in system:
-            rest["model"] = self.model(system["model"], f"{path}.model")
+            rest["model"] = self.model(system["model"], "model")
         try:
-            return DeviceDescription(
+            return _Description(
                 name=system["name"],
                 qudits=qudits,
                 couplings=[c for _, c in entries["couplings"]],
@@ -2634,14 +2631,14 @@ class _Reader:
             self.problems.extend(
                 Problem(
                     p.message,
-                    path=f"{path}.{in_file(p.path)}",
+                    path=in_file(p.path),
                     value=p.value,
                     fix=p.fix,
                 )
                 for p in error.problems
             )
         except (TypeError, ValueError) as error:
-            self.problem(path, str(error))
+            self.problem("name", str(error))
         return None
 
     def calibrations(self, data: Any, path: str, owner: str) -> dict[Any, Any]:

@@ -1,11 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Architecture-neutral target API for QPU Hamiltonians and decoherence models.
+"""The parts of a quantum system, architecture-neutral.
 
-A ``DeviceDescription`` fully describes a quantum device: qubit frequencies,
-anharmonicities, coupling topology, decoherence parameters, readout, and
-the pulses its gates are calibrated for. Simulation lowers it to the
-module attributes of the Pulse -> QOp lowering.
+``pulse.quantum_system(name=..., qudits=..., couplings=..., model=...)``
+builds a quantum system from them: its qudits' frequencies,
+anharmonicities, decoherence, drive and readout, its couplings, and the
+pulses its gates are calibrated for. Simulation lowers it to the module
+attributes of the Pulse -> QOp lowering.
 """
 
 from __future__ import annotations
@@ -917,23 +918,17 @@ def _coupling_operator(model: Any) -> str | None:
 
 
 @dataclass(frozen=True, eq=False)
-class DeviceDescription:
-    """Full description of a quantum processing unit.
+class _Description:
+    """What ``pulse.quantum_system`` builds a quantum system from: the values
+    of its keywords, read-only (``qudits`` a read-only mapping, ``couplings``
+    and ``residual_zz`` tuples). ``clock_ghz`` is the clock that converts
+    nanoseconds to cycles. The model also decides the operator of the
+    couplings: the exchange for ``TransmonModel``. Descriptions compare by
+    content, so one unpickled is equal to the one pickled.
 
-    A target is read-only once built: ``qudits`` is a read-only mapping and
-    ``couplings`` and ``residual_zz`` are tuples. ``clock_ghz`` is the pulse
-    clock that converts nanoseconds to clock cycles. ``model`` is how the
-    simulator treats its qudits, and how many levels each has: a
-    ``SimulationModel`` class or instance (``TransmonModel`` by default,
-    ``TransmonModel(levels={0: 4})`` to give qudit 0 four levels), or
-    ``None`` for a system with no simulation model. The model also decides
-    the operator of the couplings: the exchange for ``TransmonModel``.
-    Targets compare by content, so a target unpickled is equal to the one
-    pickled.
-
-    A target's couplings and residual ZZ entries are checked when it is built,
-    and a ``QuantumSystemDefinitionError`` lists every problem, each at its path in
-    the target (``couplings[3].qudits[1]``).
+    The couplings and residual ZZ entries are checked when it is built, and
+    a ``QuantumSystemDefinitionError`` lists every problem, each at its path
+    (``couplings[3].qudits[1]``).
     """
 
     name: str
@@ -1078,7 +1073,7 @@ class DeviceDescription:
 
 
 def _unmeasured(
-    target: DeviceDescription,
+    target: _Description,
     indices: Sequence[int],
     needs: str,
     fix: str = "give the strength in Hz",
@@ -1103,7 +1098,7 @@ def _unmeasured(
 _CHECKED: tuple[Sequence[Any], Sequence[Any], frozenset[int]] = ((), (), frozenset())
 
 
-def _entries_problems(target: DeviceDescription) -> list[Problem]:
+def _entries_problems(target: _Description) -> list[Problem]:
     """Every problem with *target*'s couplings and residual ZZ entries."""
     global _CHECKED
     known = target.qudits

@@ -387,8 +387,8 @@ A whole program with unanswered calls does not lower to LLVM:
 ``ScheduledKernel.mlir("llvm")`` points to ``pulse.simulate``, which lowers each
 segment with its answers bound, on the CPU or the GPU.
 
-``quantum_system=`` simulates another device description than the quantum system the program
-was compiled for, keeping the program as compiled: its qubits' frequencies,
+``quantum_system=`` simulates another quantum system than the one the program
+was compiled for, keeping the program as compiled: its qudits' frequencies,
 T1, T2, drive strength and readout parameters apply. That is how a drifting
 quantum system is simulated (see below).
 

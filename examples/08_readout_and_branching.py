@@ -113,9 +113,9 @@ if __name__ == "__main__":
     print(compiled_kernel.mlir())
 
     print("\n=== Simulating it (CPU reference) ===")
-    from cudaq_pulse.quantum_systems import DeviceDescription, PhysicalQudit
+    from cudaq_pulse.quantum_systems import PhysicalQudit
 
-    target = DeviceDescription(
+    reset_demo = pulse.quantum_system(
         name="reset-demo",
         qudits={
             0: PhysicalQudit(
@@ -125,7 +125,6 @@ if __name__ == "__main__":
     )
     # Start in (|0> + |1>) / sqrt(2): each outcome is equally likely, and
     # either way the qubit ends in |0>.
-    reset_demo = pulse.quantum_system(target)
     compiled = pulse.compile(active_reset, quantum_system=reset_demo).lower(reset_demo.qudits[0])
     result = pulse.simulate(
         compiled, initial_state=[2**-0.5, 2**-0.5, 0.0], shots_count=1000, seed=7

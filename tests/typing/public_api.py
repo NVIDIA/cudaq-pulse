@@ -27,7 +27,6 @@ from cudaq_pulse.controller import (
 from cudaq_pulse.ops import Waveform
 from cudaq_pulse.quantum_systems import (
     Coupling,
-    DeviceDescription,
     DispersiveReadout,
     DragPulse,
     FluxCZ,
@@ -52,8 +51,8 @@ assert_type(pulse.quantum_system("transmon_17q"), pulse.QuantumSystem)
 assert_type(pulse.quantum_system("transmon_17q", layout=[4, 5], clock_ghz=1.0), pulse.QuantumSystem)
 assert_type(pulse.QuantumSystem.from_dict(dev.as_dict()), pulse.QuantumSystem)
 assert_type(pulse.QuantumSystem.load("qpu.json"), pulse.QuantumSystem)
-pulse.quantum_system({"quantum_system": "transmon_17q"})  # type: ignore[arg-type]
-pulse.quantum_system("transmon_17q", [4, 5])  # type: ignore[call-arg]
+pulse.quantum_system({"name": "transmon_17q"})  # type: ignore[arg-type]
+pulse.quantum_system("transmon_17q", [4, 5])  # type: ignore[call-arg, arg-type]
 assert_type(dev.qudits[0], pulse.Qudit)
 assert_type(dev.qudits[0:2], pulse.Register)
 assert_type(dev.qudits[[0, 1]], pulse.Register)
@@ -279,14 +278,14 @@ Coupling((0, 1), 5.7e6, gate=cz)  # type: ignore[call-arg]
 zz = ResidualZZ((0, 1), 1.5e4)
 assert_type(zz.rate_hz, float)
 ResidualZZ((0, 1), 1.5e4, zz_coupling=0.5)  # type: ignore[call-arg]
-pair = DeviceDescription(
+pair = pulse.quantum_system(
     name="pair",
     qudits={0: PhysicalQudit(0, 5.0e9, -2.5e8, 50.0, 30.0)},
     couplings=[edge],
     residual_zz=[zz],
 )
-DeviceDescription(name="pair", crosstalk=[zz])  # type: ignore[call-arg]
+pulse.quantum_system(name="pair", crosstalk=[zz])  # type: ignore[call-arg]
 assert_type(CZ_LAYERS, tuple[tuple[tuple[int, int], ...], ...])
 assert_type(pair.coupling_map, list[tuple[int, ...]])
-assert_type(pair.coupling(0, 1), Coupling)
-DeviceDescription(name="pair", architecture="transmon")  # type: ignore[call-arg]
+assert_type(pair.coupling(pair.qudits[0], pair.qudits[1]), Coupling)
+pulse.quantum_system(name="pair", architecture="transmon")  # type: ignore[call-arg]

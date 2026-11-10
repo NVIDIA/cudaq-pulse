@@ -51,7 +51,6 @@ sampled path per shot of the protocol:
 from __future__ import annotations
 
 import argparse
-import dataclasses
 import json
 import math
 import runpy
@@ -78,7 +77,7 @@ def _bootstrap(values, stat, rng, n=2000):
 
 def _att_target():
     base = transmon_17q()
-    qudit = base.qudits[0]
+    qudit = base.physical_qudits[0]
     att = qudit.replace(
         frequency_hz=4.13e9,
         anharmonicity_hz=-210e6,
@@ -87,7 +86,15 @@ def _att_target():
         thermal_population=0.0,
         readout=qudit.readout.replace(error_1to0=0.11, error_0to1=0.14),
     )
-    return dataclasses.replace(base, qudits={**base.qudits, 0: att})
+    return pulse.quantum_system(
+        name=base.name,
+        qudits={**base.physical_qudits, 0: att},
+        couplings=base.couplings,
+        residual_zz=base.residual_zz,
+        model=base.model,
+        attribution=base.attribution,
+        clock_ghz=base.clock_ghz,
+    )
 
 
 tracked_t1 = P["tracked_t1"]
@@ -141,8 +148,7 @@ def _shares(result, shots_count):
 
 
 def adaptive_t1(n, seed):
-    target = _att_target()
-    dev = pulse.quantum_system(target)
+    dev = _att_target()
     lowered = pulse.compile(
         att_paper, quantum_system=dev, control_system=P["control_system"]
     ).lower(dev.qudits[0])
@@ -174,8 +180,7 @@ def adaptive_t1(n, seed):
 
 
 def binary_search(n, seed):
-    target = transmon_17q()
-    dev = pulse.quantum_system(target)
+    dev = transmon_17q()
     lowered = pulse.compile(
         P["binary_search"], quantum_system=dev, control_system=P["control_system"]
     ).lower(dev.qudits[0], 15)
@@ -186,7 +191,7 @@ def binary_search(n, seed):
         offset = float(rng.normal(0.0, 1e6))
         result = pulse.simulate(
             lowered,
-            quantum_system=P["search_system"](target, offset),
+            quantum_system=P["search_system"](dev, offset),
             shots_count=1,
             seed=seed * 100_003 + k,
             branches="sampled",
@@ -209,12 +214,11 @@ def binary_search(n, seed):
 
 
 def chain(n, seed):
-    target = transmon_17q()
-    dev = pulse.quantum_system(target)
+    dev = transmon_17q()
     lowered = pulse.compile(
         P["calibration_chain"], quantum_system=dev, control_system=P["control_system"]
     ).lower(dev.qudits[0], 20_000.0 * CLOCK)
-    true_system = P["chain_system"](target)
+    true_system = P["chain_system"](dev)
     rows = []
     start = time.perf_counter()
     for k in range(n):
@@ -257,10 +261,9 @@ def chain(n, seed):
 
 
 def steps(seed):
-    target = transmon_17q()
-    dev = pulse.quantum_system(target)
+    dev = transmon_17q()
     q = dev.qudits[0]
-    true_system = P["chain_system"](target)
+    true_system = P["chain_system"](dev)
     shots_per_step = {
         "readout errors": (step_assignment, 2 * P["shots_per_setting"] + 1),
         "Ramsey frequency": (step_ramsey, 3 * P["shots_per_setting"]),

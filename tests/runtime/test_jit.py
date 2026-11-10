@@ -4,7 +4,7 @@
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.quantum_systems.base import DeviceDescription, PhysicalQudit
+from cudaq_pulse.quantum_systems.base import PhysicalQudit
 
 from tests._handles import Q
 from tests.runtime._lowering import evolve, on
@@ -21,7 +21,7 @@ def _jit_test_kernel(q0):
 def test_jit_executes_target_aware_program():
     """The direct JIT path executes scheduled, target-aware pulse MLIR."""
     ir = (_jit_test_kernel, Q[0])
-    target = DeviceDescription(
+    target = pulse.quantum_system(
         name="jit-test",
         qudits={
             0: PhysicalQudit(
@@ -43,7 +43,7 @@ def test_jit_import():
 
 
 def _qudit_target(t1_us=50.0, t2_us=30.0):
-    return DeviceDescription(
+    return pulse.quantum_system(
         name="test",
         qudits={
             0: PhysicalQudit(
