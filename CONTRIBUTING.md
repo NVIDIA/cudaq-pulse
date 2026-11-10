@@ -608,3 +608,72 @@ No release is published without GPU verification of the tagged commit; the
 
   The attestation counts only on a manual run, only when it names the exact
   commit being released, and only when `gpu-install-test` did not run.
+
+## Developer Certificate of Origin
+
+Every commit in a pull request must be signed off. Signing off means adding
+a `Signed-off-by:` line with your name and email address at the end of the
+commit message:
+
+```text
+Signed-off-by: Jane Doe <jane.doe@example.com>
+```
+
+With it you certify that you can contribute the change under the project's
+open source license, as the Developer Certificate of Origin 1.1 states:
+
+```text
+Developer Certificate of Origin
+Version 1.1
+
+Copyright (C) 2004, 2006 The Linux Foundation and its contributors.
+
+Everyone is permitted to copy and distribute verbatim copies of this
+license document, but changing it is not allowed.
+
+
+Developer's Certificate of Origin 1.1
+
+By making a contribution to this project, I certify that:
+
+(a) The contribution was created in whole or in part by me and I
+    have the right to submit it under the open source license
+    indicated in the file; or
+
+(b) The contribution is based upon previous work that, to the best
+    of my knowledge, is covered under an appropriate open source
+    license and I have the right under that license to submit that
+    work with modifications, whether created in whole or in part
+    by me, under the same open source license (unless I am
+    permitted to submit under a different license), as indicated
+    in the file; or
+
+(c) The contribution was provided directly to me by some other
+    person who certified (a), (b) or (c) and I have not modified
+    it.
+
+(d) I understand and agree that this project and the contribution
+    are public and that a record of the contribution (including all
+    personal information I submit with it, including my sign-off) is
+    maintained indefinitely and may be redistributed consistent with
+    this project or the open source license(s) involved.
+```
+
+Use your real name and the email address you commit with. `git commit -s`
+(`--signoff`) adds the line from `user.name` and `user.email`:
+
+```bash
+git config user.name "Jane Doe"
+git config user.email jane.doe@example.com
+git commit -s -m "Describe the change"
+```
+
+To sign off commits you already made, amend the last one, or rebase the
+branch onto the one your pull request targets (`<base>`) with every commit
+signed off, then update the pull request:
+
+```bash
+git commit --amend -s --no-edit         # the last commit
+git rebase --signoff <base>             # every commit since <base>
+git push --force-with-lease
+```
