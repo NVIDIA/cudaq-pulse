@@ -68,6 +68,16 @@ behavior may change in any 0.x release.
   controller exports carry a `program_id`, shared by every call of one
   compile, and `symbols`: each symbol's value in the call, and per event the
   symbols its qudit, frequency, phase and waveform depend on.
+- **Variadic qudits.** A kernel may take `*qudits`:
+  `def k(tau: float, *qudits: Qudit)` is called as `k(tau, q0, q1, ...)` or
+  `k(tau, *dev.qudit_handles[0:4])`, and from another kernel as
+  `k(tau, *qudits)`. In the kernel `qudits` is a register of the call's
+  qudits, which indexes, slices, iterates and has a `len()`. Annotated
+  `Qudit` it is a runtime register, compiled once per number of qudits;
+  unannotated, the kernel is specialized on the qudits. A call may pass
+  none. A `*` parameter takes only qudit handles: another annotation is a
+  `TypeError` when the kernel is defined, another value one when it is
+  called. Kernels still cannot take `**kwargs`.
 - **Control systems.** A device can hold the controllers that play it:
   `pulse.Controller` (a controller's limits, the drive and readout lines it
   plays, its peer latency, clock skew and alignment tolerance, its

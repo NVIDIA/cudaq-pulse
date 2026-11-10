@@ -33,10 +33,12 @@ Arguments
 
 Arguments bind exactly as for a Python function: positional and keyword
 arguments, defaults, keyword-only parameters, and ``TypeError`` for a call
-that does not match the signature. Kernels cannot take ``*args`` or
-``**kwargs``. A kernel, ``kernel.lower`` and ``pulse.compile(kernel)`` keep
-the decorated function's signature for type checkers, so editors check each
-call against it.
+that does not match the signature. A ``*qudits`` parameter takes the
+call's remaining positional arguments, which must be qudit handles, and
+binds them as one register; a kernel cannot take ``**kwargs``. A kernel,
+``kernel.lower`` and ``pulse.compile(kernel)`` keep the decorated
+function's signature for type checkers, so editors check each call against
+it.
 
 Annotations decide what a compilation depends on:
 
@@ -49,6 +51,12 @@ Annotations decide what a compilation depends on:
 - A parameter annotated ``Qudit`` or ``Register`` is a runtime value too:
   the compiled module takes the qudits as arguments, so calling on other
   qudits of the device never recompiles.
+- ``*qudits: Qudit`` is a runtime register of the call's qudits: the kernel
+  compiles once for each number of qudits passed. An unannotated
+  ``*qudits`` is a static register, like an unannotated register parameter.
+  Any other annotation of a ``*`` parameter is a ``TypeError`` when the
+  kernel is defined; pass other values as named parameters (a
+  ``list[float]`` for a runtime list of numbers).
 - Every other parameter (``int``, a list of handles, anything
   unannotated, including an unannotated qudit or a duration passed as a
   time) is *static*: the kernel is specialized on its value. Annotate a

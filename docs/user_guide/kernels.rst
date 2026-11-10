@@ -75,6 +75,34 @@ described in :doc:`compilation`.
    reg = dev.qudit_handles[0:2]
    two(reg[0], reg[1], 0.3)
 
+A ``*qudits`` parameter takes any number of qudits, one argument each. In
+the kernel it is a register of the call's qudits, so it indexes, slices,
+iterates, has a ``len()`` and passes on to another kernel as ``*qudits``;
+parameters after it are keyword-only:
+
+.. code-block:: python
+
+   @pulse.kernel
+   def x_all(amplitude: float, *qudits: pulse.Qudit, sigma=cal["x_sigma"]):
+       for q in qudits:
+           drive(get_drive_line(q), gaussian(cal["x_duration"], amplitude, sigma))
+
+   @pulse.kernel
+   def x_then_measure_first(*qudits: pulse.Qudit):
+       x_all(0.5, *qudits)
+       first = get_readout_line(qudits[0])
+       sync(first, *[get_drive_line(q) for q in qudits])
+       readout(first, square(cal["readout_duration"], 0.05))
+
+   x_all(0.3, dev.qudit_handles[0], dev.qudit_handles[2])
+   x_then_measure_first(*dev.qudit_handles[0:4])
+
+Annotated ``Qudit``, the qudits are runtime, as for a ``Register``
+parameter: one compilation serves every call with the same number of
+qudits. Unannotated, the kernel is specialized on which qudits it gets. A
+call may pass none, as with an empty register; ``*qudits`` takes only qudit
+handles, so unpack a register into it (``*reg``). See :doc:`compilation`.
+
 Qudits always come from a device: a kernel takes them as parameters, and a
 call passes the device's handles (``dev.qudit_handles[i]``, or a register
 ``dev.qudit_handles[0:4]``). A call without handles raises
