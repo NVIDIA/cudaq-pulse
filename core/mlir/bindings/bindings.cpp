@@ -217,6 +217,20 @@ struct PackedValueError : std::invalid_argument {
   size_t word;
 };
 
+/// What the exports cannot say yet; NotImplementedError in Python.
+struct NotSupportedYet : std::runtime_error {
+  using std::runtime_error::runtime_error;
+};
+
+/// Refuse a readout whose mode the exports do not support yet: only iq.
+inline void requireExportedMode(mlir::Operation *op) {
+  if (auto readout = mlir::dyn_cast<pulse::ReadoutOp>(op);
+      readout && readout.getMode() != pulse::ReadoutMode::IQ) [[unlikely]]
+    throw NotSupportedYet("readout mode " +
+                          pulse::stringifyReadoutMode(readout.getMode()).str() +
+                          " is not supported by the exports yet; only iq is");
+}
+
 /// `value` as Python's repr() writes a float.
 [[gnu::cold]] std::string pythonFloat(double value) {
   if (std::isnan(value))
@@ -1064,6 +1078,7 @@ struct ControllerEventWalk : ControllerExpressions {
 
   template <bool RunTime>
   void timed(mlir::Operation *op) {
+    requireExportedMode(op);
     mlir::Operation *allocation = trace(op->getOperand(0));
     int64_t qubit = allocation ? pulse::quditOf(allocation) : -1;
     auto start = pulse::scheduledStart(op, iteration);
@@ -2479,6 +2494,7 @@ public:
     std::function<void(mlir::Block &)> collect = [&](mlir::Block &block) {
       for (mlir::Operation &op : block) {
         if (mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(op)) {
+          requireExportedMode(&op);
           mlir::Operation *allocation = trace(op.getOperand(0));
           int64_t line = allocation ? lineIndex.lookup(allocation) : -1;
           int64_t qubit = allocation ? pulse::quditOf(allocation) : -1;
@@ -6276,6 +6292,8 @@ NB_MODULE(_cudaq_pulse_native, m) {
         } catch (const PackedValueError &e) {
           nb::object args = nb::make_tuple(e.what(), e.word);
           PyErr_SetObject(packedValueError, args.ptr());
+        } catch (const NotSupportedYet &e) {
+          PyErr_SetString(PyExc_NotImplementedError, e.what());
         }
       });
 

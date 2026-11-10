@@ -852,6 +852,7 @@ struct ControllerWalk : ControllerExpressions {
   }
 
   void timed(mlir::Operation *op) {
+    requireExportedMode(op);
     mlir::Operation *allocation = trace(op->getOperand(0));
     int64_t qubit = allocation ? pulse::quditOf(allocation) : -1;
     auto start = pulse::scheduledStart(op, iteration);

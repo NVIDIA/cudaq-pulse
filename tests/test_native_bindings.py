@@ -95,3 +95,20 @@ def test_compiled_module_is_named_after_the_kernel():
     compiled = _x.lower(Q[0], 0.1)
     assert compiled.mlir().startswith("module @_x")
     assert "pulse.qubit_freq_hz = array<f64: 5.000000e+09>" in compiled.mlir()
+
+
+@pulse.kernel
+def _measured(q):
+    r = get_readout_line(q)
+    return readout(r, square(400, 0.05))
+
+
+def test_the_exports_refuse_a_readout_mode_they_do_not_support_yet():
+    text = pulse.compile(_measured).lower(Q[0]).mlir()
+    assert ", iq <{" in text
+    module = native.MLIRPipeline().parse_to_module(text.replace(", iq <{", ", trace <{"))
+    message = "readout mode trace is not supported by the exports yet; only iq is"
+    with pytest.raises(NotImplementedError, match=message):
+        module.events()
+    with pytest.raises(NotImplementedError, match=message):
+        module.controller_events([], [])

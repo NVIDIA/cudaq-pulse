@@ -701,7 +701,7 @@ struct PulseToQOpPass
       notIq->emitError("readout mode ")
           << pulse::stringifyReadoutMode(
                  cast<pulse::ReadoutOp>(notIq).getMode())
-          << " is not simulated; only iq is";
+          << " is not supported by the simulator yet; only iq is";
       return signalPassFailure();
     }
     // The frequencies of the simulated qubits, where they differ from the
