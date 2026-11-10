@@ -198,13 +198,13 @@ def _bad(source_kind):
         ("recursion", "recursion"),
     ],
 )
-def test_what_keeps_a_body_out_of_controller_form_is_named(kind, message):
+def test_what_keeps_a_body_off_a_processor_is_named(kind, message):
     cost = analyze(_bad(kind)).cost
     assert not cost.runs_on_processor
     assert any(message in v for v in cost.violations), cost.violations
 
 
-def test_the_protocol_estimators_are_in_controller_form():
+def test_the_protocol_estimators_run_on_a_processor():
     for helper in (
         cal.adaptive_t1_update,
         cal.adaptive_t1_wait,

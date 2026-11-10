@@ -7,10 +7,10 @@ once: every arithmetic operation, comparison, branch, load and elementary
 function is counted by class, through the helper functions it calls, with
 loops multiplied by their trip counts. An expression of constants costs
 nothing (it folds when the program compiles) and dividing by a constant is
-a multiply. The walk also checks the body is in
-*controller form*: a fixed number of scalars of state, loops of a trip count
-known when the program compiles (``range`` of a constant, or a fixed-size
-argument), no ``while``, recursion, allocation, exceptions, closures over
+a multiply. The walk also checks the body is one a processor runs: a
+fixed number of scalars of state, loops of a trip count known when the
+program compiles (``range`` of a constant, or a fixed-size argument), no
+``while``, recursion, allocation, exceptions, closures over
 mutable state or calls it cannot follow. A helper with a
 ``controller_cost`` attribute (a function of its arguments' lengths giving
 its ``OpCounts``) is an intrinsic, counted by it instead of its body.
@@ -111,7 +111,7 @@ class FunctionCost:
     of the body, both arms of each branch (what the controller stores).
     ``local_count`` is how many scalars the body and its helpers hold at once at
     most, beyond the arguments and results. ``violations`` lists what keeps
-    the body out of controller form; empty when it is in it. ``helpers``
+    the body off a processor; empty when it ``runs_on_processor``. ``helpers``
     names the functions it calls whose bodies were counted too.
 
     For a ``Processor``: ``iteration_count`` counts the loop iterations on the

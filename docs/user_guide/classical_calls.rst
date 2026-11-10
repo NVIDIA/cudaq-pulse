@@ -586,10 +586,10 @@ amplitudes, the delays come from the T1 estimate.
 
 The estimators in ``cudaq_pulse.classical.calibration`` that the chain uses
 (``adaptive_t1_update``, ``binary_search_update``, ``decay_time``,
-``sparse_phase`` and their helpers) are in *controller form*: a fixed
-number of scalars of state, closed-form arithmetic, branches and loops of a
-trip count fixed when the program compiles, and no allocation or
-exceptions. An estimate that cannot be formed is a result
+``sparse_phase`` and their helpers) run on a controller's processor: a
+fixed number of scalars of state, closed-form arithmetic, branches and
+loops of a trip count fixed when the program compiles, and no allocation
+or exceptions. An estimate that cannot be formed is a result
 (``decay_time`` returns whether it formed one), not an error.
 
 Compile the chain with ALAP scheduling (the default). A pulse just before a
