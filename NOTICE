@@ -1,7 +1,6 @@
 cudaq-pulse
 
-Copyright (c) 2026 NVIDIA Corporation & Affiliates
-All rights reserved.
+Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,8 +14,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 
-This product includes software developed by NVIDIA Corporation and its
-affiliates, and material from third parties. The binary distributions
+This product includes software developed by NVIDIA CORPORATION &
+AFFILIATES, and material from third parties. The binary distributions
 (wheels) statically link third-party software, LLVM and MLIR among it.
 THIRD_PARTY_NOTICES, in the source tree and in each wheel's
 .dist-info/licenses, lists what the wheels' binaries link, with each
