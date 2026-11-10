@@ -12,7 +12,6 @@ import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse._errors import QuantumSystemDefinitionError
 from cudaq_pulse.classical import Link
-from cudaq_pulse.controller import resources
 
 from tests._handles import ladder_target
 
@@ -134,12 +133,11 @@ def test_each_controller_exports_the_calls_of_its_own_instance():
         calls = [e for e in program["events"] if e["kind"] in ("submit", "answer")]
         assert [e["controller"] for e in calls] == [index, index]
         assert all(e["qudit"] == -1 for e in calls)
-    links = resources(lowered).links
-    assert [(u.controller, u.peak_slots_used, u.calls_per_shot) for u in links] == [
+    report = lowered.controller_usage
+    assert [(u.controller, u.peak_slots_used, u.calls_per_shot) for u in report.links] == [
         (0, 1, 1),
         (1, 1, 1),
     ]
-    report = resources(lowered)
     assert report.violations == () and "decoder@1" in str(report)
 
 
@@ -147,7 +145,8 @@ def test_a_shared_link_exports_without_an_instance():
     program = _lower(two_rounds, _device(False)).export_to_controller(controller=0)
     assert all("controller" not in c for c in program["calls"])
     assert all("controller" not in e for e in program["events"])
-    assert [u.controller for u in resources(_lower(two_rounds, _device(False))).links] == [None]
+    shared = _lower(two_rounds, _device(False)).controller_usage
+    assert [u.controller for u in shared.links] == [None]
 
 
 def test_a_call_over_a_per_controller_link_runs_on_one_controller():

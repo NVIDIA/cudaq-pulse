@@ -135,14 +135,14 @@ def _chain():
 def test_the_chain_fits_the_declared_controller():
     compiled, _, q = _chain()
     lowered = compiled.lower(q, 20_000.0 * CLOCK)
-    report = controller.resources(lowered)
-    assert report.violations == ()
-    assert all(row.on_controller and row.cost.runs_on_processor for row in report.functions)
-    by_name = {row.compiled_name: row for row in report.functions}
+    report = lowered.controller_usage
+    assert report.violations == () and report.off_board == ()
+    rows = [f for c in report.controllers for p in c.processors for f in p.functions]
+    assert all(row.cost.runs_on_processor for row in rows)
+    by_name = {row.function: row for row in rows}
     assert by_name["adaptive_t1__1"].calls_per_shot == P["tracker_shots"]
-    assert by_name["adaptive_t1__1"].function == "adaptive_t1"
-    assert report.calls_per_shot == 7 + P["tracker_shots"]
-    assert all(row.compute_ns < row.max_latency_ns for row in report.functions)
+    assert sum(link.calls_per_shot for link in report.links) == 7 + P["tracker_shots"]
+    assert all(row.slack_ns > 0 for row in rows)
 
 
 def test_a_slower_controller_rejects_the_chain_at_compile_time():
@@ -168,4 +168,4 @@ def test_two_qudits_calibrate_side_by_side():
     # one: only their requests on the shared link go out one after the other.
     alone, side_by_side = (max(e.end for e in low.schedule) for low in (one, two))
     assert alone <= side_by_side < alone * 1.01
-    assert controller.resources(two).violations == ()
+    assert two.controller_usage.violations == ()

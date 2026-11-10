@@ -510,8 +510,8 @@ When the scheduler cannot tell a call's controller (it reads no
 measurement and its answer is unused, or leaves the kernel), the link's
 calls share one set of slots, as on a shared link. Each controller may
 place the link on one of its own processors; ``controller_usage`` counts
-each instance's calls on its controller's processor, and
-``resources(lowered).links`` has a row per instance.
+each instance's calls on its controller's processor, and its ``links``
+have a row per instance.
 
 Times between controllers are budgeted with how well each one's start is
 known: its ``clock_skew_cycles``, plus one of its own cycles without a

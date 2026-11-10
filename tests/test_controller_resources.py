@@ -12,18 +12,12 @@ import pytest
 from cudaq_pulse import Controller, ControlSystem, Processor, _controller_cost
 from cudaq_pulse.classical import Link
 from cudaq_pulse.classical import calibration as cal
-from cudaq_pulse.controller import (
-    ControllerLimitError,
-    OpClass,
-    OpCounts,
-    OpCycles,
-    analyze,
-    resources,
-)
+from cudaq_pulse.controller import ControllerLimitError, OpClass, OpCounts, OpCycles
 
 from tests._handles import Q
 
 _CYCLES = {"div": 8, "sqrt": 8, "exp": 12, "log": 12, "trig": 12}
+_ALONE = Processor()
 N = 4
 _SCALE = 2.0
 
@@ -70,19 +64,19 @@ def _counted(bits: pulse.Length[pulse.Bits, 50]) -> float:
 
 
 def test_operations_are_counted_by_class():
-    cost = analyze(_arithmetic).cost
+    cost = _ALONE.usage(_arithmetic).cost
     assert cost.ops == OpCounts(add=2, div=1, mul=1, sqrt=1)
     assert cost.runs_on_processor and cost.size == cost.total == 5
 
 
 def test_constants_fold_and_dividing_by_a_constant_is_a_multiply():
-    cost = analyze(_by_constants).cost
+    cost = _ALONE.usage(_by_constants).cost
     # 2 pi 1e-9 folds; dividing by it or by _SCALE multiplies by a reciprocal.
     assert cost.ops == OpCounts(add=2, mul=2, div=1)
 
 
 def test_a_loop_multiplies_its_body_by_its_trip_count():
-    cost = analyze(_looped.specialize(values=N)).cost
+    cost = _ALONE.usage(_looped.specialize(values=N)).cost
     # Per trip: a load and a multiply, the accumulation, the counter and
     # the branch back.
     assert cost.ops["mul"] == N and cost.ops["load"] == N
@@ -91,19 +85,19 @@ def test_a_loop_multiplies_its_body_by_its_trip_count():
 
 
 def test_a_branch_costs_its_longer_arm_and_holds_both():
-    cost = analyze(_branched).cost
+    cost = _ALONE.usage(_branched).cost
     assert cost.ops == OpCounts(branch=1, compare=1, exp=1, mul=1)
     assert cost.size == cost.total
 
 
 def test_helpers_are_inlined():
-    cost = analyze(_with_helper).cost
+    cost = _ALONE.usage(_with_helper).cost
     assert cost.ops["mul"] == 2 and cost.ops["add"] == 2
     assert any(h.endswith("_square") for h in cost.helpers)
 
 
 def test_counting_measurement_bits_is_by_word():
-    cost = analyze(_counted).cost
+    cost = _ALONE.usage(_counted).cost
     assert cost.ops["popcount"] == 2 and cost.runs_on_processor
 
 
@@ -113,14 +107,13 @@ def test_a_function_of_call_lengths_is_analyzed_per_version():
         return [1 - b for b in outcomes]
 
     message = (
-        "flip's list lengths come from its calls (outcomes), so it has no single cost; analyze"
-        " one version, e.g. analyze(flip.specialize(outcomes=3))"
+        "flip's list lengths come from its calls (outcomes), so it has no single cost; ask for"
+        " one version's, e.g. processor.usage(flip.specialize(outcomes=3))"
     )
     with pytest.raises(TypeError, match=re.escape(message)):
-        analyze(flip)
-    row = analyze(flip.specialize(outcomes=3))
-    assert (row.function, row.compiled_name) == ("flip", "flip__3")
-    assert (analyze(_counted).function, analyze(_counted).compiled_name) == ("_counted",) * 2
+        _ALONE.usage(flip)
+    assert _ALONE.usage(flip.specialize(outcomes=3)).function == "flip__3"
+    assert _ALONE.usage(_counted).function == "_counted"
 
 
 def _bad(source_kind):
@@ -199,7 +192,7 @@ def _bad(source_kind):
     ],
 )
 def test_what_keeps_a_body_off_a_processor_is_named(kind, message):
-    cost = analyze(_bad(kind)).cost
+    cost = _ALONE.usage(_bad(kind)).cost
     assert not cost.runs_on_processor
     assert any(message in v for v in cost.violations), cost.violations
 
@@ -222,13 +215,15 @@ def test_the_protocol_estimators_run_on_a_processor():
     assert not _controller_cost.analyze_callable(cal.t1_update, {}).runs_on_processor
 
 
-def test_compute_time_follows_the_cycle_costs():
-    row = analyze(_arithmetic)
-    # On no processor; mul 1 + add 2 at one cycle, div 8, sqrt 8: 19 cycles.
-    assert row.compute_cycles is None and row.compute_ns is None and row.margin_ns is None
-    assert row.cost.processor_cycles(OpCycles(**_CYCLES), True) == 19
+def test_a_processor_reports_a_function_in_cycles_and_at_its_own_clock():
+    row = Processor(cycles_per_op=OpCycles(**_CYCLES)).usage(_arithmetic)
+    # mul 1 + add 2 at one cycle, div 8, sqrt 8: 19 cycles; no clock, no time.
+    assert row.compute_cycles == 19 and row.compute_ns is None and row.slack_ns is None
+    assert row.calls_per_shot is None
     assert row.state_bytes == 3 * 8 + 8  # three arguments, one result
     assert row.request_bytes == 24 + 24 and row.answer_bytes == 24 + 8
+    timed = Processor(cycles_per_op=OpCycles(**_CYCLES), clock_ghz=0.5).usage(_arithmetic)
+    assert timed.compute_ns == pytest.approx(38.0) and timed.slack_ns == pytest.approx(62.0)
 
 
 def test_unknown_operation_classes_are_rejected():
@@ -292,23 +287,23 @@ def test_a_function_that_computes_past_its_budget_fails_to_compile():
 
 def test_only_functions_on_a_processor_are_checked():
     # _remote's while loop runs on the GPU link: reported, not checked.
-    report = resources(_lower(_machine({"fixed_cost_only": True})))
-    remote = next(row for row in report.functions if row.compiled_name == "_remote__1")
-    assert remote.function == "_remote"
-    assert not remote.on_controller and not remote.cost.runs_on_processor
-    assert remote.compute_ns is None
+    lowered = _lower(_machine({"fixed_cost_only": True}))
+    report = lowered.controller_usage
+    assert report.off_board == ("_remote__1",)
+    remote = next(fn for fn in lowered.classical if fn.name == "_remote__1")
+    assert not _ALONE.usage(remote).cost.runs_on_processor
     assert report.violations == ()
     with pytest.raises(ControllerLimitError, match="_remote__1 is not fixed-cost"):
         _lower(_machine({"fixed_cost_only": True, "links": ("controller", "gpu")}))
 
 
 def test_per_shot_limits_count_calls_and_bytes():
-    lowered = _lower(_machine(), n=5)
-    report = resources(lowered)
-    update = next(row for row in report.functions if row.compiled_name == "_update__1")
-    assert update.calls_per_shot == 5 and report.calls_per_shot == 10
-    per_call = update.request_bytes + update.answer_bytes  # 24 + 9, 24 + 8
-    assert per_call == 65
+    report = _lower(_machine(), n=5).controller_usage
+    assert sum(link.calls_per_shot for link in report.links) == 10
+    controller_link = next(link for link in report.links if link.link == "controller")
+    per_call = 24 + 9 + 24 + 8  # _update's request and answer
+    assert controller_link.calls_per_shot == 5
+    assert controller_link.bytes_per_shot == 5 * per_call
     with pytest.raises(ControllerLimitError, match="makes 5 calls to it; it takes 4"):
         _lower(_machine({"max_calls_per_shot": 4}), n=5)
     with pytest.raises(ControllerLimitError, match=f"take {5 * per_call} bytes"):
@@ -320,16 +315,18 @@ def test_per_shot_limits_count_calls_and_bytes():
 
 
 def test_the_report_is_a_table_of_functions_and_links():
-    report = resources(_lower(_machine({"cycles_per_op": OpCycles(**_CYCLES), "clock_ghz": 1.0})))
+    report = _lower(
+        _machine({"cycles_per_op": OpCycles(**_CYCLES), "clock_ghz": 1.0})
+    ).controller_usage
     text = str(report)
     assert "_update" in text and "_remote" in text and "controller" in text
-    assert "Links, per shot" in text and "Per shot: 6 calls" in text
+    assert "Links, per shot" in text
     controller_link = next(u for u in report.links if u.link == "controller")
     assert controller_link.calls_per_shot == 3
     assert 1 <= controller_link.peak_slots_used <= controller_link.slots
-    update = next(row for row in report.functions if row.compiled_name == "_update__1")
+    (update,) = report.controllers[0].processors[0].functions
     # exp 12, a multiply, a load and an add, at 1 ns per cycle.
-    assert update.on_controller and update.compute_ns == pytest.approx(15.0)
+    assert update.function == "_update__1" and update.compute_ns == pytest.approx(15.0)
 
 
 def test_without_compute_limits_bodies_are_not_read(monkeypatch):

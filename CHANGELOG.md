@@ -257,13 +257,13 @@ behavior may change in any 0.x release.
   superconducting qubits", arXiv:2506.09576 (2025);
   `benchmarks/classical/calibration_protocol.py` checks it end to end over
   many seeds against the published numbers.
-- **What classical functions cost a controller.** `controller.resources()`
-  reports each classical function's operations by class (read from its
-  body; an expression of constants folds, and dividing by a constant is a
-  multiply), state in bytes, compute time against `max_latency_ns`, and calls,
-  slots and buffer bytes per shot, and whether its body is in controller
-  form (fixed-size state, bounded loops, no allocation or exceptions), its
-  compute time on the `Processor` that runs it.
+- **What classical functions cost a controller.** `lowered.controller_usage`
+  reports each classical function's operations (read from its body; an
+  expression of constants folds, and dividing by a constant is a multiply),
+  state in bytes and compute time against `max_latency_ns` on the
+  `Processor` that runs it, and each link's calls, slots and bytes per
+  shot. `processor.usage(fn)` is one function's cost on a processor on its
+  own: its cycles, and its time when the processor has a clock.
 - **Faster simulation of long programs.** Idle waits and square pulses in
   their frame are propagated exactly, at a cost independent of their
   length, and driven stretches on registers of up to four levels by RK4

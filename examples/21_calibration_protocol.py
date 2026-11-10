@@ -46,7 +46,7 @@ Then the frequency binary search of
     Tracking", arXiv:2501.05386 (2025),
 
 which narrows a detuning shot by shot without resetting the qubit, and the
-resource report: what each estimator costs the controller, checked against
+usage report: what each estimator costs the controller, checked against
 a declared ``Controller``.
 
 Compile with ALAP scheduling (the default): the pulse before each variable
@@ -558,8 +558,7 @@ if __name__ == "__main__":
 
     print("\n=== 3. What the estimators cost the controller ===")
     lowered = compiled.lower(q, 20_000.0 * clock_ghz)
-    report = controller.resources(lowered)
-    print(report)
+    print(lowered.controller_usage)
     slow = dataclasses.replace(processor, cycles_per_op=processor.cycles_per_op.replace(exp=400))
     slow_system = pulse.ControlSystem(
         controllers=[pulse.Controller(processors=[slow])], links=links

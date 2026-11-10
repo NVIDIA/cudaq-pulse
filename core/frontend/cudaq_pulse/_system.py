@@ -58,6 +58,7 @@ if TYPE_CHECKING:
 
     from . import _clocks
     from ._capability import Capability
+    from ._controller_cost import FunctionUsage
     from ._device import QuantumSystem
     from ._op_classes import OpClass
     from ._op_tables import OpCycles
@@ -455,6 +456,18 @@ class Processor:
         """Whether it runs a rolled loop as a loop (``"loop"`` is not
         ``unsupported``); without, its loops are unrolled."""
         return "loop" not in self.unsupported
+
+    def usage(self, function: Any) -> FunctionUsage:
+        """What the classical *function* uses of this processor on its own:
+        its operations, state and messages, and its cycles on the longest
+        path; ``compute_ns`` only when the processor has ``clock_ghz`` (else
+        ``None``), and ``calls_per_shot`` ``None`` (a compiled program's
+        ``controller_usage`` has both). A function whose list lengths come
+        from its calls has a cost per version: ask for one,
+        ``processor.usage(flip.specialize(outcomes=3))``."""
+        from ._controller_cost import function_usage
+
+        return function_usage(self, function)
 
     def as_dict(self) -> dict[str, Any]:
         """The processor as JSON-serializable data, as a system file holds it:

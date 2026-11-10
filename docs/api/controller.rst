@@ -50,17 +50,9 @@ Export and limits
 What classical functions cost
 -----------------------------
 
-.. autofunction:: cudaq_pulse.controller.resources
-
-.. autofunction:: cudaq_pulse.controller.analyze
-
-.. autoclass:: cudaq_pulse.controller.ResourceReport
-   :members:
-
-.. autoclass:: cudaq_pulse.controller.FunctionResources
-   :members:
-
-.. autoclass:: cudaq_pulse.controller.LinkUsage
+``processor.usage(fn)`` (:meth:`cudaq_pulse.Processor.usage`) is what one
+classical function costs on a processor on its own: a ``FunctionUsage``
+with its cycles, and its time when the processor has a clock.
 
 .. autoclass:: cudaq_pulse.controller.FunctionCost
    :members:
@@ -75,13 +67,14 @@ What classical functions cost
 .. autoclass:: cudaq_pulse.controller.OpCycles
    :members: replace
 
-What a program uses of each processor
--------------------------------------
+What a program uses of each processor and link
+----------------------------------------------
 
 ``lowered.controller_usage`` is :func:`~cudaq_pulse.controller.usage` of a
-lowered program. A program over a processor's limits does not compile: its
-``ControllerLimitError`` carries the report as ``usage``, with each limit
-exceeded and by how much in ``usage.exceeded``.
+lowered program: each processor's functions and totals, and each link's
+calls, slots and bytes per shot (``links``). A program over a processor's
+limits does not compile: its ``ControllerLimitError`` carries the report as
+``usage``, with each limit exceeded and by how much in ``usage.exceeded``.
 
 .. autofunction:: cudaq_pulse.controller.usage
 
@@ -97,6 +90,8 @@ exceeded and by how much in ``usage.exceeded``.
 
 .. autoclass:: cudaq_pulse.controller.FunctionUsage
    :members:
+
+.. autoclass:: cudaq_pulse.controller.LinkUsage
 
 Backends
 --------

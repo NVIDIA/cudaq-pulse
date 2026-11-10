@@ -40,14 +40,13 @@ its ``Processor`` states: the cycles each class of operation takes, how
 many operations and bytes of state a function may hold, and how many calls
 and bytes of requests and answers one shot may use. ``usage`` reports, for
 every classical function of a program, what it holds on the processor that
-runs it and the limits it exceeds. ``resources`` reports, for every
-classical function, an estimate of its operations by class (read from its
-body), its state in bytes, its compute time on its processor against its
-``max_latency_ns``, its calls, slots and buffer bytes per shot, and
-whether its body is in *controller form*: a fixed number of scalars of
-state, loops of a trip count known when the program compiles, no
-``while``, recursion, allocation or exceptions. ``analyze`` does the same
-for one function on its own, without a processor.
+runs it (its operations, read from its body, its state in bytes and its
+compute time against its ``max_latency_ns``), each link's calls, slots and
+bytes per shot, and the limits they exceed. ``Processor.usage`` does the
+same for one function on its own: its cycles always, its time when the
+processor has a clock. A processor runs a body with a fixed number of
+scalars of state, loops of a trip count known when the program compiles,
+no ``while``, recursion, allocation or exceptions.
 """
 
 from __future__ import annotations
@@ -80,16 +79,11 @@ if TYPE_CHECKING:
     from ._classical_report import ClassicalCall
     from ._controller_cost import ControllerUsage as ControllerUsage
     from ._controller_cost import FunctionCost as FunctionCost
-    from ._controller_cost import FunctionResources as FunctionResources
     from ._controller_cost import FunctionUsage as FunctionUsage
     from ._controller_cost import LimitExceeded as LimitExceeded
     from ._controller_cost import LinkUsage as LinkUsage
     from ._controller_cost import ProcessorUsage as ProcessorUsage
-    from ._controller_cost import ResourceReport as ResourceReport
     from ._controller_cost import UsageReport as UsageReport
-    from ._controller_cost import analyze as analyze
-    from ._controller_cost import format_report as format_report
-    from ._controller_cost import resources as resources
     from ._controller_cost import usage as usage
     from ._op_classes import ExpressionTerm as ExpressionTerm
     from ._op_classes import OpClass as OpClass
@@ -111,7 +105,6 @@ __all__ = [
     "Event",
     "ExpressionTerm",
     "FunctionCost",
-    "FunctionResources",
     "FunctionUsage",
     "LimitExceeded",
     "LinkUsage",
@@ -120,14 +113,11 @@ __all__ = [
     "OpCycles",
     "ProcessorUsage",
     "ReadoutLine",
-    "ResourceReport",
     "UsageReport",
     "WaveformMemoryScope",
-    "analyze",
     "check",
     "evaluate_expression",
     "export",
-    "resources",
     "sample_waveform",
     "shape_key",
     "usage",
@@ -2354,9 +2344,9 @@ def _compile_check(
         if lowered.parameters or (lowered._role is not None and lowered._role.slots > 0):
             # When calls are due can depend on a call's values.
             return found, False
-        from ._controller_cost import usage
+        from ._controller_cost import _usage
 
-        extra = usage(lowered).violations
+        extra = _usage(lowered).violations
         return ([*found, *extra] if extra else found), exact
     machine = lowered.options.machine
     if limits is machine.controller:
@@ -2444,9 +2434,9 @@ def _call_violations(lowered: Lowered) -> Sequence[str]:
         found = _limit_violations(lowered, machine.controller, clocks)
         if not system._placement:
             return found
-        from ._controller_cost import usage
+        from ._controller_cost import _usage
 
-        extra = usage(lowered).violations
+        extra = _usage(lowered).violations
         return [*found, *extra] if extra else found
     if system is not None:
         repeats: list[tuple[int, ...]] | None = []
@@ -2532,8 +2522,6 @@ def _has_samples(node: Mapping[str, Any] | None) -> bool:
 
 if TYPE_CHECKING:
     _Limits = Controller
-    _Report = ResourceReport
-    _Resources = FunctionResources
     _Usage = UsageReport
 
 
@@ -2545,10 +2533,8 @@ class ControllerNames(Protocol):
     ControllerLimitError: type[ControllerLimitError]
     Event: type[Event]
     FunctionCost: type[FunctionCost]
-    FunctionResources: type[FunctionResources]
     LimitExceeded: type[LimitExceeded]
     LinkUsage: type[LinkUsage]
-    ResourceReport: type[ResourceReport]
     ControllerUsage: type[ControllerUsage]
     FunctionUsage: type[FunctionUsage]
     ProcessorUsage: type[ProcessorUsage]
@@ -2562,7 +2548,6 @@ class ControllerNames(Protocol):
         OpCounts: type[OpCounts]
         OpCycles: type[OpCycles]
 
-    def analyze(self, function: Any) -> _Resources: ...
     def check(self, lowered: Lowered, limits: _Limits | None = None) -> Sequence[str]: ...
     def evaluate_expression(
         self,
@@ -2577,7 +2562,6 @@ class ControllerNames(Protocol):
         controller: int | None = None,
         version: int = 1,
     ) -> dict[str, Any]: ...
-    def resources(self, lowered: Lowered) -> _Report: ...
     def sample_waveform(
         self, node: Mapping[str, Any], duration_cycles: int, samples_per_cycle: float = 1
     ) -> np.ndarray: ...
@@ -2655,16 +2639,11 @@ class _ControllerModule(types.ModuleType):
         # no __set__ is not, to a checker.
         FunctionCost: Any
         ControllerUsage: Any
-        FunctionResources: Any
         FunctionUsage: Any
         LimitExceeded: Any
         LinkUsage: Any
         ProcessorUsage: Any
-        ResourceReport: Any
         UsageReport: Any
-        analyze: Any
-        format_report: Any
-        resources: Any
         usage: Any
         ExpressionTerm: Any
         OpClass: Any
@@ -2675,16 +2654,11 @@ class _ControllerModule(types.ModuleType):
 
     FunctionCost = _Loaded("FunctionCost")
     ControllerUsage = _Loaded("ControllerUsage")
-    FunctionResources = _Loaded("FunctionResources")
     FunctionUsage = _Loaded("FunctionUsage")
     LimitExceeded = _Loaded("LimitExceeded")
     LinkUsage = _Loaded("LinkUsage")
     ProcessorUsage = _Loaded("ProcessorUsage")
-    ResourceReport = _Loaded("ResourceReport")
     UsageReport = _Loaded("UsageReport")
-    analyze = _Loaded("analyze")
-    format_report = _Loaded("format_report")
-    resources = _Loaded("resources")
     usage = _Loaded("usage")
     ExpressionTerm = _Loaded("ExpressionTerm")
     OpClass = _Loaded("OpClass")

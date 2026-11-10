@@ -187,7 +187,7 @@ def test_exports_build_no_report(tmp_path):
         "cudaq_pulse._classical_report",
         "cudaq_pulse.classical._link",
     ]
-    report = _PLAIN + "import cudaq_pulse.controller as c\nc.resources(low)\n"
+    report = _PLAIN + "import cudaq_pulse.controller as c\nc.usage(low)\n"
     assert _loaded(report, tmp_path, _REPORTS) == ["cudaq_pulse._controller_cost"]
 
 
@@ -410,7 +410,7 @@ def test_classes_most_programs_never_use_are_made_when_used():
     unmade = sorted(["ResidualZZ", "Problem", *usage])
     code = (
         _PLAIN + "import cudaq_pulse.controller as c\n"
-        "low.schedule; low.export_to_controller(); low.export_to_emulator(); c.resources(low)\n"
+        "low.schedule; low.export_to_controller(); low.export_to_emulator(); c.FunctionCost\n"
         f"names = [(n, getattr(c, n)) for n in {usage!r}]\n"
         "names += [('ResidualZZ', p.quantum_systems.ResidualZZ), ('Problem', p.Problem)]\n"
         "def unmade():\n"
@@ -443,10 +443,10 @@ def test_the_report_names_resolve_on_first_use():
         "from cudaq_pulse.classical import emulation\n"
         "assert 'cudaq_pulse._controller_cost' not in sys.modules\n"
         "assert set(c.__all__) <= set(dir(c)) and set(emulation.__all__) <= set(dir(emulation))\n"
-        "from cudaq_pulse.controller import ResourceReport, usage\n"
-        "assert c.ResourceReport is ResourceReport and 'usage' in vars(c)\n"
-        "assert ResourceReport.__module__ == 'cudaq_pulse.controller'\n"
-        "assert pickle.loads(pickle.dumps(ResourceReport)) is ResourceReport\n"
+        "from cudaq_pulse.controller import LinkUsage, usage\n"
+        "assert c.LinkUsage is LinkUsage and 'usage' in vars(c)\n"
+        "assert LinkUsage.__module__ == 'cudaq_pulse.controller'\n"
+        "assert pickle.loads(pickle.dumps(LinkUsage)) is LinkUsage\n"
         "from cudaq_pulse.classical import wire\n"
         "assert emulation.export is wire._emulation_export\n"
         "assert emulation.FORMAT == wire._EMULATION_FORMAT\n"

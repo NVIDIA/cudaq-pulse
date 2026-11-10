@@ -507,7 +507,7 @@ def nelder_mead_step(state: NelderMead, cost: float) -> tuple[NelderMead, tuple[
 # search of F. Berritta et al., "Efficient Qubit Calibration by Binary-Search
 # Hamiltonian Tracking", arXiv:2501.05386 (2025). They are written so that
 # a controller's processor can run them as they are
-# (``cudaq_pulse.controller.resources`` checks it): a fixed number of scalars
+# (``Processor.usage`` reports it): a fixed number of scalars
 # of state, closed-form arithmetic (+ - * /, comparisons, sqrt, exp, log,
 # atan2, cos), branches and loops of a trip count fixed when the program
 # compiles, and no allocation or exceptions. An estimate that cannot be formed

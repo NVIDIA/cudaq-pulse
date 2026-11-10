@@ -88,7 +88,7 @@ end, two returns of different lengths), compiling says so and names the
 line; return a fixed maximum and a count instead (``positions = [0] *
 len(syndrome)``, fill the first ``count`` items, ``return count,
 positions``). ``flip.specialize(outcomes=3)`` is the version of one length,
-for ``wire.schema``, ``wire.native`` or ``controller.analyze``.
+for ``wire.schema``, ``wire.native`` or ``processor.usage``.
 
 **Fixed lengths.** Where one size is wanted, the signature states it with
 ``pulse.Length`` (``typing.Annotated``, so checkers read the type inside
@@ -605,11 +605,11 @@ grow with its waits.
 What it costs the controller
 ----------------------------
 
-``cudaq_pulse.controller.resources(lowered)`` reads each classical
-function's body once and reports its operations by class on its longest
-path, how many it holds, its state in bytes, its compute time against its
-``max_latency_ns``, and its calls, slots and bytes per shot. An expression
-of constants costs nothing, as it folds when the program compiles, and
+``lowered.controller_usage`` reads the body of each classical function a
+processor runs once and reports how many operations it holds, its state in
+bytes, its compute time against its ``max_latency_ns`` and its calls per
+shot, with each link's calls, slots and bytes per shot. An expression of
+constants costs nothing, as it folds when the program compiles, and
 dividing by a constant counts as a multiply. The costs and limits come
 from the ``Processor`` of a controller that runs the functions on its
 ``links``:
@@ -618,8 +618,6 @@ from the ``Processor`` of a controller that runs the functions on its
 
 .. code-block:: python
    :class: fragment
-
-   from cudaq_pulse import controller
 
    processor = pulse.Processor(
        links=["controller"],
@@ -634,18 +632,20 @@ from the ``Processor`` of a controller that runs the functions on its
        links={"controller": Link(fixed_ns=4)},
    )
    lowered = pulse.compile(chain, quantum_system=qs, control_system=system).lower(q)
-   print(controller.resources(lowered))
+   print(lowered.controller_usage)
 
 .. :spellcheck-enable:
 
 The report is a table: for the chain's adaptive T1 update, 47 operations
 (one ``exp``, one ``log``, eight divisions) and 0.5 us at these costs, called
-50 times per shot. A function that computes past its budget, holds too many
+50 times per shot. ``processor.usage(fn)`` is one function's cost on a
+processor on its own: its cycles always, its time only when the processor
+has a ``clock_ghz``, and no calls per shot, which come from a compiled
+program. A function that computes past its budget, holds too many
 operations or bytes, or (with ``fixed_cost_only=True``) uses a ``while``
 loop, a list or an exception fails to compile with ``ControllerLimitError``
-naming it, the limit and the line (``Lowered.controller_usage`` reports what
-each processor holds against its limits). Without processors, compiling
-does not read function bodies.
+naming it, the limit and the line. Without processors, compiling does not
+read function bodies.
 
 Running on hardware
 -------------------
