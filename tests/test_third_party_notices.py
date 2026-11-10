@@ -352,12 +352,14 @@ def test_license_expression_names_every_listed_license_and_no_gpl(tmp_path, chec
     assert "METADATA has no License-Expression" in _problems(checker, path)
 
 
-def _tools_wheel(tmp_path, checker, *, extra=(), drop=(), expression=None):
+def _tools_wheel(tmp_path, checker, *, extra=(), drop=(), expression=None, texts=None):
     dist_info = "cudaq_pulse_tools-0.1.0.dist-info"
     package = _ROOT / "packaging" / "cudaq-pulse-tools"
     files = {"cudaq_pulse_tools-0.1.0.data/scripts/cudaq-pulse-opt": "", f"{dist_info}/WHEEL": ""}
     for name in checker._TOOLS_LICENSES:
         files[f"{dist_info}/licenses/{name}"] = (package / name).read_text()
+    for name, text in (texts or {}).items():
+        files[f"{dist_info}/licenses/{name}"] = text
     for item in extra:
         files[item] = ""
     for item in drop:
@@ -383,6 +385,15 @@ def test_a_complete_driver_wheel_passes(tmp_path, checker):
     assert "THIRD_PARTY_NOTICES" in checker._TOOLS_LICENSES
     assert "LICENSES/LLVM-LICENSE.txt" in checker._TOOLS_LICENSES
     assert _problems(checker, _tools_wheel(tmp_path, checker)) == []
+
+
+@pytest.mark.parametrize("name", ["LICENSE", "NOTICE", "LICENSES/LLVM-LICENSE.txt"])
+def test_both_wheels_carry_the_repositorys_license_texts(tmp_path, checker, name):
+    package = _ROOT / "packaging" / "cudaq-pulse-tools"
+    assert (package / name).read_bytes() == (_ROOT / name).read_bytes()
+    path = _tools_wheel(tmp_path, checker, texts={name: (_ROOT / name).read_text() + "\n"})
+    item = f"cudaq_pulse_tools-0.1.0.dist-info/licenses/{name}"
+    assert f"{item} differs from the repository's {name}" in _problems(checker, path)
 
 
 def test_the_driver_wheel_needs_its_notices(tmp_path, checker):

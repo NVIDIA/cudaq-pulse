@@ -24,7 +24,8 @@ repair grafted; the licenses of packaging/cudaq-pulse-tools (LICENSE, NOTICE,
 THIRD_PARTY_NOTICES, LLVM's and the other texts that file needs); and no
 requirements.
 
-Both: THIRD_PARTY_NOTICES as tools/third-party-notices.py generates it,
+Both: LICENSE, NOTICE and the LICENSES/ texts byte for byte the
+repository's; THIRD_PARTY_NOTICES as tools/third-party-notices.py generates it,
 listing LLVM and every library grafted into the wheel, with each listed
 license in License-Expression; and no CUDA runtime library (those come from
 the CUDA wheels) and no GPL or LGPL library or license.
@@ -153,13 +154,19 @@ def _wheel_name(path: Path) -> list[str] | None:
 
 
 def _check_licenses(
-    names: set[str], dist_info: str, metadata: Message, licenses: list[str]
+    wheel: zipfile.ZipFile, dist_info: str, metadata: Message, licenses: list[str]
 ) -> list[str]:
-    problems = [
-        f"missing {dist_info}/licenses/{f}"
-        for f in licenses
-        if f"{dist_info}/licenses/{f}" not in names
-    ]
+    """Every license file is present and named in METADATA, and all but
+    THIRD_PARTY_NOTICES are the repository's own LICENSE, NOTICE and
+    LICENSES/ texts, byte for byte."""
+    names = set(wheel.namelist())
+    problems = []
+    for f in licenses:
+        item = f"{dist_info}/licenses/{f}"
+        if item not in names:
+            problems.append(f"missing {item}")
+        elif f != "THIRD_PARTY_NOTICES" and wheel.read(item) != (_ROOT / f).read_bytes():
+            problems.append(f"{item} differs from the repository's {f}")
     declared = set(metadata.get_all("License-File") or [])
     problems += [f"METADATA does not name License-File {f}" for f in licenses if f not in declared]
     problems += [
@@ -188,7 +195,7 @@ def check_tools_wheel(path: Path) -> list[str]:
         elif not (wheel.getinfo(executable).external_attr >> 16) & 0o111:
             problems.append(f"{executable} is not executable")
         problems += _check_notices(wheel, names, dist_info, metadata)
-    problems += _check_licenses(names, dist_info, metadata, _TOOLS_LICENSES)
+        problems += _check_licenses(wheel, dist_info, metadata, _TOOLS_LICENSES)
     expected = {executable, *(f"{dist_info}/{f}" for f in ("METADATA", "WHEEL", "RECORD"))}
     expected |= {f"{dist_info}/licenses/{f}" for f in _TOOLS_LICENSES}
     expected |= {item for item in names if notices.GRAFTED_DIR.search(item)}
@@ -224,6 +231,7 @@ def check_wheel(path: Path) -> list[str]:
                 wheel.read("__builtins__.pyi").decode(),
                 wheel.read("cudaq_pulse/ops/__init__.py").decode(),
             )
+        problems += _check_licenses(wheel, dist_info, metadata, _LICENSES)
 
     required = [
         "__builtins__.pyi",
@@ -246,7 +254,6 @@ def check_wheel(path: Path) -> list[str]:
             f"cudaq_pulse/_native/{extension.pattern}"
         )
 
-    problems += _check_licenses(names, dist_info, metadata, _LICENSES)
     requirement = f"{_TOOLS}=={version}"
     tools_requirements = [
         r for r in metadata.get_all("Requires-Dist") or [] if re.match(rf"{_TOOLS}\b", r)
