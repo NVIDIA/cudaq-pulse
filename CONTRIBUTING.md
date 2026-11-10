@@ -129,8 +129,13 @@ MYPYPATH=build/dev/python mypy -p cudaq_pulse
 
 The hooks run the ruff linter and formatter, clang-format, whitespace and
 YAML/TOML checks, and a license-header check
-(`tools/check-license-headers.py`). New source files need the NVIDIA
-Apache-2.0 header used by their neighbors.
+(`tools/check-license-headers.py`). New source files start with these two
+lines, in the file's comment syntax (after a shebang line, if any):
+
+```text
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+```
 
 mypy runs in strict mode against the staged package, because it needs the
 type stub that the build generates for the native extension.

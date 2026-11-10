@@ -1,10 +1,5 @@
-// ============================================================================ //
-// Copyright (c) 2026 NVIDIA Corporation & Affiliates.                          //
-// All rights reserved.                                                         //
-//                                                                              //
-// This source code and the accompanying materials are made available under     //
-// the terms of the Apache License 2.0 which accompanies this distribution.     //
-// ============================================================================ //
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
 
 // Loops one after another on a link: a loop whose last iterations are not
 // simulated still holds the slots they hold, so the next loop's first

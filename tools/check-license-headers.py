@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-# ============================================================================ #
-# Copyright (c) 2026 NVIDIA Corporation & Affiliates.                          #
-# All rights reserved.                                                         #
-#                                                                              #
-# This source code and the accompanying materials are made available under     #
-# the terms of the Apache License 2.0 which accompanies this distribution.     #
-# ============================================================================ #
-"""Fail if any given file lacks the NVIDIA Apache-2.0 header near its top.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Fail if any given file lacks the NVIDIA SPDX license header near its top.
 
-The header's comment style varies by language, so only its two load-bearing
-lines are matched. Used as a pre-commit hook; pass the files to check.
+The header is two consecutive lines with the same comment prefix (``#``,
+``//``, `` *`` or an indented reStructuredText comment):
+
+    SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+    SPDX-License-Identifier: Apache-2.0
+
+The former prose header (the entity in mixed case, the license named in a
+sentence) is refused. Used as a pre-commit hook; pass the files to check.
 """
 
 from __future__ import annotations
@@ -19,21 +20,35 @@ import sys
 from pathlib import Path
 
 HEAD_LINES = 12
-COPYRIGHT = re.compile(r"Copyright \(c\) 20\d\d( - 20\d\d)? NVIDIA Corporation & Affiliates\.")
-LICENSE = "the terms of the Apache License 2.0"
+HEADER = re.compile(
+    r"^(?P<prefix>(?:#|//| \*|  ) )SPDX-FileCopyrightText: Copyright \(c\) 20\d\d(?:-20\d\d)? "
+    r"NVIDIA CORPORATION & AFFILIATES\. All rights reserved\.\n"
+    r"(?P=prefix)SPDX-License-Identifier: Apache-2\.0\n",
+    re.MULTILINE,
+)
+ENTITY = "NVIDIA CORPORATION & AFFILIATES"
+ANY_ENTITY = re.compile(re.escape(ENTITY), re.IGNORECASE)
+OLD_LICENSE = "the terms of the Apache License 2.0"
 
 
-def has_header(path: Path) -> bool:
+def problem(path: Path) -> str | None:
     with path.open(encoding="utf-8", errors="replace") as handle:
         head = "".join(line for _, line in zip(range(HEAD_LINES), handle, strict=False))
-    return bool(COPYRIGHT.search(head)) and LICENSE in head
+    if OLD_LICENSE in head or any(m[0] != ENTITY for m in ANY_ENTITY.finditer(head)):
+        return "has the old prose license header; use the two SPDX lines"
+    if HEADER.search(head) is None:
+        return "missing the NVIDIA SPDX license header"
+    return None
 
 
 def main(paths: list[str]) -> int:
-    missing = [p for p in paths if not has_header(Path(p))]
-    for path in missing:
-        print(f"{path}: missing the NVIDIA Apache-2.0 license header")
-    return 1 if missing else 0
+    failed = 0
+    for path in paths:
+        message = problem(Path(path))
+        if message is not None:
+            print(f"{path}: {message}")
+            failed = 1
+    return failed
 
 
 if __name__ == "__main__":

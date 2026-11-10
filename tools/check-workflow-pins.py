@@ -1,11 +1,6 @@
 #!/usr/bin/env python3
-# ============================================================================ #
-# Copyright (c) 2026 NVIDIA Corporation & Affiliates.                          #
-# All rights reserved.                                                         #
-#                                                                              #
-# This source code and the accompanying materials are made available under     #
-# the terms of the Apache License 2.0 which accompanies this distribution.     #
-# ============================================================================ #
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Fail if a GitHub workflow or action uses a third-party action by a tag.
 
 Every ``uses: owner/repo@ref`` must pin a full 40-character commit SHA,

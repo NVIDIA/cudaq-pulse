@@ -1,10 +1,5 @@
-// ============================================================================ //
-// Copyright (c) 2026 NVIDIA Corporation & Affiliates.                          //
-// All rights reserved.                                                         //
-//                                                                              //
-// This source code and the accompanying materials are made available under     //
-// the terms of the Apache License 2.0 which accompanies this distribution.     //
-// ============================================================================ //
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
 
 // pulse.modes lists the simulated qudits, one mode each in order: qutrits 3
 // and 13 are modes 0 and 1 of a 3 x 3 space, not modes of a 3^14 one. Qudit 5

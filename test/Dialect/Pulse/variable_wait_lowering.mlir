@@ -1,10 +1,5 @@
-// ============================================================================ //
-// Copyright (c) 2026 NVIDIA Corporation & Affiliates.                          //
-// All rights reserved.                                                         //
-//                                                                              //
-// This source code and the accompanying materials are made available under     //
-// the terms of the Apache License 2.0 which accompanies this distribution.     //
-// ============================================================================ //
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
 
 // RUN: not cudaq-pulse-opt --split-input-file --pulse-verify %s 2>&1 | FileCheck %s --check-prefix=UNMARKED
 // RUN: not cudaq-pulse-opt --split-input-file --pulse-schedule-alap --pulse-to-qop %s 2>&1 | FileCheck %s --check-prefix=UNBOUND

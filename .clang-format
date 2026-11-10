@@ -1,5 +1,6 @@
 BasedOnStyle: LLVM
 AlwaysBreakTemplateDeclarations: Yes
+CommentPragmas: '^ (IWYU pragma:|SPDX-)'
 IncludeCategories:
   - Regex:           '^<'
     Priority:        4

@@ -1,12 +1,8 @@
-# ============================================================================ #
-# Copyright (c) 2026 NVIDIA Corporation & Affiliates.                          #
-# All rights reserved.                                                         #
-#                                                                              #
-# This source code and the accompanying materials are made available under     #
-# the terms of the Apache License 2.0 which accompanies this distribution.     #
-# ============================================================================ #
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """The release tag checks, the workflow pin check, the release hygiene check,
-the GPU CI matrix and the classical remnant check (source tree only)."""
+the GPU CI matrix, the classical remnant check and the license header check
+(source tree only)."""
 
 import importlib.util
 import json
@@ -277,6 +273,58 @@ def test_classical_remnants(tmp_path):
     notebook = tmp_path / "n.ipynb"
     notebook.write_text(json.dumps({"cells": [{"source": ["x = 1\n", bad[1]]}]}))
     assert [error.split(":")[1] for error in check(notebook)] == ["2"]
+
+
+_SPDX = (
+    "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. "
+    "All rights reserved.",
+    "SPDX-License-Identifier: Apache-2.0",
+)
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        [f"# {line}" for line in _SPDX],
+        ["#!/usr/bin/env python3", *(f"# {line}" for line in _SPDX)],
+        [f"// {line}" for line in _SPDX],
+        ["//===- a.cpp - A file -----===//", "//", *(f"// {line}" for line in _SPDX), "//"],
+        ["/*", *(f" * {line}" for line in _SPDX), " */"],
+        ["..", *(f"   {line}" for line in _SPDX)],
+    ],
+)
+def test_license_header_accepts_the_spdx_pair(tmp_path, header):
+    path = tmp_path / "f"
+    path.write_text("\n".join([*header, "", "code"]) + "\n")
+    assert _load("check-license-headers").problem(path) is None
+
+
+@pytest.mark.parametrize(
+    "header, message",
+    [
+        (
+            [
+                "# Copyright (c) 2026 NVIDIA Corporation & Affiliates.",
+                "# All rights reserved.",
+                "# This source code and the accompanying materials are made available under",
+                "# the terms of the Apache License 2.0 which accompanies this distribution.",
+            ],
+            "old prose",
+        ),
+        ([f"# {line.replace('CORPORATION', 'Corporation')}" for line in _SPDX], "old prose"),
+        ([f"# {_SPDX[0]}"], "missing"),
+        ([f"# {_SPDX[0]}", f"// {_SPDX[1]}"], "missing"),
+        ([f"# {_SPDX[0].replace('2026', '26')}", f"# {_SPDX[1]}"], "missing"),
+        (["", *[f"#{i}" for i in range(12)], *(f"# {line}" for line in _SPDX)], "missing"),
+    ],
+)
+def test_license_header_refuses_anything_else(tmp_path, capsys, header, message):
+    check = _load("check-license-headers")
+    path = tmp_path / "f"
+    path.write_text("\n".join([*header, "code"]) + "\n")
+    assert message in check.problem(path)
+    assert check.main([str(path)]) == 1
+    assert capsys.readouterr().out.startswith(f"{path}: ")
 
 
 def _locked(package):
