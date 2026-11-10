@@ -5641,10 +5641,8 @@ public:
         requirePayload(7);
         auto driveOp = pulse::DriveOp::create(
             *builder_, loc, driveTy, toneTy, look(p[0]), look(p[1]), look(p[2]),
-            p[5] != -1 ? builder_->getI64IntegerAttr(p[5])
-                       : mlir::IntegerAttr(),
-            p[6] != -1 ? builder_->getI64IntegerAttr(p[6])
-                       : mlir::IntegerAttr(),
+            p[5] != -1 ? std::optional<int64_t>(p[5]) : std::nullopt,
+            p[6] != -1 ? std::optional<int64_t>(p[6]) : std::nullopt,
             /*period_cycles=*/{});
         bind(p[3], driveOp.getUpdatedLine());
         bind(p[4], driveOp.getUpdatedTone());

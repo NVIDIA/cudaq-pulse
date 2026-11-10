@@ -141,8 +141,7 @@ private:
             << *duration << ", but the operation takes " << *cycles
             << " cycles";
     }
-    auto periods = pulse::periodCyclesAttr(op);
-    if (static_cast<size_t>(periods ? periods.size() : 0) != iteration.size()) {
+    if (pulse::periodCycles(op).size() != iteration.size()) {
       error(op,
             "scheduled operation needs one period_cycles entry per enclosing "
             "scf.for");
@@ -200,8 +199,8 @@ private:
     loop.getBody()->walk([&](mlir::Operation *op) {
       if (!isTimedOp(op))
         return;
-      auto periods = pulse::periodCyclesAttr(op);
-      if (!periods || periods.size() <= level)
+      llvm::ArrayRef<int64_t> periods = pulse::periodCycles(op);
+      if (periods.size() <= level)
         return;
       int64_t period = periods[level];
       if (period < 0) {

@@ -10,9 +10,9 @@
 // Adjacent square drives fuse inside a block, but not across its boundary:
 // the block keeps its own timing.
 // CHECK-LABEL: func.func @fuse_and_blocks
-// CHECK: pulse.drive {{.*}}duration_cycles = 80 : i64, fused
+// CHECK: pulse.drive {{.*}}duration_cycles = 80 : i64{{.*}}}> {fused
 // CHECK: pulse.schedule_block
-// CHECK: pulse.drive {{.*}}duration_cycles = 80 : i64, fused
+// CHECK: pulse.drive {{.*}}duration_cycles = 80 : i64{{.*}}}> {fused
 // CHECK-NEXT: pulse.yield
 func.func @fuse_and_blocks() {
   %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit

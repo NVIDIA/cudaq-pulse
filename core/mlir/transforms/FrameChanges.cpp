@@ -156,19 +156,14 @@ public:
         }
       }
     }
-    pulse::setTiming(change, mlir::IntegerAttr::get(i64, time->base),
-                     mlir::IntegerAttr::get(i64, 0),
-                     time->periods.empty() ? mlir::DenseI64ArrayAttr()
-                                           : mlir::DenseI64ArrayAttr::get(
-                                                 context, time->periods));
+    pulse::setTiming(change, time->base, 0, time->periods);
   }
 
 private:
   Time timeOf(mlir::Operation *op, int64_t offset) const {
-    Time time{pulse::startCyclesAttr(op).getInt() + offset, {}};
-    if (auto periods = pulse::periodCyclesAttr(op))
-      time.periods.assign(periods.asArrayRef().begin(),
-                          periods.asArrayRef().end());
+    Time time{*pulse::startCycles(op) + offset, {}};
+    llvm::ArrayRef<int64_t> periods = pulse::periodCycles(op);
+    time.periods.assign(periods.begin(), periods.end());
     return time;
   }
 

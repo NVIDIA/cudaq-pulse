@@ -123,50 +123,52 @@ inline R withTiming(mlir::Operation *op, R otherwise, Fn &&fn) {
   return otherwise;
 }
 
-inline mlir::IntegerAttr startCyclesAttr(mlir::Operation *op) {
-  return withTiming(op, mlir::IntegerAttr(),
-                    [](auto timed) { return timed.getStartCyclesAttr(); });
+inline std::optional<int64_t> startCycles(mlir::Operation *op) {
+  return withTiming(op, std::optional<int64_t>(),
+                    [](auto timed) { return timed.getStartCycles(); });
 }
 
-inline mlir::IntegerAttr durationCyclesAttr(mlir::Operation *op) {
-  return withTiming(op, mlir::IntegerAttr(),
-                    [](auto timed) { return timed.getDurationCyclesAttr(); });
+inline std::optional<int64_t> durationCycles(mlir::Operation *op) {
+  return withTiming(op, std::optional<int64_t>(),
+                    [](auto timed) { return timed.getDurationCycles(); });
 }
 
-inline mlir::DenseI64ArrayAttr periodCyclesAttr(mlir::Operation *op) {
-  return withTiming(op, mlir::DenseI64ArrayAttr(),
-                    [](auto timed) { return timed.getPeriodCyclesAttr(); });
+/// The periods of `op`, one per enclosing loop it is scheduled in; empty
+/// outside loops or when it is not scheduled.
+inline llvm::ArrayRef<int64_t> periodCycles(mlir::Operation *op) {
+  return withTiming(op, llvm::ArrayRef<int64_t>(),
+                    [](auto timed) { return timed.getPeriodCycles(); });
 }
 
 /// Whether `op` has a start: it is scheduled and runs.
 inline bool hasStart(mlir::Operation *op) {
-  return static_cast<bool>(startCyclesAttr(op));
+  return startCycles(op).has_value();
 }
 
-/// Sets the timing of `op`, a timed op; a null attribute removes that part.
-inline void setTiming(mlir::Operation *op, mlir::IntegerAttr start,
-                      mlir::IntegerAttr duration,
-                      mlir::DenseI64ArrayAttr period) {
+/// Sets the timing of `op`, a timed op; nullopt or no periods removes that
+/// part.
+inline void setTiming(mlir::Operation *op, std::optional<int64_t> start,
+                      std::optional<int64_t> duration,
+                      llvm::ArrayRef<int64_t> periods) {
   withTiming(op, 0, [&](auto timed) {
-    auto &properties = timed.getProperties();
-    properties.start_cycles = start;
-    properties.duration_cycles = duration;
-    properties.period_cycles = period;
+    timed.setStartCycles(start);
+    timed.setDurationCycles(duration);
+    timed.setPeriodCycles(periods);
     return 0;
   });
 }
 
-inline void setStartCycles(mlir::Operation *op, mlir::IntegerAttr start) {
+inline void setStartCycles(mlir::Operation *op, std::optional<int64_t> start) {
   withTiming(op, 0, [&](auto timed) {
-    timed.getProperties().start_cycles = start;
+    timed.setStartCycles(start);
     return 0;
   });
 }
 
 inline void setPeriodCycles(mlir::Operation *op,
-                            mlir::DenseI64ArrayAttr period) {
+                            llvm::ArrayRef<int64_t> periods) {
   withTiming(op, 0, [&](auto timed) {
-    timed.getProperties().period_cycles = period;
+    timed.setPeriodCycles(periods);
     return 0;
   });
 }
@@ -177,21 +179,18 @@ inline std::optional<int64_t>
 scheduledStart(mlir::Operation *op, llvm::ArrayRef<int64_t> iteration) {
   return withTiming(
       op, std::optional<int64_t>(), [&](auto timed) -> std::optional<int64_t> {
-        mlir::IntegerAttr start = timed.getStartCyclesAttr();
+        std::optional<int64_t> start = timed.getStartCycles();
         if (!start)
           return std::nullopt;
-        int64_t time = start.getInt();
-        if (auto periods = timed.getPeriodCyclesAttr())
-          for (auto [k, period] : llvm::zip(iteration, periods.asArrayRef()))
-            time += k * period;
+        int64_t time = *start;
+        for (auto [k, period] : llvm::zip(iteration, timed.getPeriodCycles()))
+          time += k * period;
         return time;
       });
 }
 
 inline std::optional<int64_t> scheduledDuration(mlir::Operation *op) {
-  if (auto duration = durationCyclesAttr(op))
-    return duration.getInt();
-  return std::nullopt;
+  return durationCycles(op);
 }
 
 } // namespace pulse

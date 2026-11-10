@@ -27,7 +27,7 @@ classical.callable @track {function_id = 2067622972 : i64, device = 1 : i64,
 // starts there under both policies, and the eager submission stays at 300.
 // CHECK-LABEL: func.func @feedback
 // CHECK: pulse.readout {{.*}}start_cycles = 0
-// CHECK: classical.submit {{.*}}classical.budget_cycles = 3000 : i64{{.*}}classical.submit_cycles = 1 : i64{{.*}}duration_cycles = 1 : i64, start_cycles = 300 : i64}
+// CHECK: classical.submit {{.*}}<{duration_cycles = 1 : i64, start_cycles = 300 : i64}> {{.*}}classical.budget_cycles = 3000 : i64{{.*}}classical.submit_cycles = 1 : i64
 // CHECK: classical.wait {{.*}}duration_cycles = 0 : i64, start_cycles = 3301 : i64}
 // CHECK: pulse.drive {{.*}}start_cycles = 3301 : i64
 func.func @feedback() {
@@ -114,7 +114,7 @@ func.func @link_order() {
 // CHECK: pulse.drive {{.*}}start_cycles = 0 : i64
 // ASAP: pulse.drive {{.*}}start_cycles = 0 : i64
 // ALAP: pulse.drive {{.*}}start_cycles = 101 : i64
-// CHECK: classical.wait {{.*}}classical.blocking{{.*}}start_cycles = 141 : i64}
+// CHECK: classical.wait {{.*}}start_cycles = 141 : i64}> {{.*}}classical.blocking
 // CHECK: pulse.drive {{.*}}start_cycles = 141 : i64
 func.func @barrier() {
   %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit

@@ -106,7 +106,7 @@ def Classical_SubmitOp : ClassicalOp<"submit",
   let results = (outs Classical_LinkType:$updated_link,
                       Classical_FutureType:$future);
   let assemblyFormat = [{
-    $link `,` $callee `(` $args `)` attr-dict `:` functional-type($args, results)
+    $link `,` $callee `(` $args `)` `` custom<Timing>("getOperationName()", $start_cycles, $duration_cycles, $period_cycles) attr-dict `:` functional-type($args, results)
   }];
 }
 
@@ -128,7 +128,7 @@ def Classical_WaitOp : ClassicalOp<"wait",
                        OptionalAttr<F64Attr>:$timeout_ns),
                        PulseTimingArgs);
   let results = (outs Variadic<AnyType>:$values);
-  let assemblyFormat = "$future `,` $callee attr-dict `:` type($values)";
+  let assemblyFormat = "$future `,` $callee `` custom<Timing>(\"getOperationName()\", $start_cycles, $duration_cycles, $period_cycles, $timeout_ns) attr-dict `:` type($values)";
 }
 
 #endif // CUDAQ_PULSE_DIALECT_CLASSICAL_OPS

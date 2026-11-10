@@ -243,7 +243,7 @@ def test_the_module_rounds_and_the_call_binds():
     assert "pulse.variable_wait" in generic and "pulse.min_cycles = 0" in generic
     bound = lowered.mlir()
     assert "%arg0" not in bound
-    assert "duration_cycles = 7 : i64, pulse.min_cycles = 0" in bound
+    assert "duration_cycles = 7 : i64, start_cycles = 40 : i64}> {pulse.min_cycles = 0" in bound
 
 
 def test_without_values_a_wait_stands_at_its_lowest_length():

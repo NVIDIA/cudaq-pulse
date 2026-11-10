@@ -252,7 +252,7 @@ def DriveOp : PulseOp<"drive", []> {
                        PulseTimingArgs);
   let results = (outs DriveLineType:$updated_line, ToneType:$updated_tone);
   let assemblyFormat = [{
-    $line `,` $pulse `,` $tone attr-dict `:` qualified(type($line))
+    $line `,` $pulse `,` $tone `` custom<Timing>("getOperationName()", $start_cycles, $duration_cycles, $period_cycles) attr-dict `:` qualified(type($line))
     `,` qualified(type($pulse)) `,` qualified(type($tone))
     `->` qualified(type($updated_line)) `,` qualified(type($updated_tone))
   }];
@@ -287,7 +287,7 @@ def ReadoutOp : PulseOp<"readout", []> {
     MeasurementType:$result
   );
   let assemblyFormat = [{
-    $line `,` $pulse `,` $tone `,` $mode attr-dict `:` qualified(type($line))
+    $line `,` $pulse `,` $tone `,` $mode `` custom<Timing>("getOperationName()", $start_cycles, $duration_cycles, $period_cycles) attr-dict `:` qualified(type($line))
     `,` qualified(type($pulse)) `,` qualified(type($tone))
     `->` qualified(type($updated_line)) `,` qualified(type($updated_tone))
     `,` qualified(type($result))
@@ -373,7 +373,7 @@ def WaitOp : PulseOp<"wait", [AllTypesMatch<["line", "updated_line"]>]> {
   ),
                        PulseTimingArgs);
   let results = (outs AnyLineType:$updated_line);
-  let assemblyFormat = "$line `,` $duration attr-dict `:` functional-type(operands, results)";
+  let assemblyFormat = "$line `,` $duration `` custom<Timing>(\"getOperationName()\", $start_cycles, $duration_cycles, $period_cycles) attr-dict `:` functional-type(operands, results)";
   let hasVerifier = 1;
   let hasFolder = 1;
   let hasCanonicalizer = 1;
@@ -460,7 +460,7 @@ def ShiftFrequencyOp : PulseOp<"shift_frequency", []> {
   let arguments = !con((ins ToneType:$tone, F64:$frequency_hz),
                        PulseTimingArgs);
   let results = (outs ToneType:$updated_tone);
-  let assemblyFormat = "$tone `,` $frequency_hz attr-dict `:` qualified(type($tone)) `,` type($frequency_hz) `->` qualified(type($updated_tone))";
+  let assemblyFormat = "$tone `,` $frequency_hz `` custom<Timing>(\"getOperationName()\", $start_cycles, $duration_cycles, $period_cycles) attr-dict `:` qualified(type($tone)) `,` type($frequency_hz) `->` qualified(type($updated_tone))";
   let hasFolder = 1;
   let hasCanonicalizer = 1;
 }
@@ -477,7 +477,7 @@ def ShiftPhaseOp : PulseOp<"shift_phase", []> {
   let arguments = !con((ins ToneType:$tone, F64:$phase_rad),
                        PulseTimingArgs);
   let results = (outs ToneType:$updated_tone);
-  let assemblyFormat = "$tone `,` $phase_rad attr-dict `:` qualified(type($tone)) `,` type($phase_rad) `->` qualified(type($updated_tone))";
+  let assemblyFormat = "$tone `,` $phase_rad `` custom<Timing>(\"getOperationName()\", $start_cycles, $duration_cycles, $period_cycles) attr-dict `:` qualified(type($tone)) `,` type($phase_rad) `->` qualified(type($updated_tone))";
   let hasFolder = 1;
   let hasCanonicalizer = 1;
 }
@@ -491,7 +491,7 @@ def SetPhaseOp : PulseOp<"set_phase", []> {
   let arguments = !con((ins ToneType:$tone, F64:$phase_rad),
                        PulseTimingArgs);
   let results = (outs ToneType:$updated_tone);
-  let assemblyFormat = "$tone `,` $phase_rad attr-dict `:` qualified(type($tone)) `,` type($phase_rad) `->` qualified(type($updated_tone))";
+  let assemblyFormat = "$tone `,` $phase_rad `` custom<Timing>(\"getOperationName()\", $start_cycles, $duration_cycles, $period_cycles) attr-dict `:` qualified(type($tone)) `,` type($phase_rad) `->` qualified(type($updated_tone))";
   let hasFolder = 1;
   let hasCanonicalizer = 1;
 }
@@ -505,7 +505,7 @@ def SetFrequencyOp : PulseOp<"set_frequency", []> {
   let arguments = !con((ins ToneType:$tone, F64:$frequency_hz),
                        PulseTimingArgs);
   let results = (outs ToneType:$updated_tone);
-  let assemblyFormat = "$tone `,` $frequency_hz attr-dict `:` qualified(type($tone)) `,` type($frequency_hz) `->` qualified(type($updated_tone))";
+  let assemblyFormat = "$tone `,` $frequency_hz `` custom<Timing>(\"getOperationName()\", $start_cycles, $duration_cycles, $period_cycles) attr-dict `:` qualified(type($tone)) `,` type($frequency_hz) `->` qualified(type($updated_tone))";
   let hasFolder = 1;
   let hasCanonicalizer = 1;
 }
@@ -634,7 +634,7 @@ def ScheduleBlockOp : PulseOp<"schedule_block", [
   let results = (outs Variadic<AnyTimedType>:$outputs);
   let regions = (region SizedRegion<1>:$body);
   let assemblyFormat = [{
-    $policy ` ` `(` $inputs `)` attr-dict `:` functional-type($inputs, $outputs)
+    $policy ` ` `(` $inputs `)` `` custom<Timing>("getOperationName()", $start_cycles, $duration_cycles, $period_cycles, $callee) attr-dict `:` functional-type($inputs, $outputs)
     $body
   }];
   let hasRegionVerifier = 1;

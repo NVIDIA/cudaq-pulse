@@ -22,9 +22,9 @@ classical.callable @decode {function_id = 1, device = 0 : i64,
     submit = "eager", function_id_override}
 
 // CHECK-LABEL: func.func @each_controller_its_own_slot
-// CHECK: classical.submit {{.*}}classical.instance = 0 : i64{{.*}}start_cycles = 10 : i64}
+// CHECK: classical.submit {{.*}}start_cycles = 10 : i64}> {{.*}}classical.instance = 0 : i64
 // CHECK: classical.wait {{.*}}classical.instance = 0 : i64
-// CHECK: classical.submit {{.*}}classical.instance = 1 : i64{{.*}}start_cycles = 10 : i64}
+// CHECK: classical.submit {{.*}}start_cycles = 10 : i64}> {{.*}}classical.instance = 1 : i64
 // CHECK: classical.wait {{.*}}classical.instance = 1 : i64
 func.func @each_controller_its_own_slot() {
   %c10 = arith.constant 10 : i64

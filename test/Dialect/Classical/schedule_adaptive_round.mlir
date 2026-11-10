@@ -33,7 +33,7 @@ classical.callable @update {args = ["bits:1", "f64", "f64", "f64"], device = 0 :
 // ALAP: pulse.drive {{.*}}duration_cycles = 40 : i64, start_cycles = 1184 : i64}
 // ASAP: pulse.drive {{.*}}start_cycles = 200 : i64}
 // ASAP: pulse.drive {{.*}}duration_cycles = 40 : i64, start_cycles = 240 : i64}
-// CHECK: pulse.wait {{.*}}classical.variable{{.*}}duration_cycles = 32 : i64, {{.*}}start_cycles = 1224 : i64}
+// CHECK: pulse.wait {{.*}}duration_cycles = 32 : i64, {{.*}}start_cycles = 1224 : i64}> {{.*}}classical.variable
 // CHECK: pulse.readout {{.*}}start_cycles = 1256 : i64}
 func.func @round() {
   %c40 = arith.constant 40 : i64

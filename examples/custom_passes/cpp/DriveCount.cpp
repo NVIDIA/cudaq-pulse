@@ -9,8 +9,9 @@
 //   cudaq-pulse-opt --load-pass-plugin=PulseExamplePlugin.so \
 //       --pass-pipeline='builtin.module(pulse-example-drive-count)' in.mlir
 //
-// The pass matches ops by name, so it builds against MLIR alone; a plugin can
-// equally include the generated Pulse dialect headers and use the op classes.
+// The pass matches ops by name and reads their properties as attributes, so it
+// builds against MLIR alone; a plugin can equally include the generated Pulse
+// dialect headers and use the op classes.
 
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -44,8 +45,13 @@ struct DriveCountPass
         if (op->getName().getStringRef() != "pulse.drive")
           return;
         ++drives;
-        if (auto duration =
-                op->getAttrOfType<mlir::IntegerAttr>("duration_cycles"))
+        // The schedule is in the op's properties, read here in their
+        // attribute form.
+        auto properties = mlir::dyn_cast_or_null<mlir::DictionaryAttr>(
+            op->getPropertiesAsAttribute());
+        if (auto duration = properties ? properties.getAs<mlir::IntegerAttr>(
+                                             "duration_cycles")
+                                       : mlir::IntegerAttr())
           driveCycles += duration.getInt();
       });
       function.setAttr("pulse_example.drives",

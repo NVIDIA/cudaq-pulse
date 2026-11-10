@@ -25,7 +25,7 @@ classical.callable @tau {function_id = 1 : i64, device = 0 : i64,
 // CHECK-NOT: classical.timeline
 // ASAP: pulse.drive {{.*}}start_cycles = 0 : i64
 // ALAP: pulse.drive {{.*}}start_cycles = 260 : i64
-// CHECK: pulse.wait {{.*}}classical.variable{{.*}}duration_cycles = 16 : i64, {{.*}}start_cycles = 300 : i64}
+// CHECK: pulse.wait {{.*}}duration_cycles = 16 : i64, {{.*}}start_cycles = 300 : i64}> {{.*}}classical.variable
 // CHECK: pulse.drive {{.*}}start_cycles = 316 : i64
 func.func @barrier() {
   %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
@@ -60,7 +60,7 @@ func.func @barrier() {
 // CHECK: pulse.drive {{.*}}start_cycles = 0 : i64
 // ASAP: pulse.drive {{.*}}start_cycles = 0 : i64
 // ALAP: pulse.drive {{.*}}start_cycles = 61 : i64
-// CHECK: pulse.wait {{.*}}classical.variable{{.*}}duration_cycles = 16 : i64, {{.*}}start_cycles = 101 : i64}
+// CHECK: pulse.wait {{.*}}duration_cycles = 16 : i64, {{.*}}start_cycles = 101 : i64}> {{.*}}classical.variable
 // CHECK: pulse.drive {{.*}}start_cycles = 117 : i64
 func.func @independent() {
   %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
@@ -92,7 +92,7 @@ func.func @independent() {
 // is peeled off the loop.
 // CHECK-LABEL: func.func @rounds
 // ASAP: classical.submit {{.*}}period_cycles = array<i64: 106>, start_cycles = 0 : i64}
-// ASAP: pulse.wait {{.*}}classical.variable{{.*}}period_cycles = array<i64: 106>, {{.*}}start_cycles = 101 : i64}
+// ASAP: pulse.wait {{.*}}period_cycles = array<i64: 106>, {{.*}}start_cycles = 101 : i64}> {{.*}}classical.variable
 // ASAP: pulse.drive {{.*}}period_cycles = array<i64: 106>, start_cycles = 106 : i64}
 // ALAP: pulse.drive {{.*}}period_cycles = array<i64: 106>, start_cycles = 167 : i64}
 // ALAP: pulse.drive {{.*}}start_cycles = 424 : i64}

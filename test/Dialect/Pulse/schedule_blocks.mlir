@@ -25,7 +25,7 @@
 // parent places the block as late as it can, so it ends with line a; line
 // c keeps its place at the start of the block instead of moving to the end.
 // CHECK-LABEL: func.func @asap_in_alap
-// CHECK: pulse.drive {{.*}}{duration_cycles = 200 : i64, start_cycles = 0 : i64}
+// CHECK: pulse.drive {{.*}}<{duration_cycles = 200 : i64, start_cycles = 0 : i64}>
 // ASAP: pulse.drive {{.*}}{duration_cycles = 100 : i64, start_cycles = 0 : i64}
 // ASAP: pulse.drive {{.*}}{duration_cycles = 40 : i64, start_cycles = 0 : i64}
 // ALAP: pulse.drive {{.*}}{duration_cycles = 100 : i64, start_cycles = 100 : i64}
@@ -60,9 +60,9 @@ func.func @asap_in_alap() {
 // An ALAP block in an ASAP parent: the short line c is right-aligned inside
 // the block, and the drive after the block waits for the block's end on c.
 // CHECK-LABEL: func.func @alap_in_asap
-// CHECK: pulse.drive {{.*}}{duration_cycles = 100 : i64, start_cycles = 0 : i64}
-// CHECK: pulse.drive {{.*}}{duration_cycles = 40 : i64, start_cycles = 60 : i64}
-// CHECK: pulse.drive {{.*}}{duration_cycles = 40 : i64, start_cycles = 100 : i64}
+// CHECK: pulse.drive {{.*}}<{duration_cycles = 100 : i64, start_cycles = 0 : i64}>
+// CHECK: pulse.drive {{.*}}<{duration_cycles = 40 : i64, start_cycles = 60 : i64}>
+// CHECK: pulse.drive {{.*}}<{duration_cycles = 40 : i64, start_cycles = 100 : i64}>
 // FLAT-ASAP-LABEL: func.func @alap_in_asap
 // FLAT-ASAP: pulse.drive {{.*}}{duration_cycles = 100 : i64, start_cycles = 0 : i64}
 // FLAT-ASAP: pulse.drive {{.*}}{duration_cycles = 40 : i64, start_cycles = 0 : i64}
@@ -95,7 +95,7 @@ func.func @alap_in_asap() {
 // 2 does not wait for: its first op on y is at 100. The ALAP root places
 // level 1 (length 140) to end with the 300-long drive on z.
 // CHECK-LABEL: func.func @three_levels
-// CHECK: pulse.drive {{.*}}{duration_cycles = 300 : i64, start_cycles = 0 : i64}
+// CHECK: pulse.drive {{.*}}<{duration_cycles = 300 : i64, start_cycles = 0 : i64}>
 // ASAP: pulse.drive {{.*}}{duration_cycles = 60 : i64, start_cycles = 0 : i64}
 // ASAP: pulse.drive {{.*}}{duration_cycles = 100 : i64, start_cycles = 0 : i64}
 // ASAP: pulse.drive {{.*}}{duration_cycles = 40 : i64, start_cycles = 100 : i64}
@@ -147,11 +147,11 @@ func.func @three_levels() {
 // affine: the block's ops take the loop's period, followed by the period of
 // the loop inside the block.
 // CHECK-LABEL: func.func @block_in_loop
-// CHECK: pulse.drive {{.*}}{duration_cycles = 100 : i64, start_cycles = 0 : i64}
+// CHECK: pulse.drive {{.*}}<{duration_cycles = 100 : i64, start_cycles = 0 : i64}>
 // CHECK: scf.for
 // CHECK-NEXT: scf.for
-// CHECK-NEXT: pulse.drive {{.*}}{duration_cycles = 40 : i64, period_cycles = array<i64: 100, 40>, start_cycles = 100 : i64}
-// CHECK: pulse.wait {{.*}}{duration_cycles = 20 : i64, period_cycles = array<i64: 100>, start_cycles = 180 : i64}
+// CHECK-NEXT: pulse.drive {{.*}}<{duration_cycles = 40 : i64, period_cycles = array<i64: 100, 40>, start_cycles = 100 : i64}>
+// CHECK: pulse.wait {{.*}}<{duration_cycles = 20 : i64, period_cycles = array<i64: 100>, start_cycles = 180 : i64}>
 func.func @block_in_loop() {
   %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qudit) -> (!d, !t)
@@ -186,10 +186,10 @@ func.func @block_in_loop() {
 // A block in a measurement-conditioned arm starts once the measurement is
 // available; inside it, the ALAP policy right-aligns the short line.
 // CHECK-LABEL: func.func @block_in_if
-// CHECK: pulse.readout {{.*}}{duration_cycles = 400 : i64, start_cycles = 0 : i64}
+// CHECK: pulse.readout {{.*}}<{duration_cycles = 400 : i64, start_cycles = 0 : i64}>
 // CHECK: scf.if
-// CHECK: pulse.drive {{.*}}{duration_cycles = 100 : i64, start_cycles = 400 : i64}
-// CHECK: pulse.drive {{.*}}{duration_cycles = 40 : i64, start_cycles = 460 : i64}
+// CHECK: pulse.drive {{.*}}<{duration_cycles = 100 : i64, start_cycles = 400 : i64}>
+// CHECK: pulse.drive {{.*}}<{duration_cycles = 40 : i64, start_cycles = 460 : i64}>
 func.func @block_in_if() {
   %qa = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
   %qb = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qudit
@@ -224,10 +224,10 @@ func.func @block_in_if() {
 // operand that only the branch, 40 into the block, waits for. The block
 // starts so that the branch begins when the readout is done.
 // CHECK-LABEL: func.func @if_in_block
-// CHECK: pulse.readout {{.*}}{duration_cycles = 400 : i64, start_cycles = 0 : i64}
-// CHECK: pulse.drive {{.*}}{duration_cycles = 40 : i64, start_cycles = 360 : i64}
+// CHECK: pulse.readout {{.*}}<{duration_cycles = 400 : i64, start_cycles = 0 : i64}>
+// CHECK: pulse.drive {{.*}}<{duration_cycles = 40 : i64, start_cycles = 360 : i64}>
 // CHECK: scf.if
-// CHECK: pulse.drive {{.*}}{duration_cycles = 100 : i64, start_cycles = 400 : i64}
+// CHECK: pulse.drive {{.*}}<{duration_cycles = 100 : i64, start_cycles = 400 : i64}>
 func.func @if_in_block() {
   %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
   %r0, %tr0 = pulse.get_readout_line %q : (!pulse.qudit) -> (!r, !t)
@@ -261,8 +261,8 @@ func.func @if_in_block() {
 // only changes phase in the block, so it passes through: the drive on line c
 // after the block does not wait for the block.
 // CHECK-LABEL: func.func @tones_across_blocks
-// CHECK: pulse.drive {{.*}}{duration_cycles = 300 : i64, start_cycles = 0 : i64}
-// CHECK: pulse.drive {{.*}}{duration_cycles = 40 : i64, start_cycles = 300 : i64}
+// CHECK: pulse.drive {{.*}}<{duration_cycles = 300 : i64, start_cycles = 0 : i64}>
+// CHECK: pulse.drive {{.*}}<{duration_cycles = 40 : i64, start_cycles = 300 : i64}>
 // CHECK: pulse.shift_phase
 // ASAP: pulse.drive {{.*}}{duration_cycles = 40 : i64, start_cycles = 0 : i64}
 // ALAP: pulse.drive {{.*}}{duration_cycles = 40 : i64, start_cycles = 300 : i64}
@@ -295,8 +295,8 @@ func.func @tones_across_blocks() {
 // Line a is busy until 200, so the block, whose readout follows the sync,
 // starts at 200 even though line r is free.
 // CHECK-LABEL: func.func @sync_in_block
-// CHECK: pulse.drive {{.*}}{duration_cycles = 200 : i64, start_cycles = 0 : i64}
-// CHECK: pulse.readout {{.*}}{duration_cycles = 400 : i64, start_cycles = 200 : i64}
+// CHECK: pulse.drive {{.*}}<{duration_cycles = 200 : i64, start_cycles = 0 : i64}>
+// CHECK: pulse.readout {{.*}}<{duration_cycles = 400 : i64, start_cycles = 200 : i64}>
 func.func @sync_in_block() {
   %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qudit) -> (!d, !t)

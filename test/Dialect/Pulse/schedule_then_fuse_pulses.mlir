@@ -10,7 +10,7 @@
 
 // CHECK-LABEL: func.func @fuse_in_loop
 // CHECK: scf.for
-// CHECK: pulse.drive {{.*}}{duration_cycles = 80 : i64, fused, period_cycles = array<i64: 280>, start_cycles = 0 : i64}
+// CHECK: pulse.drive {{.*}}<{duration_cycles = 80 : i64, period_cycles = array<i64: 280>, start_cycles = 0 : i64}> {fused}
 // CHECK-NOT: pulse.drive %
 // CHECK: pulse.wait
 func.func @fuse_in_loop() {

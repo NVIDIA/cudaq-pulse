@@ -11,9 +11,9 @@
 // the wait after it starts once all eight have run.
 // CHECK-LABEL: func.func @dd_loop
 // CHECK: scf.for
-// CHECK: pulse.drive {{.*}}{duration_cycles = 40 : i64, period_cycles = array<i64: 240>, start_cycles = 100 : i64}
-// CHECK: pulse.wait {{.*}}{duration_cycles = 200 : i64, period_cycles = array<i64: 240>, start_cycles = 140 : i64}
-// CHECK: pulse.wait {{.*}}{duration_cycles = 10 : i64, start_cycles = 2020 : i64}
+// CHECK: pulse.drive {{.*}}<{duration_cycles = 40 : i64, period_cycles = array<i64: 240>, start_cycles = 100 : i64}>
+// CHECK: pulse.wait {{.*}}<{duration_cycles = 200 : i64, period_cycles = array<i64: 240>, start_cycles = 140 : i64}>
+// CHECK: pulse.wait {{.*}}<{duration_cycles = 10 : i64, start_cycles = 2020 : i64}>
 func.func @dd_loop() {
   %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
@@ -74,10 +74,10 @@ func.func @transient(%x: !pulse.waveform) {
 // The conditional X waits for the readout; the wait after the if waits for
 // the longer arm.
 // CHECK-LABEL: func.func @active_reset
-// CHECK: pulse.readout {{.*}}{duration_cycles = 300 : i64, start_cycles = 0 : i64}
+// CHECK: pulse.readout {{.*}}<{duration_cycles = 300 : i64, start_cycles = 0 : i64}>
 // CHECK: scf.if
-// CHECK: pulse.drive {{.*}}{duration_cycles = 40 : i64, start_cycles = 300 : i64}
-// CHECK: pulse.wait {{.*}}{duration_cycles = 10 : i64, start_cycles = 340 : i64}
+// CHECK: pulse.drive {{.*}}<{duration_cycles = 40 : i64, start_cycles = 300 : i64}>
+// CHECK: pulse.wait {{.*}}<{duration_cycles = 10 : i64, start_cycles = 340 : i64}>
 func.func @active_reset() {
   %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
@@ -105,7 +105,7 @@ func.func @active_reset() {
 // Each conditional drive waits for its own iteration's readout. ASAP plays it
 // right after the readout; ALAP packs the drives at the end of the schedule.
 // CHECK-LABEL: func.func @feedback_in_loop
-// CHECK: pulse.readout {{.*}}{duration_cycles = 300 : i64, period_cycles = array<i64: 300>, start_cycles = 0 : i64}
+// CHECK: pulse.readout {{.*}}<{duration_cycles = 300 : i64, period_cycles = array<i64: 300>, start_cycles = 0 : i64}>
 // ASAP: pulse.drive {{.*}}{duration_cycles = 40 : i64, period_cycles = array<i64: 300>, start_cycles = 300 : i64}
 // ALAP: pulse.drive {{.*}}{duration_cycles = 40 : i64, period_cycles = array<i64: 40>, start_cycles = 1340 : i64}
 func.func @feedback_in_loop() {

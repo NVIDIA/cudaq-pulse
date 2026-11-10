@@ -10,7 +10,7 @@
 
 // CHECK-LABEL: func.func @main
 // CHECK: %[[T1:.*]] = pulse.shift_phase
-// CHECK: %{{.*}}, %[[T2:.*]], %[[M:.*]] = pulse.readout %{{.*}}, %{{.*}}, %[[T1]], iq {duration_cycles = 400 : i64, start_cycles = 0 : i64}
+// CHECK: %{{.*}}, %[[T2:.*]], %[[M:.*]] = pulse.readout %{{.*}}, %{{.*}}, %[[T1]], iq <{duration_cycles = 400 : i64, start_cycles = 0 : i64}>
 // CHECK: %[[T3:.*]] = pulse.shift_phase %[[T2]]
 // CHECK: pulse.iq_acquire %{{.*}}, %{{.*}}, %[[T3]] : !pulse.readout_line
 // CHECK: pulse.is_set %[[M]]

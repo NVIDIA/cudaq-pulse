@@ -34,10 +34,10 @@ func.func @t1(%tau: f64) {
   %len = pulse.duration_from_int %n : (i64) -> !pulse.duration
   // CHECK: = pulse.wait %
   // CHECK-SAME: duration_cycles = 16
+  // CHECK-SAME: start_cycles = 40
   // CHECK-SAME: pulse.max_cycles = 4000
   // CHECK-SAME: pulse.min_cycles = 16
   // CHECK-SAME: pulse.variable_wait
-  // CHECK-SAME: start_cycles = 40
   %d2 = pulse.wait %d1, %len {pulse.variable_wait, pulse.min_cycles = 16 : i64, pulse.max_cycles = 4000 : i64}
       : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
   %s:2 = pulse.sync %d2, %r0 : !pulse.drive_line, !pulse.readout_line

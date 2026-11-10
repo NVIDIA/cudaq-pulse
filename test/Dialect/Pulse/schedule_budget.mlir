@@ -21,7 +21,7 @@ func.func @fits(%d0: !d, %t0: !t) {
   %ub = arith.constant 100 : index
   %step = arith.constant 1 : index
   %dn, %tn = scf.for %i = %lb to %ub step %step iter_args(%d = %d0, %t = %t0) -> (!d, !t) {
-    %d1, %t1 = pulse.schedule_block asap (%d, %t) {callee = "cycle", max_duration_cycles = 80 : i64} : (!d, !t) -> (!d, !t) {
+    %d1, %t1 = pulse.schedule_block asap (%d, %t) <{callee = "cycle"}> {max_duration_cycles = 80 : i64} : (!d, !t) -> (!d, !t) {
     ^bb0(%db: !d, %tb: !t):
       %d2, %t2 = pulse.drive %db, %x, %tb : !d, !w, !t -> !d, !t
       %d3, %t3 = pulse.drive %d2, %x, %t2 : !d, !w, !t -> !d, !t
@@ -43,7 +43,7 @@ func.func @overruns(%d0: !d, %t0: !t) {
   %s = arith.constant 10.0 : f64
   %x = pulse.gaussian %c, %a, %s : i64, f64, f64 -> !pulse.waveform
   // expected-error @+1 {{each call of kernel 'cycle' takes 80 cycles, more than max_duration_cycles=79; let its operations overlap, shorten them or raise max_duration_cycles}}
-  %d1, %t1 = pulse.schedule_block asap (%d0, %t0) {callee = "cycle", max_duration_cycles = 79 : i64} : (!d, !t) -> (!d, !t) {
+  %d1, %t1 = pulse.schedule_block asap (%d0, %t0) <{callee = "cycle"}> {max_duration_cycles = 79 : i64} : (!d, !t) -> (!d, !t) {
   ^bb0(%db: !d, %tb: !t):
     %d2, %t2 = pulse.drive %db, %x, %tb : !d, !pulse.waveform, !t -> !d, !t
     %d3, %t3 = pulse.drive %d2, %x, %t2 : !d, !pulse.waveform, !t -> !d, !t
@@ -61,7 +61,7 @@ func.func @variable_wait(%tau: f64, %d0: !d) {
   %n = arith.fptosi %tau : f64 to i64
   %len = pulse.duration_from_int %n : (i64) -> !pulse.duration
   // expected-error @+1 {{each call of kernel 'idle' takes up to 400 cycles (8 as scheduled, its variable waits add up to 392), more than max_duration_cycles=100}}
-  %d1 = pulse.schedule_block asap (%d0) {callee = "idle", max_duration_cycles = 100 : i64} : (!d) -> (!d) {
+  %d1 = pulse.schedule_block asap (%d0) <{callee = "idle"}> {max_duration_cycles = 100 : i64} : (!d) -> (!d) {
   ^bb0(%db: !d):
     %d2 = pulse.wait %db, %len {pulse.variable_wait, pulse.min_cycles = 8 : i64, pulse.max_cycles = 400 : i64}
         : (!d, !pulse.duration) -> !d
@@ -77,7 +77,7 @@ func.func @variable_wait(%tau: f64, %d0: !d) {
 func.func @unbounded_wait(%tau: f64, %d0: !d) {
   %n = arith.fptosi %tau : f64 to i64
   %len = pulse.duration_from_int %n : (i64) -> !pulse.duration
-  %d1 = pulse.schedule_block asap (%d0) {callee = "idle", max_duration_cycles = 100 : i64} : (!d) -> (!d) {
+  %d1 = pulse.schedule_block asap (%d0) <{callee = "idle"}> {max_duration_cycles = 100 : i64} : (!d) -> (!d) {
   ^bb0(%db: !d):
     // expected-error @+1 {{each call of kernel 'idle' has max_duration_cycles=100, but this wait in it has no highest length; bound it with wait(..., bounds=(lowest, highest)), or drop max_duration_cycles}}
     %d2 = pulse.wait %db, %len {pulse.variable_wait, pulse.min_cycles = 8 : i64}

@@ -36,7 +36,7 @@ module attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.coupling_pairs = 
     %c40 = arith.constant 40 : i64
     %zero = arith.constant 0.0 : f64
     %x = pulse.square %c40, %zero, %zero : i64, f64, f64 -> !pulse.waveform
-    %d2, %t2 = pulse.drive %d0, %x, %t0 {start_cycles = 0 : i64, duration_cycles = 40 : i64} : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+    %d2, %t2 = pulse.drive %d0, %x, %t0 <{duration_cycles = 40 : i64, start_cycles = 0 : i64}> : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
     return
   }
 }
@@ -60,7 +60,7 @@ module attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.coupling_pairs = 
     %c40 = arith.constant 40 : i64
     %zero = arith.constant 0.0 : f64
     %x = pulse.square %c40, %zero, %zero : i64, f64, f64 -> !pulse.waveform
-    %d2, %t2 = pulse.drive %d0, %x, %t0 {start_cycles = 0 : i64, duration_cycles = 40 : i64} : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+    %d2, %t2 = pulse.drive %d0, %x, %t0 <{duration_cycles = 40 : i64, start_cycles = 0 : i64}> : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
     return
   }
 }

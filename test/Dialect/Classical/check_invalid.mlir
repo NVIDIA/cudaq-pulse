@@ -63,9 +63,9 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
       submit = "eager"}
   func.func @early() {
     %l = classical.get_link {device = 0 : i64} : !classical.link
-    %l1, %h = classical.submit %l, @f() {start_cycles = 10 : i64, duration_cycles = 1 : i64} : () -> (!classical.link, !classical.future)
+    %l1, %h = classical.submit %l, @f() <{duration_cycles = 1 : i64, start_cycles = 10 : i64}> : () -> (!classical.link, !classical.future)
     // expected-error @+1 {{the answer of 'f' is taken at 50, before it is due at 111}}
-    %v = classical.wait %h, @f {start_cycles = 50 : i64, duration_cycles = 0 : i64} : f64
+    %v = classical.wait %h, @f <{duration_cycles = 0 : i64, start_cycles = 50 : i64}> : f64
     return
   }
 }
@@ -84,9 +84,9 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
     %ub = arith.constant 4 : index
     %step = arith.constant 1 : index
     %ln = scf.for %i = %lb to %ub step %step iter_args(%l = %l0) -> (!classical.link) {
-      %l1, %h = classical.submit %l, @f() {start_cycles = 0 : i64, duration_cycles = 1 : i64, period_cycles = array<i64: 10>} : () -> (!classical.link, !classical.future)
+      %l1, %h = classical.submit %l, @f() <{duration_cycles = 1 : i64, period_cycles = array<i64: 10>, start_cycles = 0 : i64}> : () -> (!classical.link, !classical.future)
       // expected-error @+1 {{the answer of 'f' is taken at 116, before it is due at 131}}
-      %v = classical.wait %h, @f {start_cycles = 101 : i64, duration_cycles = 0 : i64, period_cycles = array<i64: 5>} : f64
+      %v = classical.wait %h, @f <{duration_cycles = 0 : i64, period_cycles = array<i64: 5>, start_cycles = 101 : i64}> : f64
       scf.yield %l1 : !classical.link
     }
     return
@@ -105,9 +105,9 @@ module attributes {pulse.clock_ghz = 1.0 : f64,
   func.func @crowded() {
     %l0 = classical.get_link {device = 0 : i64} : !classical.link
     // expected-error @+1 {{link 0 holds 3 requests at once at 2, more than its 2 slots}}
-    %l1, %a = classical.submit %l0, @f() {start_cycles = 0 : i64, duration_cycles = 1 : i64} : () -> (!classical.link, !classical.future)
-    %l2, %b = classical.submit %l1, @f() {start_cycles = 1 : i64, duration_cycles = 1 : i64} : () -> (!classical.link, !classical.future)
-    %l3, %c = classical.submit %l2, @f() {start_cycles = 2 : i64, duration_cycles = 1 : i64} : () -> (!classical.link, !classical.future)
+    %l1, %a = classical.submit %l0, @f() <{duration_cycles = 1 : i64, start_cycles = 0 : i64}> : () -> (!classical.link, !classical.future)
+    %l2, %b = classical.submit %l1, @f() <{duration_cycles = 1 : i64, start_cycles = 1 : i64}> : () -> (!classical.link, !classical.future)
+    %l3, %c = classical.submit %l2, @f() <{duration_cycles = 1 : i64, start_cycles = 2 : i64}> : () -> (!classical.link, !classical.future)
     return
   }
 }
@@ -123,9 +123,9 @@ module attributes {pulse.clock_ghz = 1.0 : f64,
       submit = "eager"}
   func.func @overlapping() {
     %l0 = classical.get_link {device = 0 : i64} : !classical.link
-    %l1, %a = classical.submit %l0, @f() {start_cycles = 0 : i64, duration_cycles = 24 : i64} : () -> (!classical.link, !classical.future)
+    %l1, %a = classical.submit %l0, @f() <{duration_cycles = 24 : i64, start_cycles = 0 : i64}> : () -> (!classical.link, !classical.future)
     // expected-error @+1 {{submission on link 0 starts at 10, before the one before it in program order ends at 24}}
-    %l2, %b = classical.submit %l1, @f() {start_cycles = 10 : i64, duration_cycles = 24 : i64} : () -> (!classical.link, !classical.future)
+    %l2, %b = classical.submit %l1, @f() <{duration_cycles = 24 : i64, start_cycles = 10 : i64}> : () -> (!classical.link, !classical.future)
     return
   }
 }
@@ -144,11 +144,11 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
     %ub = arith.constant 1 : index
     %step = arith.constant 1 : index
     %ln, %hn = scf.for %i = %lb to %ub step %step iter_args(%l = %l0, %h = %h0) -> (!classical.link, !classical.future) {
-      %l1, %g = classical.submit %l, @f() {start_cycles = 0 : i64, duration_cycles = 1 : i64} : () -> (!classical.link, !classical.future)
+      %l1, %g = classical.submit %l, @f() <{duration_cycles = 1 : i64, start_cycles = 0 : i64}> : () -> (!classical.link, !classical.future)
       scf.yield %l1, %g : !classical.link, !classical.future
     }
     // expected-error @+1 {{the answer of 'f' is taken in another loop iteration than its submission}}
-    %v = classical.wait %hn, @f {start_cycles = 500 : i64, duration_cycles = 0 : i64} : f64
+    %v = classical.wait %hn, @f <{duration_cycles = 0 : i64, start_cycles = 500 : i64}> : f64
     return
   }
 }
@@ -163,10 +163,10 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
       latency_nominal_ns = 800.0, latency_max_ns = 800.0, mode = "bounded",
       submit = "eager", reaction_deadline_ns = 600.0}
   func.func @slow(%r0: !pulse.readout_line, %rt0: !pulse.tone, %ro: !pulse.waveform) {
-    %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, iq {start_cycles = 0 : i64, duration_cycles = 100 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, iq <{duration_cycles = 100 : i64, start_cycles = 0 : i64}> : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     %l = classical.get_link {device = 0 : i64} : !classical.link
     // expected-error @+1 {{'f' cannot react in time: its answer is due 801 cycles after the readouts it carries end, but reaction_deadline_ns allows 600 (slack -201); submit it sooner, lower max_latency_ns, use a faster link or raise reaction_deadline_ns}}
-    %l1, %h = classical.submit %l, @f(%m) {start_cycles = 100 : i64, duration_cycles = 1 : i64} : (!pulse.measurement) -> (!classical.link, !classical.future)
+    %l1, %h = classical.submit %l, @f(%m) <{duration_cycles = 1 : i64, start_cycles = 100 : i64}> : (!pulse.measurement) -> (!classical.link, !classical.future)
     return
   }
 }
@@ -181,14 +181,14 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
       latency_nominal_ns = 100.0, latency_max_ns = 100.0, mode = "bounded",
       submit = "eager", reaction_deadline_ns = 400.0}
   func.func @drifting(%r0: !pulse.readout_line, %rt0: !pulse.tone, %ro: !pulse.waveform) {
-    %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, iq {start_cycles = 0 : i64, duration_cycles = 100 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, iq <{duration_cycles = 100 : i64, start_cycles = 0 : i64}> : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     %l0 = classical.get_link {device = 0 : i64} : !classical.link
     %lb = arith.constant 0 : index
     %ub = arith.constant 8 : index
     %step = arith.constant 1 : index
     %ln = scf.for %i = %lb to %ub step %step iter_args(%l = %l0) -> (!classical.link) {
       // expected-error @+1 {{'f' cannot react in time: in iteration (7) its answer is due 451 cycles after the readouts it carries end, but reaction_deadline_ns allows 400 (slack -51)}}
-      %l1, %h = classical.submit %l, @f(%m) {start_cycles = 100 : i64, duration_cycles = 1 : i64, period_cycles = array<i64: 50>} : (!pulse.measurement) -> (!classical.link, !classical.future)
+      %l1, %h = classical.submit %l, @f(%m) <{duration_cycles = 1 : i64, period_cycles = array<i64: 50>, start_cycles = 100 : i64}> : (!pulse.measurement) -> (!classical.link, !classical.future)
       scf.yield %l1 : !classical.link
     }
     return
@@ -205,14 +205,14 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
       latency_nominal_ns = 100.0, latency_max_ns = 100.0, mode = "bounded",
       submit = "eager", reaction_deadline_ns = 200.0}
   func.func @stretched(%tau: f64, %d0: !pulse.drive_line, %r0: !pulse.readout_line, %rt0: !pulse.tone, %ro: !pulse.waveform) {
-    %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, iq {start_cycles = 0 : i64, duration_cycles = 100 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, iq <{duration_cycles = 100 : i64, start_cycles = 0 : i64}> : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     %n = arith.fptosi %tau : f64 to i64
     %len = pulse.duration_from_int %n : (i64) -> !pulse.duration
-    %d1 = pulse.wait %d0, %len {pulse.variable_wait, pulse.min_cycles = 0 : i64, pulse.max_cycles = 300 : i64, start_cycles = 100 : i64, duration_cycles = 0 : i64}
+    %d1 = pulse.wait %d0, %len <{duration_cycles = 0 : i64, start_cycles = 100 : i64}> {pulse.variable_wait, pulse.min_cycles = 0 : i64, pulse.max_cycles = 300 : i64}
         : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
     %l = classical.get_link {device = 0 : i64} : !classical.link
     // expected-error @+1 {{its answer is due 401 cycles after the readouts it carries end, but reaction_deadline_ns allows 200 (slack -201)}}
-    %l1, %h = classical.submit %l, @f(%m) {start_cycles = 100 : i64, duration_cycles = 1 : i64} : (!pulse.measurement) -> (!classical.link, !classical.future)
+    %l1, %h = classical.submit %l, @f(%m) <{duration_cycles = 1 : i64, start_cycles = 100 : i64}> : (!pulse.measurement) -> (!classical.link, !classical.future)
     return
   }
 }
@@ -227,15 +227,15 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
       submit = "eager", reaction_deadline_ns = 2000.0}
   func.func @branch(%c: i1, %r0: !pulse.readout_line, %rt0: !pulse.tone, %ro: !pulse.waveform) {
     %r1, %rt1, %m = scf.if %c -> (!pulse.readout_line, !pulse.tone, !pulse.measurement) {
-      %r2, %rt2, %m2 = pulse.readout %r0, %ro, %rt0, iq {start_cycles = 0 : i64, duration_cycles = 100 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+      %r2, %rt2, %m2 = pulse.readout %r0, %ro, %rt0, iq <{duration_cycles = 100 : i64, start_cycles = 0 : i64}> : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
       scf.yield %r2, %rt2, %m2 : !pulse.readout_line, !pulse.tone, !pulse.measurement
     } else {
-      %r3, %rt3, %m3 = pulse.readout %r0, %ro, %rt0, iq {start_cycles = 0 : i64, duration_cycles = 50 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+      %r3, %rt3, %m3 = pulse.readout %r0, %ro, %rt0, iq <{duration_cycles = 50 : i64, start_cycles = 0 : i64}> : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
       scf.yield %r3, %rt3, %m3 : !pulse.readout_line, !pulse.tone, !pulse.measurement
     }
     %l = classical.get_link {device = 0 : i64} : !classical.link
     // expected-error @+1 {{'f' has reaction_deadline_ns, but a measurement it carries comes out of a branch or a loop iteration, so its readout is not known; read it out where the request is made, or drop reaction_deadline_ns}}
-    %l1, %h = classical.submit %l, @f(%m) {start_cycles = 100 : i64, duration_cycles = 1 : i64} : (!pulse.measurement) -> (!classical.link, !classical.future)
+    %l1, %h = classical.submit %l, @f(%m) <{duration_cycles = 1 : i64, start_cycles = 100 : i64}> : (!pulse.measurement) -> (!classical.link, !classical.future)
     return
   }
 }
@@ -254,13 +254,13 @@ module attributes {pulse.clock_ghz = 1.0 : f64,
   func.func @streaming() {
     %l0 = classical.get_link {device = 0 : i64} : !classical.link
     // expected-error @+1 {{link 0 holds 7 requests at once at 82, more than its 3 slots}}
-    %l1, %a = classical.submit %l0, @f() {start_cycles = 0 : i64, duration_cycles = 1 : i64} : () -> (!classical.link, !classical.future)
+    %l1, %a = classical.submit %l0, @f() <{duration_cycles = 1 : i64, start_cycles = 0 : i64}> : () -> (!classical.link, !classical.future)
     %lb = arith.constant 0 : index
     %ub = arith.constant 1000 : index
     %step = arith.constant 1 : index
     %ln = scf.for %i = %lb to %ub step %step iter_args(%l = %l1) -> (!classical.link) {
-      %l2, %h = classical.submit %l, @f() {start_cycles = 1 : i64, duration_cycles = 1 : i64, period_cycles = array<i64: 40>} : () -> (!classical.link, !classical.future)
-      %l3, %g = classical.submit %l2, @f() {start_cycles = 2 : i64, duration_cycles = 1 : i64, period_cycles = array<i64: 40>} : () -> (!classical.link, !classical.future)
+      %l2, %h = classical.submit %l, @f() <{duration_cycles = 1 : i64, period_cycles = array<i64: 40>, start_cycles = 1 : i64}> : () -> (!classical.link, !classical.future)
+      %l3, %g = classical.submit %l2, @f() <{duration_cycles = 1 : i64, period_cycles = array<i64: 40>, start_cycles = 2 : i64}> : () -> (!classical.link, !classical.future)
       scf.yield %l3 : !classical.link
     }
     return
@@ -283,9 +283,9 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
     %ub = arith.constant 1000 : index
     %step = arith.constant 1 : index
     %ln = scf.for %i = %lb to %ub step %step iter_args(%l = %l0) -> (!classical.link) {
-      %l1, %h = classical.submit %l, @f() {start_cycles = 0 : i64, duration_cycles = 2 : i64, period_cycles = array<i64: 100>} : () -> (!classical.link, !classical.future)
+      %l1, %h = classical.submit %l, @f() <{duration_cycles = 2 : i64, period_cycles = array<i64: 100>, start_cycles = 0 : i64}> : () -> (!classical.link, !classical.future)
       // expected-error @+1 {{submission on link 0 starts at 301, before the one before it in program order ends at 302}}
-      %l2, %g = classical.submit %l1, @f() {start_cycles = 4 : i64, duration_cycles = 2 : i64, period_cycles = array<i64: 99>} : () -> (!classical.link, !classical.future)
+      %l2, %g = classical.submit %l1, @f() <{duration_cycles = 2 : i64, period_cycles = array<i64: 99>, start_cycles = 4 : i64}> : () -> (!classical.link, !classical.future)
       scf.yield %l2 : !classical.link
     }
     return
@@ -315,12 +315,12 @@ module attributes {pulse.clock_ghz = 1.0 : f64,
     %step = arith.constant 1 : index
     %ln = scf.for %i = %lb to %ub step %step iter_args(%l = %l0) -> (!classical.link) {
       // expected-error @+1 {{link 0 holds 4 requests at once at 20041, more than its 3 slots}}
-      %l1, %h = classical.submit %l, @f() {start_cycles = 1 : i64, duration_cycles = 1 : i64, period_cycles = array<i64: 40>} : () -> (!classical.link, !classical.future)
+      %l1, %h = classical.submit %l, @f() <{duration_cycles = 1 : i64, period_cycles = array<i64: 40>, start_cycles = 1 : i64}> : () -> (!classical.link, !classical.future)
       scf.yield %l1 : !classical.link
     }
     %lm = scf.if %c -> (!classical.link) {
       // expected-error @+1 {{submission on link 0 starts at 20025, before the one before it on its path ends at 39962}}
-      %l2, %g = classical.submit %ln, @g() {start_cycles = 20025 : i64, duration_cycles = 1 : i64} : () -> (!classical.link, !classical.future)
+      %l2, %g = classical.submit %ln, @g() <{duration_cycles = 1 : i64, start_cycles = 20025 : i64}> : () -> (!classical.link, !classical.future)
       scf.yield %l2 : !classical.link
     } else {
       scf.yield %ln : !classical.link
@@ -339,10 +339,10 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
       latency_nominal_ns = 100.0, latency_max_ns = 100.0, mode = "bounded",
       submit = "eager"}
   func.func @early(%c: i1, %r0: !pulse.readout_line, %rt0: !pulse.tone, %ro: !pulse.waveform) {
-    %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, iq {start_cycles = 0 : i64, duration_cycles = 100 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, iq <{duration_cycles = 100 : i64, start_cycles = 0 : i64}> : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     %l = classical.get_link {device = 0 : i64} : !classical.link
     // expected-error @+1 {{the call of 'f' starts at 90, before the readout it sends ends at 100}}
-    %l1, %h = classical.submit %l, @f(%m) {start_cycles = 90 : i64, duration_cycles = 1 : i64} : (!pulse.measurement) -> (!classical.link, !classical.future)
+    %l1, %h = classical.submit %l, @f(%m) <{duration_cycles = 1 : i64, start_cycles = 90 : i64}> : (!pulse.measurement) -> (!classical.link, !classical.future)
     scf.if %c {
     }
     return
@@ -360,10 +360,10 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
       submit = "eager"}
   func.func @chained(%c: i1, %x: f64) {
     %l = classical.get_link {device = 0 : i64} : !classical.link
-    %l1, %h = classical.submit %l, @f(%x) {start_cycles = 0 : i64, duration_cycles = 1 : i64, classical.budget_cycles = 100 : i64} : (f64) -> (!classical.link, !classical.future)
-    %v = classical.wait %h, @f {start_cycles = 150 : i64, duration_cycles = 0 : i64} : f64
+    %l1, %h = classical.submit %l, @f(%x) <{duration_cycles = 1 : i64, start_cycles = 0 : i64}> {classical.budget_cycles = 100 : i64} : (f64) -> (!classical.link, !classical.future)
+    %v = classical.wait %h, @f <{duration_cycles = 0 : i64, start_cycles = 150 : i64}> : f64
     // expected-error @+1 {{the call of 'f' starts at 120, before the answer it sends ends at 150}}
-    %l2, %h2 = classical.submit %l1, @f(%v) {start_cycles = 120 : i64, duration_cycles = 1 : i64, classical.budget_cycles = 100 : i64} : (f64) -> (!classical.link, !classical.future)
+    %l2, %h2 = classical.submit %l1, @f(%v) <{duration_cycles = 1 : i64, start_cycles = 120 : i64}> {classical.budget_cycles = 100 : i64} : (f64) -> (!classical.link, !classical.future)
     scf.if %c {
     }
     return
@@ -380,10 +380,10 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
       submit = "eager"}
   func.func @reordered(%c: i1) {
     %l0 = classical.get_link {device = 0 : i64} : !classical.link
-    %l1, %a = classical.submit %l0, @f() {start_cycles = 20 : i64, duration_cycles = 24 : i64} : () -> (!classical.link, !classical.future)
+    %l1, %a = classical.submit %l0, @f() <{duration_cycles = 24 : i64, start_cycles = 20 : i64}> : () -> (!classical.link, !classical.future)
     %l3 = scf.if %c -> (!classical.link) {
       // expected-error @+1 {{submission on link 0 starts at 0, before the one before it on its path ends at 44}}
-      %l2, %b = classical.submit %l1, @f() {start_cycles = 0 : i64, duration_cycles = 24 : i64} : () -> (!classical.link, !classical.future)
+      %l2, %b = classical.submit %l1, @f() <{duration_cycles = 24 : i64, start_cycles = 0 : i64}> : () -> (!classical.link, !classical.future)
       scf.yield %l2 : !classical.link
     } else {
       scf.yield %l1 : !classical.link
@@ -403,13 +403,13 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
       submit = "eager"}
   func.func @unanswered(%d0: !pulse.drive_line, %t0: !pulse.tone, %w: !pulse.waveform) {
     %l = classical.get_link {device = 0 : i64} : !classical.link
-    %l1, %h = classical.submit %l, @f() {start_cycles = 0 : i64, duration_cycles = 1 : i64, classical.budget_cycles = 100 : i64} : () -> (!classical.link, !classical.future)
-    %v = classical.wait %h, @f {start_cycles = 150 : i64, duration_cycles = 0 : i64} : f64
+    %l1, %h = classical.submit %l, @f() <{duration_cycles = 1 : i64, start_cycles = 0 : i64}> {classical.budget_cycles = 100 : i64} : () -> (!classical.link, !classical.future)
+    %v = classical.wait %h, @f <{duration_cycles = 0 : i64, start_cycles = 150 : i64}> : f64
     %half = arith.constant 0.5 : f64
     %c = arith.cmpf ogt, %v, %half : f64
     %d1, %t1 = scf.if %c -> (!pulse.drive_line, !pulse.tone) {
       // expected-error @+1 {{an operation in a branch on an answer starts at 120, before the answer is taken at 150}}
-      %d2, %t2 = pulse.drive %d0, %w, %t0 {start_cycles = 120 : i64, duration_cycles = 16 : i64} : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+      %d2, %t2 = pulse.drive %d0, %w, %t0 <{duration_cycles = 16 : i64, start_cycles = 120 : i64}> : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
       scf.yield %d2, %t2 : !pulse.drive_line, !pulse.tone
     } else {
       scf.yield %d0, %t0 : !pulse.drive_line, !pulse.tone
@@ -437,12 +437,12 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
     %dn, %tn, %ln = scf.for %i = %lb to %ub step %step
         iter_args(%d = %d0, %t = %t0, %l = %l0)
         -> (!pulse.drive_line, !pulse.tone, !classical.link) {
-      %l1, %h = classical.submit %l, @f() {start_cycles = 0 : i64, period_cycles = array<i64: 10>, duration_cycles = 1 : i64, classical.budget_cycles = 50 : i64} : () -> (!classical.link, !classical.future)
-      %v = classical.wait %h, @f {start_cycles = 100 : i64, period_cycles = array<i64: 10>, duration_cycles = 0 : i64} : f64
+      %l1, %h = classical.submit %l, @f() <{duration_cycles = 1 : i64, period_cycles = array<i64: 10>, start_cycles = 0 : i64}> {classical.budget_cycles = 50 : i64} : () -> (!classical.link, !classical.future)
+      %v = classical.wait %h, @f <{duration_cycles = 0 : i64, period_cycles = array<i64: 10>, start_cycles = 100 : i64}> : f64
       %c = arith.cmpf ogt, %v, %half : f64
       %d1, %t1 = scf.if %c -> (!pulse.drive_line, !pulse.tone) {
         // expected-error @+1 {{an operation in a branch on an answer starts at 717, before the answer is taken at 730}}
-        %d2, %t2 = pulse.drive %d, %w, %t {start_cycles = 150 : i64, period_cycles = array<i64: 9>, duration_cycles = 4 : i64} : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+        %d2, %t2 = pulse.drive %d, %w, %t <{duration_cycles = 4 : i64, period_cycles = array<i64: 9>, start_cycles = 150 : i64}> : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
         scf.yield %d2, %t2 : !pulse.drive_line, !pulse.tone
       } else {
         scf.yield %d, %t : !pulse.drive_line, !pulse.tone

@@ -269,14 +269,14 @@ def test_a_frame_change_carried_to_the_next_iteration_is_a_phase_step():
 
 def test_frame_changes_are_stamped_on_the_timeline_with_no_duration():
     text = _compile(looped, unroll_threshold=0).mlir()
-    [before] = re.findall(r"pulse\.shift_frequency .*\{(.*)\}", text)
-    assert before == "duration_cycles = 0 : i64, start_cycles = 0 : i64"
+    [before] = re.findall(r"pulse\.shift_frequency [^<]*(<\{.*?\}>)", text)
+    assert before == "<{duration_cycles = 0 : i64, start_cycles = 0 : i64}>"
     # The shift after the drive in the loop's body: at its end, every period;
     # the last iteration's is left to nothing, so the loop lists it.
-    [carried] = re.findall(r"pulse\.shift_phase .*\{(.*)\}", text)
+    [carried] = re.findall(r"pulse\.shift_phase [^<]*(<\{.*?\}> \{.*?\})", text)
     assert carried == (
-        "duration_cycles = 0 : i64, period_cycles = array<i64: 24>, pulse.carried = 0 : i64, "
-        "start_cycles = 16 : i64"
+        "<{duration_cycles = 0 : i64, period_cycles = array<i64: 24>, start_cycles = 16 : i64}> "
+        "{pulse.carried = 0 : i64}"
     )
     assert "pulse.exit_updates = array<i64: 0>" in text
     text = _compile(straight).mlir()
@@ -421,10 +421,10 @@ def test_a_change_in_a_loop_on_a_tone_it_does_not_play_keeps_the_loop_rolled():
     lowered = pulse.compile(idle, device=_DEV, unroll_threshold=0).lower(Q[0], Q[1])
     plain = pulse.compile(idle_unchanged, device=_DEV, unroll_threshold=0).lower(Q[0], Q[1])
     # Each iteration's change at the start of the iteration.
-    [stamp] = re.findall(r"pulse\.shift_phase .*\{(.*)\}", lowered.mlir())
+    [stamp] = re.findall(r"pulse\.shift_phase [^<]*(<\{.*?\}> \{.*?\})", lowered.mlir())
     assert stamp == (
-        "duration_cycles = 0 : i64, period_cycles = array<i64: 16>, pulse.unconsumed, "
-        "start_cycles = 0 : i64"
+        "<{duration_cycles = 0 : i64, period_cycles = array<i64: 16>, start_cycles = 0 : i64}> "
+        "{pulse.unconsumed}"
     )
     structured = lowered.export_controller(version=2)
     unchanged = plain.export_controller(version=2)

@@ -259,9 +259,7 @@ private:
                                         llvm::ArrayRef<int64_t> iteration) {
     if (!iteration.empty())
       return pulse::scheduledStart(op, iteration);
-    if (auto start = pulse::startCyclesAttr(op))
-      return start.getInt();
-    return std::nullopt;
+    return pulse::startCycles(op);
   }
 
   /// When `op`, a readout or an answer the op walked depends on, ends in the

@@ -29,14 +29,12 @@ inline void applyLineDelays(mlir::Operation *function,
     return;
   auto drive = delays.getAs<mlir::DenseI64ArrayAttr>("drive");
   auto readout = delays.getAs<mlir::DenseI64ArrayAttr>("readout");
-  mlir::MLIRContext *context = function->getContext();
-  auto i64 = mlir::IntegerType::get(context, 64);
   AllocationTracer trace;
   function->walk([&](mlir::Operation *op) {
     if (!mlir::isa<DriveOp, ReadoutOp, WaitOp>(op) ||
         op->hasAttr("classical.variable"))
       return;
-    auto start = startCyclesAttr(op);
+    std::optional<int64_t> start = startCycles(op);
     if (!start)
       return;
     mlir::Operation *allocation = trace(op->getOperand(0));
@@ -49,7 +47,7 @@ inline void applyLineDelays(mlir::Operation *function,
       return;
     int64_t shift = shifts[qudit];
     if (shift != 0)
-      setStartCycles(op, mlir::IntegerAttr::get(i64, start.getInt() + shift));
+      setStartCycles(op, *start + shift);
   });
 }
 

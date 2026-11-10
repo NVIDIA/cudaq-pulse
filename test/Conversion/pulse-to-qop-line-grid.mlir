@@ -27,11 +27,11 @@ func.func @main() {
   %s = pulse.square %duration, %real, %imag : i64, f64, f64 -> !pulse.waveform
   %product = pulse.mul %g, %s : !pulse.waveform
   %d1, %t1 = pulse.drive %d0, %product, %t0
-      {start_cycles = 0 : i64, duration_cycles = 4 : i64}
+      <{duration_cycles = 4 : i64, start_cycles = 0 : i64}>
       : !pulse.drive_line, !pulse.waveform, !pulse.tone
       -> !pulse.drive_line, !pulse.tone
   %e1, %u1 = pulse.drive %e0, %product, %u0
-      {start_cycles = 0 : i64, duration_cycles = 4 : i64}
+      <{duration_cycles = 4 : i64, start_cycles = 0 : i64}>
       : !pulse.drive_line, !pulse.waveform, !pulse.tone
       -> !pulse.drive_line, !pulse.tone
   return

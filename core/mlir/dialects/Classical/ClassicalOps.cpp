@@ -11,6 +11,7 @@
 
 #include "cudaq-pulse/Dialect/Pulse/PulseDialect.h.inc"
 #include "cudaq-pulse/Dialect/Pulse/PulseEnums.h.inc"
+#include "cudaq-pulse/Dialect/Pulse/PulseTimingFormat.h"
 #define GET_TYPEDEF_CLASSES
 #include "cudaq-pulse/Dialect/Pulse/PulseTypes.h.inc"
 
@@ -157,6 +158,9 @@ LogicalResult WaitOp::verifySymbolUses(SymbolTableCollection &symbols) {
   }
   return success();
 }
+
+using pulse::parseTiming;
+using pulse::printTiming;
 
 } // namespace classical
 

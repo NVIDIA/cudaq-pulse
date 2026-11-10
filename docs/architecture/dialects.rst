@@ -30,7 +30,8 @@ once and returned updated by each op that uses them, so the order of the
 pulses on a line is explicit in the IR and ``pulse-verify`` can check it.
 Waveforms are ordinary values. Durations are in clock cycles of the target,
 and scheduling records each timed op's ``start_cycles`` and ``duration_cycles``
-(and ``period_cycles`` in loops) in the op's properties.
+(and ``period_cycles`` in loops) as integers in the op's properties, printed
+in a ``<{...}>`` dictionary before its other attributes.
 
 - Types: ``!pulse.qudit``, ``!pulse.drive_line``, ``!pulse.readout_line``,
   ``!pulse.tone``, ``!pulse.waveform``, ``!pulse.measurement``,

@@ -47,7 +47,7 @@ func.func @sync_on_common_grid() {
 // A 6-cycle drive on a 4-cycle grid repeats every 8 cycles.
 // CHECK-LABEL: func.func @loop_on_grid
 // CHECK: scf.for
-// CHECK: pulse.drive {{.*}}{duration_cycles = 6 : i64, period_cycles = array<i64: 8>, start_cycles = 0 : i64}
+// CHECK: pulse.drive {{.*}}<{duration_cycles = 6 : i64, period_cycles = array<i64: 8>, start_cycles = 0 : i64}>
 func.func @loop_on_grid() {
   %qa = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
   %a0, %ta = pulse.get_drive_line %qa : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
@@ -68,8 +68,8 @@ func.func @loop_on_grid() {
 // Samples made for qudit 0's controller, one every 4 cycles: 3 samples last
 // 12 cycles.
 // CHECK-LABEL: func.func @samples_at_the_lines_rate
-// CHECK: pulse.drive {{.*}}{duration_cycles = 12 : i64, start_cycles = 0 : i64}
-// CHECK: pulse.drive {{.*}}{duration_cycles = 8 : i64, start_cycles = 12 : i64}
+// CHECK: pulse.drive {{.*}}<{duration_cycles = 12 : i64, start_cycles = 0 : i64}>
+// CHECK: pulse.drive {{.*}}<{duration_cycles = 8 : i64, start_cycles = 12 : i64}>
 func.func @samples_at_the_lines_rate() {
   %qa = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
   %a0, %ta = pulse.get_drive_line %qa : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)

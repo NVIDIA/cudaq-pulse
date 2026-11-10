@@ -98,7 +98,7 @@ func.func @sync_of_a_drive_and_a_readout_line(%a: !pulse.drive_line, %b: !pulse.
 // -----
 
 func.func @start_of_the_wrong_type(%d0: !pulse.drive_line, %t0: !pulse.tone, %w: !pulse.waveform) {
-  // expected-error @+1 {{'pulse.drive' op attribute 'start_cycles' failed to satisfy constraint: 64-bit signless integer attribute}}
-  %d1, %t1 = pulse.drive %d0, %w, %t0 {start_cycles = 1.0 : f64} : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+  // expected-error @+1 {{invalid properties {start_cycles = 1.000000e+00 : f64} for op pulse.drive: expected a number of cycles, an i64}}
+  %d1, %t1 = pulse.drive %d0, %w, %t0 <{start_cycles = 1.0 : f64}> : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
   return
 }
