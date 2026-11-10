@@ -78,6 +78,17 @@ rabi(dev.qudit_handles[0], 0.5, 1)  # type: ignore[call-arg]
 rabi(dev.qudit_handles[0], amp="high")  # type: ignore[arg-type]
 rabi.lower(dev.qudit_handles[0], ampl=0.5)  # type: ignore[call-arg]
 
+
+@pulse.kernel
+def spread(tau: float, *qudits: pulse.Qudit, amp: float = 0.1) -> None:
+    pass
+
+
+spread(1.0)
+spread(1.0, *dev.qudit_handles[0:3], amp=0.2)
+assert_type(spread.lower(1.0, dev.qudit_handles[0], dev.qudit_handles[1]), pulse.Lowered)
+spread(1.0, dev.qudit_handles[0:2])  # type: ignore[arg-type]
+
 lowered = rabi.lower(dev.qudit_handles[0], 0.5)
 assert_type(lowered, pulse.Lowered)
 assert_type(lowered.mlir(), str)

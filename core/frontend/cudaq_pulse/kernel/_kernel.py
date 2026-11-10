@@ -9,7 +9,9 @@ So is each element of a ``list[float]`` parameter, whose length is part of
 the specialization. A parameter annotated ``Qudit`` or ``Register`` is a
 runtime qudit: the module takes it as a slot, and a call binds the slot to
 its handle's carrier, so calls with other handles, or on a recalibrated
-device, share the module. Every other parameter (unannotated qudits, ints,
+device, share the module. A ``*qudits`` parameter is a register of the
+call's qudits, runtime when annotated ``Qudit``, of a length that is part of
+the specialization. Every other parameter (unannotated qudits, ints,
 anything unannotated) is static: it can shape the program, so the kernel is
 specialized on its value.
 
@@ -113,24 +115,50 @@ def _runtime_kind(annotation: Any, scope: dict[str, Any]) -> int | None:
     return None
 
 
-def _make_binder(fn: types.FunctionType) -> Callable[..., tuple[Any, ...]]:
-    """A function with *fn*'s signature that returns its bound arguments.
+def _make_binder(fn: types.FunctionType, names: tuple[str, ...]) -> Callable[..., tuple[Any, ...]]:
+    """A function with *fn*'s signature that returns its bound arguments,
+    those of *names* in order.
 
     Python itself binds the call, so defaults, keyword-only parameters and
-    every ``TypeError`` behave exactly as for *fn*.
+    every ``TypeError`` behave exactly as for *fn*. A ``*`` parameter, the
+    last of *names*, is bound to a ``Register`` of its qudits.
     """
     code = fn.__code__
-    names = code.co_varnames[: code.co_argcount + code.co_kwonlyargcount]
     npos = code.co_posonlyargcount
     params = list(names[: code.co_argcount])
     if npos:
         params.insert(npos, "/")
-    if code.co_kwonlyargcount:
-        params.append("*")
-        params.extend(names[code.co_argcount :])
-    body = f"({', '.join(names)},)" if names else "()"
-    src = f"def _bind({', '.join(params)}):\n    return {body}\n"
     namespace: dict[str, Any] = {}
+    if code.co_flags & inspect.CO_VARARGS:
+        star = names[-1]
+        kernel = fn.__name__
+
+        def register(qudits: tuple[Any, ...]) -> Register:
+            for position, value in enumerate(qudits):
+                if type(value) is not Qudit:
+                    if isinstance(value, (Register, list, tuple)):
+                        hint = f"each qudit as its own argument, as {kernel}(..., *register)"
+                    else:
+                        hint = "other values as named parameters"
+                    raise InvalidTypeError(
+                        f"{kernel}(): *{star} takes qudit handles, got "
+                        f"{type(value).__name__} at position {position}; pass {hint}"
+                    )
+            return Register(qudits)
+
+        bound = "_register"
+        while bound in names:
+            bound += "_"
+        namespace[bound] = register
+        params.append(f"*{star}")
+        params.extend(names[code.co_argcount : -1])
+        body = f"({', '.join(names[:-1])}{', ' if names[1:] else ''}{bound}({star}),)"
+    else:
+        if code.co_kwonlyargcount:
+            params.append("*")
+            params.extend(names[code.co_argcount :])
+        body = f"({', '.join(names)},)" if names else "()"
+    src = f"def _bind({', '.join(params)}):\n    return {body}\n"
     exec(compile(src, code.co_filename, "exec"), namespace)
     binder: Any = namespace["_bind"]
     binder.__code__ = binder.__code__.replace(co_name=code.co_name, co_qualname=code.co_qualname)
@@ -526,8 +554,6 @@ class Kernel[**P]:
         if not isinstance(fn, types.FunctionType):
             raise TypeError(f"@kernel expects a function, got {type(fn).__name__}")
         code = fn.__code__
-        if code.co_flags & (inspect.CO_VARARGS | inspect.CO_VARKEYWORDS):
-            raise TypeError(f"pulse kernel {fn.__name__}() cannot take *args or **kwargs")
         self.__wrapped__ = fn
         self.__pulse_kernel_fn__ = fn
         # Called from another kernel, the kernel is scheduled on its own with
@@ -544,6 +570,37 @@ class Kernel[**P]:
             setattr(self, attr, getattr(fn, attr))
         signature = inspect.signature(fn)
         self.__signature__ = signature
+        if code.co_flags & (inspect.CO_VARARGS | inspect.CO_VARKEYWORDS):
+            # A * parameter is a register of the call's qudits. The kernel is
+            # traced as a function of the same code that takes it as its last
+            # keyword-only parameter, where the code keeps it.
+            name = fn.__name__
+            parameters = signature.parameters.values()
+            if code.co_flags & inspect.CO_VARKEYWORDS:
+                keywords = next(p for p in parameters if p.kind is p.VAR_KEYWORD)
+                raise InvalidTypeError(f"pulse kernel {name}() cannot take **{keywords.name}")
+            star = next(p for p in parameters if p.kind is p.VAR_POSITIONAL)
+            annotation = star.annotation
+            if annotation is not star.empty:
+                if _runtime_kind(annotation, fn.__globals__) != _QUDIT:
+                    raise InvalidTypeError(
+                        f"pulse kernel {name}(): *{star.name} takes qudits: annotate it Qudit "
+                        "to compile once for every placement, or leave it unannotated to "
+                        "specialize on the qudits, and pass other values as named parameters"
+                    )
+                annotation = tuple[Qudit, ...]
+            code = code.replace(
+                co_flags=code.co_flags & ~inspect.CO_VARARGS,
+                co_kwonlyargcount=code.co_kwonlyargcount + 1,
+            )
+            traced = types.FunctionType(code, fn.__globals__, name, fn.__defaults__, fn.__closure__)
+            traced.__qualname__ = fn.__qualname__
+            traced.__kwdefaults__ = fn.__kwdefaults__
+            # Called from another kernel, it binds as the function does.
+            traced.__signature__ = signature  # type: ignore[attr-defined]
+            self.__pulse_kernel_fn__ = traced
+            classified = [p.replace(annotation=annotation) if p is star else p for p in parameters]
+            signature = signature.replace(parameters=classified)
         names = code.co_varnames[: code.co_argcount + code.co_kwonlyargcount]
         self._names = names
         kinds = {}
@@ -557,7 +614,7 @@ class Kernel[**P]:
         # programs it traced, the last _TRACED_KEPT of them, which other line
         # delays schedule again without tracing.
         self._traced: dict[Any, _Entry] = {}
-        self._bind = _make_binder(fn)
+        self._bind = _make_binder(fn, names)
         self._dispatch = self._dispatcher_type(
             self,
             CompileOptions(
@@ -570,8 +627,8 @@ class Kernel[**P]:
     @property
     def runtime_parameters(self) -> tuple[str, ...]:
         """Parameters annotated ``float``, ``list[float]``, ``Qudit`` or
-        ``Register``: function arguments of the module. An unannotated qudit
-        or register parameter is static."""
+        ``Register``, and ``*qudits: Qudit``: function arguments of the
+        module. An unannotated qudit or register parameter is static."""
         return tuple(self._names[i] for i in self._split[1])
 
     @property
@@ -649,7 +706,7 @@ class Kernel[**P]:
             found = self._retimed(values, target, options)
             if found is not None:
                 return found
-        fn = self.__wrapped__
+        fn = self.__pulse_kernel_fn__
         names = self._names
         while True:
             static, runtime = self._split

@@ -73,11 +73,11 @@ def test_arguments_bind_like_a_python_call():
         rabi.lower(q, 0.1, dur=8)
 
 
-def test_varargs_kernels_are_rejected():
-    with pytest.raises(TypeError, match=r"cannot take \*args"):
+def test_keyword_varargs_kernels_are_rejected():
+    with pytest.raises(TypeError, match=r"cannot take \*\*options"):
 
         @pulse.kernel
-        def k(*qs):
+        def k(*qs, **options):
             pass
 
 
