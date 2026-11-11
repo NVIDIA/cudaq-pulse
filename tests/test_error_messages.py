@@ -31,18 +31,19 @@ def test_an_op_called_outside_a_kernel_is_a_compilation_error_naming_it(name):
         op(*[None] * len(required))
 
 
-def test_qudit_handles_in_a_list_say_how_to_pass_them():
+@pytest.mark.parametrize("handles", [list, tuple])
+def test_qudit_handles_in_a_list_or_tuple_say_how_to_pass_them(handles):
     @pulse.kernel
     def k(qs):
         d = get_drive_line(qs[0])
         drive(d, square(8, 0.1))
 
     with pytest.raises(pulse.CompilationError) as info:
-        pulse.compile(k).lower([Q[0], Q[1]])
+        pulse.compile(k).lower(handles([Q[0], Q[1]]))
     assert str(info.value) == (
         "get_drive_line(): argument 1 is a qudit handle that reached the kernel inside a "
-        "list; pass qudits as separate arguments, a Register (qs.qudits[0:4]) or a "
-        "tuple, not a list"
+        "list; pass qudits as separate arguments, *qudits, or a Register (qs.qudits[0:4]), "
+        "not a list or tuple"
     )
 
 

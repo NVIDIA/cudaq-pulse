@@ -117,8 +117,8 @@ def operand_error(fname: str, call_args: list[Any]) -> CompilationError:
         if isinstance(value, Qudit):
             message = (
                 f"{fname}(): argument {index + 1} is a qudit handle that reached the kernel "
-                "inside a list; pass qudits as separate arguments, a Register "
-                "(qs.qudits[0:4]) or a tuple, not a list"
+                "inside a list; pass qudits as separate arguments, *qudits, or a Register "
+                "(qs.qudits[0:4]), not a list or tuple"
             )
         else:
             message += "; pass one of the kernel's qudit arguments"

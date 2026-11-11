@@ -636,8 +636,10 @@ class Kernel[**P]:
     def runtime_parameters(self) -> tuple[str, ...]:
         """Parameters annotated ``float``, ``list[float]``, ``Qudit`` or
         ``Register``, and ``*qudits: Qudit``: function arguments of the
-        module. An unannotated qudit or register parameter is static."""
-        return tuple(self._names[i] for i in self._split[1])
+        module. An unannotated qudit or register parameter is static. In the
+        order of the signature."""
+        runtime = {self._names[i] for i in self._split[1]}
+        return tuple(n for n in self.__signature__.parameters if n in runtime)
 
     @property
     def static_parameters(self) -> tuple[str, ...]:
@@ -646,8 +648,10 @@ class Kernel[**P]:
         Includes float parameters whose value the program needs while it
         compiles: one that sets a waveform duration, goes through ``int()``
         or decides Python control flow. A wait length is not one of them.
+        In the order of the signature.
         """
-        return tuple(self._names[i] for i in self._split[0])
+        static = {self._names[i] for i in self._split[0]}
+        return tuple(n for n in self.__signature__.parameters if n in static)
 
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> Any:
         return self._dispatch.call(args, kwargs)

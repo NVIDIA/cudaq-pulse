@@ -60,9 +60,22 @@ def test_annotated_qudits_lower_as_a_runtime_register():
 
 def test_unannotated_qudits_lower_as_a_static_register():
     assert fixed.runtime_parameters == ("tau",)
-    assert set(fixed.static_parameters) == {"qudits", "amp"}
+    assert fixed.static_parameters == ("qudits", "amp")
     for qudits in (Q[0:1], Q[0:3], Q[[4, 2]]):
         assert _mlir(fixed, 8.0, *qudits) == _mlir(fixed_register, 8.0, qudits)
+
+
+def test_parameters_are_listed_in_signature_order():
+    @pulse.kernel
+    def ramsey(tau: float, *qudits: Qudit, amp: float, steps: int):
+        for q in qudits:
+            d = get_drive_line(q)
+            for _ in range(steps):
+                drive(d, square(16, amp))
+                wait(d, tau)
+
+    assert ramsey.runtime_parameters == ("tau", "qudits", "amp")
+    assert ramsey.static_parameters == ("steps",)
 
 
 def test_arity_is_part_of_the_specialization():

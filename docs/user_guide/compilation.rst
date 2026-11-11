@@ -57,9 +57,10 @@ Annotations decide what a compilation depends on:
   Any other annotation of a ``*`` parameter is a ``TypeError`` when the
   kernel is defined; pass other values as named parameters (a
   ``list[float]`` for a runtime list of numbers).
-- Every other parameter (``int``, a list of handles, anything
-  unannotated, including an unannotated qudit or a duration passed as a
-  time) is *static*: the kernel is specialized on its value. Annotate a
+- Every other parameter (``int``, anything unannotated, including an
+  unannotated qudit or a duration passed as a time) is *static*: the kernel
+  is specialized on its value. A list or tuple of qudit handles is
+  rejected: pass a Register (``qs.qudits[0:4]``) or use ``*qudits``. Annotate a
   qudit parameter to compile once for every placement. A time passed to a
   ``float`` parameter is a ``TypeError``; see :ref:`durations`.
 - A ``float`` the program needs while it compiles -- one that sets a

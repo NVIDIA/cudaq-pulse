@@ -77,7 +77,10 @@ behavior may change in any 0.x release.
   unannotated, the kernel is specialized on the qudits. A call may pass
   none. A `*` parameter takes only qudit handles: another annotation is a
   `TypeError` when the kernel is defined, another value one when it is
-  called. Kernels still cannot take `**kwargs`.
+  called. Kernels still cannot take `**kwargs`. A list or tuple of qudit
+  handles is not a register: pass a `Register` (`qs.qudits[0:4]`) or use
+  `*qudits`. `kernel.static_parameters` and `kernel.runtime_parameters`
+  list parameters in the order of the signature.
 - **Control systems.** A quantum system can hold the controllers that play it:
   `pulse.Controller` (a controller's limits, the drive and readout lines it
   plays, its peer latency, clock skew and alignment tolerance, its
