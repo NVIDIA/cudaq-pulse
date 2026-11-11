@@ -1,11 +1,11 @@
 {
-  "about": "Wire facts of the CUDA-Q Realtime messaging protocol and the CUDA-QX decoder messages, copied from public sources as test fixtures. cudaq-pulse does not depend on either project.",
+  "about": "Wire facts of the CUDA-Q Realtime messaging protocol and the CUDA-Q QEC decoding server messages, copied from public sources as test fixtures. cudaq-pulse does not depend on either project.",
   "sources": {
     "cuda-quantum": {"repository": "https://github.com/NVIDIA/cuda-quantum", "commit": "de8b70540bf0c9f2822a63b06b682ad0caf5ef5d",
                      "files": ["realtime/include/cudaq/realtime/daemon/dispatcher/rpc_wire_format.h",
                                "realtime/include/cudaq/realtime/daemon/dispatcher/cudaq_realtime.h",
                                "realtime/docs/cudaq_realtime_message_protocol.md"]},
-    "cudaqx": {"repository": "https://github.com/NVIDIA/cudaqx", "commit": "d9f3870336d326af3dc4a929652150497092be2a",
+    "cudaqx": {"repository": "https://github.com/NVIDIA/cudaq-qec", "commit": "963c4a2c308707af08ecf7867321ca63076dfce3",
                "files": ["libs/qec/include/cudaq/qec/realtime/decoder_rpc_wire_format.h"]}
   },
   "header_bytes": 24,
@@ -26,8 +26,8 @@
   ],
   "bit_packing": {"bits": [1, 0, 1, 1, 0, 0, 0, 1, 1, 1], "bytes": [141, 3]},
   "cudaqx_decoder": {
-    "function_ids": {"enqueue_syndromes": 2128133762, "get_corrections": 2284673953, "reset_decoder": 2541377999},
-    "payload_bytes": {"enqueue_syndromes_header": 32, "get_corrections": 17, "reset_decoder": 8},
+    "function_ids": {"enqueue_syndromes": 2128133762, "get_corrections": 2284673953, "get_logical_measurements": 810983753, "reset_decoder": 2541377999},
+    "payload_bytes": {"enqueue_syndromes_header": 32, "get_corrections": 17, "get_logical_measurements": 25, "reset_decoder": 8},
     "status": {"OK": 0, "INVALID_DECODER": 1, "BAD_REQUEST": 2, "INTERNAL_ERROR": 3, "NOT_READY": 4, "BUSY": 5, "SYNDROMES_DROPPED": 6}
   }
 }

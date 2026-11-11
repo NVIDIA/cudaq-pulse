@@ -292,4 +292,5 @@ def test_fixture_matches_cudaqx_sources():
         assert re.search(rf"\b{name} = {value}\b", text)
     assert "sizeof(EnqueueRequestPayload) == 32" in text
     assert "sizeof(GetCorrectionsRequestPayload) == 17" in text
+    assert "sizeof(GetLogicalMeasurementsRequestPayload) == 25" in text
     assert "sizeof(ResetRequestPayload) == 8" in text
