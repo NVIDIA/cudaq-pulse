@@ -354,10 +354,11 @@ struct AttrNames {
 /// What each context made by makeContext keeps for its next modules.
 ///
 /// Its scheduling pass managers, by the options that built them, for modules
-/// scheduled alike: building one, and its first run on a multithreaded
-/// context, which copies its nested passes for each thread, cost as much as
-/// scheduling a small module. One being run is taken out, so that no two
-/// threads run it at once.
+/// scheduled alike, and its run_passes() pass managers, by their pipeline:
+/// building one, and its first run on a multithreaded context, which copies
+/// its nested passes for each thread, cost as much as scheduling a small
+/// module. One being run is taken out, so that no two threads run it at
+/// once.
 ///
 /// Its AttrNames, interned once for the life of the context.
 class ContextStore {
@@ -414,6 +415,44 @@ public:
     kept.emplace_back(std::move(options), std::move(passes));
   }
 
+  /// A kept run_passes() pass manager of `context` for `pipeline`, or null.
+  static std::unique_ptr<mlir::PassManager>
+  takePipeline(mlir::MLIRContext *context,
+               const std::vector<std::string> &pipeline) {
+    std::lock_guard<std::mutex> guard(lock());
+    auto found = contexts().find(context);
+    if (found == contexts().end())
+      return nullptr;
+    auto &kept = found->second->pipelines;
+    for (auto it = kept.begin(); it != kept.end(); ++it)
+      if (it->first == pipeline) {
+        std::unique_ptr<mlir::PassManager> passes = std::move(it->second);
+        kept.erase(it);
+        return passes;
+      }
+    return nullptr;
+  }
+
+  /// Keep `passes`, built for `pipeline`, if `context` keeps pass managers:
+  /// the latest few.
+  static void keepPipeline(mlir::MLIRContext *context,
+                           std::vector<std::string> pipeline,
+                           std::unique_ptr<mlir::PassManager> passes) {
+    std::unique_ptr<mlir::PassManager> dropped; // destroyed unlocked
+    std::lock_guard<std::mutex> guard(lock());
+    auto found = contexts().find(context);
+    if (found == contexts().end()) {
+      dropped = std::move(passes);
+      return;
+    }
+    auto &kept = found->second->pipelines;
+    if (kept.size() == kMaxKept) {
+      dropped = std::move(kept.front().second);
+      kept.erase(kept.begin());
+    }
+    kept.emplace_back(std::move(pipeline), std::move(passes));
+  }
+
   /// The AttrNames of `context`: those it keeps, or else interned in `own`.
   static const AttrNames &names(mlir::MLIRContext *context,
                                 std::optional<AttrNames> &own) {
@@ -440,6 +479,9 @@ private:
   static constexpr size_t kMaxKept = 4;
   mlir::MLIRContext *context;
   std::vector<std::pair<Options, std::unique_ptr<mlir::PassManager>>> kept;
+  std::vector<
+      std::pair<std::vector<std::string>, std::unique_ptr<mlir::PassManager>>>
+      pipelines;
   std::unique_ptr<AttrNames> attrNames;
 
   // Never destroyed, as the shared pool's last context is not.
@@ -2406,11 +2448,17 @@ public:
   void run_passes(const std::vector<std::string> &pipeline) {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
     changed();
-    mlir::PassManager pm(ctx_.get(), mlir::ModuleOp::getOperationName(),
-                         mlir::OpPassManager::Nesting::Implicit);
+    std::unique_ptr<mlir::PassManager> passes =
+        ContextStore::takePipeline(ctx_.get(), pipeline);
+    bool build = !passes;
+    if (build)
+      passes = std::make_unique<mlir::PassManager>(
+          ctx_.get(), mlir::ModuleOp::getOperationName(),
+          mlir::OpPassManager::Nesting::Implicit);
+    mlir::PassManager &pm = *passes;
     llvm::SmallVector<const pulse::RewriteStage *, 4> stages;
     auto flush = [&] {
-      if (!stages.empty())
+      if (build && !stages.empty())
         pm.addNestedPass<mlir::func::FuncOp>(
             pulse::createPulseRewritePass(stages));
       stages.clear();
@@ -2429,6 +2477,8 @@ public:
           continue;
         }
         flush();
+        if (!build)
+          continue;
         const mlir::PassInfo *info = lookupPass(name);
         if (!info)
           throw std::runtime_error("Unknown pass: " + name.str());
@@ -2440,6 +2490,7 @@ public:
     flush();
     programs_.clear();
     runPipeline(pm, *module_, "MLIR pass pipeline failed");
+    ContextStore::keepPipeline(ctx_.get(), pipeline, std::move(passes));
   }
 
   /// Keep the selects whose uses all set a parameter of a kind in
