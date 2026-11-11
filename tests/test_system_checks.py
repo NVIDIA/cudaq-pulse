@@ -271,16 +271,10 @@ def test_a_calibration_matches_a_pair_named_in_either_order():
 
     published = transmon_surface17(calibration=None)
     calibration = shipped_calibration("transmon_surface17")
-    reversed_ = pulse.quantum_system(
-        name=published.name,
-        qudits=published.physical_qudits,
+    reversed_ = published.replace(
         couplings=[
             Coupling(c.qudits[::-1], c.strength_hz, c.calibrations) for c in published.couplings
-        ],
-        residual_zz=published.residual_zz,
-        model=published.model,
-        attribution=published.attribution,
-        clock_ghz=published.clock_ghz,
+        ]
     )
     forward = calibration._apply(published._description).couplings
     backward = calibration._apply(reversed_._description).couplings
@@ -416,15 +410,7 @@ def test_a_calibration_keeps_the_checks():
     with pytest.raises(
         QuantumSystemDefinitionError, match=r"couplings\[1\].qudits: names the same pair"
     ):
-        pulse.quantum_system(
-            name=target.name,
-            qudits=target.physical_qudits,
-            couplings=[target.couplings[0]] * 2,
-            residual_zz=target.residual_zz,
-            model=target.model,
-            attribution=target.attribution,
-            clock_ghz=target.clock_ghz,
-        )
+        target.replace(couplings=[target.couplings[0]] * 2)
 
 
 # ── System files: missing keys and value problems at their lines ───────────
@@ -562,15 +548,7 @@ def test_a_system_made_from_a_checked_one_is_checked_for_what_changed():
 
 def _problems_of(target, couplings):
     with pytest.raises(QuantumSystemDefinitionError) as raised:
-        pulse.quantum_system(
-            name=target.name,
-            qudits=target.physical_qudits,
-            couplings=couplings,
-            residual_zz=target.residual_zz,
-            model=target.model,
-            attribution=target.attribution,
-            clock_ghz=target.clock_ghz,
-        )
+        target.replace(couplings=couplings)
     return raised.value.problems
 
 
@@ -584,12 +562,4 @@ def test_values_that_are_not_floats_take_the_complete_checks():
     )
     assert [c.strength_hz for c in target.couplings] == [5, 0.0]
     with pytest.raises(QuantumSystemDefinitionError, match="names the same pair of qudits"):
-        pulse.quantum_system(
-            name=target.name,
-            qudits=target.physical_qudits,
-            couplings=[*target.couplings, Coupling((2, 1), 7)],
-            residual_zz=target.residual_zz,
-            model=target.model,
-            attribution=target.attribution,
-            clock_ghz=target.clock_ghz,
-        )
+        target.replace(couplings=[*target.couplings, Coupling((2, 1), 7)])

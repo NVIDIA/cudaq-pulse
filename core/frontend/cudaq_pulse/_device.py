@@ -633,6 +633,36 @@ class QuantumSystem:
             f"'QuantumSystem' object has no attribute {name!r}", name=name, obj=self
         )
 
+    def replace(self, **changes: Any) -> QuantumSystem:
+        """A variant of the quantum system, as ``dataclasses.replace`` makes one:
+        the quantum system ``pulse.quantum_system(name=..., qudits=...)`` builds
+        from this one's ``name``, ``qudits`` (its ``physical_qudits``),
+        ``couplings``, ``residual_zz``, ``model``, ``attribution``, ``layout``,
+        ``control_system`` and ``clock_ghz``, with *changes* in their place:
+        ``qs.replace(qudits={**qs.physical_qudits, 0: qudit})`` changes one
+        qudit. The values are the calibrated ones, so the variant has no
+        ``calibration`` of its own."""
+        described = self._description
+        values: dict[str, Any] = {
+            "name": self.name,
+            "qudits": described.qudits,
+            "couplings": described.couplings,
+            "residual_zz": described.residual_zz,
+            "model": described.model,
+            "attribution": described.attribution,
+            "layout": None if self.layout == tuple(sorted(described.qudits)) else self.layout,
+            "control_system": self.control_system,
+            "clock_ghz": self.clock_ghz,
+        }
+        unknown = sorted(changes.keys() - values.keys())
+        if unknown:
+            raise InvalidTypeError(
+                f"QuantumSystem.replace() got an unexpected keyword argument {unknown[0]!r}; "
+                f"it takes {', '.join(values)}"
+            )
+        values.update(changes)
+        return quantum_system(**values)
+
     def as_dict(self) -> dict[str, Any]:
         """The quantum system as JSON-serializable data, which ``QuantumSystem.from_dict``
         reads back: its format (``cudaq-pulse.system/1``), the version that
@@ -1077,6 +1107,7 @@ def quantum_system(
     described: _Description | None = None
     if qudits is not None:
         if name.__class__ is not str:
+            _not_a_name(name)
             raise InvalidTypeError(
                 "pulse.quantum_system(qudits=...) builds a quantum system and needs its name=, "
                 f"got {type(name).__name__}"
@@ -1100,6 +1131,7 @@ def quantum_system(
     elif name.__class__ is str and name.partition(":")[0] not in _registry():
         _unknown_target(name)
     elif couplings or residual_zz or attribution or model is not _TRANSMON:
+        _not_a_name(name)
         given = "couplings" if couplings else "residual_zz" if residual_zz else "attribution"
         raise InvalidTypeError(
             f"pulse.quantum_system's {'model' if model is not _TRANSMON else given} builds a "
@@ -1136,6 +1168,7 @@ def quantum_system(
         if name.partition(":")[0] not in _registry():
             _unknown_target(name)
     else:
+        _not_a_name(name)
         fix = (
             "; QuantumSystem.from_dict(data) reads a system file's data"
             if isinstance(name, Mapping)
@@ -1169,6 +1202,16 @@ def quantum_system(
             f"{_count(len(problems), 'problem')} in pulse.quantum_system()", problems=problems
         )
     return found
+
+
+def _not_a_name(name: Any) -> None:
+    """Raise for a QuantumSystem given where ``pulse.quantum_system`` takes a name."""
+    if isinstance(name, QuantumSystem):
+        raise InvalidTypeError(
+            "pulse.quantum_system takes a registered name or the keywords that build a "
+            "quantum system, not a QuantumSystem; qs.replace(...) makes a variant of "
+            f"one, as qs.replace(layout=[0, 1]) for {name.name!r} on its first two qudits"
+        )
 
 
 def _unknown_target(name: str) -> None:

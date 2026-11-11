@@ -116,17 +116,11 @@ if __name__ == "__main__":
 
     print("=== 1. Frequency binary search in one shot (2 rounds) ===")
     offset_hz = 400e3
-    detuned = pulse.quantum_system(
-        name=qs.name,
+    detuned = qs.replace(
         qudits={
             **qs.physical_qudits,
             0: qudit.replace(frequency_hz=qudit.frequency_hz + offset_hz),
-        },
-        couplings=qs.couplings,
-        residual_zz=qs.residual_zz,
-        model=qs.model,
-        attribution=qs.attribution,
-        clock_ghz=qs.clock_ghz,
+        }
     )
     scheduled = pulse.compile(
         binary_search, quantum_system=qs, control_system=control_system

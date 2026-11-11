@@ -112,15 +112,7 @@ def drifted(factors):
         assert isinstance(given, MicrowaveDrive)
         stronger = given.replace(amplitude_scale_rad_per_ns=strength)
         qudits[q] = qudits[q].replace(drive=stronger)
-    return pulse.quantum_system(
-        name=quantum_system.name,
-        qudits=qudits,
-        couplings=quantum_system.couplings,
-        residual_zz=quantum_system.residual_zz,
-        model=quantum_system.model,
-        attribution=quantum_system.attribution,
-        clock_ghz=quantum_system.clock_ghz,
-    )
+    return quantum_system.replace(qudits=qudits)
 
 
 def populations(program, true_system):

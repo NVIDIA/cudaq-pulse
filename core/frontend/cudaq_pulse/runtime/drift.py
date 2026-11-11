@@ -127,7 +127,6 @@ class DriftingPlant:
 
     def now(self) -> QuantumSystem:
         """The quantum system with the qudit's current true parameters."""
-        from .._device import quantum_system
         from ..quantum_systems.base import MicrowaveDrive
 
         system = self._system
@@ -141,15 +140,7 @@ class DriftingPlant:
         )
         qudits = dict(system.physical_qudits)
         qudits[self.qudit] = qudit
-        return quantum_system(
-            name=system.name,
-            qudits=qudits,
-            couplings=system.couplings,
-            residual_zz=system.residual_zz,
-            model=system.model,
-            attribution=system.attribution,
-            clock_ghz=system.clock_ghz,
-        )
+        return system.replace(qudits=qudits)
 
     def truth_trace(self) -> dict[str, list[float]]:
         """Every recorded state, as columns (JSON-ready)."""

@@ -455,15 +455,7 @@ def chain_system(qs, t1_us=18.3, offset_hz=60e3, amplitude_scale=1.015):
         drive=qudit.drive.replace(amplitude_scale_rad_per_ns=scale),
         readout=qudit.readout.replace(error_1to0=0.03, error_0to1=0.02),
     )
-    return pulse.quantum_system(
-        name=qs.name,
-        qudits={**qs.physical_qudits, 0: true_system},
-        couplings=qs.couplings,
-        residual_zz=qs.residual_zz,
-        model=qs.model,
-        attribution=qs.attribution,
-        clock_ghz=qs.clock_ghz,
-    )
+    return qs.replace(qudits={**qs.physical_qudits, 0: true_system})
 
 
 def search_system(qs, offset_hz):
@@ -477,15 +469,7 @@ def search_system(qs, offset_hz):
         frequency_hz=qudit.frequency_hz + offset_hz,
         readout=qudit.readout.replace(error_1to0=0.115, error_0to1=0.105),
     )
-    return pulse.quantum_system(
-        name=qs.name,
-        qudits={**qs.physical_qudits, 0: true_system},
-        couplings=qs.couplings,
-        residual_zz=qs.residual_zz,
-        model=qs.model,
-        attribution=qs.attribution,
-        clock_ghz=qs.clock_ghz,
-    )
+    return qs.replace(qudits={**qs.physical_qudits, 0: true_system})
 
 
 def chain_results(branch):

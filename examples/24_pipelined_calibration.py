@@ -229,15 +229,7 @@ def true_p1(program, true_system, index):
 if __name__ == "__main__":
     nominal = quantum_system.physical_qudits[0]
     true_qudit = nominal.replace(frequency_hz=nominal.frequency_hz + hidden_offset_hz)
-    true_system = pulse.quantum_system(
-        name=quantum_system.name,
-        qudits={**quantum_system.physical_qudits, 0: true_qudit},
-        couplings=quantum_system.couplings,
-        residual_zz=quantum_system.residual_zz,
-        model=quantum_system.model,
-        attribution=quantum_system.attribution,
-        clock_ghz=quantum_system.clock_ghz,
-    )
+    true_system = quantum_system.replace(qudits={**quantum_system.physical_qudits, 0: true_qudit})
 
     print("=== The program, compiled once ===")
     started = time.perf_counter()

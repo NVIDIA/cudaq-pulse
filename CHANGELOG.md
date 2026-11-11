@@ -451,7 +451,9 @@ behavior may change in any 0.x release.
   `control_system=` and `clock_ghz=` keywords, or, with no argument, the
   process quantum system; a string is always a name, and
   `QuantumSystem.load` / `QuantumSystem.from_dict` read system files.
-  Quantum systems compare by
+  `qs.replace(...)` makes a variant of a quantum system with the same
+  keywords, as `dataclasses.replace` does; a `QuantumSystem` passed to
+  `pulse.quantum_system` is a `TypeError`. Quantum systems compare by
   content and share compiled kernels, but handles of two quantum systems, even
   equal ones, do not mix in one call or in a kernel compiled for one
   (`QuantumSystemMismatchError`), and an empty `layout` is a

@@ -78,15 +78,7 @@ def test_adaptive_t1_tracks_the_papers_device_on_the_controller():
         thermal_population=0.0,
         readout=qudit.readout.replace(error_1to0=0.11, error_0to1=0.14),
     )
-    target = pulse.quantum_system(
-        name=base.name,
-        qudits={**base.physical_qudits, 0: device_qudit},
-        couplings=base.couplings,
-        residual_zz=base.residual_zz,
-        model=base.model,
-        attribution=base.attribution,
-        clock_ghz=base.clock_ghz,
-    )
+    target = base.replace(qudits={**base.physical_qudits, 0: device_qudit})
     dev, q = _device(target)
     lowered = pulse.compile(
         _adaptive_t1, quantum_system=dev, control_system=P["control_system"]

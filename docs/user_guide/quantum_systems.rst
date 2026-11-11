@@ -59,6 +59,18 @@ zeta = E11 - E10 - E01 + E00. The values are checked when the system is
 built, and one ``QuantumSystemDefinitionError`` lists every problem at its path
 (``couplings[1].qudits[0]``).
 
+``qs.replace(...)`` makes a variant of a quantum system, as
+``dataclasses.replace`` does: the same build keywords, each defaulting to
+the system's own value (``qudits`` to its ``physical_qudits``). Passing a
+``QuantumSystem`` to ``pulse.quantum_system`` is a ``TypeError``.
+
+.. code-block:: python
+
+   q0 = qs.physical_qudits[0]
+   q0 = q0.replace(frequency_hz=q0.frequency_hz + 1e6)
+   detuned = qs.replace(qudits={**qs.physical_qudits, 0: q0})
+   first_two = qs.replace(layout=[0, 1])
+
 Arguments or a system file with problems raise ``QuantumSystemDefinitionError``, a
 ``ValueError``, which lists every problem rather than the first. Each is a
 ``pulse.Problem`` with its path (the argument, or its place in the file),

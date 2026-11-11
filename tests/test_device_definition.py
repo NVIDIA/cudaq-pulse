@@ -256,6 +256,34 @@ def test_a_lattice_spans_its_frequency_range():
     )
 
 
+def test_replace_makes_a_variant_of_a_quantum_system():
+    qs = pulse.quantum_system(TRANSMON_SURFACE17, layout=[4, 5, 6])
+    q4 = qs.physical_qudits[4]
+    detuned = qs.replace(qudits={**qs.physical_qudits, 4: q4.replace(frequency_hz=5.0e9)})
+    assert detuned.name == qs.name and detuned.layout == (4, 5, 6)
+    assert detuned.physical_qudits[4].frequency_hz == 5.0e9
+    assert detuned.couplings == qs.couplings and detuned.calibration is None
+    assert detuned.qudit_freq[0] == 5.0e9 and detuned.qudit_freq[1] == qs.qudit_freq[1]
+    assert qs.replace(layout=[0, 1]).layout == (0, 1)
+    assert qs.replace(name="copy").name == "copy"
+    with pytest.raises(
+        TypeError, match=r"unexpected keyword argument 'calibration'; it takes name"
+    ):
+        qs.replace(calibration=None)
+
+
+@pytest.mark.parametrize("keywords", [{}, {"layout": [0, 1]}, {"couplings": []}, {"qudits": {}}])
+def test_a_quantum_system_passed_to_quantum_system_says_to_replace_it(keywords):
+    qs = pulse.quantum_system(TRANSMON_SURFACE17)
+    with pytest.raises(TypeError) as info:
+        pulse.quantum_system(qs, **keywords)
+    assert str(info.value) == (
+        "pulse.quantum_system takes a registered name or the keywords that build a quantum "
+        "system, not a QuantumSystem; qs.replace(...) makes a variant of one, as "
+        "qs.replace(layout=[0, 1]) for 'transmon_surface17' on its first two qudits"
+    )
+
+
 def test_a_missing_file_is_an_os_error(tmp_path: Path):
     with pytest.raises(FileNotFoundError):
         pulse.QuantumSystem.load(tmp_path / "absent.json")

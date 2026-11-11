@@ -86,15 +86,7 @@ def _att_target():
         thermal_population=0.0,
         readout=qudit.readout.replace(error_1to0=0.11, error_0to1=0.14),
     )
-    return pulse.quantum_system(
-        name=base.name,
-        qudits={**base.physical_qudits, 0: att},
-        couplings=base.couplings,
-        residual_zz=base.residual_zz,
-        model=base.model,
-        attribution=base.attribution,
-        clock_ghz=base.clock_ghz,
-    )
+    return base.replace(qudits={**base.physical_qudits, 0: att})
 
 
 tracked_t1 = P["tracked_t1"]

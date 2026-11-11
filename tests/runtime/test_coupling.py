@@ -191,15 +191,7 @@ def test_systems_without_a_simulation_model_are_refused(backend):
     target = rebuilt(_pair(5.0e9, 5.5e9, g_hz=10.0e6), model=None)
     with pytest.raises(NotImplementedError, match=r"has no simulation model \(its model is None\)"):
         pulse.simulate(_lowered(target), backend=backend)
-    target = pulse.quantum_system(
-        name=target.name,
-        qudits=target.physical_qudits,
-        couplings=target.couplings,
-        residual_zz=target.residual_zz,
-        model=SimulationModel,
-        attribution=target.attribution,
-        clock_ghz=target.clock_ghz,
-    )
+    target = target.replace(model=SimulationModel)
     with pytest.raises(NotImplementedError, match="SimulationModel has no simulator"):
         pulse.simulate(_lowered(target), backend=backend)
 

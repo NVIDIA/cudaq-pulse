@@ -50,15 +50,7 @@ def _generic():
         ),
         calibrations={pulse.gates.READOUT: ReadoutPulse(integration_ns=400.0)},
     )
-    return pulse.quantum_system(
-        name=target.name,
-        qudits={0: qudit},
-        couplings=target.couplings,
-        residual_zz=target.residual_zz,
-        model=target.model,
-        attribution=target.attribution,
-        clock_ghz=target.clock_ghz,
-    )
+    return target.replace(qudits={0: qudit})
 
 
 TARGETS = {"generic": _generic, "transmon_surface17": transmon_surface17}
@@ -178,19 +170,13 @@ def test_k12_frequency_binary_search_follows_a_detuned_plant(target):
     dev = _device(target)
     offset = 300e3
     plant = DriftingPlant(target, frequency=OrnsteinUhlenbeck(1.0, 1.0), seed=0)
-    detuned = pulse.quantum_system(
-        name=target.name,
+    detuned = target.replace(
         qudits={
             **target.physical_qudits,
             0: target.physical_qudits[0].replace(
                 frequency_hz=target.physical_qudits[0].frequency_hz + offset
             ),
-        },
-        couplings=target.couplings,
-        residual_zz=target.residual_zz,
-        model=target.model,
-        attribution=target.attribution,
-        clock_ghz=target.clock_ghz,
+        }
     )
     lowered = pulse.compile(binary_search, quantum_system=dev, control_system=MACHINE).lower(
         dev.qudits[0], 1
@@ -245,19 +231,13 @@ def test_k13_three_point_decay_and_phase_recover_the_device(target):
     assert t1_us == pytest.approx(target.physical_qudits[0].t1_us, rel=0.02)
     # A detuned plant puts a phase 2 pi d T on the Ramsey fringe.
     offset = 250e3
-    detuned = pulse.quantum_system(
-        name=target.name,
+    detuned = target.replace(
         qudits={
             **target.physical_qudits,
             0: target.physical_qudits[0].replace(
                 frequency_hz=target.physical_qudits[0].frequency_hz + offset
             ),
-        },
-        couplings=target.couplings,
-        residual_zz=target.residual_zz,
-        model=target.model,
-        attribution=target.attribution,
-        clock_ghz=target.clock_ghz,
+        }
     )
     ramsey = pulse.compile(ramsey_shot, quantum_system=dev)
     wait_cycles, theta, delta = 600, math.pi / 2, 0.5
@@ -291,19 +271,13 @@ def test_k14_golden_section_finds_the_qudit_frequency(target):
     dev = _device(target)
     q = dev.qudits[0]
     offset = 1.3e6
-    detuned = pulse.quantum_system(
-        name=target.name,
+    detuned = target.replace(
         qudits={
             **target.physical_qudits,
             0: target.physical_qudits[0].replace(
                 frequency_hz=target.physical_qudits[0].frequency_hz + offset
             ),
-        },
-        couplings=target.couplings,
-        residual_zz=target.residual_zz,
-        model=target.model,
-        attribution=target.attribution,
-        clock_ghz=target.clock_ghz,
+        }
     )
     compiled = pulse.compile(spectroscopy, quantum_system=dev)
     state = cal.GoldenSection.start(-4e6, 4e6, tolerance=2e4)
@@ -472,19 +446,13 @@ def test_k16_tracking_a_drifting_plant_against_its_truth(target):
 
 
 def test_k17_latency_within_depletion_is_hidden(target):
-    depleting = pulse.quantum_system(
-        name=target.name,
+    depleting = target.replace(
         qudits={
             **target.physical_qudits,
             0: target.physical_qudits[0].replace(
                 readout=target.physical_qudits[0].readout.replace(depletion_ns=250.0),
             ),
-        },
-        couplings=target.couplings,
-        residual_zz=target.residual_zz,
-        model=target.model,
-        attribution=target.attribution,
-        clock_ghz=target.clock_ghz,
+        }
     )
     dev = _device(depleting)
     for latency_ns, exposed_ns in ((200.0, 0.0), (400.0, 150.0)):
@@ -517,17 +485,11 @@ def test_k18_readout_models_on_the_target(target):
     pulses = qudit.calibrations
     window = (pulses.get(pulse.gates.READOUT) or ReadoutPulse()).replace(duration_ns=400.0)
     calibrations = {**pulses, pulse.gates.READOUT: window}
-    modelled = pulse.quantum_system(
-        name=target.name,
+    modelled = target.replace(
         qudits={
             **target.physical_qudits,
             0: qudit.replace(readout=params, calibrations=calibrations),
-        },
-        couplings=target.couplings,
-        residual_zz=target.residual_zz,
-        model=target.model,
-        attribution=target.attribution,
-        clock_ghz=target.clock_ghz,
+        }
     )
     dev = _device(modelled)
 
