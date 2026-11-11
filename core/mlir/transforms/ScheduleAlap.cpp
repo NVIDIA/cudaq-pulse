@@ -2974,7 +2974,7 @@ private:
               noteEnd(time, 0);
           for (auto [op, group] : groups->ofOp) {
             if (!mlir::isa<classical::WaitOp>(op) ||
-                op->getParentOfType<mlir::scf::ForOp>() != loop)
+                op->template getParentOfType<mlir::scf::ForOp>() != loop)
               continue;
             auto found = samples.find(op);
             if (found != samples.end() && !found->second.empty() &&

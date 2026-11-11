@@ -3237,7 +3237,7 @@ public:
                         classical::SubmitOp>(user)) {
             it->second.push_back(user);
           } else if (user->getNumRegions() > 0) {
-            user->walk([&](mlir::Operation *inner) {
+            user->walk([&it = it](mlir::Operation *inner) {
               if (mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp,
                             classical::SubmitOp>(inner))
                 it->second.push_back(inner);

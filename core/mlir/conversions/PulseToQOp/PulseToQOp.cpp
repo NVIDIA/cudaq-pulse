@@ -1012,7 +1012,10 @@ struct PulseToQOpPass
           lineGrid.enabled() ? lineGrid.of(op->getOperand(0), trace) : 1;
       static constexpr llvm::StringLiteral quadratures[] = {"spin_x", "spin_y"};
       for (auto [quadrature, kind] : llvm::enumerate(quadratures)) {
-        auto lower = [&](const pulse::Occurrence &occurrence) {
+        // Clang < 16 cannot capture a structured binding by name.
+        auto lower = [&clockGHz, &qubitFrequency, &driveScale,
+                      &quadrature = quadrature,
+                      &grid](const pulse::Occurrence &occurrence) {
           return getWaveformCallbacks(occurrence, clockGHz,
                                       qubitFrequency->second, driveScale,
                                       static_cast<int32_t>(quadrature), grid);

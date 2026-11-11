@@ -1299,7 +1299,7 @@ struct ControllerWalk : ControllerExpressions {
   bool holdsBoundary(mlir::scf::ForOp loop) {
     auto [it, inserted] = boundaries.try_emplace(loop, false);
     if (inserted)
-      loop->walk([&](mlir::Operation *op) {
+      loop->walk([&it = it](mlir::Operation *op) {
         if (op->hasAttr("classical.variable") ||
             op->hasAttr("classical.blocking"))
           it->second = true;
