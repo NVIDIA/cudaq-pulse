@@ -360,6 +360,45 @@ jobs:
           PYTEST_ADDOPTS: --durations=30
         run: uv run --no-sync cmake --build build/dev --target check-pulse
 
+  # The oldest compilers the build supports, Ubuntu 22.04's GCC 11 and
+  # Clang 14, which lack parts of C++20 the newer ones have (Clang 14 cannot
+  # capture a structured binding in a lambda; GCC 11 misparses a member
+  # template called through one in a class template). Build and lit only.
+  old-compilers:
+    name: build and lit (linux-x86_64, ${{ matrix.compiler }})
+    if: ${{ !startsWith(github.ref, 'refs/heads/pull-request/') && !inputs.perf_baseline }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { compiler: gcc-11, cc: gcc-11, cxx: g++-11 }
+          - { compiler: clang-14, cc: clang-14, cxx: clang++-14 }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked --no-default-groups --group build --group test
+      - uses: ./.github/actions/mlir-toolchain
+
+      - name: Configure and build
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        run: |
+          uv run --no-sync cmake -S . -B build/dev -G Ninja \
+            -DCUDAQ_PULSE_BUILD_TESTS=ON \
+            -DPython3_EXECUTABLE="$PWD/.venv/bin/python"
+          uv run --no-sync cmake --build build/dev -j 4
+
+      - name: lit
+        run: uv run --no-sync cmake --build build/dev --target check-pulse-mlir
+
   # Line and branch coverage of the Python package by the CPU suite. It is a
   # report only: there is no threshold, and the job never blocks a merge.
   # Code that runs only in a subprocess the tests start is not measured.

@@ -10,8 +10,9 @@ in [SECURITY.md](SECURITY.md), not in an issue.
 - [uv](https://docs.astral.sh/uv/) (it provides Python, CMake, Ninja, and
   every Python tool below)
 - A C++20 compiler: GCC or Clang on Linux, the Xcode command-line tools on
-  macOS. CI builds with GCC 13 (Ubuntu 24.04), the manylinux_2_28 toolchain
-  and the Apple Clang of macOS 15
+  macOS. CI builds with GCC 13 (Ubuntu 24.04), the manylinux_2_28 toolchain,
+  the Apple Clang of macOS 15 and the oldest compilers supported, GCC 11 and
+  Clang 14 (Ubuntu 22.04)
 - For GPU work only: Linux, an NVIDIA GPU and driver, and the CUDA 12.9
   toolkit (or no toolkit at all; see [GPU builds](#gpu-builds))
 
@@ -429,7 +430,8 @@ after its release. [zizmor](https://docs.zizmor.sh/) audits the workflows
   3.15), and macOS (3.12 to 3.14), and the lit and pytest suites on
   free-threaded CPython 3.14t with the GIL off (configured with
   `-DCUDAQ_PULSE_FREE_THREADED=ON`, which declares the extension safe
-  without the GIL, as the free-threaded wheels do). The `gpu` job
+  without the GIL, as the free-threaded wheels do). `old-compilers` builds
+  and runs lit with GCC 11 and Clang 14 on Ubuntu 22.04. The `gpu` job
   builds with GPU support and runs the GPU tests (see [GPU CI](#gpu-ci)).
 - `wheels.yml`: cibuildwheel for the `cudaq-pulse-tools` wheel (`py3-none`)
   first, then the `cudaq-pulse` wheels for `cp312-abi3` (3.12 and newer) and
