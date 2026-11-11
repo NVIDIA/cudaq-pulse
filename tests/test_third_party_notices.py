@@ -4,6 +4,8 @@
 check's license, notice, CUDA and GPL rules (source tree only)."""
 
 import importlib.util
+import io
+import tarfile
 import zipfile
 from pathlib import Path
 
@@ -440,3 +442,25 @@ def test_the_driver_wheel_may_carry_only_listed_grafts(tmp_path, checker):
     )
     assert "bundles cudaq_pulse_tools.libs/libgmp-1a2b.so.10, a GPL or LGPL library" in problems
     assert not any(p.startswith("contains cudaq_pulse_tools.libs/") for p in problems)
+
+
+def _sdist(tmp_path, checker, requires):
+    path = tmp_path / "cudaq_pulse-0.1.0.tar.gz"
+    metadata = ["Metadata-Version: 2.4", "Name: cudaq-pulse", "Version: 0.1.0"]
+    metadata += [f"Requires-Dist: {r}" for r in requires]
+    files = {"PKG-INFO": "\n".join(metadata) + "\n\n", **dict.fromkeys(checker._LICENSES, "")}
+    with tarfile.open(path, "w:gz") as sdist:
+        for name, text in files.items():
+            info = tarfile.TarInfo(f"cudaq_pulse-0.1.0/{name}")
+            info.size = len(text.encode())
+            sdist.addfile(info, io.BytesIO(text.encode()))
+    return path
+
+
+def test_the_sdist_requires_the_driver_at_its_version(tmp_path, checker):
+    path = _sdist(tmp_path, checker, ["numpy>=2.0", "cudaq-pulse-tools==0.1.0"])
+    assert checker.check_sdist(path) == []
+    path = _sdist(tmp_path, checker, ["numpy>=2.0"])
+    assert checker.check_sdist(path) == [
+        f"{path.name}: requires [], expected exactly ['cudaq-pulse-tools==0.1.0']"
+    ]

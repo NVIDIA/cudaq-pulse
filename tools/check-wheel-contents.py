@@ -30,8 +30,9 @@ listing LLVM and every library grafted into the wheel, with each listed
 license in License-Expression; and no CUDA runtime library (those come from
 the CUDA wheels) and no GPL or LGPL library or license.
 
-For an sdist: LICENSE, NOTICE, THIRD_PARTY_NOTICES and LICENSES/. Exits 1
-listing every problem.
+For an sdist: LICENSE, NOTICE, THIRD_PARTY_NOTICES and LICENSES/, and a
+PKG-INFO requiring exactly cudaq-pulse-tools==<its version>. Exits 1 listing
+every problem.
 """
 
 from __future__ import annotations
@@ -178,6 +179,17 @@ def _check_licenses(
     return problems
 
 
+def _check_tools_requirement(metadata: Message, version: str) -> list[str]:
+    """cudaq-pulse requires exactly cudaq-pulse-tools==<its version>."""
+    requirement = f"{_TOOLS}=={version}"
+    tools_requirements = [
+        r for r in metadata.get_all("Requires-Dist") or [] if re.match(rf"{_TOOLS}\b", r)
+    ]
+    if tools_requirements != [requirement]:
+        return [f"requires {tools_requirements}, expected exactly ['{requirement}']"]
+    return []
+
+
 def check_tools_wheel(path: Path) -> list[str]:
     name, version, python_tag, abi_tag, platform_tag = _wheel_name(path) or [""] * 5
     problems = []
@@ -255,12 +267,7 @@ def check_wheel(path: Path) -> list[str]:
             f"cudaq_pulse/_native/{extension.pattern}"
         )
 
-    requirement = f"{_TOOLS}=={version}"
-    tools_requirements = [
-        r for r in metadata.get_all("Requires-Dist") or [] if re.match(rf"{_TOOLS}\b", r)
-    ]
-    if tools_requirements != [requirement]:
-        problems.append(f"requires {tools_requirements}, expected exactly ['{requirement}']")
+    problems += _check_tools_requirement(metadata, version)
 
     for item in sorted(names):
         if item.endswith(".pyc") or "/__pycache__/" in item or item.startswith("tests/"):
@@ -288,8 +295,16 @@ def check_pairs(wheels: list[Path]) -> list[str]:
 
 def check_sdist(path: Path) -> list[str]:
     with tarfile.open(path) as sdist:
-        members = {"/".join(m.name.split("/")[1:]) for m in sdist.getmembers()}
-    return [f"{path.name}: missing {f}" for f in _LICENSES if f not in members]
+        members = {"/".join(m.name.split("/")[1:]): m for m in sdist.getmembers()}
+        pkg_info = members.get("PKG-INFO")
+        file = sdist.extractfile(pkg_info) if pkg_info is not None else None
+        metadata = Parser().parsestr(file.read().decode()) if file is not None else None
+    problems = [f"missing {f}" for f in _LICENSES if f not in members]
+    if metadata is None:
+        problems.append("missing PKG-INFO")
+    else:
+        problems += _check_tools_requirement(metadata, metadata.get("Version") or "")
+    return [f"{path.name}: {problem}" for problem in problems]
 
 
 def main() -> int:
