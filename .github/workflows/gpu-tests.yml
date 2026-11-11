@@ -112,6 +112,9 @@ jobs:
         if: inputs.source == 'build'
         env:
           EXTRA: ${{ matrix.extra }}
+          # The dependencies without cudaq-pulse-tools, which this job builds
+          # with CMake ([tool.uv] in pyproject.toml).
+          CUDAQ_PULSE_UNPINNED_TOOLS: "1"
         run: |
           major="${EXTRA#cu}"
           uv pip install -r pyproject.toml --extra "$EXTRA"
