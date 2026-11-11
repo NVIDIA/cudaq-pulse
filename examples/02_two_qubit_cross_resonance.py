@@ -39,7 +39,7 @@ def echoed_cr(qudit_ctrl, qudit_tgt):
 
 
 if __name__ == "__main__":
-    qs = pulse.quantum_system("transmon_17q")
+    qs = pulse.quantum_system("transmon_surface17")
     compiled_kernel = pulse.compile(echoed_cr, quantum_system=qs).lower(qs.qudits[0], qs.qudits[1])
     print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")

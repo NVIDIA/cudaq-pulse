@@ -25,8 +25,8 @@ from cudaq_pulse.classical.loop import EstimateLog, ParameterStore
 from cudaq_pulse.quantum_systems import (
     DispersiveReadout,
     ReadoutPulse,
-    transmon_17q,
-    transmon_generic,
+    transmon_lattice,
+    transmon_surface17,
 )
 from cudaq_pulse.runtime._calls import IQModel
 from cudaq_pulse.runtime.drift import DriftingPlant, OrnsteinUhlenbeck, TelegraphT1
@@ -39,7 +39,7 @@ MACHINE = ControlSystem(links={"controller": Link(fixed_ns=4, feedback_ns=8)})
 def _generic():
     # The generic target has no readout parameters; give it a dispersive
     # readout so the readout skeletons have something to optimize.
-    target = transmon_generic(1)
+    target = transmon_lattice(1)
     qudit = target.physical_qudits[0].replace(
         readout=DispersiveReadout(
             frequency_hz=7.0e9,
@@ -61,7 +61,7 @@ def _generic():
     )
 
 
-TARGETS = {"generic": _generic, "transmon_17q": transmon_17q}
+TARGETS = {"generic": _generic, "transmon_surface17": transmon_surface17}
 
 
 @pytest.fixture(params=sorted(TARGETS))

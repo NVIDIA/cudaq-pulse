@@ -30,7 +30,7 @@ from cudaq_pulse.quantum_systems.base import (
 )
 from cudaq_pulse.quantum_systems.models import SimulationModel
 
-TRANSMON_17Q = "transmon_17q"
+TRANSMON_SURFACE17 = "transmon_surface17"
 
 
 @pulse.kernel
@@ -65,7 +65,7 @@ def corrected(q, r):
 def _qpu(*controllers, links=None, layout=(0, 1, 2, 3), **config):
     system = pulse.ControlSystem(controllers=list(controllers), links=links or {})
     return pulse.QuantumSystem.from_dict(
-        {"name": TRANSMON_17Q, "layout": list(layout), "control_system": system, **config}
+        {"name": TRANSMON_SURFACE17, "layout": list(layout), "control_system": system, **config}
     )
 
 
@@ -138,7 +138,7 @@ def test_the_device_holds_its_control_system():
     assert qpu.control_system.controllers == (box,)
     other = _qpu(pulse.Controller(drive_lines=range(4), readout_lines=range(3)))
     assert qpu.fingerprint == other.fingerprint and qpu != other
-    legacy = pulse.quantum_system(TRANSMON_17Q, layout=[0, 1, 2, 3])
+    legacy = pulse.quantum_system(TRANSMON_SURFACE17, layout=[0, 1, 2, 3])
     assert legacy.control_system is None and legacy.fingerprint == qpu.fingerprint
 
 
@@ -147,7 +147,7 @@ def test_the_device_holds_its_control_system():
 
 def _schedule(machine):
     lowered = pulse.compile(drive_and_branch, schedule="rcp", control_system=machine).lower(
-        *pulse.quantum_system("transmon_17q").qudits[:2]
+        *pulse.quantum_system("transmon_surface17").qudits[:2]
     )
     events = [(e.kind, e.line, e.start_cycles, e.duration_cycles) for e in lowered.schedule]
     return events, lowered.mlir()
@@ -184,7 +184,7 @@ def test_compile_uses_the_device_control_system():
 
 
 def test_one_controller_given_to_compile_says_what_it_lacks():
-    qpu = pulse.quantum_system("transmon_17q")
+    qpu = pulse.quantum_system("transmon_surface17")
     q, r = qpu.qudits[:2]
     wired = pulse.Controller(drive_lines=[0, 1], readout_lines=[1])
     with pytest.raises(ControllerLimitError) as raised:
@@ -292,7 +292,7 @@ def test_line_delays_and_a_reference_clock_are_the_control_systems():
     assert box.drive_lines[0] == DriveLine(0, delay_ns=2.3)
     system = pulse.ControlSystem(controllers=[box], reference_clock_ghz=0.5)
     assert system._machine._line_delays == delays and system._machine.reference_clock_ghz == 0.5
-    timed = pulse.quantum_system(TRANSMON_17Q, layout=[0, 1, 2, 3], control_system=system)
+    timed = pulse.quantum_system(TRANSMON_SURFACE17, layout=[0, 1, 2, 3], control_system=system)
     by_system = pulse.compile(drive_and_branch, quantum_system=timed).lower(
         timed.qudits[0], timed.qudits[1]
     )
@@ -311,7 +311,7 @@ def test_new_line_delays_of_a_control_system_schedule_again_to_the_same_bytes():
     kernel = pulse.kernel(drive_and_branch.__pulse_kernel_fn__)
     for k, delays in enumerate(({("drive", 0): 1.0}, {("drive", 1): 4.0, ("readout", 0): 1.5})):
         system = pulse.ControlSystem(controllers=[_delayed_box(delays)])
-        qpu = pulse.quantum_system(TRANSMON_17Q, layout=[0, 1], control_system=system)
+        qpu = pulse.quantum_system(TRANSMON_SURFACE17, layout=[0, 1], control_system=system)
         again = pulse.compile(kernel, quantum_system=qpu).lower(qpu.qudits[0], qpu.qudits[1])
         assert (again.metrics.trace_ms == 0.0) == (k > 0)
         fresh = pulse.kernel(drive_and_branch.__pulse_kernel_fn__)
@@ -329,7 +329,7 @@ def test_a_control_systems_line_delays_and_reference_clock_are_checked():
     box = pulse.Controller(readout_lines=[ReadoutLine(40, delay_ns=1.0)])
     system = pulse.ControlSystem(controllers=[box])
     with pytest.raises(QuantumSystemDefinitionError, match="qudit 40 is not in the quantum system"):
-        pulse.quantum_system(TRANSMON_17Q, control_system=system)
+        pulse.quantum_system(TRANSMON_SURFACE17, control_system=system)
 
 
 def test_a_control_system_takes_its_times_as_times():
@@ -358,7 +358,7 @@ def test_a_control_system_takes_its_times_as_times():
     assert by_time == by_number
     assert [ns.__class__ for ns in by_time._line_delays.values()] == [float, float]
     qpus = [
-        pulse.quantum_system(TRANSMON_17Q, layout=[0, 1], control_system=system)
+        pulse.quantum_system(TRANSMON_SURFACE17, layout=[0, 1], control_system=system)
         for system in (by_time, by_number)
     ]
     assert qpus[0].as_dict() == qpus[1].as_dict()
@@ -705,7 +705,7 @@ def test_a_qpu_round_trips_through_its_system_file():
         a, b, links={"feedback": pulse.Link(fixed_ns=40.0, controllers=[b])}, layout=range(6)
     )
     data = _round_trip(qpu)
-    assert data["name"] == TRANSMON_17Q and data["calibration"] == "transmon_17q"
+    assert data["name"] == TRANSMON_SURFACE17 and data["calibration"] == "transmon_surface17"
     system = data["control_system"]
     assert system["links"]["feedback"]["controllers"] == [1]
     assert system["controllers"][1]["peer_latency_cycles"] == {"0": 12}
@@ -757,7 +757,7 @@ def test_line_delays_and_a_reference_clock_round_trip_through_the_system_file():
     a = dataclasses.replace(a, drive_lines=[DriveLine(0, delay_ns=1.5), *a.drive_lines[1:]])
     b = dataclasses.replace(b, readout_lines=[2, ReadoutLine(3, delay_ns=2.0)])
     system = pulse.ControlSystem(controllers=[a, b], reference_clock_ghz=0.25)
-    qpu = pulse.quantum_system(TRANSMON_17Q, layout=[0, 1, 2, 3], control_system=system)
+    qpu = pulse.quantum_system(TRANSMON_SURFACE17, layout=[0, 1, 2, 3], control_system=system)
     data = _round_trip(qpu)
     control = data["control_system"]
     assert control["controllers"][0]["drive_lines"][0] == {"qudit": 0, "delay_ns": 1.5}
@@ -774,7 +774,9 @@ def test_line_delays_and_a_reference_clock_round_trip_through_the_system_file():
 
 def test_a_program_clock_round_trips_through_the_system_file():
     system = pulse.ControlSystem(controllers=[pulse.Controller(clock_ghz=1.0)])
-    qpu = pulse.quantum_system(TRANSMON_17Q, layout=[0, 1], control_system=system, clock_ghz=4.0)
+    qpu = pulse.quantum_system(
+        TRANSMON_SURFACE17, layout=[0, 1], control_system=system, clock_ghz=4.0
+    )
     assert qpu.clock_ghz == 4.0
     assert _round_trip(qpu)["clock_ghz"] == 4.0
     assert "clock_ghz" not in _round_trip(_qpu(pulse.Controller(), layout=[0, 1]))
@@ -814,9 +816,11 @@ def test_a_system_file_reports_every_problem_with_its_line(tmp_path):
 
 def test_a_newer_system_file_format_is_refused():
     with pytest.raises(QuantumSystemDefinitionError, match="newer than this cudaq-pulse reads"):
-        pulse.QuantumSystem.from_dict({"format": "cudaq-pulse.system/2", "name": TRANSMON_17Q})
+        pulse.QuantumSystem.from_dict(
+            {"format": "cudaq-pulse.system/2", "name": TRANSMON_SURFACE17}
+        )
     with pytest.raises(QuantumSystemDefinitionError, match="not a system file format"):
-        pulse.QuantumSystem.from_dict({"format": "something/1", "name": TRANSMON_17Q})
+        pulse.QuantumSystem.from_dict({"format": "something/1", "name": TRANSMON_SURFACE17})
 
 
 # ── Controller descriptions ──────────────────────────────────────────────────
@@ -909,7 +913,7 @@ def test_doctor_checks_a_system_file(tmp_path):
     path.write_text(json.dumps(qpu.as_dict(), indent=2))
     code, text = _doctor(path)
     assert code == 0, text
-    assert f"{path}: ok, quantum system {TRANSMON_17Q} with 4 qudits" in text
+    assert f"{path}: ok, quantum system {TRANSMON_SURFACE17} with 4 qudits" in text
     assert "controllers[1]: box.b, drive lines 2..3" in text
     assert "link 'feedback': reaches controllers [0]" in text
     data = qpu.as_dict()

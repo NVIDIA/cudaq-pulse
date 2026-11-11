@@ -4,7 +4,7 @@
 
 The default target is the 17-qubit distance-three surface-code quantum system of
 Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708, built from the
-values the paper publishes (``_transmon_17q``, with a citation for each).
+values the paper publishes (``_transmon_surface17``, with a citation for each).
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 from .._errors import InvalidValueError
-from . import _transmon_17q as _k
+from . import _transmon_surface17 as _k
 from .base import (
     Coupling,
     DispersiveReadout,
@@ -30,7 +30,7 @@ from .base import (
 if TYPE_CHECKING:
     from .._device import QuantumSystem
 
-#: The CZs of one error correction cycle of ``transmon_17q``, layer by layer
+#: The CZs of one error correction cycle of ``transmon_surface17``, layer by layer
 #: (Fig. 3a and the edge labels of Fig. 6c): each layer is three CZs on
 #: disjoint pairs, each pair the (auxiliary, data) qudit indices of a
 #: coupling. Layers 1-4 measure the Z stabilizers, 5-8 the X stabilizers.
@@ -46,7 +46,7 @@ CZ_LAYERS: tuple[tuple[tuple[int, int], ...], ...] = (
 )
 
 
-def transmon_17q(calibration: Any = "transmon_17q") -> QuantumSystem:
+def transmon_surface17(calibration: Any = "transmon_surface17") -> QuantumSystem:
     """17-qubit surface-code quantum system of Krinner et al., Nature 605, 669 (2022).
 
     Qudits 0-16 are D1-D9, X1-X4, Z1-Z4, the column order of the paper's
@@ -67,9 +67,9 @@ def transmon_17q(calibration: Any = "transmon_17q") -> QuantumSystem:
     MHz measured on X2-D4 at 4.4 GHz, Hellings et al., arXiv:2503.04610).
     *calibration* (a ``Calibration``, the name of a shipped one, or None)
     supplies the device-wide charge coupling g_c (fitted to the X2-D4
-    measurement, 3.12 MHz in ``transmon_17q``), and each coupling is the
+    measurement, 3.12 MHz in ``transmon_surface17``), and each coupling is the
     exchange J_qq = g_c ``<0|n_a|1> <0|n_d|1>`` at the qubits' idle points:
-    5.67-6.08 MHz with the shipped ``transmon_17q``. With
+    5.67-6.08 MHz with the shipped ``transmon_surface17``. With
     ``calibration=None`` it is the published value over sqrt(2), 4.95 MHz.
     Each coupling's ``CZ`` calibration is a ``FluxCZ``: 98 ns on average,
     with 15 ns buffers, at the pair's interaction frequency of Fig. 6c.
@@ -81,25 +81,27 @@ def transmon_17q(calibration: Any = "transmon_17q") -> QuantumSystem:
 
     No residual ZZ is listed: the paper gives no per-pair values, only
     that the calculated idle ZZ is below about 8 kHz. Simulated with three
-    or more levels, the couplings produce it; ``transmon_17q_idle_zz_hz`` gives
-    the charge model's value, -4.5 to -7.3 kHz with ``transmon_17q``.
+    or more levels, the couplings produce it; ``transmon_surface17_idle_zz_hz`` gives
+    the charge model's value, -4.5 to -7.3 kHz with ``transmon_surface17``.
     """
     if calibration is None:
         from .._device import _calibrated
 
-        return _calibrated(_published_17q(), None, "transmon_17q(calibration=None)", None, None)
+        return _calibrated(
+            _published_surface17(), None, "transmon_surface17(calibration=None)", None, None
+        )
     from .._device import quantum_system
 
-    if calibration == "transmon_17q":
-        return quantum_system("transmon_17q")
-    return quantum_system("transmon_17q", calibration=calibration)
+    if calibration == "transmon_surface17":
+        return quantum_system("transmon_surface17")
+    return quantum_system("transmon_surface17", calibration=calibration)
 
 
-def _described_17q(calibration: Any = "transmon_17q") -> _Description:
-    """The description ``transmon_17q(calibration)`` is built from."""
+def _described_surface17(calibration: Any = "transmon_surface17") -> _Description:
+    """The description ``transmon_surface17(calibration)`` is built from."""
     if isinstance(calibration, str):
-        return _calibrated_17q(calibration)
-    target = _published_17q()
+        return _calibrated_surface17(calibration)
+    target = _published_surface17()
     return target if calibration is None else calibration._apply(target)
 
 
@@ -108,7 +110,7 @@ _BUILT: dict[str | None, _Description] = {}
 _BUILT_LOCK = threading.RLock()
 
 
-def _calibrated_17q(name: str) -> _Description:
+def _calibrated_surface17(name: str) -> _Description:
     from .calibration import shipped_calibration
 
     built = _BUILT.get(name)
@@ -116,21 +118,21 @@ def _calibrated_17q(name: str) -> _Description:
         with _BUILT_LOCK:
             built = _BUILT.get(name)
             if built is None:
-                built = _BUILT[name] = shipped_calibration(name)._apply(_published_17q())
+                built = _BUILT[name] = shipped_calibration(name)._apply(_published_surface17())
     return built
 
 
-def _published_17q() -> _Description:
+def _published_surface17() -> _Description:
     built = _BUILT.get(None)
     if built is None:
         with _BUILT_LOCK:
             built = _BUILT.get(None)
             if built is None:
-                built = _BUILT[None] = _build_published_17q()
+                built = _BUILT[None] = _build_published_surface17()
     return built
 
 
-def _build_published_17q() -> _Description:
+def _build_published_surface17() -> _Description:
     qudits = {}
     drive = MicrowaveDrive()
     x = DragPulse(duration_ns=_k.DRIVE_DURATION_NS, sigma_ns=_k.DRIVE_SIGMA_NS)
@@ -184,21 +186,23 @@ def _build_published_17q() -> _Description:
         for e in _k.EDGES
     ]
     return _Description(
-        name="transmon_17q",
+        name="transmon_surface17",
         qudits=qudits,
         couplings=couplings,
         attribution=_k.CITATION,
     )
 
 
-def transmon_17q_idle_zz_hz(calibration: Any = "transmon_17q") -> dict[tuple[int, int], float]:
-    """Idle ZZ of each coupled pair of the ``transmon_17q`` target, keyed by the
+def transmon_surface17_idle_zz_hz(
+    calibration: Any = "transmon_surface17",
+) -> dict[tuple[int, int], float]:
+    """Idle ZZ of each coupled pair of the ``transmon_surface17`` target, keyed by the
     coupling's (auxiliary, data) qudit indices.
 
     zeta = E_11 - E_10 - E_01 + E_00 of the dressed levels of the
     charge-coupled pair (charge basis, five levels each, no rotating-wave
     approximation) at the idle sweet spots, with the circuits and couplings
-    of *calibration*: -4.5 to -7.3 kHz with the shipped ``transmon_17q``, below
+    of *calibration*: -4.5 to -7.3 kHz with the shipped ``transmon_surface17``, below
     the paper's "below about 8 kHz". The simulation's Duffing ladder with
     exchange J_qq reproduces it within a few percent.
     """
@@ -212,7 +216,7 @@ def transmon_17q_idle_zz_hz(calibration: Any = "transmon_17q") -> dict[tuple[int
     }
 
 
-def transmon_generic(
+def transmon_lattice(
     qudit_count: int,
     *,
     base_frequency_hz: float = 5.0e9,
@@ -245,7 +249,7 @@ def transmon_generic(
     """
     from .._device import _calibrated
 
-    built = _described_generic(
+    built = _described_lattice(
         qudit_count,
         base_frequency_hz=base_frequency_hz,
         frequency_spread_hz=frequency_spread_hz,
@@ -255,10 +259,10 @@ def transmon_generic(
         t2_star_us=t2_star_us,
         topology=topology,
     )
-    return _calibrated(built, None, f"transmon_generic({qudit_count})", None, None)
+    return _calibrated(built, None, f"transmon_lattice({qudit_count})", None, None)
 
 
-def _described_generic(
+def _described_lattice(
     qudit_count: int,
     *,
     base_frequency_hz: float = 5.0e9,
@@ -269,7 +273,7 @@ def _described_generic(
     t2_star_us: float = 15.0,
     topology: str = "linear",
 ) -> _Description:
-    """The description ``transmon_generic(...)`` is built from."""
+    """The description ``transmon_lattice(...)`` is built from."""
     if qudit_count < 1:
         raise InvalidValueError(f"qudit_count must be >= 1, got {qudit_count}")
 
@@ -305,7 +309,7 @@ def _described_generic(
     couplings = [Coupling((a, b), coupling_strength_hz) for a, b in edges]
 
     return _Description(
-        name=f"transmon_generic_{qudit_count}q_{topology}",
+        name=f"transmon_lattice_{qudit_count}q_{topology}",
         qudits=qudits,
         couplings=couplings,
     )

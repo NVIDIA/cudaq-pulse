@@ -93,7 +93,7 @@ def sideband_modulation(qudit):
 
 
 if __name__ == "__main__":
-    qs = pulse.quantum_system("transmon_17q")
+    qs = pulse.quantum_system("transmon_surface17")
     print("=== Phase Rotation (4 x pi/2 = full circle) ===")
     compiled_kernel = pulse.compile(phase_rotation_demo, quantum_system=qs).lower(qs.qudits[0])
     print(compiled_kernel.mlir())

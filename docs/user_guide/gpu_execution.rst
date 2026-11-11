@@ -142,7 +142,7 @@ To inspect the lowered LLVM IR:
        sigma = 5 * pulse.ns
        drive(drive_line, gaussian(duration, 0.3, sigma))
 
-   qs = pulse.quantum_system("transmon_17q")
+   qs = pulse.quantum_system("transmon_surface17")
    llvm_ir = my_kernel.lower(qs.qudits[0]).mlir("llvm")
    print(llvm_ir)
 
@@ -232,7 +232,7 @@ Physical Model
 
 The simulated space holds only the qudits the program uses: those it gets a
 drive or readout line on, one mode each in increasing order of quantum system index.
-A pair at qudits 13 and 3 of the 17-qudit ``transmon_17q`` quantum system is a 3 x 3 problem
+A pair at qudits 13 and 3 of the 17-qudit ``transmon_surface17`` quantum system is a 3 x 3 problem
 with three levels, not a 3^14 one. Couplings and residual ZZ between those
 qudits keep their quantum system values; the other qudits are left out, with their
 couplings, as classical spectators in their ground state. To simulate an

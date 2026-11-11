@@ -112,7 +112,7 @@ def staggered_readout(qudit_0, qudit_1):
 
 
 if __name__ == "__main__":
-    qs = pulse.quantum_system("transmon_17q")
+    qs = pulse.quantum_system("transmon_surface17")
     print("=== Two-qubit simultaneous drive ===")
     compiled_kernel = pulse.compile(two_qudit_simultaneous, quantum_system=qs).lower(
         qs.qudits[0], qs.qudits[1]

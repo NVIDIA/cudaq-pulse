@@ -121,7 +121,7 @@ def knill_dd(qudit, sigma, amplitude_pi, tau):
 
 
 if __name__ == "__main__":
-    qs = pulse.quantum_system("transmon_17q")
+    qs = pulse.quantum_system("transmon_surface17")
     sigma = 5 * pulse.ns  # every pulse lasts 4 sigma
     amplitude_pi = 0.50
     amplitude_half_pi = 0.25

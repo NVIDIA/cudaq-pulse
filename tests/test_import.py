@@ -38,7 +38,7 @@ def test_import_and_compile_do_not_load_numpy_or_the_gpu_runtime(tmp_path):
         "def k(q):\n"
         "    d = get_drive_line(q)\n"
         "    drive(d, square(40, 0.1))\n"
-        "dev = p.quantum_system('transmon_17q')\n"
+        "dev = p.quantum_system('transmon_surface17')\n"
         "p.compile(k).lower(dev.qudits[0])\n"
         "print(sorted(m for m in ('numpy', 'cudaq_pulse.runtime.gpu',"
         " 'cudaq_pulse.runtime._jit', 'importlib.metadata') if m in sys.modules))",
@@ -73,7 +73,7 @@ def test_links_wait_checks_and_the_classical_report_load_on_first_use(tmp_path):
         "def k(q):\n"
         "    d = get_drive_line(q)\n"
         "    drive(d, square(40, 0.1))\n"
-        "p.compile(k).lower(p.quantum_system('transmon_17q').qudits[0])\n"
+        "p.compile(k).lower(p.quantum_system('transmon_surface17').qudits[0])\n"
         "lazy = ('cudaq_pulse.classical._link', 'cudaq_pulse._waits',"
         " 'cudaq_pulse._classical_report', 'cudaq_pulse._system')\n"
         "print(sorted(m for m in lazy if m in sys.modules))\n"

@@ -4,7 +4,7 @@
 
 Builds on ``20_adaptive_calibration.py``. An optimizer tunes the amplitude
 and the detuning of a pi pulse on one qudit of the 17-qudit transmon twin
-(``transmon_17q``), measured through a train of 9 pi pulses, which adds up
+(``transmon_surface17``), measured through a train of 9 pi pulses, which adds up
 both errors. Each batch runs a few of its suggestions; their results update
 it and it suggests the next batch. Two loops are compared:
 
@@ -42,9 +42,9 @@ import time
 
 import cudaq_pulse as pulse
 import numpy as np
-from cudaq_pulse.quantum_systems import transmon_17q
+from cudaq_pulse.quantum_systems import transmon_surface17
 
-quantum_system = transmon_17q()
+quantum_system = transmon_surface17()
 pulse_duration = 40 * pulse.ns
 pulse_sigma = 10 * pulse.ns
 # A pi pulse rotates by pi: the Gaussian's area (ns) times the drive's rad/ns

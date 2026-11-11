@@ -15,7 +15,7 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse import controller
-from cudaq_pulse.quantum_systems import transmon_17q
+from cudaq_pulse.quantum_systems import transmon_surface17
 
 _EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "21_calibration_protocol.py"
 if not _EXAMPLE.exists():
@@ -50,7 +50,7 @@ def _device(quantum_system):
 
 @pytest.mark.slow
 def test_the_pi_train_corrects_a_drive_amplitude_error():
-    target = transmon_17q()
+    target = transmon_surface17()
     dev, q = _device(target)
     lowered = pulse.compile(_pi_step, quantum_system=dev, control_system=P["control_system"]).lower(
         q
@@ -68,7 +68,7 @@ def test_the_pi_train_corrects_a_drive_amplitude_error():
 
 @pytest.mark.slow
 def test_adaptive_t1_tracks_the_papers_device_on_the_controller():
-    base = transmon_17q()
+    base = transmon_surface17()
     qudit = base.physical_qudits[0]
     device_qudit = qudit.replace(
         frequency_hz=4.13e9,
@@ -108,7 +108,7 @@ def test_adaptive_t1_tracks_the_papers_device_on_the_controller():
 
 
 def test_the_binary_search_narrows_on_the_controller():
-    target = transmon_17q()
+    target = transmon_surface17()
     dev, q = _device(target)
     lowered = pulse.compile(
         P["binary_search"], quantum_system=dev, control_system=P["control_system"]
@@ -128,7 +128,7 @@ def test_the_binary_search_narrows_on_the_controller():
 
 
 def _chain():
-    target = transmon_17q()
+    target = transmon_surface17()
     dev, q = _device(target)
     return (
         pulse.compile(

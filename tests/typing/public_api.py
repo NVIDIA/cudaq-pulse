@@ -45,14 +45,16 @@ pulse.ops.wf_scale(0.5, wave)  # type: ignore[arg-type]
 pulse.ops.wf_scale(waveform=wave, scalar=0.5)  # type: ignore[call-arg]
 assert_type(pulse.ops.wf_add(wave, wave), Waveform)
 
-dev = pulse.quantum_system("transmon_17q")
+dev = pulse.quantum_system("transmon_surface17")
 assert_type(dev, pulse.QuantumSystem)
-assert_type(pulse.quantum_system("transmon_17q"), pulse.QuantumSystem)
-assert_type(pulse.quantum_system("transmon_17q", layout=[4, 5], clock_ghz=1.0), pulse.QuantumSystem)
+assert_type(pulse.quantum_system("transmon_surface17"), pulse.QuantumSystem)
+assert_type(
+    pulse.quantum_system("transmon_surface17", layout=[4, 5], clock_ghz=1.0), pulse.QuantumSystem
+)
 assert_type(pulse.QuantumSystem.from_dict(dev.as_dict()), pulse.QuantumSystem)
 assert_type(pulse.QuantumSystem.load("qpu.json"), pulse.QuantumSystem)
-pulse.quantum_system({"name": "transmon_17q"})  # type: ignore[arg-type]
-pulse.quantum_system("transmon_17q", [4, 5])  # type: ignore[call-arg, arg-type]
+pulse.quantum_system({"name": "transmon_surface17"})  # type: ignore[arg-type]
+pulse.quantum_system("transmon_surface17", [4, 5])  # type: ignore[call-arg, arg-type]
 assert_type(dev.qudits[0], pulse.Qudit)
 assert_type(dev.qudits[0:2], pulse.Register)
 assert_type(dev.qudits[[0, 1]], pulse.Register)
@@ -217,7 +219,7 @@ assert_type(pulse.controller.OpCounts(add=2).total, int)
 assert_type(cores.max_ops_total, int | None)
 assert_type(cores.dispatch_keys, Mapping[str, int])
 assert_type(pulse.Controller(processors=[cores]).processors, Sequence[pulse.Processor])
-qpu = pulse.quantum_system("transmon_17q", control_system=control)
+qpu = pulse.quantum_system("transmon_surface17", control_system=control)
 assert_type(qpu.control_system, pulse.ControlSystem | None)
 assert_type(qpu.as_dict(), dict[str, Any])
 pulse.compile(rabi, quantum_system=qpu, control_system=control)

@@ -60,7 +60,7 @@ from pathlib import Path
 
 import cudaq_pulse as pulse
 import numpy as np
-from cudaq_pulse.quantum_systems import transmon_17q
+from cudaq_pulse.quantum_systems import transmon_surface17
 from cudaq_pulse.runtime import _propagate
 
 _EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "21_calibration_protocol.py"
@@ -76,7 +76,7 @@ def _bootstrap(values, stat, rng, n=2000):
 
 
 def _att_target():
-    base = transmon_17q()
+    base = transmon_surface17()
     qudit = base.physical_qudits[0]
     att = qudit.replace(
         frequency_hz=4.13e9,
@@ -180,7 +180,7 @@ def adaptive_t1(n, seed):
 
 
 def binary_search(n, seed):
-    dev = transmon_17q()
+    dev = transmon_surface17()
     lowered = pulse.compile(
         P["binary_search"], quantum_system=dev, control_system=P["control_system"]
     ).lower(dev.qudits[0], 15)
@@ -214,7 +214,7 @@ def binary_search(n, seed):
 
 
 def chain(n, seed):
-    dev = transmon_17q()
+    dev = transmon_surface17()
     lowered = pulse.compile(
         P["calibration_chain"], quantum_system=dev, control_system=P["control_system"]
     ).lower(dev.qudits[0], 20_000.0 * CLOCK)
@@ -261,7 +261,7 @@ def chain(n, seed):
 
 
 def steps(seed):
-    dev = transmon_17q()
+    dev = transmon_surface17()
     q = dev.qudits[0]
     true_system = P["chain_system"](dev)
     shots_per_step = {

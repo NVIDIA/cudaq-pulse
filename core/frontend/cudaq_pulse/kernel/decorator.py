@@ -59,7 +59,7 @@ def kernel[**P](
             d = get_drive_line(q)
             drive(d, gaussian(40, amp, 10.0))
 
-        dev = cudaq_pulse.quantum_system("transmon_17q")
+        dev = cudaq_pulse.quantum_system("transmon_surface17")
         rabi(dev.qudits[0], 0.3)
 
     A kernel called from another kernel is scheduled with it, unless it

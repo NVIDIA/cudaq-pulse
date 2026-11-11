@@ -23,7 +23,7 @@ control = pulse.ControlSystem(
     controllers=[left, right],
     links={"feedback": pulse.Link(fixed_ns=40.0, feedback_ns=20.0, controllers=[left, right])},
 )
-qpu = pulse.quantum_system("transmon_17q", layout=[0, 1, 2, 3], control_system=control)
+qpu = pulse.quantum_system("transmon_surface17", layout=[0, 1, 2, 3], control_system=control)
 
 
 @pulse.classical(max_latency_ns=400, link="feedback")

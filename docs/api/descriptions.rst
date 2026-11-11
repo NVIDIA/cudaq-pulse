@@ -125,12 +125,12 @@ levels have names says in its docstring which number each name has.
 Shipped quantum systems
 -----------------------
 
-.. autofunction:: cudaq_pulse.quantum_systems.transmon_17q
+.. autofunction:: cudaq_pulse.quantum_systems.transmon_surface17
 
 .. autodata:: cudaq_pulse.quantum_systems.transmon.CZ_LAYERS
    :no-value:
 
-.. autofunction:: cudaq_pulse.quantum_systems.transmon_generic
+.. autofunction:: cudaq_pulse.quantum_systems.transmon_lattice
 
 Registering quantum systems
 ---------------------------

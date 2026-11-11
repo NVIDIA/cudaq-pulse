@@ -13,7 +13,7 @@ from cudaq_pulse.quantum_systems import (
     PhysicalQudit,
     SimulationModel,
     TransmonModel,
-    transmon_generic,
+    transmon_lattice,
 )
 from cudaq_pulse.quantum_systems.base import _Description
 
@@ -39,7 +39,7 @@ def test_each_model_class_declares_its_levels():
 def test_a_target_takes_a_model_class_or_instance_and_defaults_to_transmons():
     assert _target(TransmonModel).model == TransmonModel() == _target(TransmonModel()).model
     assert pulse.quantum_system(name="plain", qudits={}).model == TransmonModel()
-    assert transmon_generic(2).model == TransmonModel()
+    assert transmon_lattice(2).model == TransmonModel()
     assert _target(None).model is None
     with pytest.raises(pulse.InvalidTypeError, match="model must be a SimulationModel class"):
         _target("transmon")

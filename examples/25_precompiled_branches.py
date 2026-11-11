@@ -3,7 +3,7 @@
 """Compiling every branch of an adaptive experiment ahead of time.
 
 Builds on ``24_pipelined_calibration.py``. A check measures whether each of
-four qudits of the 17-qudit transmon twin (``transmon_17q``) still has a
+four qudits of the 17-qudit transmon twin (``transmon_surface17``) still has a
 good pi pulse. Which qudits fail decides the next calibration step: an
 amplitude sweep of amplified pi trains on exactly those qudits, with the
 others only checked. Four qudits give 15 possible next programs, plus "all
@@ -38,9 +38,9 @@ import time
 
 import cudaq_pulse as pulse
 import numpy as np
-from cudaq_pulse.quantum_systems import MicrowaveDrive, transmon_17q
+from cudaq_pulse.quantum_systems import MicrowaveDrive, transmon_surface17
 
-quantum_system = transmon_17q()
+quantum_system = transmon_surface17()
 qudit_indices = (0, 1, 2, 3)
 repetitions = 9
 pulse_duration = 40 * pulse.ns

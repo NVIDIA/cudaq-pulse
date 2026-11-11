@@ -20,7 +20,7 @@ only run it.
        drive_line = get_drive_line(qubit)
        drive(drive_line, gaussian(cal["x_duration"], amplitude, cal["x_sigma"]))
 
-   qs = pulse.quantum_system("transmon_17q")
+   qs = pulse.quantum_system("transmon_surface17")
    q = qs.qudits[0]
 
    rabi(q, 0.3)                    # compiles, then runs; returns None

@@ -97,7 +97,7 @@ def ghz_n(qudit_0, qudit_1, qudit_count):
 
 
 if __name__ == "__main__":
-    qs = pulse.quantum_system("transmon_17q")
+    qs = pulse.quantum_system("transmon_surface17")
     print("=== 3-qubit GHZ (explicit) ===")
     compiled_kernel = pulse.compile(ghz_3, quantum_system=qs).lower(
         qs.qudits[0], qs.qudits[1], qs.qudits[2]

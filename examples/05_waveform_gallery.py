@@ -139,7 +139,7 @@ def derivative_pulse(qudit, beta: float):
 
 
 if __name__ == "__main__":
-    qs = pulse.quantum_system("transmon_17q")
+    qs = pulse.quantum_system("transmon_surface17")
     print("=== Waveform Showcase ===")
     compiled_kernel = pulse.compile(waveform_showcase, quantum_system=qs).lower(qs.qudits[0])
     print(compiled_kernel.mlir())

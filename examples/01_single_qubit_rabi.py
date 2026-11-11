@@ -34,7 +34,7 @@ def rabi_with_readout(qudit, duration, amplitude):
 
 
 if __name__ == "__main__":
-    qs = pulse.quantum_system("transmon_17q")
+    qs = pulse.quantum_system("transmon_surface17")
     qudit = qs.qudits[0]
 
     print("=== Compiled for the qubit's quantum system ===")
@@ -52,7 +52,7 @@ if __name__ == "__main__":
     print(f"  compiled {sweep.cache_info().compiled} time(s) for the whole sweep")
 
     print("\n=== The same kernel on a quantum system with a 1 GHz clock ===")
-    slow = pulse.quantum_system("transmon_17q", clock_ghz=1.0)
+    slow = pulse.quantum_system("transmon_surface17", clock_ghz=1.0)
     for quantum_system in (qs, slow):
         compiled = rabi.lower(quantum_system.qudits[0], cal["rabi_duration"], 0.5)
         cycles = compiled.schedule[0].duration_cycles

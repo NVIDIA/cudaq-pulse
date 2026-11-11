@@ -66,7 +66,7 @@ def test_neither_import_nor_a_device_loads_the_gates():
         [
             sys.executable,
             "-c",
-            "import sys, cudaq_pulse as p; p.quantum_system('transmon_17q'); "
+            "import sys, cudaq_pulse as p; p.quantum_system('transmon_surface17'); "
             "print('cudaq_pulse.gates' in sys.modules); p.gates; "
             "print('cudaq_pulse.gates' in sys.modules)",
         ],
@@ -154,7 +154,7 @@ def test_a_qudit_checks_its_calibrations():
 
 
 def test_a_qudit_handle_and_a_coupling_give_the_device_calibrations():
-    dev = pulse.quantum_system("transmon_17q")
+    dev = pulse.quantum_system("transmon_surface17")
     q = dev.qudits[4]
     assert q.get_calibration(X) == dev.physical_qudits[4].get_calibration(X)
     assert q.get_calibration(X).amplitude == pytest.approx(math.pi / _AREA_NS)
@@ -170,13 +170,13 @@ def test_a_qudit_handle_and_a_coupling_give_the_device_calibrations():
 
 
 def test_a_coupling_of_a_device_takes_its_handles():
-    dev = pulse.quantum_system("transmon_17q")
+    dev = pulse.quantum_system("transmon_surface17")
     with pytest.raises(pulse.NotFoundError, match="are not coupled"):
         dev.coupling(dev.qudits[0], dev.qudits[1])
     with pytest.raises(pulse.InvalidTypeError, match="takes two qudit handles"):
         dev.coupling(0, 1)  # type: ignore[arg-type]
     other = _device()
-    with pytest.raises(pulse.QuantumSystemMismatchError, match="not of 'transmon_17q'"):
+    with pytest.raises(pulse.QuantumSystemMismatchError, match="not of 'transmon_surface17'"):
         dev.coupling(other.qudits[0], dev.qudits[0])
 
 

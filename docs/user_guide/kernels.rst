@@ -31,7 +31,7 @@ Infrastructure stays behind the ``pulse.`` prefix:
        drive_line = get_drive_line(qubit)
        drive(drive_line, gaussian(duration, 0.5, sigma))
 
-   qs = pulse.quantum_system("transmon_17q")
+   qs = pulse.quantum_system("transmon_surface17")
    duration = 32 * pulse.ns
    sigma = 8 * pulse.ns
    rabi_oscillation(qs.qudits[0], duration, sigma)
@@ -141,8 +141,8 @@ them from a calibration the kernel closes over.
        wait(d, gap)
        drive(d, x)
 
-   fast = pulse.quantum_system("transmon_17q", clock_ghz=2.0)
-   slow = pulse.quantum_system("transmon_17q", clock_ghz=1.0)
+   fast = pulse.quantum_system("transmon_surface17", clock_ghz=2.0)
+   slow = pulse.quantum_system("transmon_surface17", clock_ghz=1.0)
    gap = 100 * pulse.ns
    x_then_wait.lower(fast.qudits[0], gap)  # 40, 200, 40 cycles
    x_then_wait.lower(slow.qudits[0], gap)  # 20, 100, 20 cycles

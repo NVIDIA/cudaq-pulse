@@ -140,7 +140,7 @@ def test_concurrent_first_loads_build_each_target_and_calibration_once(monkeypat
         return found
 
     monkeypatch.setattr(calibration, "_indexed", counted)
-    targets = _together(16, lambda i: transmon._described_17q())
+    targets = _together(16, lambda i: transmon._described_surface17())
     assert len(loads) == 1
     assert all(t is targets[0] for t in targets)
 
@@ -156,8 +156,8 @@ def test_registering_targets_while_others_resolve(monkeypatch):
             if i % 2:
                 _registry.register_quantum_system(f"stress_{i}_{round}", lambda arg: None)
             else:
-                assert "transmon_generic" in pulse.quantum_systems.available_quantum_systems()
-                assert _registry.make_quantum_system("transmon_generic:2").qudit_count == 2
+                assert "transmon_lattice" in pulse.quantum_systems.available_quantum_systems()
+                assert _registry.make_quantum_system("transmon_lattice:2").qudit_count == 2
 
     _together(8, work)
     names = pulse.quantum_systems.available_quantum_systems()

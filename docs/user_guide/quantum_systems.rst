@@ -15,8 +15,8 @@ It is read-only.
 
    import cudaq_pulse as pulse
 
-   qs = pulse.quantum_system("transmon_17q")                  # shipped quantum system
-   chip = pulse.quantum_system("transmon_17q", layout=[4, 5, 6])
+   qs = pulse.quantum_system("transmon_surface17")                  # shipped quantum system
+   chip = pulse.quantum_system("transmon_surface17", layout=[4, 5, 6])
    chip = pulse.QuantumSystem.load("chip.json")              # the same, from a system file
 
    q = chip.qudits[0]          # a handle naming carrier 4
@@ -67,7 +67,7 @@ the offending value and a fix; for a file, the line and column too:
 .. code-block:: text
 
    QuantumSystemDefinitionError: 2 problems in quantum system file lab.json:
-     lab.json:3:20: layout[2]: carrier 99 is not in quantum system 'transmon_17q' (it has 0..16)
+     lab.json:3:20: layout[2]: carrier 99 is not in quantum system 'transmon_surface17' (it has 0..16)
      lab.json:4:15: cooldown: 'x' is given without a calibration; add "calibration", a shipped name or a file path, or remove "cooldown"
 
 ``python -m cudaq_pulse.doctor --system lab.json`` runs the same checks
@@ -103,7 +103,7 @@ and a coupling give the same values:
 
 .. code-block:: python
 
-   qs = pulse.quantum_system("transmon_17q")
+   qs = pulse.quantum_system("transmon_surface17")
 
    @pulse.kernel
    def x_then_measure(q):
@@ -136,8 +136,8 @@ target*:
 
 .. code-block:: bash
 
-   CUDAQ_PULSE_QUANTUM_SYSTEM=transmon_17q python script.py
-   python -m cudaq_pulse --quantum-system transmon_generic:4 script.py --script-args
+   CUDAQ_PULSE_QUANTUM_SYSTEM=transmon_surface17 python script.py
+   python -m cudaq_pulse --quantum-system transmon_lattice:4 script.py --script-args
 
 The launcher sets ``CUDAQ_PULSE_QUANTUM_SYSTEM`` for the script and passes the
 script's own arguments through unparsed. ``pulse.quantum_system()`` with no
@@ -145,10 +145,10 @@ argument returns the process quantum system's quantum system, whose handles the 
 passes to its kernels; a kernel call with no qudit handles always raises
 ``NoQuantumSystemError``.
 
-Registered names are ``transmon_17q`` and ``transmon_generic:N``;
+Registered names are ``transmon_surface17`` and ``transmon_lattice:N``;
 ``cudaq_pulse.quantum_systems.register_quantum_system`` adds more.
 
-``transmon_17q`` is the distance-three surface-code quantum system of
+``transmon_surface17`` is the distance-three surface-code quantum system of
 Krinner et al., Nature 605, 669 (2022), built from the values the paper
 publishes. Its qudits 0-16 are D1-D9, X1-X4 and Z1-Z4 (``PhysicalQudit.label``), and
 its 24 couplings are the auxiliary-data pairs of the stabilizers, each with
@@ -165,7 +165,7 @@ arXiv:2503.04610). The simulated exchange comes from the
 quantum system's calibration (below): one device-wide charge coupling g_c, and the
 exchange J_qq = g_c <0|n_a|1> <0|n_d|1> at the idle points is 5.67-6.08 MHz.
 The idle ZZ of the charge-coupled pairs is -4.5 to -7.3 kHz
-(``cudaq_pulse.quantum_systems.transmon.transmon_17q_idle_zz_hz``), below the
+(``cudaq_pulse.quantum_systems.transmon.transmon_surface17_idle_zz_hz``), below the
 paper's "below about 8 kHz"; simulated with three levels, the couplings
 reproduce it within a few percent. Each qubit also records its Hahn-echo T2
 and thermal excited-state population from Tab. I (``QuantumSystem.t2_echo_times``,
@@ -177,8 +177,8 @@ Calibrations
 ------------
 
 A calibration holds the values that are fitted rather than published, apart
-from the quantum system: for the ``transmon_17q`` quantum system, the shipped
-``transmon_17q`` calibration holds each qubit's circuit (E_C, E_J,max and the SQUID asymmetry d, fitted to Tab. I and the
+from the quantum system: for the ``transmon_surface17`` quantum system, the shipped
+``transmon_surface17`` calibration holds each qubit's circuit (E_C, E_J,max and the SQUID asymmetry d, fitted to Tab. I and the
 other sweet spot of Fig. 1c), each pair's charge coupling, the flux-line
 model of Hellings et al., the in-model CZ knobs of all 24 pairs, crosstalk,
 defect bands and feedline groups. Every value records its
@@ -187,7 +187,7 @@ defect bands and feedline groups. Every value records its
 
 .. code-block:: python
 
-   qs = pulse.quantum_system("transmon_17q", calibration="transmon_17q", cooldown="2022-main")
+   qs = pulse.quantum_system("transmon_surface17", calibration="transmon_surface17", cooldown="2022-main")
    cal = qs.calibration
    cal.entry("qudits", "D4", "ec")        # value with its provenance
    cal.exchange_hz("X2-D4")               # J_qq at the idle points
@@ -197,8 +197,8 @@ defect bands and feedline groups. Every value records its
    cal.detuning_for_flux("X2", 0.25)
 
 ``calibration=`` is a shipped name, the path of a calibration file or a
-``cudaq_pulse.quantum_systems.Calibration``; the ``transmon_17q`` quantum system uses the
-``transmon_17q`` calibration by default. Its couplings replace the system's, so quantum systems with different
+``cudaq_pulse.quantum_systems.Calibration``; the ``transmon_surface17`` quantum system uses the
+``transmon_surface17`` calibration by default. Its couplings replace the system's, so quantum systems with different
 calibrations compile separately. Detunings are in Hz; for qubits whose
 circuit, including d, is calibrated (``Calibration.flux_qudits``, all 17
 here) ``flux_for_detuning`` and ``detuning_for_flux`` convert to and from

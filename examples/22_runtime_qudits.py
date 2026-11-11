@@ -25,7 +25,7 @@ def excite_to_two(qudit: pulse.Qudit, f12_hz: float):
 
 
 if __name__ == "__main__":
-    qs = pulse.quantum_system("transmon_17q")
+    qs = pulse.quantum_system("transmon_surface17")
 
     for i in range(4):
         f12_hz = float(qs.transition_freq[i, 1, 2])

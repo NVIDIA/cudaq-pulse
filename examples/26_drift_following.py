@@ -41,10 +41,10 @@ import time
 import cudaq_pulse as pulse
 import numpy as np
 from cudaq_pulse.classical import calibration as cal
-from cudaq_pulse.quantum_systems import transmon_17q
+from cudaq_pulse.quantum_systems import transmon_surface17
 from cudaq_pulse.runtime.drift import DriftingPlant, OrnsteinUhlenbeck
 
-target = transmon_17q()
+target = transmon_surface17()
 qudit_index = 0
 pulse_duration = 40 * pulse.ns
 pulse_sigma = 10 * pulse.ns

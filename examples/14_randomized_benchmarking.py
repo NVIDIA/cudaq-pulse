@@ -97,7 +97,7 @@ def clifford_sequence(qudit, gates):
 
 
 if __name__ == "__main__":
-    qs = pulse.quantum_system("transmon_17q")
+    qs = pulse.quantum_system("transmon_surface17")
     qudit = qs.qudits[0]
     rb = pulse.compile(clifford_sequence, quantum_system=qs)
 

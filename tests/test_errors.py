@@ -151,12 +151,12 @@ def test_an_internal_error_asks_for_a_report():
 
 def test_library_errors_are_pulse_errors_of_their_kind():
     from cudaq_pulse.classical import emulation
-    from cudaq_pulse.quantum_systems import Calibration, transmon_generic
+    from cudaq_pulse.quantum_systems import Calibration, transmon_lattice
 
     with pytest.raises(pulse.NotFoundError, match="no calibration 'missing'"):
         Calibration.load("missing")
     with pytest.raises(pulse.InvalidValueError, match="qudit_count must be >= 1"):
-        transmon_generic(0)
+        transmon_lattice(0)
     with pytest.raises(pulse.UnsupportedError, match="not available yet"):
         emulation.device_call_text(None)
     with pytest.raises(pulse.CompilationError, match="inside a @cudaq_pulse.kernel"):

@@ -21,7 +21,7 @@ cycle, is left out.
 import cudaq_pulse as pulse
 from cudaq_pulse.quantum_systems.transmon import CZ_LAYERS
 
-qs = pulse.quantum_system("transmon_17q")
+qs = pulse.quantum_system("transmon_surface17")
 clock_ghz = qs.clock_ghz  # the program clock the schedule counts cycles of
 labels = {q.index: q.label for q in qs.physical_qudits.values()}
 qudit_count = len(qs.physical_qudits)

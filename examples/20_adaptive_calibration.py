@@ -3,7 +3,7 @@
 """Adaptive calibration against a drifting quantum system.
 
 Builds on ``19_classical_calls.py``. On qubit 0 of the 17-qubit transmon
-twin (``transmon_17q``), this example:
+twin (``transmon_surface17``), this example:
 
 1. Runs a frequency binary search inside one shot: after each Ramsey shot an
    estimator on the controller link updates a Gaussian posterior over the
@@ -28,7 +28,7 @@ from cudaq_pulse import ControlSystem
 from cudaq_pulse.classical import Link
 from cudaq_pulse.classical import calibration as cal
 from cudaq_pulse.classical.loop import EstimateLog, ParameterStore
-from cudaq_pulse.quantum_systems import transmon_17q
+from cudaq_pulse.quantum_systems import transmon_surface17
 from cudaq_pulse.runtime.drift import DriftingPlant, OrnsteinUhlenbeck, TelegraphT1
 
 # square(pi_duration, pi_amp) is a pi pulse; at half the amplitude, a pi/2.
@@ -110,7 +110,7 @@ def t1_shot(q, wait_ns: int):
 
 
 if __name__ == "__main__":
-    qs = transmon_17q()
+    qs = transmon_surface17()
     q = qs.qudits[0]
     qudit = qs.physical_qudits[0]
 

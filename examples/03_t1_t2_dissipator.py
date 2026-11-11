@@ -80,7 +80,7 @@ def t2_echo(qudit, tau):
 
 
 if __name__ == "__main__":
-    qs = pulse.quantum_system("transmon_17q")
+    qs = pulse.quantum_system("transmon_surface17")
     qudit = qs.qudits[0]
     spec = qs.physical_qudits[0]
     t1_ns = spec.t1_us * 1e3

@@ -6,7 +6,7 @@ A calibration file is JSON whose leaves are ``{value, units, kind, source,
 uncertainty, cooldown[, method]}`` objects: ``kind`` is ``published``,
 ``digitized`` or ``fitted``, ``source`` cites where the value comes from and
 ``cooldown`` names one of the file's ``cooldowns``. ``Calibration.load``
-reads one, a shipped name (``"transmon_17q"``) or a path, for one cooldown.
+reads one, a shipped name (``"transmon_surface17"``) or a path, for one cooldown.
 
 A calibration gives each flux-tunable qubit its circuit (E_C, E_J,max and
 SQUID asymmetry d, so flux in flux quanta converts to frequency and back)
@@ -90,7 +90,7 @@ class Calibration:
 
     @classmethod
     def load(
-        cls, source: str | os.PathLike[str] = "transmon_17q", *, cooldown: str | None = None
+        cls, source: str | os.PathLike[str] = "transmon_surface17", *, cooldown: str | None = None
     ) -> Calibration:
         """A shipped calibration by name, or a calibration file by path."""
         path = name = os.fspath(source)

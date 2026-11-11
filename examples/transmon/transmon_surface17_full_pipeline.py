@@ -21,11 +21,11 @@ import subprocess
 import cudaq_pulse as pulse
 from cudaq_pulse.quantum_systems.transmon import CZ_LAYERS
 
-qs = pulse.quantum_system("transmon_17q")
+qs = pulse.quantum_system("transmon_surface17")
 clock_ghz = qs.clock_ghz  # the program clock the schedule counts cycles of
 qudit_aux, qudit_data = qs.qudit("X1"), qs.qudit("D2")
 coupling = qs.coupling(qudit_aux, qudit_data)
-# The transmon_17q target publishes each coupling's CZ; a generic coupling
+# The transmon_surface17 target publishes each coupling's CZ; a generic coupling
 # has none (get_calibration raises NotFoundError).
 cz = coupling.get_calibration(pulse.gates.CZ)
 assert cz.interaction_frequency_hz is not None and coupling.strength_hz is not None

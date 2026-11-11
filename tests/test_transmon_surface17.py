@@ -14,11 +14,11 @@ import pytest
 from cudaq_pulse.quantum_systems import (
     Coupling,
     PhysicalQudit,
-    transmon_17q,
-    transmon_generic,
+    transmon_lattice,
+    transmon_surface17,
 )
-from cudaq_pulse.quantum_systems import _transmon_17q as _k
-from cudaq_pulse.quantum_systems.transmon import CZ_LAYERS, transmon_17q_idle_zz_hz
+from cudaq_pulse.quantum_systems import _transmon_surface17 as _k
+from cudaq_pulse.quantum_systems.transmon import CZ_LAYERS, transmon_surface17_idle_zz_hz
 
 from tests._handles import Q
 from tests.runtime._lowering import on
@@ -41,7 +41,7 @@ _X_LOGICAL = {"D1", "D4", "D7"}
 
 @pytest.fixture(scope="module")
 def target():
-    return transmon_17q()
+    return transmon_surface17()
 
 
 def _label(target, index):
@@ -88,7 +88,7 @@ def test_couplings_are_the_stabilizer_supports(target):
 
 
 def test_without_a_calibration_the_exchange_is_the_published_value_over_sqrt2():
-    published = transmon_17q(calibration=None)
+    published = transmon_surface17(calibration=None)
     for c in published.couplings:
         g_11_20 = _k.coupling_11_20_hz(*edges_of(published, c))
         assert c.strength_hz == pytest.approx(g_11_20 / math.sqrt(2.0))
@@ -132,7 +132,7 @@ def test_gate_errors_reproduce_the_published_statistics():
 
 
 def test_idle_zz_is_a_few_kilohertz(target):
-    zz = transmon_17q_idle_zz_hz()
+    zz = transmon_surface17_idle_zz_hz()
     assert set(zz) == {c.qudits for c in target.couplings}
     # Calculated idle ZZ "lower than ~8 kHz" (Methods A).
     assert all(-7.5e3 < v < -4.4e3 for v in zz.values())
@@ -149,7 +149,7 @@ def test_a_coupled_pair_idles_with_its_dispersive_zz(target, pair):
     }
     (g_hz,) = (c.strength_hz for c in target.couplings if c.qudits == (a, d))
     pair_target = pulse.quantum_system(
-        name="transmon-17q-pair",
+        name="transmon-surface17-pair",
         qudits=qudits,
         couplings=[Coupling((0, 1), strength_hz=g_hz)],
     )
@@ -182,11 +182,11 @@ def test_a_coupled_pair_idles_with_its_dispersive_zz(target, pair):
     detuning = target.physical_qudits[d].frequency_hz - target.physical_qudits[a].frequency_hz
     second_order = 2 * g_hz**2 * (alpha_a + alpha_d) / ((detuning + alpha_d) * (detuning - alpha_a))
     assert zeta == pytest.approx(second_order, rel=2e-2)
-    assert zeta == pytest.approx(transmon_17q_idle_zz_hz()[(a, d)], rel=7e-2)
+    assert zeta == pytest.approx(transmon_surface17_idle_zz_hz()[(a, d)], rel=7e-2)
 
 
 def test_echo_t2_and_thermal_populations_are_on_the_target():
-    target = transmon_17q()
+    target = transmon_surface17()
     echo = target.t2_echo_times
     thermal = target.thermal_populations
     assert all(t is not None and t > 0 for t in echo.values())
@@ -240,4 +240,4 @@ def x90_alone(q):
 
 def test_a_generic_coupling_makes_no_gate_claims():
     assert not Coupling((0, 1), strength_hz=5e6).calibrations
-    assert all(not c.calibrations for c in transmon_generic(3).couplings)
+    assert all(not c.calibrations for c in transmon_lattice(3).couplings)

@@ -106,8 +106,8 @@ def test_needing_a_float_arguments_value_says_how_to_keep_it_symbolic():
 
 
 def test_qudits_of_two_devices_of_one_target_name_their_layouts():
-    a = pulse.quantum_system("transmon_generic:4")
-    b = pulse.quantum_system("transmon_generic:4", layout=[2, 3])
+    a = pulse.quantum_system("transmon_lattice:4")
+    b = pulse.quantum_system("transmon_lattice:4", layout=[2, 3])
 
     @pulse.kernel
     def k(q0, q1):
@@ -117,7 +117,7 @@ def test_qudits_of_two_devices_of_one_target_name_their_layouts():
     with pytest.raises(pulse.QuantumSystemMismatchError) as info:
         k.lower(a.qudits[0], b.qudits[1])
     assert str(info.value) == (
-        "k() got qudits of two different quantum systems, both of target 'transmon_generic:4': one "
+        "k() got qudits of two different quantum systems, both of target 'transmon_lattice:4': one "
         "with layout 0..3, the other with layout 2..3; pass handles of one quantum system"
     )
 
@@ -194,13 +194,13 @@ def test_no_shots_is_the_documented_simulate_default(idle):
 @pytest.mark.parametrize(
     ("index", "message"),
     [
-        (999, "qudit index 999 is out of range: quantum system 'transmon_17q' has 17 qudits"),
-        (-18, "qudit index -18 is out of range: quantum system 'transmon_17q' has 17 qudits"),
+        (999, "qudit index 999 is out of range: quantum system 'transmon_surface17' has 17 qudits"),
+        (-18, "qudit index -18 is out of range: quantum system 'transmon_surface17' has 17 qudits"),
         ([0, 999], "qudit index 999 is out of range"),
     ],
 )
 def test_a_qudit_index_past_the_device_says_how_many_qudits_it_has(index, message):
-    handles = pulse.quantum_system("transmon_17q").qudits
+    handles = pulse.quantum_system("transmon_surface17").qudits
     with pytest.raises(pulse.IndexOutOfRangeError, match=message) as info:
         handles[index]
     assert isinstance(info.value, IndexError)
@@ -208,7 +208,7 @@ def test_a_qudit_index_past_the_device_says_how_many_qudits_it_has(index, messag
 
 
 def test_a_qudit_index_past_a_register_says_how_many_qudits_it_has():
-    register = pulse.quantum_system("transmon_17q").qudits[0:3]
+    register = pulse.quantum_system("transmon_surface17").qudits[0:3]
     with pytest.raises(pulse.IndexOutOfRangeError) as info:
         register[5]
     assert str(info.value) == (

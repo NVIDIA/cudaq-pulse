@@ -252,9 +252,9 @@ def test_emulation_draws_iq_points_at_the_reported_levels():
 
 def test_the_17_qudit_twin_separates_its_readout_states():
     from cudaq_pulse.classical import emulation
-    from cudaq_pulse.quantum_systems import transmon_17q
+    from cudaq_pulse.quantum_systems import transmon_surface17
 
-    dev = transmon_17q()
+    dev = transmon_surface17()
     q = dev.qudits[0]
     model = IQModel(dev._description, (0,), decay=False)
     given = dev.physical_qudits[0].readout
@@ -262,7 +262,7 @@ def test_the_17_qudit_twin_separates_its_readout_states():
     c0, c1 = (model.center(0, k, given.frequency_hz, 1.0, tau) for k in (0, 1))
     assert abs(c1 - c0) > 3  # a high-fidelity single-shot readout
 
-    @pulse.classical(name="transmon_17q_iq", max_latency_ns=0)
+    @pulse.classical(name="transmon_surface17_iq", max_latency_ns=0)
     def record(points: list[complex]) -> pulse.Bits:
         return [0]
 

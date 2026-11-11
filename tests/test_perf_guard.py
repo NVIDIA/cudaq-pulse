@@ -565,7 +565,7 @@ _SIMULATE_PAIRS = """
 import json, resource, sys
 import cudaq_pulse as pulse
 
-q = pulse.quantum_system("transmon_17q").qudits
+q = pulse.quantum_system("transmon_surface17").qudits
 
 
 @pulse.kernel

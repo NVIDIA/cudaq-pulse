@@ -16,10 +16,10 @@ import shutil
 import subprocess
 
 import cudaq_pulse as pulse
-from cudaq_pulse.quantum_systems import transmon_17q
+from cudaq_pulse.quantum_systems import transmon_surface17
 
-target = transmon_17q()
-qs = pulse.quantum_system("transmon_17q")
+target = transmon_surface17()
+qs = pulse.quantum_system("transmon_surface17")
 qudit_idx = 4  # D5 -- central data qubit
 
 qudit_d5 = target.physical_qudits[qudit_idx]

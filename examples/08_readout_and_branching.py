@@ -103,7 +103,7 @@ def ramsey_with_readout(qudit, tau):
 
 
 if __name__ == "__main__":
-    qs = pulse.quantum_system("transmon_17q")
+    qs = pulse.quantum_system("transmon_surface17")
     print("=== Measure single qubit ===")
     compiled_kernel = pulse.compile(measure_single_qudit, quantum_system=qs).lower(qs.qudits[0])
     print(compiled_kernel.mlir())

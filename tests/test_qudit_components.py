@@ -18,7 +18,7 @@ from cudaq_pulse.quantum_systems import (
     MicrowaveDrive,
     PhysicalQudit,
     Readout,
-    transmon_17q,
+    transmon_surface17,
 )
 from cudaq_pulse.runtime._call_tree import ReadoutModel
 from cudaq_pulse.runtime._calls import IQModel
@@ -104,7 +104,7 @@ def test_the_depletion_comes_from_the_readout():
 
 
 def test_the_shipped_target_describes_its_drive_and_readout():
-    qudit = transmon_17q().physical_qudits[0]
+    qudit = transmon_surface17().physical_qudits[0]
     assert isinstance(qudit.drive, MicrowaveDrive) and isinstance(qudit.readout, DispersiveReadout)
     x = qudit.calibrations[pulse.gates.X]
     assert (x.duration_ns, x.sigma_ns, x.amplitude) == (40.0, 10.0, None)

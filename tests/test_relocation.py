@@ -30,7 +30,7 @@ from hypothesis import strategies as st
 
 from tests.property_settings import examples
 
-DEV = pulse.quantum_system("transmon_17q")
+DEV = pulse.quantum_system("transmon_surface17")
 H = DEV.qudits
 
 

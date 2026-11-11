@@ -12,7 +12,7 @@ all of them::
 
     controllers = [pulse.Controller(drive_lines=range(8), readout_lines=range(8))]
     qpu = pulse.quantum_system(
-        "transmon_17q", control_system=pulse.ControlSystem(controllers=controllers)
+        "transmon_surface17", control_system=pulse.ControlSystem(controllers=controllers)
     )
     compiled = pulse.compile(kernel, quantum_system=qpu)
 

@@ -47,7 +47,7 @@ def with_cosine(q):
 
 @pytest.fixture
 def qudit():
-    return pulse.quantum_system("transmon_17q").qudits[0]
+    return pulse.quantum_system("transmon_surface17").qudits[0]
 
 
 def _ops(mlir):

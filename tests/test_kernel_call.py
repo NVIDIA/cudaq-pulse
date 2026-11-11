@@ -421,17 +421,17 @@ def test_device_values_are_read_only():
 
 def test_a_device_from_a_system_file(tmp_path: Path):
     path = tmp_path / "dev.json"
-    path.write_text(json.dumps({"name": "transmon_17q", "layout": [4, 5]}))
+    path.write_text(json.dumps({"name": "transmon_surface17", "layout": [4, 5]}))
     dev = pulse.QuantumSystem.load(path)
     assert [q.index for q in dev.qudits] == [4, 5]
-    assert dev == pulse.quantum_system("transmon_17q", layout=[4, 5])
-    assert dev != pulse.quantum_system("transmon_17q")
+    assert dev == pulse.quantum_system("transmon_surface17", layout=[4, 5])
+    assert dev != pulse.quantum_system("transmon_surface17")
     with pytest.raises(
         pulse.QuantumSystemDefinitionError, match="lattice: is not a key of a system"
     ):
-        pulse.QuantumSystem.from_dict({"name": "transmon_17q", "lattice": []})
+        pulse.QuantumSystem.from_dict({"name": "transmon_surface17", "lattice": []})
     with pytest.raises(pulse.QuantumSystemDefinitionError, match="zones: is reserved"):
-        pulse.QuantumSystem.from_dict({"name": "transmon_17q", "zones": []})
+        pulse.QuantumSystem.from_dict({"name": "transmon_surface17", "zones": []})
 
 
 def test_a_waveform_as_a_frequency_is_reserved():
@@ -557,7 +557,7 @@ def test_the_launcher_sets_the_process_target(tmp_path: Path):
             "-m",
             "cudaq_pulse",
             "--quantum-system",
-            "transmon_generic:3",
+            "transmon_lattice:3",
             str(script),
             "-x",
         ],
@@ -567,8 +567,8 @@ def test_the_launcher_sets_the_process_target(tmp_path: Path):
         check=False,
     )
     assert run.returncode == 0, run.stderr
-    assert run.stdout.strip() == "transmon_generic:3 ['-x']"
-    assert "quantum system transmon_generic:3" in run.stderr
+    assert run.stdout.strip() == "transmon_lattice:3 ['-x']"
+    assert "quantum system transmon_lattice:3" in run.stderr
     bad = subprocess.run(
         [sys.executable, "-m", "cudaq_pulse", "--quantum-system", "nope", str(script)],
         capture_output=True,

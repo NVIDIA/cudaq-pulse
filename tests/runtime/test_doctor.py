@@ -206,13 +206,13 @@ def test_invalid_mlir_context_limits_fail(monkeypatch):
 
 def test_the_process_target_and_kernel_cache_are_reported(monkeypatch):
     monkeypatch.setattr(doctor, "_diagnose_gpu", lambda write: gpu.GpuSupportNotBuiltError())
-    monkeypatch.setenv("CUDAQ_PULSE_QUANTUM_SYSTEM", "transmon_generic:3")
+    monkeypatch.setenv("CUDAQ_PULSE_QUANTUM_SYSTEM", "transmon_lattice:3")
     monkeypatch.setenv("CUDAQ_PULSE_CACHE_SIZE", "8")
     code, out = _run("--allow-no-gpu")
     assert code == 0
     assert (
-        "Process quantum system: transmon_generic:3 "
-        "(env CUDAQ_PULSE_QUANTUM_SYSTEM=transmon_generic:3" in out
+        "Process quantum system: transmon_lattice:3 "
+        "(env CUDAQ_PULSE_QUANTUM_SYSTEM=transmon_lattice:3" in out
     )
     assert "Kernel cache: 8 specializations per kernel (CUDAQ_PULSE_CACHE_SIZE=8)" in out
 
@@ -230,12 +230,12 @@ def test_invalid_kernel_settings_fail(monkeypatch, name, value):
 
 def test_system_lists_every_problem_of_a_device_file(tmp_path):
     path = tmp_path / "lab.json"
-    path.write_text('{"name": "transmon_17q",\n "layout": [4, 99], "cooldown": "x"}\n')
+    path.write_text('{"name": "transmon_surface17",\n "layout": [4, 99], "cooldown": "x"}\n')
     code, output = _run("--system", str(path))
     assert code == 1
     assert output.splitlines() == [
-        f"{path}:2:16: error: layout[1]: carrier 99 is not in quantum system 'transmon_17q' (it "
-        "has 0..16)",
+        f"{path}:2:16: error: layout[1]: carrier 99 is not in quantum system "
+        "'transmon_surface17' (it has 0..16)",
         f"{path}:2:33: error: cooldown: 'x' is given without a calibration; add "
         '"calibration", a shipped name or a file path, or remove "cooldown"',
         f"{path}: 2 problems",
@@ -246,39 +246,39 @@ def test_system_json_report(tmp_path):
     import json
 
     path = tmp_path / "lab.json"
-    path.write_text('{"name": "transmon_17q", "layout": [4, 99]}')
+    path.write_text('{"name": "transmon_surface17", "layout": [4, 99]}')
     code, output = _run("--system", str(path), "--json")
     assert code == 1
     report = json.loads(output)
     assert report["ok"] is False and report["quantum_system"] is None
     assert report["problems"] == [
         {
-            "message": "carrier 99 is not in quantum system 'transmon_17q' (it has 0..16)",
+            "message": "carrier 99 is not in quantum system 'transmon_surface17' (it has 0..16)",
             "path": "layout[1]",
             "value": 99,
             "fix": "",
             "file": str(path),
             "line": 1,
-            "column": 40,
+            "column": 46,
         }
     ]
-    path.write_text('{"name": "transmon_17q", "layout": [4, 5]}')
+    path.write_text('{"name": "transmon_surface17", "layout": [4, 5]}')
     code, output = _run("--system", str(path), "--json")
     assert code == 0
     assert json.loads(output) == {
         "file": str(path),
         "ok": True,
-        "quantum_system": {"name": "transmon_17q", "qudits": 2, "layout": [4, 5]},
+        "quantum_system": {"name": "transmon_surface17", "qudits": 2, "layout": [4, 5]},
         "problems": [],
     }
 
 
 def test_system_reports_a_good_or_unreadable_file(tmp_path):
     path = tmp_path / "lab.json"
-    path.write_text('{"name": "transmon_17q", "layout": [4, 5]}')
+    path.write_text('{"name": "transmon_surface17", "layout": [4, 5]}')
     assert _run("--system", str(path)) == (
         0,
-        f"{path}: ok, quantum system transmon_17q with 2 qudits\n",
+        f"{path}: ok, quantum system transmon_surface17 with 2 qudits\n",
     )
     code, output = _run("--system", str(tmp_path / "absent.json"))
     assert code == 1

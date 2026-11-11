@@ -24,7 +24,7 @@ from cudaq_pulse.runtime import require_gpu_runtime
 
 require_gpu_runtime()
 
-qs = pulse.quantum_system("transmon_17q")
+qs = pulse.quantum_system("transmon_surface17")
 qudit_aux, qudit_data = qs.qudit("X1"), qs.qudit("D2")
 auxiliary, data = qudit_aux.index, qudit_data.index
 # The CZ's slot, from the coupling's calibration; the pulses are the

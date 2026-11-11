@@ -153,4 +153,4 @@ def test_the_plant_must_define_the_programs_qudits():
     with pytest.raises(ValueError, match="does not define qudits"):
         pulse.simulate(lowered, quantum_system=empty, levels=2)
     with pytest.raises(TypeError, match="quantum_system must be a QuantumSystem"):
-        pulse.simulate(lowered, quantum_system="transmon_17q", levels=2)
+        pulse.simulate(lowered, quantum_system="transmon_surface17", levels=2)

@@ -17,7 +17,7 @@ from .base import (
 )
 from .calibration import Calibration
 from .models import SimulationModel, TransmonModel
-from .transmon import transmon_17q, transmon_generic
+from .transmon import transmon_lattice, transmon_surface17
 
 __all__ = [
     "PhysicalQudit",
@@ -33,8 +33,8 @@ __all__ = [
     "SimulationModel",
     "TransmonModel",
     "Calibration",
-    "transmon_17q",
-    "transmon_generic",
+    "transmon_surface17",
+    "transmon_lattice",
     "register_quantum_system",
     "available_quantum_systems",
     "UnknownQuantumSystemError",

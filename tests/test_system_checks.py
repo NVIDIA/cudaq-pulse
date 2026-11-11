@@ -266,11 +266,11 @@ def test_the_fingerprint_holds_the_whole_cz_calibration():
 
 
 def test_a_calibration_matches_a_pair_named_in_either_order():
-    from cudaq_pulse.quantum_systems import transmon_17q
+    from cudaq_pulse.quantum_systems import transmon_surface17
     from cudaq_pulse.quantum_systems.calibration import shipped_calibration
 
-    published = transmon_17q(calibration=None)
-    calibration = shipped_calibration("transmon_17q")
+    published = transmon_surface17(calibration=None)
+    calibration = shipped_calibration("transmon_surface17")
     reversed_ = pulse.quantum_system(
         name=published.name,
         qudits=published.physical_qudits,
@@ -409,9 +409,9 @@ def test_coupling_and_residual_zz_problems_come_in_one_error():
 
 
 def test_a_calibration_keeps_the_checks():
-    from cudaq_pulse.quantum_systems import transmon_17q
+    from cudaq_pulse.quantum_systems import transmon_surface17
 
-    target = transmon_17q()
+    target = transmon_surface17()
     assert all(pulse.gates.CZ in c.calibrations for c in target.couplings)
     with pytest.raises(
         QuantumSystemDefinitionError, match=r"couplings\[1\].qudits: names the same pair"

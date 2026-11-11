@@ -826,7 +826,7 @@ def _plain_value(value: Any) -> Any:
 class Coupling:
     """A coupling of the qudits ``qudits`` of a quantum system: two in this
     release, by the system's qudit index, in the order the coupling names
-    them (``transmon_17q``'s are (auxiliary, data)).
+    them (``transmon_surface17``'s are (auxiliary, data)).
 
     The system's ``model`` decides the operator; a ``TransmonModel``
     coupling is the exchange g (a^dagger b + a b^dagger), in the

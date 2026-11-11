@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""The in-model CZ knobs of the shipped transmon_17q calibration.
+"""The in-model CZ knobs of the shipped transmon_surface17 calibration.
 
 The sudden-net-zero pulse (Negirneac et al., PRL 126, 220502 (2021)): the
 data qubit at the interaction frequency and the auxiliary's 1-2 transition
@@ -17,7 +17,7 @@ import statistics
 
 import numpy as np
 import pytest
-from cudaq_pulse.quantum_systems import _transmon_17q as _k
+from cudaq_pulse.quantum_systems import _transmon_surface17 as _k
 from cudaq_pulse.quantum_systems.calibration import Calibration
 
 SIGMA_NS = 0.5
@@ -27,7 +27,7 @@ LEVELS = 5
 
 @pytest.fixture(scope="module")
 def cal():
-    return Calibration.load("transmon_17q")
+    return Calibration.load("transmon_surface17")
 
 
 def _knobs(cal):

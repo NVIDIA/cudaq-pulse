@@ -226,7 +226,7 @@ def _wheel(
         "cudaq_pulse/ops/__init__.py": "__all__ = []\n",
         "cudaq_pulse/_native/_cudaq_pulse_native.pyi": "",
         "cudaq_pulse/_native/_cudaq_pulse_native.abi3.so": "",
-        "cudaq_pulse/quantum_systems/calibrations/transmon_17q.json": "{}",
+        "cudaq_pulse/quantum_systems/calibrations/transmon_surface17.json": "{}",
     }
     for name in checker._LICENSES:
         source = _ROOT / name

@@ -115,7 +115,7 @@ def test_a_qudit_the_target_lacks_is_refused_however_its_tables_were_made():
     from cudaq_pulse.compiler import CompileOptions, build
 
     options = CompileOptions.make()
-    dense = rebuilt(pulse.quantum_system("transmon_17q"))
+    dense = rebuilt(pulse.quantum_system("transmon_surface17"))
     for dev, lacking in ((_sparse_device(), (1, 5)), (dense, (17, 30))):
         kernel = pulse.kernel(_drive_one.__wrapped__)
         handles = dev.qudits

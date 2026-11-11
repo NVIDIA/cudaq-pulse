@@ -11,7 +11,7 @@ import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse.quantum_systems import Calibration, Coupling, PhysicalQudit
 
-TRANSMON_17Q = "transmon_17q"
+TRANSMON_SURFACE17 = "transmon_surface17"
 
 
 def _pair(**parts):
@@ -39,7 +39,7 @@ def test_every_problem_of_a_config_is_reported_in_its_key_order():
         {
             "layout": [0, 99, 0],
             "cooldown": "x",
-            "name": TRANSMON_17Q,
+            "name": TRANSMON_SURFACE17,
             "laout": [],
             "zones": [],
         }
@@ -59,7 +59,7 @@ def test_every_problem_of_a_config_is_reported_in_its_key_order():
 
 
 def test_a_device_definition_error_is_a_value_error_and_a_pulse_error():
-    error = _problems({"name": TRANSMON_17Q, "cooldown": "x"})
+    error = _problems({"name": TRANSMON_SURFACE17, "cooldown": "x"})
     assert isinstance(error, ValueError) and isinstance(error, pulse.PulseError)
     assert not isinstance(error, TypeError)
 
@@ -69,56 +69,56 @@ def test_a_device_definition_error_is_a_value_error_and_a_pulse_error():
     [
         ({}, "name", "is missing; give a registered name"),
         ({"name": 4}, "name", "must be a registered name, got int"),
-        ({"name": "transmon_17"}, "name", "did you mean 'transmon_17q'?"),
-        ({"name": "transmon_generic"}, "name", "needs a qudit count"),
+        ({"name": "transmon_17"}, "name", "did you mean 'transmon_surface17'?"),
+        ({"name": "transmon_lattice"}, "name", "needs a qudit count"),
         (
-            {"name": TRANSMON_17Q, "couplings": []},
+            {"name": TRANSMON_SURFACE17, "couplings": []},
             "couplings",
             'builds a quantum system, with "qudits"',
         ),
         ({"qudits": []}, "name", "is missing; give the quantum system's name"),
         ({"name": "chip", "qudits": 3}, "qudits", "must be a list of qudits, got int"),
         (
-            {"name": TRANSMON_17Q, "target": TRANSMON_17Q},
+            {"name": TRANSMON_SURFACE17, "target": TRANSMON_SURFACE17},
             "target",
             "is not a key of a system file",
         ),
         (
-            {"name": TRANSMON_17Q, "layout": "0,1"},
+            {"name": TRANSMON_SURFACE17, "layout": "0,1"},
             "layout",
             "must be a list of carrier indices",
         ),
         (
-            {"name": TRANSMON_17Q, "layout": [0, True]},
+            {"name": TRANSMON_SURFACE17, "layout": [0, True]},
             "layout[1]",
             "must be a carrier index",
         ),
         (
-            {"name": TRANSMON_17Q, "layout": []},
+            {"name": TRANSMON_SURFACE17, "layout": []},
             "layout",
             "must name at least one carrier",
         ),
         (
-            {"name": TRANSMON_17Q, "layout": ()},
+            {"name": TRANSMON_SURFACE17, "layout": ()},
             "layout",
             "must name at least one carrier",
         ),
         (
-            {"name": TRANSMON_17Q, "calibration": "nope"},
+            {"name": TRANSMON_SURFACE17, "calibration": "nope"},
             "calibration",
             "no calibration 'nope'",
         ),
         (
-            {"name": TRANSMON_17Q, "calibration": 3},
+            {"name": TRANSMON_SURFACE17, "calibration": 3},
             "calibration",
             "must be a shipped calibration",
         ),
         (
-            {"name": TRANSMON_17Q, "calibration": "transmon_17q", "cooldown": "nope"},
+            {"name": TRANSMON_SURFACE17, "calibration": "transmon_surface17", "cooldown": "nope"},
             "cooldown",
             "has no cooldown 'nope'",
         ),
-        ({"name": TRANSMON_17Q, "transport": {}}, "transport", "is reserved"),
+        ({"name": TRANSMON_SURFACE17, "transport": {}}, "transport", "is reserved"),
     ],
 )
 def test_each_check_names_its_path(config, path, text):
@@ -128,9 +128,9 @@ def test_each_check_names_its_path(config, path, text):
 
 
 def test_a_calibration_loaded_for_another_cooldown():
-    calibration = Calibration.load("transmon_17q", cooldown="2025-flux-tuning")
+    calibration = Calibration.load("transmon_surface17", cooldown="2025-flux-tuning")
     (problem,) = _problems(
-        {"name": TRANSMON_17Q, "calibration": calibration, "cooldown": "2022-main"}
+        {"name": TRANSMON_SURFACE17, "calibration": calibration, "cooldown": "2022-main"}
     ).problems
     assert problem.path == "cooldown"
     assert problem.fix == "pass Calibration.load(..., cooldown='2022-main')"
@@ -165,7 +165,7 @@ def test_a_registered_name_takes_no_keywords_that_build_a_system():
     for given in ({"couplings": [Coupling((0, 1), 5e6)]}, {"model": None}, {"attribution": "x"}):
         (keyword,) = given
         with pytest.raises(TypeError, match=f"quantum_system's {keyword} builds a quantum system"):
-            pulse.quantum_system(TRANSMON_17Q, **given)
+            pulse.quantum_system(TRANSMON_SURFACE17, **given)
     with pytest.raises(TypeError, match="builds a quantum system and needs its name="):
         pulse.quantum_system(qudits={})
 
@@ -192,7 +192,9 @@ def test_the_device_constructor_checks_its_layout():
 
 def test_a_file_problem_gives_its_file_line_and_column(tmp_path: Path):
     path = tmp_path / "lab.json"
-    path.write_text('{\n  "name": "transmon_17q",\n  "layout": [4, 5, 99],\n  "cooldown": "x"\n}\n')
+    path.write_text(
+        '{\n  "name": "transmon_surface17",\n  "layout": [4, 5, 99],\n  "cooldown": "x"\n}\n'
+    )
     error = _problems(path)
     assert [(p.file, p.line, p.column, p.path) for p in error.problems] == [
         (str(path), 3, 20, "layout[2]"),
@@ -200,8 +202,8 @@ def test_a_file_problem_gives_its_file_line_and_column(tmp_path: Path):
     ]
     assert str(error).splitlines() == [
         f"2 problems in quantum system file {path}:",
-        f"  {path}:3:20: layout[2]: carrier 99 is not in quantum system 'transmon_17q' (it has "
-        "0..16)",
+        f"  {path}:3:20: layout[2]: carrier 99 is not in quantum system 'transmon_surface17' "
+        "(it has 0..16)",
         f"  {path}:4:15: cooldown: 'x' is given without a calibration; add "
         '"calibration", a shipped name or a file path, or remove "cooldown"',
     ]
@@ -210,7 +212,7 @@ def test_a_file_problem_gives_its_file_line_and_column(tmp_path: Path):
 
 def test_a_file_that_is_not_json_or_not_an_object(tmp_path: Path):
     path = tmp_path / "lab.json"
-    path.write_text('{"name": "transmon_17q",\n  , }')
+    path.write_text('{"name": "transmon_surface17",\n  , }')
     (problem,) = _problems(path).problems
     assert (problem.line, problem.column) == (2, 3)
     assert problem.message.startswith("not valid JSON: ")
@@ -223,7 +225,7 @@ def test_a_file_that_is_not_json_or_not_an_object(tmp_path: Path):
 def test_a_calibration_file_that_is_not_json(tmp_path: Path):
     path = tmp_path / "cal.json"
     path.write_text('{"cooldowns": ')
-    (problem,) = _problems({"name": TRANSMON_17Q, "calibration": str(path)}).problems
+    (problem,) = _problems({"name": TRANSMON_SURFACE17, "calibration": str(path)}).problems
     assert problem.path == "calibration"
     assert problem.message.startswith("the calibration file is not valid JSON: ")
 
@@ -234,15 +236,15 @@ def test_a_missing_file_is_an_os_error(tmp_path: Path):
 
 
 def test_a_target_name_is_a_device(tmp_path: Path, monkeypatch):
-    dev = pulse.quantum_system(TRANSMON_17Q)
-    assert dev == pulse.quantum_system(TRANSMON_17Q) and dev.name == TRANSMON_17Q
-    assert len(pulse.quantum_system("transmon_generic:4").qudits) == 4
-    with pytest.raises(pulse.NotFoundError, match=r"did you mean 'transmon_17q'\?"):
-        pulse.quantum_system("transmon_transmon_17qq")
+    dev = pulse.quantum_system(TRANSMON_SURFACE17)
+    assert dev == pulse.quantum_system(TRANSMON_SURFACE17) and dev.name == TRANSMON_SURFACE17
+    assert len(pulse.quantum_system("transmon_lattice:4").qudits) == 4
+    with pytest.raises(pulse.NotFoundError, match=r"did you mean 'transmon_surface17'\?"):
+        pulse.quantum_system("transmon_transmon_surface17s")
     with pytest.raises(FileNotFoundError):
         pulse.QuantumSystem.load("absent.json")
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "lab.json").write_text(json.dumps({"name": TRANSMON_17Q, "layout": [4]}))
+    (tmp_path / "lab.json").write_text(json.dumps({"name": TRANSMON_SURFACE17, "layout": [4]}))
     assert pulse.QuantumSystem.load("lab.json").layout == (4,)
     with pytest.raises(pulse.NotFoundError) as raised:
         pulse.quantum_system("lab.json")
@@ -252,11 +254,12 @@ def test_a_target_name_is_a_device(tmp_path: Path, monkeypatch):
 
 
 def test_no_argument_is_the_process_target(monkeypatch):
-    monkeypatch.setenv("CUDAQ_PULSE_QUANTUM_SYSTEM", "transmon_generic:3")
+    monkeypatch.setenv("CUDAQ_PULSE_QUANTUM_SYSTEM", "transmon_lattice:3")
     assert len(pulse.quantum_system().qudits) == 3
     monkeypatch.delenv("CUDAQ_PULSE_QUANTUM_SYSTEM")
     with pytest.raises(
-        pulse.NoProcessQuantumSystemError, match=r'name a target, as quantum system\("transmon_17q'
+        pulse.NoProcessQuantumSystemError,
+        match=r'name a target, as quantum system\("transmon_surface17',
     ):
         pulse.quantum_system()
 
@@ -271,36 +274,36 @@ def test_data_that_is_not_a_mapping_is_a_type_error():
     with pytest.raises(
         TypeError, match=r"QuantumSystem.from_dict\(data\) reads a system file's data"
     ):
-        pulse.quantum_system({"name": TRANSMON_17Q})  # type: ignore[arg-type]
+        pulse.quantum_system({"name": TRANSMON_SURFACE17})  # type: ignore[arg-type]
     for keyword in ("control_system", "calibration"):
         with pytest.raises(TypeError, match=f"pulse.quantum_system's {keyword} is a .*, not data"):
-            pulse.quantum_system(TRANSMON_17Q, **{keyword: {}})
+            pulse.quantum_system(TRANSMON_SURFACE17, **{keyword: {}})
 
 
 def test_the_arguments_of_device_are_checked_at_their_names():
     with pytest.raises(pulse.QuantumSystemDefinitionError) as info:
-        pulse.quantum_system(TRANSMON_17Q, layout=[0, 99], cooldown="x", clock_ghz=-1.0)
+        pulse.quantum_system(TRANSMON_SURFACE17, layout=[0, 99], cooldown="x", clock_ghz=-1.0)
     assert str(info.value).startswith("3 problems in pulse.quantum_system():")
     assert [p.path for p in info.value.problems] == ["layout[1]", "cooldown", "clock_ghz"]
     with pytest.raises(TypeError):
-        pulse.quantum_system(description=TRANSMON_17Q)  # type: ignore[call-arg]
+        pulse.quantum_system(description=TRANSMON_SURFACE17)  # type: ignore[call-arg]
     with pytest.raises(TypeError):
-        pulse.quantum_system(TRANSMON_17Q, [4])  # type: ignore[call-arg]
+        pulse.quantum_system(TRANSMON_SURFACE17, [4])  # type: ignore[call-arg]
 
 
 def test_the_keyword_form_is_the_device_of_the_same_values(monkeypatch):
-    dev = pulse.quantum_system(TRANSMON_17Q, layout=[4, 5], calibration="transmon_17q")
-    data = {"name": TRANSMON_17Q, "layout": [4, 5], "calibration": "transmon_17q"}
+    dev = pulse.quantum_system(TRANSMON_SURFACE17, layout=[4, 5], calibration="transmon_surface17")
+    data = {"name": TRANSMON_SURFACE17, "layout": [4, 5], "calibration": "transmon_surface17"}
     assert (
         dev == pulse.QuantumSystem.from_dict(data) == pulse.QuantumSystem.from_dict(dev.as_dict())
     )
-    monkeypatch.setenv("CUDAQ_PULSE_QUANTUM_SYSTEM", "transmon_generic:3")
+    monkeypatch.setenv("CUDAQ_PULSE_QUANTUM_SYSTEM", "transmon_lattice:3")
     assert pulse.quantum_system(layout=[2]).layout == (2,)
 
 
 def test_problems_survive_pickling(tmp_path: Path):
     path = tmp_path / "lab.json"
-    path.write_text(json.dumps({"name": TRANSMON_17Q, "layout": [99]}))
+    path.write_text(json.dumps({"name": TRANSMON_SURFACE17, "layout": [99]}))
     error = _problems(path)
     copy = pickle.loads(pickle.dumps(error))
     assert type(copy) is pulse.QuantumSystemDefinitionError
@@ -309,7 +312,7 @@ def test_problems_survive_pickling(tmp_path: Path):
 
 
 def test_a_long_list_is_cut_at_ten():
-    error = _problems({"name": TRANSMON_17Q, "layout": list(range(100, 112))})
+    error = _problems({"name": TRANSMON_SURFACE17, "layout": list(range(100, 112))})
     assert len(error.problems) == 12
     lines = str(error).splitlines()
     assert lines[0] == "12 problems in the quantum system data:"

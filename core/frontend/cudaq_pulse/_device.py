@@ -689,10 +689,10 @@ def _calibrated(
     base = target
     if calibration is not None:
         target = calibration._apply(target)
-    elif spec == "transmon_17q":
+    elif spec == "transmon_surface17":
         from .quantum_systems.calibration import shipped_calibration
 
-        calibration = shipped_calibration("transmon_17q")
+        calibration = shipped_calibration("transmon_surface17")
     name = target.name if spec is None else spec
     made = QuantumSystem(
         target,
@@ -1037,9 +1037,9 @@ def quantum_system(
 ) -> QuantumSystem:
     """A quantum system: a registered one by name, or one built from its qudits.
 
-    ``quantum_system("transmon_17q")`` is a registered quantum system, with
+    ``quantum_system("transmon_surface17")`` is a registered quantum system, with
     every carrier in order (a name takes its argument after a colon, as in
-    ``"transmon_generic:4"``); ``cudaq_pulse.quantum_systems.available_quantum_systems()``
+    ``"transmon_lattice:4"``); ``cudaq_pulse.quantum_systems.available_quantum_systems()``
     lists the names. A string is always a name: ``QuantumSystem.load(path)`` reads
     a system file, and ``QuantumSystem.from_dict(data)`` its data. ``quantum_system()`` is
     the process quantum system, named by ``CUDAQ_PULSE_QUANTUM_SYSTEM`` (``python -m
@@ -1062,7 +1062,7 @@ def quantum_system(
     ``Calibration``, the name of a shipped one or the path of a calibration
     file, and ``cooldown`` one of its cooldowns; the calibration's couplings
     replace the system's, and ``QuantumSystem.calibration`` holds it. The
-    ``transmon_17q`` quantum system uses the shipped ``transmon_17q`` calibration by
+    ``transmon_surface17`` quantum system uses the shipped ``transmon_surface17`` calibration by
     default. ``control_system`` is a ``ControlSystem``, whose lines must be
     carriers of the quantum system. ``clock_ghz`` is the program clock
     kernels count cycles of (``QuantumSystem.clock_ghz``); by default the fastest

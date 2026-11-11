@@ -104,7 +104,7 @@ def rabi_oscillation(qubit, amplitude: float):
     drive(drive_line, gaussian(cal["duration"], amplitude, cal["sigma"]))
 
 
-qs = pulse.quantum_system("transmon_17q")
+qs = pulse.quantum_system("transmon_surface17")
 qubit = qs.qudits[0]
 
 result = pulse.simulate(rabi_oscillation, qubit, 0.5)  # NumPy reference, no GPU needed

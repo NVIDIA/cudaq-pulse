@@ -215,7 +215,7 @@ behavior may change in any 0.x release.
   levels, or the detuning of coupled qudits) issues a `PulseWarning` at the
   caller's line, naming that frequency and a step that resolves it; such a
   step damped the coherence of levels 0 and 2 silently. Examples 03, 14,
-  19, 20 and `transmon/transmon_17q_evolve_gpu.py` take steps that resolve
+  19, 20 and `transmon/transmon_surface17_evolve_gpu.py` take steps that resolve
   their qudits, so two print converged values: example 14's survival at
   depth 20 is 0.952 (was 0.954), and example 20's level-2 branch
   probabilities change (outcomes `(1, 2, 2)` 0.002, was 0.006).
@@ -225,7 +225,7 @@ behavior may change in any 0.x release.
   200 MHz anharmonicity, whose levels spread over 2 GHz and which 0.05 ns
   dephased. Wherever 0.05 ns already resolved the simulation (a transmon
   of up to four levels whose anharmonicity is under 333 MHz, as every
-  qudit of `transmon_17q`), the step and the results are unchanged.
+  qudit of `transmon_surface17`), the step and the results are unchanged.
 - **A simulation that diverges raises instead of returning NaN.** A step
   too coarse for the integrator (4 transmon levels at `dt_ns=1.0`, about
   two steps per period of their 552 MHz spread) made its state overflow,
@@ -445,7 +445,7 @@ behavior may change in any 0.x release.
   `max-readouts`, `readout-latency`, `switch-penalty`, `alap`).
 - **Quantum systems.** `pulse.quantum_system` is the one quantum system getter: it
   describes a machine's physics and a qudit layout, from a registered
-  name (`pulse.quantum_system("transmon_17q")`) or built directly
+  name (`pulse.quantum_system("transmon_surface17")`) or built directly
   (`pulse.quantum_system(name="chip", qudits={...}, couplings=[...],
   model=...)`), with `layout=`, `calibration=`, `cooldown=`,
   `control_system=` and `clock_ghz=` keywords, or, with no argument, the
@@ -456,7 +456,7 @@ behavior may change in any 0.x release.
   equal ones, do not mix in one call or in a kernel compiled for one
   (`QuantumSystemMismatchError`), and an empty `layout` is a
   `QuantumSystemDefinitionError`. The shipped quantum system,
-  `"transmon_17q"`, is a 17-qubit transmon quantum system built from
+  `"transmon_surface17"`, is a 17-qubit transmon quantum system built from
   Krinner et al., Nature 605, 669 (2022).
   A quantum system's `model` (`cudaq_pulse.quantum_systems.TransmonModel` by default, a
   `SimulationModel` class or instance, or `None`) says how the simulator
@@ -471,7 +471,7 @@ behavior may change in any 0.x release.
   is not measured yet, which compiles, schedules and exports while
   `simulate` refuses it by name, and its tuned gates,
   `{pulse.gates.CZ: FluxCZ(duration_ns, buffer_ns=None,
-  interaction_frequency_hz=None)}`; the `transmon_17q` target gives its
+  interaction_frequency_hz=None)}`; the `transmon_surface17` target gives its
   published CZ values, and `cudaq_pulse.quantum_systems.transmon.CZ_LAYERS` the
   (auxiliary, data) pairs of each of its CZ time steps. A target's
   `residual_zz` lists `ResidualZZ(qudits, rate_hz)` entries, a static ZZ
@@ -495,9 +495,9 @@ behavior may change in any 0.x release.
   apart from the published target, and `pulse.quantum_system` takes `calibration=`
   and `cooldown=`. `cudaq_pulse.quantum_systems.transmon_model` computes
   flux-tunable transmon levels and charge-coupled pairs from circuit values.
-  The shipped `transmon_17q` calibration has one device-wide charge coupling,
+  The shipped `transmon_surface17` calibration has one device-wide charge coupling,
   fitted to the measured `|11>`-`|20>` coupling of X2-D4, so the
-  `transmon_17q` target's exchange (5.67-6.08 MHz) and idle ZZ (-4.5 to -7.3 kHz) depend on
+  `transmon_surface17` target's exchange (5.67-6.08 MHz) and idle ZZ (-4.5 to -7.3 kHz) depend on
   each pair's frequencies; calibrated qubits convert detunings to and from flux quanta.
   It also holds in-model sudden-net-zero CZ knobs for all 24 pairs (mean
   duration 65.0 +- 4.8 ns against the published 68(7) ns), each with its

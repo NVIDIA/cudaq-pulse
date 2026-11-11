@@ -120,7 +120,7 @@ def report(label: str, compiled: pulse.ScheduledKernel) -> None:
 
 
 def main():
-    qs = pulse.quantum_system("transmon_17q")
+    qs = pulse.quantum_system("transmon_surface17")
     qudits = [qs.qudits[: 1 + data_qudits]]
     report(
         "per-kernel schedules",

@@ -192,8 +192,8 @@ def read_runtime(q: pulse.Qudit, df: float):
 
 
 def test_a_readout_line_plays_at_the_readout_frequency():
-    # transmon_17q's resonators are about 3 GHz above its qubits.
-    dev = pulse.quantum_system("transmon_17q")
+    # transmon_surface17's resonators are about 3 GHz above its qubits.
+    dev = pulse.quantum_system("transmon_surface17")
     for handle in dev.qudits[[0, 9]]:
         qudit = dev.physical_qudits[handle.index]
         resonator = qudit.readout.frequency_hz
@@ -215,7 +215,7 @@ def test_the_frequency_tables_hold_the_program_s_qudits_not_the_device_s():
     # highest; a later program on a higher qudit, static or runtime, extends
     # the tables, and one on a lower qudit reads them. New kernels, on a
     # quantum system of its own: no compile is shared with another test.
-    dev = rebuilt(pulse.quantum_system("transmon_17q"))
+    dev = rebuilt(pulse.quantum_system("transmon_surface17"))
     static, runtime = (pulse.kernel(k.__wrapped__) for k in (read_static, read_runtime))
     resonator = {i: dev.physical_qudits[i].readout.frequency_hz for i in (0, 4, 9)}
     for kernel, index, count in (

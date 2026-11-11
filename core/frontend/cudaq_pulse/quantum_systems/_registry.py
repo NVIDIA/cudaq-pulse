@@ -6,7 +6,7 @@
 the ``CUDAQ_PULSE_QUANTUM_SYSTEM`` environment variable, which
 ``python -m cudaq_pulse --quantum-system NAME script.py`` sets for the script it
 runs. A name is a registered target, optionally with an argument after a
-colon (``transmon_generic:4``). There is no default: ``quantum_system()`` without
+colon (``transmon_lattice:4``). There is no default: ``quantum_system()`` without
 one raises ``NoProcessQuantumSystemError``. Kernel calls never read the process quantum system;
 they run on the quantum system of their qudit handles.
 """
@@ -59,11 +59,11 @@ def _count(name: str, factory: Callable[[int], Any]) -> QuantumSystemFactory:
 
 
 def _builtin_factories() -> dict[str, QuantumSystemFactory]:
-    from .transmon import _described_17q, _described_generic
+    from .transmon import _described_lattice, _described_surface17
 
     return {
-        "transmon_17q": _no_argument("transmon_17q", _described_17q),
-        "transmon_generic": _count("transmon_generic", _described_generic),
+        "transmon_surface17": _no_argument("transmon_surface17", _described_surface17),
+        "transmon_lattice": _count("transmon_lattice", _described_lattice),
     }
 
 
@@ -153,9 +153,9 @@ def current_quantum_system() -> QuantumSystem:
 def _no_quantum_system_message() -> str:
     return (
         "quantum system() with no argument returns the process quantum system, and none is "
-        'configured: name a target, as quantum system("transmon_17q"), '
+        'configured: name a target, as quantum system("transmon_surface17"), '
         "or set one of:\n"
-        f"    {ENV_VAR}=transmon_17q python script.py\n"
-        "    python -m cudaq_pulse --quantum-system transmon_17q script.py\n"
+        f"    {ENV_VAR}=transmon_surface17 python script.py\n"
+        "    python -m cudaq_pulse --quantum-system transmon_surface17 script.py\n"
         f"Available quantum systems: {', '.join(available_quantum_systems())}"
     )

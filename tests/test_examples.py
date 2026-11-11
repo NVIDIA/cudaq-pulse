@@ -11,7 +11,7 @@ import cudaq_pulse
 import pytest
 
 _EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
-_GPU_ONLY = {"transmon_17q_evolve_gpu.py"}
+_GPU_ONLY = {"transmon_surface17_evolve_gpu.py"}
 _SCRIPTS = sorted(p for p in _EXAMPLES.rglob("*.py") if p.name not in _GPU_ONLY)
 _SLOW = {
     "21_calibration_protocol.py",
