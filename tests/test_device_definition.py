@@ -230,6 +230,32 @@ def test_a_calibration_file_that_is_not_json(tmp_path: Path):
     assert problem.message.startswith("the calibration file is not valid JSON: ")
 
 
+@pytest.mark.parametrize(
+    ("spec", "topology", "coupled"),
+    [
+        ("transmon_lattice:4", "linear", [(0, 1), (1, 2), (2, 3)]),
+        ("transmon_lattice:4:ring", "ring", [(0, 1), (1, 2), (2, 3), (3, 0)]),
+        ("transmon_lattice:4:grid", "grid", [(0, 1), (0, 2), (1, 3), (2, 3)]),
+    ],
+)
+def test_a_lattice_is_named_as_it_is_registered(spec, topology, coupled):
+    from cudaq_pulse.quantum_systems import transmon_lattice
+
+    built = transmon_lattice(4, topology=topology)
+    registered = pulse.quantum_system(spec)
+    assert built.name == registered.name == spec
+    assert built.coupling_map == registered.coupling_map == coupled
+
+
+def test_a_lattice_spans_its_frequency_range():
+    from cudaq_pulse.quantum_systems import transmon_lattice
+
+    qs = transmon_lattice(5, base_frequency_hz=5.0e9, frequency_range_hz=200e6)
+    assert [qs.physical_qudits[i].frequency_hz for i in range(5)] == pytest.approx(
+        [5.0e9, 5.05e9, 5.1e9, 5.15e9, 5.2e9]
+    )
+
+
 def test_a_missing_file_is_an_os_error(tmp_path: Path):
     with pytest.raises(FileNotFoundError):
         pulse.QuantumSystem.load(tmp_path / "absent.json")

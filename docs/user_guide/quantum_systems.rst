@@ -145,7 +145,10 @@ argument returns the process quantum system's quantum system, whose handles the 
 passes to its kernels; a kernel call with no qudit handles always raises
 ``NoQuantumSystemError``.
 
-Registered names are ``transmon_surface17`` and ``transmon_lattice:N``;
+Registered names are ``transmon_surface17`` and ``transmon_lattice:N``
+(``transmon_lattice:N:ring`` and ``transmon_lattice:N:grid`` for the other
+topologies), and a system's ``name`` is the name it is registered under:
+``transmon_lattice(4).name`` is ``"transmon_lattice:4"``.
 ``cudaq_pulse.quantum_systems.register_quantum_system`` adds more.
 
 ``transmon_surface17`` is the distance-three surface-code quantum system of

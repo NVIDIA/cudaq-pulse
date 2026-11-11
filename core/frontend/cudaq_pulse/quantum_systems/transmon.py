@@ -220,14 +220,16 @@ def transmon_lattice(
     qudit_count: int,
     *,
     base_frequency_hz: float = 5.0e9,
-    frequency_spread_hz: float = 100e6,
+    frequency_range_hz: float = 100e6,
     anharmonicity_hz: float = -330e6,
     coupling_strength_hz: float = 3.0e6,
     t1_us: float = 25.0,
     t2_star_us: float = 15.0,
     topology: str = "linear",
 ) -> QuantumSystem:
-    """A generic transmon quantum system with configurable parameters.
+    """A transmon quantum system of *qudit_count* uniform qudits on a chain,
+    ring or grid, named ``"transmon_lattice:N"`` (``"transmon_lattice:N:ring"``
+    or ``":grid"`` for the other topologies), as the registry names it.
 
     Parameters
     ----------
@@ -235,8 +237,9 @@ def transmon_lattice(
         Number of qudits.
     base_frequency_hz : float
         Frequency of qudit 0.
-    frequency_spread_hz : float
-        Frequency spacing between adjacent qudits.
+    frequency_range_hz : float
+        Total frequency range, from qudit 0 to qudit N-1: qudit i is at
+        ``base_frequency_hz + i * frequency_range_hz / (N - 1)``.
     anharmonicity_hz : float
         Uniform anharmonicity (negative for transmon).
     coupling_strength_hz : float
@@ -252,7 +255,7 @@ def transmon_lattice(
     built = _described_lattice(
         qudit_count,
         base_frequency_hz=base_frequency_hz,
-        frequency_spread_hz=frequency_spread_hz,
+        frequency_range_hz=frequency_range_hz,
         anharmonicity_hz=anharmonicity_hz,
         coupling_strength_hz=coupling_strength_hz,
         t1_us=t1_us,
@@ -266,7 +269,7 @@ def _described_lattice(
     qudit_count: int,
     *,
     base_frequency_hz: float = 5.0e9,
-    frequency_spread_hz: float = 100e6,
+    frequency_range_hz: float = 100e6,
     anharmonicity_hz: float = -330e6,
     coupling_strength_hz: float = 3.0e6,
     t1_us: float = 25.0,
@@ -283,7 +286,7 @@ def _described_lattice(
     for i in range(qudit_count):
         qudits[i] = PhysicalQudit(
             index=i,
-            frequency_hz=base_frequency_hz + i * frequency_spread_hz / max(qudit_count - 1, 1),
+            frequency_hz=base_frequency_hz + i * frequency_range_hz / max(qudit_count - 1, 1),
             anharmonicity_hz=anharmonicity_hz,
             t1_us=t1_us,
             t2_star_us=t2_star_us,
@@ -292,10 +295,13 @@ def _described_lattice(
 
     edges: list[tuple[int, int]] = []
     if topology == "linear":
+        name = f"transmon_lattice:{qudit_count}"
         edges = [(i, i + 1) for i in range(qudit_count - 1)]
     elif topology == "ring":
+        name = f"transmon_lattice:{qudit_count}:ring"
         edges = [(i, (i + 1) % qudit_count) for i in range(qudit_count)]
     elif topology == "grid":
+        name = f"transmon_lattice:{qudit_count}:grid"
         side = _math.ceil(_math.sqrt(qudit_count))
         for i in range(qudit_count):
             r, c = divmod(i, side)
@@ -309,7 +315,7 @@ def _described_lattice(
     couplings = [Coupling((a, b), coupling_strength_hz) for a, b in edges]
 
     return _Description(
-        name=f"transmon_lattice_{qudit_count}q_{topology}",
+        name=name,
         qudits=qudits,
         couplings=couplings,
     )

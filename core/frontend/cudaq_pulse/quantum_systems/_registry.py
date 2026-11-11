@@ -49,11 +49,16 @@ def _no_argument(name: str, factory: Callable[[], Any]) -> QuantumSystemFactory:
     return make
 
 
-def _count(name: str, factory: Callable[[int], Any]) -> QuantumSystemFactory:
+def _lattice(name: str, factory: Callable[..., Any]) -> QuantumSystemFactory:
     def make(arg: str | None) -> Any:
-        if arg is None or not arg.isdigit():
-            raise InvalidValueError(f"target {name!r} needs a qudit count, e.g. {name}:4")
-        return factory(int(arg))
+        if arg is not None and arg.isdigit():
+            return factory(int(arg))
+        count, _, topology = (arg or "").partition(":")
+        if not count.isdigit():
+            raise InvalidValueError(
+                f"target {name!r} needs a qudit count, e.g. {name}:4 or {name}:4:ring"
+            )
+        return factory(int(count), topology=topology)
 
     return make
 
@@ -63,7 +68,7 @@ def _builtin_factories() -> dict[str, QuantumSystemFactory]:
 
     return {
         "transmon_surface17": _no_argument("transmon_surface17", _described_surface17),
-        "transmon_lattice": _count("transmon_lattice", _described_lattice),
+        "transmon_lattice": _lattice("transmon_lattice", _described_lattice),
     }
 
 
