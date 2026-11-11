@@ -199,7 +199,8 @@ def check_tools_wheel(path: Path) -> list[str]:
     expected = {executable, *(f"{dist_info}/{f}" for f in ("METADATA", "WHEEL", "RECORD"))}
     expected |= {f"{dist_info}/licenses/{f}" for f in _TOOLS_LICENSES}
     expected |= {item for item in names if notices.GRAFTED_DIR.search(item)}
-    problems += [f"contains {item}" for item in sorted(names - expected)]
+    # auditwheel and delocate write an entry for every directory.
+    problems += [f"contains {item}" for item in sorted(names - expected) if not item.endswith("/")]
     if metadata.get_all("Requires-Dist"):
         problems.append(f"requires {metadata.get_all('Requires-Dist')}; it requires nothing")
     return [f"{path.name}: {problem}" for problem in problems]

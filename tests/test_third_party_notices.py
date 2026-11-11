@@ -387,6 +387,19 @@ def test_a_complete_driver_wheel_passes(tmp_path, checker):
     assert _problems(checker, _tools_wheel(tmp_path, checker)) == []
 
 
+def test_a_repaired_driver_wheel_may_list_its_directories(tmp_path, checker):
+    directories = [
+        "cudaq_pulse_tools-0.1.0.data/",
+        "cudaq_pulse_tools-0.1.0.data/scripts/",
+        "cudaq_pulse_tools-0.1.0.dist-info/",
+        "cudaq_pulse_tools-0.1.0.dist-info/licenses/",
+        "cudaq_pulse_tools-0.1.0.dist-info/licenses/LICENSES/",
+    ]
+    assert _problems(checker, _tools_wheel(tmp_path, checker, extra=directories)) == []
+    path = _tools_wheel(tmp_path, checker, extra=[*directories, "cudaq_pulse_tools/__init__.py"])
+    assert _problems(checker, path) == ["contains cudaq_pulse_tools/__init__.py"]
+
+
 @pytest.mark.parametrize("name", ["LICENSE", "NOTICE", "LICENSES/LLVM-LICENSE.txt"])
 def test_both_wheels_carry_the_repositorys_license_texts(tmp_path, checker, name):
     package = _ROOT / "packaging" / "cudaq-pulse-tools"
