@@ -10,7 +10,10 @@ requires = [
     "setuptools-scm>=9",
     "nanobind>=2.12",
 ]
-build-backend = "scikit_build_core.build"
+# scikit-build-core, with an sdist that stores copies of the license files
+# packaging/cudaq-pulse-tools links to (tools/backend/cudaq_pulse_build.py).
+build-backend = "cudaq_pulse_build"
+backend-path = ["tools/backend"]
 
 [project]
 name = "cudaq-pulse"

@@ -5,7 +5,9 @@ check's license, notice, CUDA and GPL rules (source tree only)."""
 
 import importlib.util
 import io
+import sys
 import tarfile
+import types
 import zipfile
 from pathlib import Path
 
@@ -464,3 +466,54 @@ def test_the_sdist_requires_the_driver_at_its_version(tmp_path, checker):
     assert checker.check_sdist(path) == [
         f"{path.name}: requires [], expected exactly ['cudaq-pulse-tools==0.1.0']"
     ]
+
+
+@pytest.fixture
+def backend(monkeypatch, tmp_path):
+    """tools/backend/cudaq_pulse_build.py over a stand-in for
+    scikit-build-core, whose sdist has a file, a link to it, and the links
+    ``backend.links`` (set by the test)."""
+
+    def build_sdist(sdist_directory, config_settings=None):
+        name = "cudaq_pulse-0.1.0.tar.gz"
+        with tarfile.open(Path(sdist_directory) / name, "w:gz") as sdist:
+            info = tarfile.TarInfo("cudaq_pulse-0.1.0/LICENSE")
+            info.size, info.mode = 7, 0o644
+            sdist.addfile(info, io.BytesIO(b"license"))
+            for link, target in [("tools/LICENSE", "../LICENSE"), *module.links]:
+                info = tarfile.TarInfo(f"cudaq_pulse-0.1.0/{link}")
+                info.type, info.linkname = tarfile.SYMTYPE, target
+                sdist.addfile(info)
+        return name
+
+    build = types.ModuleType("scikit_build_core.build")
+    build.__all__ = ["build_sdist", "build_wheel"]
+    build.build_sdist, build.build_wheel = build_sdist, object()
+    package = types.ModuleType("scikit_build_core")
+    package.build = build
+    monkeypatch.setitem(sys.modules, "scikit_build_core", package)
+    monkeypatch.setitem(sys.modules, "scikit_build_core.build", build)
+    spec = importlib.util.spec_from_file_location(
+        "cudaq_pulse_build", _TOOLS / "backend" / "cudaq_pulse_build.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.links = []
+    return module
+
+
+def test_the_backend_stores_a_copy_of_each_linked_file(backend, tmp_path):
+    assert backend.build_wheel is not None and "build_wheel" in backend.__all__
+    name = backend.build_sdist(str(tmp_path))
+    with tarfile.open(tmp_path / name) as sdist:
+        members = {m.name: m for m in sdist.getmembers()}
+        copy = members["cudaq_pulse-0.1.0/tools/LICENSE"]
+        assert copy.isfile() and copy.mode == 0o644
+        assert sdist.extractfile(copy).read() == b"license"
+
+
+@pytest.mark.parametrize("target", ["../missing", "../../LICENSE", "."])
+def test_the_backend_fails_on_a_link_to_no_file_in_the_sdist(backend, tmp_path, target):
+    backend.links = [("tools/other", target)]
+    with pytest.raises(RuntimeError, match="which is not a file in the sdist"):
+        backend.build_sdist(str(tmp_path))
