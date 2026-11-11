@@ -540,4 +540,13 @@ inline int64_t intAttr(mlir::Operation *op, llvm::StringRef name,
   return fallback;
 }
 
+/// intAttr() of a discardable attribute by its interned name.
+inline int64_t intAttr(mlir::Operation *op, mlir::StringAttr name,
+                       int64_t fallback = 0) {
+  if (auto attr = mlir::dyn_cast_or_null<mlir::IntegerAttr>(
+          op->getDiscardableAttr(name)))
+    return attr.getInt();
+  return fallback;
+}
+
 } // namespace classical

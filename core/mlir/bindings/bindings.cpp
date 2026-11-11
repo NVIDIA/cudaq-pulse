@@ -325,28 +325,58 @@ void runPipelineVerifyingOnce(mlir::PassManager &pm, mlir::Operation *op,
     diagnostics.fail(what);
 }
 
-/// The scheduling pass managers of each context made by makeContext, by the
-/// options that built them, for its next modules scheduled alike: building
-/// one, and its first run on a multithreaded context, which copies its
-/// nested passes for each thread, cost as much as scheduling a small module.
-/// One being run is taken out, so that no two threads run it at once.
-class SchedulePasses {
+/// The discardable attributes the walks over a module read, by their
+/// interned names: reading an attribute by its interned name compares
+/// pointers, where reading it by its spelling compares strings with each
+/// inherent and discardable name of the op, and interning a name is a
+/// lookup in the context's uniquer. None of them is inherent on any op.
+struct AttrNames {
+  explicit AttrNames(mlir::MLIRContext *context)
+      : timeline(mlir::StringAttr::get(context, classical::kTimelineAttr)),
+        variable(mlir::StringAttr::get(context, "classical.variable")),
+        blocking(mlir::StringAttr::get(context, "classical.blocking")),
+        device(mlir::StringAttr::get(context, "classical.device")),
+        instance(mlir::StringAttr::get(context, classical::kInstanceAttr)),
+        budget(mlir::StringAttr::get(context, "classical.budget_cycles")),
+        variableWait(mlir::StringAttr::get(context, "pulse.variable_wait")),
+        minCycles(mlir::StringAttr::get(context, "pulse.min_cycles")),
+        maxCycles(mlir::StringAttr::get(context, "pulse.max_cycles")),
+        framePhaseOffset(mlir::StringAttr::get(context, "frame_phase_offset")),
+        phaseOffset(mlir::StringAttr::get(context, "phase_offset")) {}
+  mlir::StringAttr timeline, variable, blocking, device, instance, budget,
+      variableWait, minCycles, maxCycles, framePhaseOffset, phaseOffset;
+
+  static bool has(mlir::Operation *op, mlir::StringAttr name) {
+    return static_cast<bool>(op->getDiscardableAttr(name));
+  }
+};
+
+/// What each context made by makeContext keeps for its next modules.
+///
+/// Its scheduling pass managers, by the options that built them, for modules
+/// scheduled alike: building one, and its first run on a multithreaded
+/// context, which copies its nested passes for each thread, cost as much as
+/// scheduling a small module. One being run is taken out, so that no two
+/// threads run it at once.
+///
+/// Its AttrNames, interned once for the life of the context.
+class ContextStore {
 public:
   /// (policy, rcp's four resource limits or zeros, whether the classical
   /// calls are checked, whether the frame-changes pass runs).
   using Options =
       std::tuple<std::string, int64_t, int64_t, int64_t, int64_t, bool, bool>;
 
-  explicit SchedulePasses(mlir::MLIRContext *context) : context(context) {
+  explicit ContextStore(mlir::MLIRContext *context) : context(context) {
     std::lock_guard<std::mutex> guard(lock());
     contexts()[context] = this;
   }
-  ~SchedulePasses() {
+  ~ContextStore() {
     std::lock_guard<std::mutex> guard(lock());
     contexts().erase(context);
   }
-  SchedulePasses(const SchedulePasses &) = delete;
-  SchedulePasses &operator=(const SchedulePasses &) = delete;
+  ContextStore(const ContextStore &) = delete;
+  ContextStore &operator=(const ContextStore &) = delete;
 
   /// A kept pass manager of `context` built with `options`, or null.
   static std::unique_ptr<mlir::PassManager> take(mlir::MLIRContext *context,
@@ -384,6 +414,22 @@ public:
     kept.emplace_back(std::move(options), std::move(passes));
   }
 
+  /// The AttrNames of `context`: those it keeps, or else interned in `own`.
+  static const AttrNames &names(mlir::MLIRContext *context,
+                                std::optional<AttrNames> &own) {
+    {
+      std::lock_guard<std::mutex> guard(lock());
+      auto found = contexts().find(context);
+      if (found != contexts().end()) {
+        auto &kept = found->second->attrNames;
+        if (!kept)
+          kept = std::make_unique<AttrNames>(context);
+        return *kept;
+      }
+    }
+    return own.emplace(context);
+  }
+
   /// The lock is held across fork, so that a child inherits it unlocked.
   static void handleForks() {
     pthread_atfork([] { lock().lock(); }, [] { lock().unlock(); },
@@ -394,27 +440,28 @@ private:
   static constexpr size_t kMaxKept = 4;
   mlir::MLIRContext *context;
   std::vector<std::pair<Options, std::unique_ptr<mlir::PassManager>>> kept;
+  std::unique_ptr<AttrNames> attrNames;
 
   // Never destroyed, as the shared pool's last context is not.
   static std::mutex &lock() {
     static auto *mutex = new std::mutex();
     return *mutex;
   }
-  static llvm::DenseMap<mlir::MLIRContext *, SchedulePasses *> &contexts() {
+  static llvm::DenseMap<mlir::MLIRContext *, ContextStore *> &contexts() {
     static auto *all =
-        new llvm::DenseMap<mlir::MLIRContext *, SchedulePasses *>();
+        new llvm::DenseMap<mlir::MLIRContext *, ContextStore *>();
     return *all;
   }
 };
 
-/// A new context with `registry`'s dialects that keeps its modules'
-/// scheduling pass managers (SchedulePasses), destroyed before it.
+/// A new context with `registry`'s dialects and its ContextStore, destroyed
+/// before it.
 std::shared_ptr<mlir::MLIRContext>
 makeContext(const mlir::DialectRegistry &registry) {
   struct Owner {
     explicit Owner(const mlir::DialectRegistry &registry) : context(registry) {}
     mlir::MLIRContext context;
-    SchedulePasses passes{&context};
+    ContextStore store{&context};
   };
   auto owner = std::make_shared<Owner>(registry);
   return std::shared_ptr<mlir::MLIRContext>(owner, &owner->context);
@@ -489,13 +536,16 @@ struct SegmentWalk {
   using Boundary =
       std::tuple<std::string, int64_t, int64_t, int64_t, int64_t, int64_t>;
 
-  explicit SegmentWalk(mlir::ModuleOp module) {
+  explicit SegmentWalk(mlir::ModuleOp module)
+      : names(ContextStore::names(module.getContext(), ownNames)) {
     module.walk([&](mlir::Operation *op) {
       if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
         lineIndex.try_emplace(op, static_cast<int64_t>(lineIndex.size()));
     });
   }
 
+  std::optional<AttrNames> ownNames;
+  const AttrNames &names;
   llvm::DenseMap<mlir::Operation *, int64_t> lineIndex;
   pulse::AllocationTracer trace;
   std::map<int64_t, int64_t> current;
@@ -559,15 +609,13 @@ struct SegmentWalk {
   }
 
   int64_t timelineOf(mlir::Operation *op) {
-    if (op->hasAttr(classical::kTimelineAttr))
-      return classical::intAttr(op, classical::kTimelineAttr);
+    if (AttrNames::has(op, names.timeline))
+      return classical::intAttr(op, names.timeline);
     for (mlir::Value operand : op->getOperands())
       if (mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType,
                     pulse::ToneType>(operand.getType())) {
         mlir::Operation *allocation = trace(operand);
-        return allocation
-                   ? classical::intAttr(allocation, classical::kTimelineAttr)
-                   : 0;
+        return allocation ? classical::intAttr(allocation, names.timeline) : 0;
       }
     return 0;
   }
@@ -577,8 +625,8 @@ struct SegmentWalk {
   /// answer is taken in the one it opens.
   int64_t visit(mlir::Operation *op, llvm::ArrayRef<int64_t> iteration) {
     int64_t &segment = current[timelineOf(op)];
-    if (!op->hasAttr("classical.variable") &&
-        !op->hasAttr("classical.blocking"))
+    if (!AttrNames::has(op, names.variable) &&
+        !AttrNames::has(op, names.blocking))
       return segment;
     auto start = pulse::scheduledStart(op, iteration);
     if (!start)
@@ -588,11 +636,10 @@ struct SegmentWalk {
       mlir::Operation *allocation = trace(op->getOperand(0));
       boundaries.emplace_back(
           "wait", allocation ? lineIndex.lookup(allocation) : -1, *start,
-          classical::intAttr(op, "pulse.min_cycles"),
-          classical::intAttr(op, "pulse.max_cycles", -1), after);
+          classical::intAttr(op, names.minCycles),
+          classical::intAttr(op, names.maxCycles, -1), after);
     } else {
-      boundaries.emplace_back("answer",
-                              classical::intAttr(op, "classical.device"),
+      boundaries.emplace_back("answer", classical::intAttr(op, names.device),
                               *start, 0, -1, after);
     }
     segment = count();
@@ -677,9 +724,13 @@ struct ControllerEventWalk : ControllerExpressions {
     }
   };
 
-  explicit ControllerEventWalk(double clockGHz, bool track = false)
-      : clockGHz(clockGHz), track(track) {}
+  ControllerEventWalk(mlir::MLIRContext *context, double clockGHz,
+                      bool track = false)
+      : names(ContextStore::names(context, ownNames)), clockGHz(clockGHz),
+        track(track) {}
 
+  std::optional<AttrNames> ownNames;
+  const AttrNames &names;
   double clockGHz;
   llvm::DenseMap<mlir::Operation *, int64_t> lineIndex;
   std::vector<Event> result;
@@ -1091,10 +1142,11 @@ struct ControllerEventWalk : ControllerExpressions {
       bool drive = mlir::isa<pulse::DriveOp>(op);
       double offset = 0.0;
       if (drive) {
-        if (auto shift =
-                op->getAttrOfType<mlir::FloatAttr>("frame_phase_offset"))
+        if (auto shift = mlir::dyn_cast_or_null<mlir::FloatAttr>(
+                op->getDiscardableAttr(names.framePhaseOffset)))
           frame.phase += shift.getValueAsDouble();
-        if (auto own = op->getAttrOfType<mlir::FloatAttr>("phase_offset"))
+        if (auto own = mlir::dyn_cast_or_null<mlir::FloatAttr>(
+                op->getDiscardableAttr(names.phaseOffset)))
           offset = own.getValueAsDouble();
       }
       frequency = frame.frequencyHz;
@@ -1164,12 +1216,14 @@ struct ControllerEventWalk : ControllerExpressions {
     next.event = static_cast<int64_t>(result.size());
     if (mlir::isa<pulse::WaitOp>(op)) {
       if (!fromRunTime(op->getOperand(1)) ||
-          !op->hasAttr("pulse.variable_wait"))
+          !AttrNames::has(op, names.variableWait))
         return;
       next.length = expression(op->getOperand(1));
-      if (auto bound = op->getAttrOfType<mlir::IntegerAttr>("pulse.max_cycles"))
+      if (auto bound = mlir::dyn_cast_or_null<mlir::IntegerAttr>(
+              op->getDiscardableAttr(names.maxCycles)))
         next.maxCycles = bound.getInt();
-      if (auto bound = op->getAttrOfType<mlir::IntegerAttr>("pulse.min_cycles"))
+      if (auto bound = mlir::dyn_cast_or_null<mlir::IntegerAttr>(
+              op->getDiscardableAttr(names.minCycles)))
         next.minCycles = bound.getInt();
       known.push_back(std::move(next));
       return;
@@ -1192,11 +1246,12 @@ struct ControllerEventWalk : ControllerExpressions {
           toneIds.try_emplace(root, static_cast<int64_t>(toneIds.size()))
               .first->second;
       if (mlir::isa<pulse::DriveOp>(op)) {
-        if (auto shift =
-                op->getAttrOfType<mlir::FloatAttr>("frame_phase_offset"))
+        if (auto shift = mlir::dyn_cast_or_null<mlir::FloatAttr>(
+                op->getDiscardableAttr(names.framePhaseOffset)))
           frameUpdate(root, "shift_phase",
                       add(Expression::Number, shift.getValueAsDouble()));
-        if (auto own = op->getAttrOfType<mlir::FloatAttr>("phase_offset"))
+        if (auto own = mlir::dyn_cast_or_null<mlir::FloatAttr>(
+                op->getDiscardableAttr(names.phaseOffset)))
           next.offset = own.getValueAsDouble();
       }
       if (auto found = pending.find(root); found != pending.end()) {
@@ -1265,7 +1320,7 @@ struct ControllerEventWalk : ControllerExpressions {
     double timeoutNs = kUnknown;
     if (!submit) {
       latest[op] = static_cast<int64_t>(result.size());
-      mode = op->hasAttr("classical.blocking") ? "blocking" : "bounded";
+      mode = AttrNames::has(op, names.blocking) ? "blocking" : "bounded";
       if (auto timeout = op->getAttrOfType<mlir::FloatAttr>("timeout_ns")) {
         mode = "timeout";
         timeoutNs = timeout.getValueAsDouble();
@@ -1282,9 +1337,8 @@ struct ControllerEventWalk : ControllerExpressions {
     // a per-controller link runs it (-1: none).
     segmentOf(op);
     result.emplace_back(
-        submit ? "submit" : "answer",
-        classical::intAttr(op, "classical.device"),
-        classical::intAttr(op, classical::kInstanceAttr, -1),
+        submit ? "submit" : "answer", classical::intAttr(op, names.device),
+        classical::intAttr(op, names.instance, -1),
         pulse::scheduledStart(op, iteration), pulse::scheduledDuration(op),
         std::vector<int64_t>(iteration.begin(), iteration.end()),
         std::vector<WaveformNode>{}, kUnknown, kUnknown, branches,
@@ -2491,6 +2545,8 @@ public:
     std::vector<Event> result;
     llvm::SmallVector<int64_t, 2> iteration;
     pulse::AllocationTracer trace;
+    std::optional<AttrNames> ownNames;
+    const AttrNames &names = ContextStore::names(ctx_.get(), ownNames);
     std::function<void(mlir::Block &)> collect = [&](mlir::Block &block) {
       for (mlir::Operation &op : block) {
         if (mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(op)) {
@@ -2505,7 +2561,7 @@ public:
           // A classical call's events are on its link; they have no qudit.
           result.emplace_back(mlir::isa<classical::SubmitOp>(op) ? "submit"
                                                                  : "answer",
-                              classical::intAttr(&op, "classical.device"), -1,
+                              classical::intAttr(&op, names.device), -1,
                               pulse::scheduledStart(&op, iteration),
                               pulse::scheduledDuration(&op));
         } else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
@@ -2572,6 +2628,8 @@ public:
     });
     llvm::SmallVector<int64_t, 2> iteration;
     pulse::AllocationTracer trace;
+    std::optional<AttrNames> ownNames;
+    const AttrNames &names = ContextStore::names(ctx_.get(), ownNames);
     auto node = [&](mlir::Operation &op, std::string kind, int64_t line,
                     int64_t qubit) {
       std::optional<int64_t> start = pulse::scheduledStart(&op, iteration);
@@ -2599,7 +2657,7 @@ public:
             } else if (mlir::isa<classical::SubmitOp, classical::WaitOp>(op)) {
               out.append(node(
                   op, mlir::isa<classical::SubmitOp>(op) ? "submit" : "answer",
-                  classical::intAttr(&op, "classical.device"), -1));
+                  classical::intAttr(&op, names.device), -1));
             } else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
               int64_t trips = pulse::constantTripCount(loop).value_or(0);
               nb::list body;
@@ -2725,7 +2783,7 @@ public:
                  std::vector<int64_t> *slots, bool summarize = false,
                  bool unsynced = false, bool trackFrames = true) {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
-    auto walk = std::make_unique<ControllerEventWalk>(clock());
+    auto walk = std::make_unique<ControllerEventWalk>(ctx_.get(), clock());
     walk->summarize = summarize;
     walk->unsynced = unsynced;
     walk->trackFrames = trackFrames;
@@ -2805,7 +2863,7 @@ public:
     if (!summarize)
       return nb::cast(std::move(trackedWalk()->natives));
     std::lock_guard<std::recursive_mutex> guard(*lock_);
-    ControllerEventWalk walk(clock(), /*track=*/true);
+    ControllerEventWalk walk(ctx_.get(), clock(), /*track=*/true);
     walk.summarize = true;
     walk.unsynced = unsynced;
     module_->walk([&](mlir::Operation *op) {
@@ -3249,22 +3307,23 @@ public:
       }
       return it->second;
     };
+    SegmentWalk segments(*module_);
+    const AttrNames &names = segments.names;
     auto startOf = [&](mlir::Operation *op, llvm::ArrayRef<int64_t> iteration) {
       llvm::SmallVector<int64_t, 2> at(iteration.begin(), iteration.end());
       at.resize(pulse::enclosingLoops(op).size(), 0);
       return pulse::scheduledStart(op, at);
     };
-    SegmentWalk segments(*module_);
     llvm::SmallVector<int64_t, 2> iteration;
     llvm::DenseMap<mlir::Operation *, bool> busy;
     auto callsOrBoundaries = [&](mlir::scf::ForOp loop) {
       auto [it, inserted] = busy.try_emplace(loop, false);
       if (inserted)
         it->second =
-            loop->walk([](mlir::Operation *inner) {
+            loop->walk([&](mlir::Operation *inner) {
                   return mlir::isa<classical::SubmitOp>(inner) ||
-                                 inner->hasAttr("classical.variable") ||
-                                 inner->hasAttr("classical.blocking")
+                                 AttrNames::has(inner, names.variable) ||
+                                 AttrNames::has(inner, names.blocking)
                              ? mlir::WalkResult::interrupt()
                              : mlir::WalkResult::advance();
                 })
@@ -3281,8 +3340,8 @@ public:
           auto callable =
               symbols.lookup<classical::CallableOp>(submit.getCallee());
           int64_t duration = pulse::scheduledDuration(&op).value_or(1);
-          int64_t due = *start + duration +
-                        classical::intAttr(&op, "classical.budget_cycles");
+          int64_t due =
+              *start + duration + classical::intAttr(&op, names.budget);
           std::optional<int64_t> taken, firstUse, deadline;
           for (mlir::Operation *user : submit.getFuture().getUsers())
             if (auto wait = mlir::dyn_cast<classical::WaitOp>(user)) {
@@ -3296,13 +3355,12 @@ public:
               deadline = *start +
                          classical::ceilCycles(limit->convertToDouble(), clock);
           calls.emplace_back(
-              submit.getCallee().str(),
-              classical::intAttr(&op, "classical.device"),
+              submit.getCallee().str(), classical::intAttr(&op, names.device),
               std::vector<int64_t>(iteration.begin(), iteration.end()), *start,
               duration, due, taken, firstUse, deadline, segment,
-              op.hasAttr(classical::kInstanceAttr)
+              AttrNames::has(&op, names.instance)
                   ? std::optional<int64_t>(
-                        classical::intAttr(&op, classical::kInstanceAttr))
+                        classical::intAttr(&op, names.instance))
                   : std::nullopt);
         } else if (mlir::isa<classical::WaitOp, pulse::WaitOp>(op)) {
           segments.visit(&op, iteration);
@@ -4284,7 +4342,7 @@ private:
                    int64_t switchPenalty, const std::string &what,
                    std::optional<bool> frameChanges = std::nullopt) {
     bool rcp = policy == "rcp" || policy == "alap_rcp";
-    SchedulePasses::Options options{
+    ContextStore::Options options{
         policy,
         rcp ? maxDrives : 0,
         rcp ? maxReadouts : 0,
@@ -4292,18 +4350,18 @@ private:
         rcp ? switchPenalty : 0,
         checkCalls && classical::declaresClassicalCalls(module),
         frameChanges ? *frameChanges : pulse::hasFrameChangeWork(module)};
-    auto passes = SchedulePasses::take(ctx_.get(), options);
+    auto passes = ContextStore::take(ctx_.get(), options);
     if (!passes) {
       passes = std::make_unique<mlir::PassManager>(ctx_.get());
       addSchedule(*passes, options);
     }
     runPipelineVerifyingOnce(*passes, module, what);
-    SchedulePasses::keep(ctx_.get(), std::move(options), std::move(passes));
+    ContextStore::keep(ctx_.get(), std::move(options), std::move(passes));
   }
 
   /// Add to `pm` the passes runSchedule runs with `options`.
   static void addSchedule(mlir::PassManager &pm,
-                          const SchedulePasses::Options &options) {
+                          const ContextStore::Options &options) {
     auto &[policy, maxDrives, maxReadouts, readoutLatency, switchPenalty,
            checkCalls, frameChanges] = options;
     if (policy == "asap")
@@ -6272,8 +6330,8 @@ void freezeType(nb::handle cls) {
 NB_MODULE(_cudaq_pulse_native, m) {
   m.doc() = "cudaq-pulse native MLIR pipeline bindings";
   // Fork takes the locks in the reverse order of these: the pool's is held
-  // while a context, and its SchedulePasses, is made or destroyed.
-  SchedulePasses::handleForks();
+  // while a context, and its ContextStore, is made or destroyed.
+  ContextStore::handleForks();
   SharedContextPool::handleForks();
 
   // Kept for the life of the process, like the module that holds it.
