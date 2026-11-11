@@ -98,9 +98,9 @@ generated MLIR:
    qubit = qs.qudits[0]
    result = pulse.simulate(rabi_oscillation, qubit, 0.5)    # NumPy reference, no GPU needed
    print(f"P(1) = {result.level_population(1):.3f}")   # P(1) = 0.972
-   compiled = rabi_oscillation.lower(qubit, 0.5)
-   print(compiled.mlir())
-   print(f"Compiled in {compiled.metrics.total_ms:.1f} ms")
+   scheduled = rabi_oscillation.lower(qubit, 0.5)
+   print(scheduled.mlir())
+   print(f"Compiled in {scheduled.metrics.total_ms:.1f} ms")
 
 The pulse lasts 32 ns, 64 cycles of the quantum system's 2 GHz clock. A duration is
 an ``int`` number of cycles or a time with units; see :ref:`durations`.
@@ -122,7 +122,7 @@ cudaq-pulse is a Python-first compiler pipeline with four stages:
 4. **Lower and simulate** -- ``pulse.simulate(kernel, *args)`` compiles a
    call and evolves it with the NumPy reference, and
    ``pulse.simulate(kernel, *args, backend="gpu")`` on the GPU, through the native
-   Pulse -> QOp -> CuDensityMat -> LLVM lowering (``compiled.mlir("llvm")``).
+   Pulse -> QOp -> CuDensityMat -> LLVM lowering (``scheduled.mlir("llvm")``).
    A program compiled already is simulated the same way without compiling
    it again: ``pulse.simulate(program, *values)`` binds the values of its
    run-time float parameters as ``program.bind(values)`` does.

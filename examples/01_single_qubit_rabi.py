@@ -38,27 +38,27 @@ if __name__ == "__main__":
     qudit = qs.qudits[0]
 
     print("=== Compiled for the qubit's quantum system ===")
-    compiled_kernel = rabi.lower(qudit, cal["rabi_duration"], 0.5)
-    print(compiled_kernel.mlir())
-    print(f"  Compile metrics: {compiled_kernel.metrics}")
+    scheduled = rabi.lower(qudit, cal["rabi_duration"], 0.5)
+    print(scheduled.mlir())
+    print(f"  Compile metrics: {scheduled.metrics}")
 
     print("\n=== Amplitude sweep (Rabi oscillation, CPU simulation) ===")
     # Pinning the quantum system compiles for it ahead of the call.
     sweep = pulse.compile(rabi, quantum_system=qs)
     for amplitude in [0.0, 0.02, 0.04, 0.06, 0.08, 0.10, 0.12]:
-        compiled_kernel = sweep.lower(qudit, cal["rabi_duration"], amplitude)
-        p1 = pulse.simulate(compiled_kernel).level_population(1)
+        scheduled = sweep.lower(qudit, cal["rabi_duration"], amplitude)
+        p1 = pulse.simulate(scheduled).level_population(1)
         print(f"  amplitude={amplitude:.2f}: P(1) = {p1:.3f}")
     print(f"  compiled {sweep.cache_info().compiled} time(s) for the whole sweep")
 
     print("\n=== The same kernel on a quantum system with a 1 GHz clock ===")
     slow = pulse.quantum_system("transmon_surface17", clock_ghz=1.0)
     for quantum_system in (qs, slow):
-        compiled = rabi.lower(quantum_system.qudits[0], cal["rabi_duration"], 0.5)
-        cycles = compiled.schedule[0].duration_cycles
+        scheduled = rabi.lower(quantum_system.qudits[0], cal["rabi_duration"], 0.5)
+        cycles = scheduled.schedule[0].duration_cycles
         print(f"  {quantum_system.clock_ghz:g} GHz: {cal['rabi_duration']} is {cycles} cycles")
 
     print("\n=== With readout ===")
-    compiled_kernel = rabi_with_readout.lower(qudit, cal["rabi_duration"], 0.5)
-    print(compiled_kernel.mlir())
-    print(f"  Compile metrics: {compiled_kernel.metrics}")
+    scheduled = rabi_with_readout.lower(qudit, cal["rabi_duration"], 0.5)
+    print(scheduled.mlir())
+    print(f"  Compile metrics: {scheduled.metrics}")

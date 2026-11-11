@@ -76,23 +76,23 @@ def main():
     tau = 250 * pulse.ns
 
     print("=== Hahn Echo ===")
-    compiled_kernel = pulse.compile(hahn_echo, quantum_system=qs).lower(
+    scheduled = pulse.compile(hahn_echo, quantum_system=qs).lower(
         qs.qudits[0], sigma, amp_half_pi, amp_pi, tau
     )
     total_hahn = 2 * (4 * sigma) + 4 * sigma + 2 * tau
     print(f"  Expected duration: {cycles(total_hahn):.0f} clock cycles")
-    print(compiled_kernel.mlir())
-    print(f"  Compile metrics: {compiled_kernel.metrics}")
+    print(scheduled.mlir())
+    print(f"  Compile metrics: {scheduled.metrics}")
 
     print("\n=== CPMG-4 Echo ===")
     refocus_count = 4
-    compiled_kernel = pulse.compile(cpmg_echo, quantum_system=qs).lower(
+    scheduled = pulse.compile(cpmg_echo, quantum_system=qs).lower(
         qs.qudits[0], sigma, amp_half_pi, amp_pi, tau, refocus_count
     )
     total_cpmg = 2 * (4 * sigma) + refocus_count * (4 * sigma + 2 * tau)
     print(f"  Expected duration: {cycles(total_cpmg):.0f} clock cycles")
-    print(compiled_kernel.mlir())
-    print(f"  Compile metrics: {compiled_kernel.metrics}")
+    print(scheduled.mlir())
+    print(f"  Compile metrics: {scheduled.metrics}")
 
 
 if __name__ == "__main__":

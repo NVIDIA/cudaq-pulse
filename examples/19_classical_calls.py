@@ -147,12 +147,12 @@ def track_t1(qudit, rounds: int, alpha: float, beta: float, first_wait):
 # ── 3. Report, simulation and emulation export ──────────────────────────────
 
 
-def print_report(compiled):
+def print_report(scheduled):
     """Each call's issue time, the time its answer is due, and its slack
     (how much later the answer could come without delaying a pulse)."""
-    clock = compiled.quantum_system.clock_ghz
+    clock = scheduled.quantum_system.clock_ghz
     print(f"  {'function':<10} {'link':>10} {'issue ns':>9} {'ready ns':>9} {'slack ns':>9}")
-    for call in compiled.classical_report():
+    for call in scheduled.classical_report():
         slack = "-" if call.slack_cycles is None else f"{call.slack_cycles / clock:.1f}"
         print(
             f"  {call.function:<10} {call.link_name:>10} {call.submit_cycles / clock:>9.1f} "
@@ -160,8 +160,8 @@ def print_report(compiled):
         )
 
 
-def export(compiled, name, directory):
-    artifact = compiled.export_to_emulator()
+def export(scheduled, name, directory):
+    artifact = scheduled.export_to_emulator()
     path = Path(directory) / f"{name}.json"
     path.write_text(json.dumps(artifact, indent=1))
     print(

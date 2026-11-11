@@ -128,27 +128,27 @@ if __name__ == "__main__":
     tau = 100 * pulse.ns
 
     print("=== XY4 (4 cycles) ===")
-    compiled_kernel = pulse.compile(xy4, quantum_system=qs).lower(
+    scheduled = pulse.compile(xy4, quantum_system=qs).lower(
         qs.qudits[0], sigma, amplitude_pi, tau, 4
     )
-    print(compiled_kernel.mlir())
-    print(f"  Compile metrics: {compiled_kernel.metrics}")
+    print(scheduled.mlir())
+    print(f"  Compile metrics: {scheduled.metrics}")
 
     print("\n=== Uhrig DD (8 pulses, T=5000 clock cycles) ===")
-    compiled_kernel = pulse.compile(uhrig_dd, quantum_system=qs).lower(
+    scheduled = pulse.compile(uhrig_dd, quantum_system=qs).lower(
         qs.qudits[0], sigma, amplitude_pi, 5000, 8
     )
-    print(compiled_kernel.mlir())
+    print(scheduled.mlir())
 
     print("\n=== CPMG (8 refocusing pulses) ===")
-    compiled_kernel = pulse.compile(cpmg, quantum_system=qs).lower(
+    scheduled = pulse.compile(cpmg, quantum_system=qs).lower(
         qs.qudits[0], sigma, amplitude_half_pi, amplitude_pi, tau, 8
     )
-    print(compiled_kernel.mlir())
+    print(scheduled.mlir())
 
     print("\n=== KDD (Knill DD) ===")
-    compiled_kernel = pulse.compile(knill_dd, quantum_system=qs).lower(
+    scheduled = pulse.compile(knill_dd, quantum_system=qs).lower(
         qs.qudits[0], sigma, amplitude_pi, tau
     )
-    print(compiled_kernel.mlir())
-    print(f"  Compile metrics: {compiled_kernel.metrics}")
+    print(scheduled.mlir())
+    print(f"  Compile metrics: {scheduled.metrics}")

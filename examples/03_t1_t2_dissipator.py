@@ -104,10 +104,10 @@ if __name__ == "__main__":
 
     print("\n=== T2* Ramsey (tau=500) ===")
     ramsey_tau = 250 * pulse.ns
-    compiled_kernel = pulse.compile(t2_ramsey, quantum_system=qs).lower(qudit, ramsey_tau)
-    print(compiled_kernel.mlir())
+    scheduled = pulse.compile(t2_ramsey, quantum_system=qs).lower(qudit, ramsey_tau)
+    print(scheduled.mlir())
 
     print("\n=== T2 Echo (tau=1000) ===")
     echo_tau = 500 * pulse.ns
-    compiled_kernel = pulse.compile(t2_echo, quantum_system=qs).lower(qudit, echo_tau)
-    print(compiled_kernel.mlir())
+    scheduled = pulse.compile(t2_echo, quantum_system=qs).lower(qudit, echo_tau)
+    print(scheduled.mlir())

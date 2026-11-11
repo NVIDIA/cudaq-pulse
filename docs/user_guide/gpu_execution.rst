@@ -115,7 +115,7 @@ The public execution path is:
 
 1. ``kernel.lower(*args)`` verifies, optimizes and schedules the kernel for
    the quantum system of its qudit handles.
-2. ``pulse.simulate(compiled, backend="gpu")`` annotates the module with the
+2. ``pulse.simulate(scheduled, backend="gpu")`` annotates the module with the
    quantum system's calibration (drive scales, couplings, residual ZZ, T1/T2) and the
    native pipeline lowers it Pulse -> QOp -> CuDensityMat -> LLVM IR.
 3. MLIR's ExecutionEngine compiles the LLVM IR in process and executes it
@@ -193,8 +193,8 @@ To execute on a GPU (requires cuDensityMat runtime):
        drive(drive_line, square(duration, math.pi / 20.0))
 
    pi_time = 20 * pulse.ns
-   compiled = x_gate.lower(qs.qudits[0], pi_time)
-   result = pulse.simulate(compiled, backend="gpu", t_end=20.0, dt_ns=0.1, integrator="rk4")
+   scheduled = x_gate.lower(qs.qudits[0], pi_time)
+   result = pulse.simulate(scheduled, backend="gpu", t_end=20.0, dt_ns=0.1, integrator="rk4")
    print(result.density_matrix)
 
 ``t_end`` and ``dt_ns`` are in nanoseconds; ``t_end`` defaults to the end of
@@ -329,8 +329,8 @@ of the outcomes from the same branch probabilities.
        if result:
            drive(drive_line, square(pi_time, math.pi / 20.0))
 
-   compiled = active_reset.lower(qs.qudits[0])
-   result = pulse.simulate(compiled, shots_count=1000, backend="cpu")
+   scheduled = active_reset.lower(qs.qudits[0])
+   result = pulse.simulate(scheduled, shots_count=1000, backend="cpu")
    result.density_matrix   # ensemble state at the end
    result.level_population(1)   # P(1) of the one qudit; level_population(1, qudit=q) for one of several
    result.level_populations()   # [P(0), P(1), P(2)] for a three-level qudit

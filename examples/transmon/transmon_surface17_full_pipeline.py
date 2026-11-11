@@ -60,12 +60,12 @@ def cz_pair(qudit_aux, qudit_data):
 
 
 print("=== Stage 1: compile (default passes, ALAP schedule) ===")
-compiled = pulse.compile(cz_pair, quantum_system=qs).lower(qudit_aux, qudit_data)
-total_cycles = max(e.end for e in compiled.schedule)
-print(f"  {compiled.metrics.op_count} ops, {total_cycles / clock_ghz:.0f} ns total")
+scheduled = pulse.compile(cz_pair, quantum_system=qs).lower(qudit_aux, qudit_data)
+total_cycles = max(e.end for e in scheduled.schedule)
+print(f"  {scheduled.metrics.op_count} ops, {total_cycles / clock_ghz:.0f} ns total")
 
 print("\n=== Stage 2: scheduled Pulse MLIR ===")
-print(compiled.mlir())
+print(scheduled.mlir())
 
 print("=== Stage 3: operator (QOp) lowering, with cudaq-pulse-opt ===")
 tool = shutil.which("cudaq-pulse-opt")
@@ -75,10 +75,10 @@ if tool is None:
         f"cudaq-pulse-tools wheel: pip install cudaq-pulse-tools=={pulse.__version__}"
     )
 qop = subprocess.run(
-    [tool, "--pulse-to-qop"], input=compiled.mlir(), capture_output=True, text=True, check=True
+    [tool, "--pulse-to-qop"], input=scheduled.mlir(), capture_output=True, text=True, check=True
 ).stdout
 print(f"  {qop.count('qop.callback_scalar')} time-dependent drive terms")
 
 print("\n=== Stage 4: LLVM IR for the cuDensityMat runtime ===")
-llvm = compiled.mlir("llvm")
+llvm = scheduled.mlir("llvm")
 print(f"  {llvm.count('llvm.call')} runtime calls")

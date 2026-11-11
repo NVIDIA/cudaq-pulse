@@ -141,15 +141,15 @@ def derivative_pulse(qudit, beta: float):
 if __name__ == "__main__":
     qs = pulse.quantum_system("transmon_surface17")
     print("=== Waveform Showcase ===")
-    compiled_kernel = pulse.compile(waveform_showcase, quantum_system=qs).lower(qs.qudits[0])
-    print(compiled_kernel.mlir())
-    print(f"  Compile metrics: {compiled_kernel.metrics}")
+    scheduled = pulse.compile(waveform_showcase, quantum_system=qs).lower(qs.qudits[0])
+    print(scheduled.mlir())
+    print(f"  Compile metrics: {scheduled.metrics}")
 
     print("\n=== Waveform Algebra ===")
-    compiled_kernel = pulse.compile(waveform_algebra, quantum_system=qs).lower(qs.qudits[0])
-    print(compiled_kernel.mlir())
+    scheduled = pulse.compile(waveform_algebra, quantum_system=qs).lower(qs.qudits[0])
+    print(scheduled.mlir())
 
     print("\n=== Derivative Pulse ===")
-    compiled_kernel = pulse.compile(derivative_pulse, quantum_system=qs).lower(qs.qudits[0], 0.5)
-    print(compiled_kernel.mlir())
-    print(f"  Compile metrics: {compiled_kernel.metrics}")
+    scheduled = pulse.compile(derivative_pulse, quantum_system=qs).lower(qs.qudits[0], 0.5)
+    print(scheduled.mlir())
+    print(f"  Compile metrics: {scheduled.metrics}")

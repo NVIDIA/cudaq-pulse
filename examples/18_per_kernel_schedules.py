@@ -94,10 +94,10 @@ def stabilizer_cycle(qudits):
             xy4(lines[i], tones[i], cal["dd_tau"])
 
 
-def first_round(compiled: pulse.ScheduledKernel) -> dict[int, list[tuple[str, int, int]]]:
+def first_round(scheduled: pulse.ScheduledKernel) -> dict[int, list[tuple[str, int, int]]]:
     """The first round's (kind, start, duration) on each line."""
     per_line: dict[int, list[tuple[str, int, int]]] = {}
-    for event in compiled.schedule:
+    for event in scheduled.schedule:
         per_line.setdefault(event.line, []).append(
             (event.kind, event.start, event.end - event.start)
         )
@@ -105,10 +105,10 @@ def first_round(compiled: pulse.ScheduledKernel) -> dict[int, list[tuple[str, in
     return {line: events[: events_per_round[line]] for line, events in per_line.items()}
 
 
-def report(label: str, compiled: pulse.ScheduledKernel) -> None:
-    timeline = first_round(compiled)
+def report(label: str, scheduled: pulse.ScheduledKernel) -> None:
+    timeline = first_round(scheduled)
     data_lines = sorted(timeline)[2:]
-    makespan = max(e.end for e in compiled.schedule)
+    makespan = max(e.end for e in scheduled.schedule)
     print(f"\n  --- {label} ---")
     print(f"    makespan: {makespan} clock cycles")
     layer = [timeline[line][0][1] for line in data_lines]

@@ -53,10 +53,10 @@ def rabi_d5(qudit):
         wait(drive_line, gap)
 
 
-compiled = pulse.compile(rabi_d5, quantum_system=qs).lower(qs.qudits[qudit_idx])
-total_cycles = max(e.end for e in compiled.schedule)
+scheduled = pulse.compile(rabi_d5, quantum_system=qs).lower(qs.qudits[qudit_idx])
+total_cycles = max(e.end for e in scheduled.schedule)
 print(
-    f"\nCompiled {compiled.metrics.op_count} ops, total length = {total_cycles / clock_ghz:.1f} ns"
+    f"\nCompiled {scheduled.metrics.op_count} ops, total length = {total_cycles / clock_ghz:.1f} ns"
 )
 
 # cudaq-pulse-opt, installed with the package, runs any pass on MLIR text.
@@ -67,6 +67,6 @@ if tool is None:
         f"cudaq-pulse-tools wheel: pip install cudaq-pulse-tools=={pulse.__version__}"
     )
 qop = subprocess.run(
-    [tool, "--pulse-to-qop"], input=compiled.mlir(), capture_output=True, text=True, check=True
+    [tool, "--pulse-to-qop"], input=scheduled.mlir(), capture_output=True, text=True, check=True
 ).stdout
 print(f"Operator program: {qop.count('qop.callback_scalar')} time-dependent drive terms")

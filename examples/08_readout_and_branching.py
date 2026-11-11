@@ -105,12 +105,12 @@ def ramsey_with_readout(qudit, tau):
 if __name__ == "__main__":
     qs = pulse.quantum_system("transmon_surface17")
     print("=== Measure single qubit ===")
-    compiled_kernel = pulse.compile(measure_single_qudit, quantum_system=qs).lower(qs.qudits[0])
-    print(compiled_kernel.mlir())
+    scheduled = pulse.compile(measure_single_qudit, quantum_system=qs).lower(qs.qudits[0])
+    print(scheduled.mlir())
 
     print("\n=== Active reset (measurement-conditioned branch) ===")
-    compiled_kernel = pulse.compile(active_reset, quantum_system=qs).lower(qs.qudits[0])
-    print(compiled_kernel.mlir())
+    scheduled = pulse.compile(active_reset, quantum_system=qs).lower(qs.qudits[0])
+    print(scheduled.mlir())
 
     print("\n=== Simulating it (CPU reference) ===")
     from cudaq_pulse.quantum_systems import PhysicalQudit
@@ -125,20 +125,20 @@ if __name__ == "__main__":
     )
     # Start in (|0> + |1>) / sqrt(2): each outcome is equally likely, and
     # either way the qubit ends in |0>.
-    compiled = pulse.compile(active_reset, quantum_system=reset_demo).lower(reset_demo.qudits[0])
+    scheduled = pulse.compile(active_reset, quantum_system=reset_demo).lower(reset_demo.qudits[0])
     result = pulse.simulate(
-        compiled, initial_state=[2**-0.5, 2**-0.5, 0.0], shots_count=1000, seed=7
+        scheduled, initial_state=[2**-0.5, 2**-0.5, 0.0], shots_count=1000, seed=7
     )
     for branch in result.branches:
         print(f"  measured {branch.levels}: p = {branch.probability:.3f}")
     print(f"  final |0> population: {result.level_population(0):.4f}")
 
     print("\n=== Repeated measurement (5 shots) ===")
-    compiled_kernel = pulse.compile(repeated_measurement, quantum_system=qs).lower(qs.qudits[0], 5)
-    print(compiled_kernel.mlir())
+    scheduled = pulse.compile(repeated_measurement, quantum_system=qs).lower(qs.qudits[0], 5)
+    print(scheduled.mlir())
 
     print("\n=== Ramsey with readout (tau=200) ===")
     tau = 100 * pulse.ns
-    compiled_kernel = pulse.compile(ramsey_with_readout, quantum_system=qs).lower(qs.qudits[0], tau)
-    print(compiled_kernel.mlir())
-    print(f"  Compile metrics: {compiled_kernel.metrics}")
+    scheduled = pulse.compile(ramsey_with_readout, quantum_system=qs).lower(qs.qudits[0], tau)
+    print(scheduled.mlir())
+    print(f"  Compile metrics: {scheduled.metrics}")

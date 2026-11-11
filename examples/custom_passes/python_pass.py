@@ -17,11 +17,11 @@ cal = {"x_duration": 20 * pulse.ns, "x_sigma": 5 * pulse.ns, "drag_beta": 0.25 *
 
 
 def concurrent_drive_violations(
-    compiled: pulse.ScheduledKernel, max_drives: int
+    scheduled: pulse.ScheduledKernel, max_drives: int
 ) -> list[tuple[int, int]]:
     """Return (time, active drives) wherever more than *max_drives* overlap."""
     edges = []
-    for event in compiled.schedule:
+    for event in scheduled.schedule:
         if event.kind == "drive" and event.duration_cycles:
             edges.append((event.start, 1))
             edges.append((event.end, -1))

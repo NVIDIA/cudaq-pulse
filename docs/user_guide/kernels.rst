@@ -436,7 +436,7 @@ runtime parameters, so a sweep over a delay compiles once:
   negative or falls outside the bounds raises ``ValueError`` naming the
   kernel, the expression and the value, before anything runs.
 - Without values (``pulse.compile(k, quantum_system=qs).schedule`` of a kernel that
-  only has float parameters, or ``compiled.generic``) the module is scheduled
+  only has float parameters, or ``scheduled.generic``) the module is scheduled
   with every such wait at its lowest length, 0 unless ``bounds`` says
   otherwise.
 - A length that needs more than arithmetic (``int(tau)``, ``tau // 2``,

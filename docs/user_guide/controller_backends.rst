@@ -472,7 +472,7 @@ plays it, the waveforms made from it too; samples given to
 on a runtime qudit's line, whose rate depends on the call, ``custom()`` is
 a compile error when the controllers' rates differ.
 
-Each controller gets its own program: ``compiled.export_to_controller(controller=k)``
+Each controller gets its own program: ``scheduled.export_to_controller(controller=k)``
 is controller ``k``'s part, in its own cycles, with ``"controller": k``,
 its ``lines`` and ``limits``, and the events it takes part in: those on its
 lines, a sync with only its lines, the submit of a call whose measurements

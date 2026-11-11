@@ -114,32 +114,30 @@ def staggered_readout(qudit_0, qudit_1):
 if __name__ == "__main__":
     qs = pulse.quantum_system("transmon_surface17")
     print("=== Two-qubit simultaneous drive ===")
-    compiled_kernel = pulse.compile(two_qudit_simultaneous, quantum_system=qs).lower(
+    scheduled = pulse.compile(two_qudit_simultaneous, quantum_system=qs).lower(
         qs.qudits[0], qs.qudits[1]
     )
-    print(compiled_kernel.mlir())
+    print(scheduled.mlir())
 
     print("\n=== Parametric pi/2 ===")
-    compiled_kernel = pulse.compile(parametric_pi_half, quantum_system=qs).lower(
+    scheduled = pulse.compile(parametric_pi_half, quantum_system=qs).lower(
         qs.qudits[0], qs.qudits[1], 0.25, 0.28
     )
-    print(compiled_kernel.mlir())
+    print(scheduled.mlir())
 
     print("\n=== Register simultaneous drive ===")
-    compiled_kernel = pulse.compile(qvec_simultaneous_drive, quantum_system=qs).lower(
-        qs.qudits[0:4], 0.3
-    )
-    print(compiled_kernel.mlir())
+    scheduled = pulse.compile(qvec_simultaneous_drive, quantum_system=qs).lower(qs.qudits[0:4], 0.3)
+    print(scheduled.mlir())
 
     print("\n=== Sync after asymmetric ops ===")
-    compiled_kernel = pulse.compile(sync_after_asymmetric_ops, quantum_system=qs).lower(
+    scheduled = pulse.compile(sync_after_asymmetric_ops, quantum_system=qs).lower(
         qs.qudits[0], qs.qudits[1]
     )
-    print(compiled_kernel.mlir())
+    print(scheduled.mlir())
 
     print("\n=== Staggered readout ===")
-    compiled_kernel = pulse.compile(staggered_readout, quantum_system=qs).lower(
+    scheduled = pulse.compile(staggered_readout, quantum_system=qs).lower(
         qs.qudits[0], qs.qudits[1]
     )
-    print(compiled_kernel.mlir())
-    print(f"  Compile metrics: {compiled_kernel.metrics}")
+    print(scheduled.mlir())
+    print(f"  Compile metrics: {scheduled.metrics}")

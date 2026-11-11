@@ -109,9 +109,9 @@ if __name__ == "__main__":
     print("\n=== Survival probability against depth (CPU simulation) ===")
     for depth in [1, 5, 10, 20]:
         gates = rb_sequence(depth, seed=depth)
-        compiled_kernel = rb.lower(qudit, gates)
-        survival = pulse.simulate(compiled_kernel, dt_ns=0.25).level_population(0)
+        scheduled = rb.lower(qudit, gates)
+        survival = pulse.simulate(scheduled, dt_ns=0.25).level_population(0)
         print(
             f"  depth={depth:3d} ({len(gates):3d} pulses): P(0) = {survival:.3f}, "
-            f"compiled in {compiled_kernel.metrics.total_ms:.3f} ms"
+            f"compiled in {scheduled.metrics.total_ms:.3f} ms"
         )

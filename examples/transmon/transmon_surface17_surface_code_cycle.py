@@ -89,10 +89,10 @@ def surface_code_cycle(qudits):
             sync(lines[qudit_count - 2 - i], lines[qudit_count - 1 - i])
 
 
-compiled = pulse.compile(surface_code_cycle, quantum_system=qs).lower(qs.qudits[:qudit_count])
-total_ns = max(e.end for e in compiled.schedule) / clock_ghz
+scheduled = pulse.compile(surface_code_cycle, quantum_system=qs).lower(qs.qudits[:qudit_count])
+total_ns = max(e.end for e in scheduled.schedule) / clock_ghz
 print(
-    f"\nCompiled and verified: {compiled.metrics.op_count} ops, "
+    f"\nCompiled and verified: {scheduled.metrics.op_count} ops, "
     f"total = {total_ns:.0f} ns: 8 CZ steps of 98 ns and 6 single-qubit slots of 40 ns "
     "(the quantum system's cycle, with readout, takes 1.1 us)"
 )

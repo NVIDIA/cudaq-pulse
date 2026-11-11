@@ -51,7 +51,7 @@ def pipeline_demo(qudit_0, qudit_1):
 
 
 def main():
-    compiled_kernel = pulse.compile(
+    scheduled = pulse.compile(
         pipeline_demo,
         schedule="alap",
         quantum_system=qs,
@@ -59,10 +59,10 @@ def main():
     ).lower(qs.qudits[0], qs.qudits[1])
 
     print("=== Compiled MLIR (first 30 lines) ===")
-    for line in compiled_kernel.mlir().splitlines()[:30]:
+    for line in scheduled.mlir().splitlines()[:30]:
         print(f"  {line}")
 
-    metrics = compiled_kernel.metrics
+    metrics = scheduled.metrics
     print("\n=== Compile metrics ===")
     print(f"  Trace     : {metrics.trace_ms:.3f} ms")
     print(f"  Passes    : {metrics.passes_ms:.3f} ms")
@@ -72,7 +72,7 @@ def main():
 
     # Lower to LLVM IR in process with the native MLIR binding.
     try:
-        llvm_ir = compiled_kernel.mlir("llvm")
+        llvm_ir = scheduled.mlir("llvm")
         print(f"\n=== LLVM IR ({len(llvm_ir)} chars, first 10 lines) ===")
         for line in llvm_ir.splitlines()[:10]:
             print(f"  {line}")

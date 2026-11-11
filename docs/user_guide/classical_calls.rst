@@ -206,7 +206,7 @@ takes. They belong to the control system, by name:
            "controller": Link(fixed_ns=4, feedback_ns=8, slots=4),
        }
    )
-   compiled = pulse.compile(kernel, quantum_system=qs, control_system=control_system).lower(q)
+   scheduled = pulse.compile(kernel, quantum_system=qs, control_system=control_system).lower(q)
 
 A function's ``link=`` names a link of the control system, or gives a link
 id: the link's position, so the first is link 0, the default. A link id the
@@ -605,7 +605,7 @@ grow with its waits.
 What it costs the controller
 ----------------------------
 
-``compiled.controller_usage`` reads the body of each classical function a
+``scheduled.controller_usage`` reads the body of each classical function a
 processor runs once and reports how many operations it holds, its state in
 bytes, its compute time against its ``max_latency_ns`` and its calls per
 shot, with each link's calls, slots and bytes per shot. An expression of
@@ -631,8 +631,8 @@ from the ``Processor`` of a controller that runs the functions on its
        controllers=[pulse.Controller(processors=[processor])],
        links={"controller": Link(fixed_ns=4)},
    )
-   compiled = pulse.compile(chain, quantum_system=qs, control_system=system).lower(q)
-   print(compiled.controller_usage)
+   scheduled = pulse.compile(chain, quantum_system=qs, control_system=system).lower(q)
+   print(scheduled.controller_usage)
 
 .. :spellcheck-enable:
 
