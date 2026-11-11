@@ -316,13 +316,30 @@ void runPipeline(mlir::PassManager &pm, mlir::Operation *op,
     diagnostics.fail(what);
 }
 
-/// Run `pm` on `op` and verify `op` once at the end, where the pass manager
-/// would verify all of it after each pass that changed it.
+/// Whether CUDAQ_PULSE_VERIFY=1 asks for the verifications that only catch a
+/// bug of the compiler itself: of the module run_passes() leaves, which
+/// scheduling verifies next anyway, and of a specialization rescheduled from
+/// a verified module. The test suite sets it; read once per process.
+bool verifyEverything() {
+  static const bool on = [] {
+    const char *text = std::getenv("CUDAQ_PULSE_VERIFY");
+    if (!text || !*text || std::strcmp(text, "0") == 0)
+      return false;
+    if (std::strcmp(text, "1") == 0)
+      return true;
+    throw std::invalid_argument(
+        std::string("CUDAQ_PULSE_VERIFY must be 0 or 1, not '") + text + "'");
+  }();
+  return on;
+}
+
+/// Run `pm` on `op` and, with `verify`, verify `op` once at the end, where
+/// the pass manager would verify all of it after each pass that changed it.
 void runPipelineVerifyingOnce(mlir::PassManager &pm, mlir::Operation *op,
-                              const std::string &what) {
+                              const std::string &what, bool verify = true) {
   DiagnosticCollector diagnostics(pm.getContext());
   pm.enableVerifier(false);
-  if (mlir::failed(pm.run(op)) || mlir::failed(mlir::verify(op)))
+  if (mlir::failed(pm.run(op)) || (verify && mlir::failed(mlir::verify(op))))
     diagnostics.fail(what);
 }
 
@@ -2470,8 +2487,12 @@ public:
     mlir::OpPrintingFlags flags;
     // The printer verifies a module first, to print an invalid one in the
     // generic form; one verified since it last changed is valid.
-    if (verified_ == version_.load())
+    if (verified_ == version_.load()) {
+      if (verifyEverything() && mlir::failed(mlir::verify(*module_)))
+        throw std::runtime_error(
+            "print: a module noted as verified does not verify");
       flags.assumeVerified();
+    }
     module_->print(os, flags);
     return result;
   }
@@ -2527,8 +2548,10 @@ public:
       }
     flush();
     programs_.clear();
-    runPipelineVerifyingOnce(pm, *module_, "MLIR pass pipeline failed");
-    verified();
+    bool verify = verifyEverything();
+    runPipelineVerifyingOnce(pm, *module_, "MLIR pass pipeline failed", verify);
+    if (verify)
+      verified();
     ContextStore::keepPipeline(ctx_.get(), pipeline, std::move(passes));
   }
 
@@ -4266,7 +4289,9 @@ public:
     result.keepSource();
     runSchedule(*result.module_, true, schedule, maxDrives, maxReadouts,
                 readoutLatency, switchPenalty,
-                "specialize: pass pipeline failed", specialized_.frameChanges);
+                "specialize: pass pipeline failed", specialized_.frameChanges,
+                verifyEverything());
+    // Verified, or trusted as the verified module it is rescheduled from.
     result.verified();
     return result;
   }
@@ -4436,11 +4461,13 @@ private:
   /// declares any, then run the passes that run on a scheduled module,
   /// raising with `what` on failure. `frameChanges`, when known, says
   /// whether the module has frame-change work; otherwise a walk finds out.
+  /// The module is verified at the end, unless not `verify`.
   void runSchedule(mlir::ModuleOp module, bool checkCalls,
                    const std::string &policy, int64_t maxDrives,
                    int64_t maxReadouts, int64_t readoutLatency,
                    int64_t switchPenalty, const std::string &what,
-                   std::optional<bool> frameChanges = std::nullopt) {
+                   std::optional<bool> frameChanges = std::nullopt,
+                   bool verify = true) {
     bool rcp = policy == "rcp" || policy == "alap_rcp";
     ContextStore::Options options{
         policy,
@@ -4455,7 +4482,7 @@ private:
       passes = std::make_unique<mlir::PassManager>(ctx_.get());
       addSchedule(*passes, options);
     }
-    runPipelineVerifyingOnce(*passes, module, what);
+    runPipelineVerifyingOnce(*passes, module, what, verify);
     ContextStore::keep(ctx_.get(), std::move(options), std::move(passes));
   }
 
@@ -6686,6 +6713,9 @@ NB_MODULE(_cudaq_pulse_native, m) {
   m.def("shared_context_stats", &SharedContextPool::stats,
         "(contexts created, builders on the current context, its packed "
         "words)");
+  m.def("verifies_everything", &verifyEverything,
+        "Whether CUDAQ_PULSE_VERIFY=1 asks for the verifications that only "
+        "catch a bug of the compiler itself");
 
   cudaq_pulse::loadLengthInference();
   m.def(

@@ -15,6 +15,9 @@ from tests._handles import ladder_target
 # ``device()`` without an argument returns the process target.
 register_target("ladder", lambda arg: ladder_target(int(arg) if arg else 64))
 os.environ[ENV_VAR] = "ladder:8192"
+# The verifications that only catch a bug of the compiler itself, which a
+# user's compile skips; read by the first compile, in every child too.
+os.environ.setdefault("CUDAQ_PULSE_VERIFY", "1")
 
 
 @pytest.fixture(autouse=True)

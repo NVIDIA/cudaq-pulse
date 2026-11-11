@@ -91,7 +91,8 @@ fails instead of skipping), `physics` (everything in `tests/physics`),
 `scaling` (benchmarks that compare two sizes in one run) and `slow` (tests
 that spend seconds in native code or child processes, which the sanitizer job
 leaves out). `tests/conftest.py`
-sets `CUDAQ_PULSE_TARGET=ladder:8192` for the whole session. Tests run with
+sets `CUDAQ_PULSE_TARGET=ladder:8192` for the whole session, and
+`CUDAQ_PULSE_VERIFY=1` unless it is set already. Tests run with
 the default unroll threshold; a test of a rolled loop of a few iterations
 passes `unroll_threshold=` to `pulse.compile` or `@pulse.kernel`.
 
@@ -100,6 +101,18 @@ them, except when `CI` is set: there they fail, unless the job names the
 tool in `CUDAQ_PULSE_OPTIONAL_TOOLS` (`tests/_tools.py`). Rewrite the IR
 goldens with `CUDAQ_PULSE_UPDATE_GOLDENS=1`; a run that changes them fails
 and names the changed cases, and the next run, without the variable, passes.
+
+`CUDAQ_PULSE_VERIFY=1` turns on the verifications that only catch a bug of
+the compiler itself, as MLIR's verify-each does: the module `run_passes()`
+leaves, before scheduling verifies it, and each specialization rescheduled
+from a verified module, which is otherwise printed without verifying it; a
+module noted as verified that does not verify then fails `mlir()`. A user's
+compile skips them (unset or `0`); any other value makes compiling raise
+`ValueError`. The test suite, `check-pulse`, `ctest` and every CI job that
+runs pytest have it on through `tests/conftest.py`; run a subset with
+`CUDAQ_PULSE_VERIFY=0 pytest ...` to test what users run. The perf gate
+measures with it off. It is a development aid, not part of the stable
+interface.
 
 The property tests use hypothesis profiles (`tests/property_settings.py`),
 chosen with `HYPOTHESIS_PROFILE`: `ci`, the default, is derandomized so every
