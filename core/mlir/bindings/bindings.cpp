@@ -30,6 +30,7 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <unordered_map>
 
 #include "mlir/Analysis/SliceAnalysis.h"
 #include "mlir/AsmParser/AsmParser.h"
@@ -360,7 +361,8 @@ struct AttrNames {
 /// module. One being run is taken out, so that no two threads run it at
 /// once.
 ///
-/// Its AttrNames, interned once for the life of the context.
+/// Its AttrNames, interned once for the life of the context, and the latest
+/// texts set_attributes() parsed in it.
 class ContextStore {
 public:
   /// (policy, rcp's four resource limits or zeros, whether the classical
@@ -469,6 +471,35 @@ public:
     return own.emplace(context);
   }
 
+  /// `text` parsed as an attribute of `context`: one of the latest texts
+  /// parsed in it, when it keeps them, is not parsed again. An attribute is
+  /// immutable, so the same text is the same attribute for the life of the
+  /// context.
+  static mlir::Attribute parsed(mlir::MLIRContext *context,
+                                const std::string &text) {
+    {
+      std::lock_guard<std::mutex> guard(lock());
+      auto found = contexts().find(context);
+      if (found != contexts().end()) {
+        auto &texts = found->second->texts;
+        if (auto it = texts.find(text); it != texts.end())
+          return it->second;
+      }
+    }
+    mlir::Attribute attr = mlir::parseAttribute(text, context);
+    if (!attr)
+      return attr;
+    std::lock_guard<std::mutex> guard(lock());
+    auto found = contexts().find(context);
+    if (found != contexts().end()) {
+      auto &texts = found->second->texts;
+      if (texts.size() >= kMaxTexts)
+        texts.clear();
+      texts.emplace(text, attr);
+    }
+    return attr;
+  }
+
   /// The lock is held across fork, so that a child inherits it unlocked.
   static void handleForks() {
     pthread_atfork([] { lock().lock(); }, [] { lock().unlock(); },
@@ -483,6 +514,8 @@ private:
       std::pair<std::vector<std::string>, std::unique_ptr<mlir::PassManager>>>
       pipelines;
   std::unique_ptr<AttrNames> attrNames;
+  static constexpr size_t kMaxTexts = 64;
+  std::unordered_map<std::string, mlir::Attribute> texts;
 
   // Never destroyed, as the shared pool's last context is not.
   static std::mutex &lock() {
@@ -3875,16 +3908,22 @@ public:
   }
 
   /// Merge a dictionary attribute, written in MLIR syntax, into the module
-  /// attributes.
-  void set_attributes(const std::string &dictionary) {
+  /// attributes, then `then`, another, unless it is empty.
+  void set_attributes(const std::string &dictionary,
+                      const std::string &then = {}) {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
     changed();
-    auto attr = mlir::parseAttribute(dictionary, ctx_.get());
-    auto entries = mlir::dyn_cast_or_null<mlir::DictionaryAttr>(attr);
-    if (!entries)
-      throw std::invalid_argument("expected an MLIR dictionary attribute");
-    for (mlir::NamedAttribute entry : entries)
-      module_->getOperation()->setAttr(entry.getName(), entry.getValue());
+    auto merge = [&](const std::string &text) {
+      auto attr = ContextStore::parsed(ctx_.get(), text);
+      auto entries = mlir::dyn_cast_or_null<mlir::DictionaryAttr>(attr);
+      if (!entries)
+        throw std::invalid_argument("expected an MLIR dictionary attribute");
+      for (mlir::NamedAttribute entry : entries)
+        module_->getOperation()->setAttr(entry.getName(), entry.getValue());
+    };
+    merge(dictionary);
+    if (!then.empty())
+      merge(then);
   }
 
   std::vector<std::string> param_names() {
@@ -6533,8 +6572,9 @@ NB_MODULE(_cudaq_pulse_native, m) {
            nb::arg("arguments") = std::vector<double>{})
       .def("set_attributes", &PulseModule::set_attributes,
            nb::call_guard<nb::gil_scoped_release>(),
-           "Merge an MLIR dictionary attribute into the module attributes",
-           nb::arg("dictionary"))
+           "Merge an MLIR dictionary attribute into the module attributes, "
+           "then another unless it is empty",
+           nb::arg("dictionary"), nb::arg("then") = "")
       .def("param_names", &PulseModule::param_names,
            nb::call_guard<nb::gil_scoped_release>(), "Get parameter names")
       .def(

@@ -1072,7 +1072,9 @@ class _Backend:
     """Segment evolution and projection for one state representation.
 
     *base* holds the module attributes of the target and levels, in MLIR
-    syntax without braces; every segment sets them along with its own.
+    syntax without braces; every segment sets them, then its own. The text
+    of *base* is the same in every segment: the module's context parses it
+    once.
     """
 
     def __init__(
@@ -1082,12 +1084,8 @@ class _Backend:
         self.dims = dims
         self.dim = math.prod(dims)
         self.dt_ns = dt_ns
-        self.base = base
+        self.base = "{" + base + "}"
         self.lock = lock
-
-    def _attributes_for(self, attributes: str) -> str:
-        """The module attributes of one segment (*attributes* in braces)."""
-        return "{" + self.base + ", " + attributes[1:]
 
     def steps(self, t0: float, t1: float) -> int:
         return max(1, math.ceil((t1 - t0) / self.dt_ns - 1e-9))
@@ -1400,9 +1398,7 @@ class _CpuBackend(_Backend):
     def evolve(self, state: Any, entries: list[list[int]], t0: float, t1: float) -> Any:
         steps = self.steps(t0, t1)
         with self.lock:
-            self.module.set_attributes(
-                self._attributes_for(_segment_attributes(entries, t0, t1, steps))
-            )
+            self.module.set_attributes(self.base, _segment_attributes(entries, t0, t1, steps))
             _, hamiltonian, collapse, *_ = self.module.operator_program(self.arguments)
         static = np.zeros((self.dim, self.dim), dtype=np.complex128)
         driven = []
@@ -1451,7 +1447,7 @@ class _GpuBackend(_Backend):
         # along the empty path over an empty window at 0 ns, which ends before
         # any measurement; every segment then sets its own path and window.
         with lock:
-            module.set_attributes(self._attributes_for(_segment_attributes([], 0.0, 0.0, 1)))
+            module.set_attributes(self.base, _segment_attributes([], 0.0, 0.0, 1))
             _, _, collapse, *_ = module.operator_program()
         self.dissipative = bool(collapse)
 
@@ -1467,7 +1463,7 @@ class _GpuBackend(_Backend):
         if mixed and not self.dissipative:
             attributes += ", qop.mixed_state"
         with self.lock:
-            self.module.set_attributes(self._attributes_for(attributes + "}"))
+            self.module.set_attributes(self.base, attributes + "}")
             text = self.module.print()
         result = self._execute(text, state, mixed)
         if not _bounded(result, state):
