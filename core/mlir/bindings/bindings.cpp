@@ -2467,7 +2467,12 @@ public:
     std::lock_guard<std::recursive_mutex> guard(*lock_);
     std::string result;
     llvm::raw_string_ostream os(result);
-    module_->print(os);
+    mlir::OpPrintingFlags flags;
+    // The printer verifies a module first, to print an invalid one in the
+    // generic form; one verified since it last changed is valid.
+    if (verified_ == version_.load())
+      flags.assumeVerified();
+    module_->print(os, flags);
     return result;
   }
 
@@ -2522,7 +2527,8 @@ public:
       }
     flush();
     programs_.clear();
-    runPipeline(pm, *module_, "MLIR pass pipeline failed");
+    runPipelineVerifyingOnce(pm, *module_, "MLIR pass pipeline failed");
+    verified();
     ContextStore::keepPipeline(ctx_.get(), pipeline, std::move(passes));
   }
 
@@ -2609,6 +2615,7 @@ public:
     keepSource();
     runSchedule(*module_, true, policy, maxDrives, maxReadouts, readoutLatency,
                 switchPenalty, "pulse scheduling failed");
+    verified();
   }
 
   using Event = std::tuple<std::string, int64_t, int64_t,
@@ -3521,6 +3528,7 @@ public:
     result.keepSource();
     runSchedule(*result.module_, false, policy, maxDrives, maxReadouts,
                 readoutLatency, switchPenalty, "simulation: scheduling failed");
+    result.verified();
     return result;
   }
 
@@ -3544,6 +3552,7 @@ public:
     result.keepSource();
     runSchedule(*result.module_, true, policy, maxDrives, maxReadouts,
                 readoutLatency, switchPenalty, "pulse scheduling failed");
+    result.verified();
     return result;
   }
 
@@ -4258,6 +4267,7 @@ public:
     runSchedule(*result.module_, true, schedule, maxDrives, maxReadouts,
                 readoutLatency, switchPenalty,
                 "specialize: pass pipeline failed", specialized_.frameChanges);
+    result.verified();
     return result;
   }
 
@@ -4577,6 +4587,9 @@ private:
     specialized_.ops.store(-1);
   }
 
+  /// Note that the module, as it is now, has been verified.
+  void verified() { verified_ = version_.load(); }
+
   struct Specialized {
     std::string key;
     uint64_t version;       // of this module when it was built
@@ -4615,6 +4628,9 @@ private:
 
   std::shared_ptr<mlir::MLIRContext> ctx_;
   mlir::OwningOpRef<mlir::ModuleOp> module_;
+  // The version_ at which the module was last verified (verified()): none
+  // yet for a module just built or copied.
+  uint64_t verified_ = UINT64_MAX;
   // Whether the program can compute something at run time or change a frame
   // in a branch: false only where the builder saw neither, so that
   // controller_program() looks for them only where there can be any.
