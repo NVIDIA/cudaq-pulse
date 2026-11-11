@@ -30,9 +30,10 @@ listing LLVM and every library grafted into the wheel, with each listed
 license in License-Expression; and no CUDA runtime library (those come from
 the CUDA wheels) and no GPL or LGPL library or license.
 
-For an sdist: LICENSE, NOTICE, THIRD_PARTY_NOTICES and LICENSES/, and a
-PKG-INFO requiring exactly cudaq-pulse-tools==<its version>. Exits 1 listing
-every problem.
+For an sdist: LICENSE, NOTICE, THIRD_PARTY_NOTICES and LICENSES/; the
+license files of packaging/cudaq-pulse-tools as regular files, all but
+THIRD_PARTY_NOTICES byte for byte the repository's; and a PKG-INFO requiring
+exactly cudaq-pulse-tools==<its version>. Exits 1 listing every problem.
 """
 
 from __future__ import annotations
@@ -294,12 +295,26 @@ def check_pairs(wheels: list[Path]) -> list[str]:
 
 
 def check_sdist(path: Path) -> list[str]:
+    problems = []
     with tarfile.open(path) as sdist:
         members = {"/".join(m.name.split("/")[1:]): m for m in sdist.getmembers()}
         pkg_info = members.get("PKG-INFO")
         file = sdist.extractfile(pkg_info) if pkg_info is not None else None
         metadata = Parser().parsestr(file.read().decode()) if file is not None else None
-    problems = [f"missing {f}" for f in _LICENSES if f not in members]
+        # The tools wheel is built from an unpacked sdist too; its license
+        # files are links in the repository, and must be files here.
+        for f in _TOOLS_LICENSES:
+            item = f"packaging/{_TOOLS}/{f}"
+            member = members.get(item)
+            if member is None:
+                problems.append(f"missing {item}")
+            elif not member.isfile():
+                problems.append(f"{item} is not a regular file")
+            elif f != "THIRD_PARTY_NOTICES":
+                content = sdist.extractfile(member)
+                if content is None or content.read() != (_ROOT / f).read_bytes():
+                    problems.append(f"{item} differs from the repository's {f}")
+    problems += [f"missing {f}" for f in _LICENSES if f not in members]
     if metadata is None:
         problems.append("missing PKG-INFO")
     else:

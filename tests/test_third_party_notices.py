@@ -446,16 +446,33 @@ def test_the_driver_wheel_may_carry_only_listed_grafts(tmp_path, checker):
     assert not any(p.startswith("contains cudaq_pulse_tools.libs/") for p in problems)
 
 
-def _sdist(tmp_path, checker, requires):
+def _tools_licenses(checker):
+    """The tools license files as the sdist must store them."""
+    return {
+        f"packaging/cudaq-pulse-tools/{f}": (_ROOT / "packaging/cudaq-pulse-tools" / f).read_bytes()
+        for f in checker._TOOLS_LICENSES
+    }
+
+
+def _sdist(tmp_path, checker, requires, tools=None, links=()):
+    """An sdist with PKG-INFO, empty root licenses, the tools license files
+    ``tools`` (by default the repository's) and ``links``, (name, target)
+    symbolic links."""
     path = tmp_path / "cudaq_pulse-0.1.0.tar.gz"
     metadata = ["Metadata-Version: 2.4", "Name: cudaq-pulse", "Version: 0.1.0"]
     metadata += [f"Requires-Dist: {r}" for r in requires]
-    files = {"PKG-INFO": "\n".join(metadata) + "\n\n", **dict.fromkeys(checker._LICENSES, "")}
+    files = {"PKG-INFO": ("\n".join(metadata) + "\n\n").encode()}
+    files |= dict.fromkeys(checker._LICENSES, b"")
+    files |= _tools_licenses(checker) if tools is None else tools
     with tarfile.open(path, "w:gz") as sdist:
-        for name, text in files.items():
+        for name, data in files.items():
             info = tarfile.TarInfo(f"cudaq_pulse-0.1.0/{name}")
-            info.size = len(text.encode())
-            sdist.addfile(info, io.BytesIO(text.encode()))
+            info.size = len(data)
+            sdist.addfile(info, io.BytesIO(data))
+        for name, target in links:
+            info = tarfile.TarInfo(f"cudaq_pulse-0.1.0/{name}")
+            info.type, info.linkname = tarfile.SYMTYPE, target
+            sdist.addfile(info)
     return path
 
 
@@ -466,6 +483,22 @@ def test_the_sdist_requires_the_driver_at_its_version(tmp_path, checker):
     assert checker.check_sdist(path) == [
         f"{path.name}: requires [], expected exactly ['cudaq-pulse-tools==0.1.0']"
     ]
+
+
+def test_the_sdist_stores_the_driver_licenses_as_the_repository_texts(tmp_path, checker):
+    requires = ["cudaq-pulse-tools==0.1.0"]
+    tools = _tools_licenses(checker)
+    linked = "packaging/cudaq-pulse-tools/LICENSE"
+    differing = "packaging/cudaq-pulse-tools/LICENSES/LLVM-LICENSE.txt"
+    missing = "packaging/cudaq-pulse-tools/NOTICE"
+    del tools[linked], tools[missing]
+    tools[differing] += b"\n"
+    path = _sdist(tmp_path, checker, requires, tools, links=[(linked, "../../LICENSE")])
+    assert set(checker.check_sdist(path)) == {
+        f"{path.name}: {linked} is not a regular file",
+        f"{path.name}: {differing} differs from the repository's LICENSES/LLVM-LICENSE.txt",
+        f"{path.name}: missing {missing}",
+    }
 
 
 @pytest.fixture
