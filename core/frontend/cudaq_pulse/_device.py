@@ -147,7 +147,7 @@ def _fingerprint(target: _Description, layout: tuple[int, ...], calibration: Any
 class Qudit:
     """A handle naming one carrier of a quantum system.
 
-    ``index`` is the carrier's index in the target (the layout is applied
+    ``index`` is the carrier's index in the quantum system (the layout is applied
     when the handle is created); ``logical`` is the position the user
     indexed. A handle is identity, not location.
     """
@@ -322,20 +322,20 @@ class QuantumSystem:
     ``pulse.quantum_system(..., clock_ghz=)`` (a system file's ``"clock_ghz"``) sets
     it; else the fastest clock of the control
     system's controllers, when every other one divides it (controllers whose
-    clocks do not divide evenly need it declared); else the target's. Each
+    clocks do not divide evenly need it declared); else the quantum system's own. Each
     controller may run its own clock, a whole-cycle ratio of it (see
     ``cudaq_pulse.controller``).
 
     ``qudit_freq[q]`` is the 0-1 transition frequency of qudit ``q`` (Hz) and
     ``transition_freq[q, i, j]`` that of levels ``i`` and ``j``, over the
-    levels the target's model gives each qudit (NaN past a qudit's last
+    levels the system's model gives each qudit (NaN past a qudit's last
     level); both are indexed by the user's qudit numbering and are read-only
     arrays.
     ``control_system`` is the ``ControlSystem`` that plays it, if given;
     ``compile(kernel, quantum_system=dev)`` checks every program against it.
     """
 
-    # The registered target the quantum system was made from, as ``as_dict`` writes it.
+    # The registered name the quantum system was made from, as ``as_dict`` writes it.
     _spec: str | None = None
     # What a kernel whose qudits are runtime parameters depends on, made by
     # the first such kernel (_programs._structure).
@@ -1216,14 +1216,14 @@ def _not_a_name(name: Any) -> None:
 
 def _unknown_target(name: str) -> None:
     """Raise ``UnknownQuantumSystemError`` for *name*, which names no registered
-    target, naming the way to read a file when it looks like the path of one."""
+    quantum system, naming the way to read a file when it looks like the path of one."""
     if os.sep in name or name.endswith(".json") or os.path.exists(name):
         try:
             make_quantum_system(name)
         except UnknownQuantumSystemError as error:
             raise UnknownQuantumSystemError(
-                f"{Exception.__str__(error)}; a string is a target name: to read a system "
-                f"file, use pulse.QuantumSystem.load({name!r})"
+                f"{Exception.__str__(error)}; a string is a registered quantum system name: "
+                f"to read a system file, use pulse.QuantumSystem.load({name!r})"
             ) from None
     make_quantum_system(name)
 

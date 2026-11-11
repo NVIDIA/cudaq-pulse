@@ -1178,7 +1178,7 @@ def build(
                     defined = sorted(target.frequencies)
                     span = f"{defined[0]}..{defined[-1]}" if defined else "none"
                     raise CompilationError(
-                        f"{name}() uses qudit {', '.join(map(str, missing))}, which target "
+                        f"{name}() uses qudit {', '.join(map(str, missing))}, which quantum system "
                         f"{target.name!r} does not define (it defines qudits {span})"
                     )
     buf: Any = builder.get_buffer()

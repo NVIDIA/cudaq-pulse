@@ -242,14 +242,14 @@ each mode: ``result.qudits[i]`` has ``result.dims[i]`` levels and is digit
 uses the same layout, and measurements report quantum system qudits.
 
 The native execution lowering is a transmon model in one rotating frame per
-qudit, with the levels the target's simulation model declares for it (three
+qudit, with the levels the quantum system's simulation model declares for it (three
 for a ``TransmonModel``) unless ``levels`` sets them. Drive envelopes are converted to X/Y Hamiltonian
 coefficients in radians per nanosecond; tone frequency and phase determine the
-rotating-frame detuning and quadrature. A target may supply
+rotating-frame detuning and quadrature. A quantum system may supply
 ``amplitude_scale_rad_per_ns`` explicitly, or pulse infers a scale from the
 amplitude of the qudit's ``X`` calibration when it publishes one.
 
-Target relaxation and dephasing data produce Lindblad collapse operators.
+The quantum system's relaxation and dephasing data produce Lindblad collapse operators.
 A qudit whose ``thermal_population`` p is nonzero starts in its thermal
 mixture (the excited level holds p, and higher levels follow the same
 Boltzmann ratio p / (1 - p) per level) unless ``initial_state`` is given,
@@ -339,7 +339,7 @@ of the outcomes from the same branch probabilities.
 
 ``backend="cpu"`` integrates the same lowered operator with a NumPy RK4
 reference; ``backend="gpu"`` evolves each segment with cuDensityMat, starting
-from the projected state. By default each qudit has the levels its target's
+from the projected state. By default each qudit has the levels its quantum system's
 model declares (three for a transmon); ``levels=2`` simulates qubits, an int
 sets every qudit's levels and a dict by quantum system qudit index sets those it
 names. With three or more levels a transmon includes its anharmonicity.

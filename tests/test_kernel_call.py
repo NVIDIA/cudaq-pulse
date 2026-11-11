@@ -359,9 +359,9 @@ def test_two_separate_devices_with_one_definition_do_not_mix_in_a_call():
     a, twin = _device(), _device()
     assert a == twin
     message = (
-        r"^pair\(\) got qudits of two separate quantum systems of target 'call-test' with the same "
-        r"definition, as two pulse.quantum_system\(\) calls make; pass handles of one quantum "
-        r"system$"
+        r"^pair\(\) got qudits of two separate quantum systems, both named 'call-test', with "
+        r"the same definition, as two pulse.quantum_system\(\) calls make; pass handles of one "
+        r"quantum system$"
     )
     with pytest.raises(pulse.QuantumSystemMismatchError, match=message):
         pair.lower(a.qudits[0], twin.qudits[1])
@@ -576,7 +576,7 @@ def test_the_launcher_sets_the_process_target(tmp_path: Path):
         env=env,
         check=False,
     )
-    assert bad.returncode != 0 and "no registered target 'nope'" in bad.stderr
+    assert bad.returncode != 0 and "no registered quantum system 'nope'" in bad.stderr
 
 
 # ── Floats that shape the program are specialized on ─────────────────────

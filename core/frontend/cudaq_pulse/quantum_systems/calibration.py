@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Quantum system calibrations: fitted circuit values, kept apart from published targets.
+"""Quantum system calibrations: fitted circuit values, kept apart from published systems.
 
 A calibration file is JSON whose leaves are ``{value, units, kind, source,
 uncertainty, cooldown[, method]}`` objects: ``kind`` is ``published``,

@@ -66,7 +66,7 @@ class _Component:
     ``__init__``), held in ``_values`` and read through ``_Field``
     descriptors, compared, hashed, pickled and printed by them.
 
-    A plain slotted class rather than a dataclass: the shipped target makes
+    A plain slotted class rather than a dataclass: the shipped system makes
     one per qudit, and making a dataclass of this many fields costs as much
     as the rest of the import.
     """
@@ -684,7 +684,7 @@ _QUDIT_STATE = attrgetter(*_QuditFields.__slots__[:-1])
 
 
 class PhysicalQudit(_QuditFields):
-    """Single qubit in a target quantum system.
+    """One qudit of a quantum system.
 
     ``drive`` and ``readout`` are its physics: how it is driven and read
     out, each by the component of its modality (``MicrowaveDrive``,
@@ -1016,7 +1016,7 @@ class _Description:
         return [c.qudits for c in self.couplings]
 
     def coupling(self, a: int, b: int) -> Coupling:
-        """The coupling of qudits *a* and *b*, in either order (the target's
+        """The coupling of qudits *a* and *b*, in either order (the system's
         qudit indices, as ``Qudit.index``); a ``NotFoundError`` names the
         qudits *a* couples to."""
         for c in self.couplings:
@@ -1049,7 +1049,7 @@ class _Description:
         drive modality is ``UnsupportedError``.
         """
         if qudit_index not in self.qudits:
-            raise NotFoundError(f"Qubit {qudit_index} not in target {self.name!r}")
+            raise NotFoundError(f"qudit {qudit_index} is not in quantum system {self.name!r}")
         drive = self.qudits[qudit_index].drive
         if drive is None:
             return 1.0

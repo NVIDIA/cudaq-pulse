@@ -3,8 +3,8 @@
    SPDX-License-Identifier: Apache-2.0
 
 
-Quantum systems API
-===================
+Quantum system components API
+==============================
 
 ``cudaq_pulse.quantum_systems`` holds what ``pulse.quantum_system(name=...,
 qudits=..., couplings=..., model=...)`` builds a quantum system

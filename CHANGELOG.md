@@ -35,10 +35,10 @@ behavior may change in any 0.x release.
   differ; system files keep them.
 - **Pickling, for process pools and caches on disk.** Kernels pickle as
   functions do: by reference, or with cloudpickle (Ray, Dask) by value
-  when defined in `__main__`, at the prompt or inside a function. Targets, quantum systems, qudit handles and registers
+  when defined in `__main__`, at the prompt or inside a function. Quantum systems, qudit handles and registers
   pickle as what they were built from and unpickle equal, with equal
   hashes; a process builds each quantum system it unpickles once. A quantum system's
-  fingerprint covers its calibration: a target with and without one are
+  fingerprint covers its calibration: a quantum system with and without one are
   two quantum systems. A shipped calibration pickles as its name, checked against
   the file shipped where it unpickles; any other, as its values. Programs
   (`ck.lower(...)`, bound or not) pickle as MLIR bytecode stamped with the
@@ -47,10 +47,10 @@ behavior may change in any 0.x release.
   without compiling again; another build refuses them with
   `UnsupportedError`, saying to compile again. Errors pickle with what they
   report, so a process pool re-raises them in the parent as they were
-  raised. Targets now compare by content.
+  raised. Quantum systems now compare by content.
 - **Controllers with their own clocks.** Kernels count cycles of the
   quantum system's program clock, `pulse.quantum_system(..., clock_ghz=)` (or the
-  target's). A controller whose clock is slower starts and times operations
+  quantum system's own). A controller whose clock is slower starts and times operations
   only every few program cycles: the scheduler puts each line's operations
   on its controller's grid and a `sync` on the grid its lines share, an
   operation off the grid is a compile error naming the line, its controller
@@ -239,8 +239,8 @@ behavior may change in any 0.x release.
   as built-in types are: setting or deleting one of their attributes raises
   `TypeError`. Subclass them to change what they give a qudit; a subclass
   is not immutable. `simulate` keeps the step it
-  resolves for a target with one of them, so a second call on that target
-  skips the checks, and drops it when the target is freed.
+  resolves for a quantum system with one of them, so a second call on that
+  quantum system skips the checks, and drops it when the quantum system is freed.
 - **Calibration on the controller.** `cudaq_pulse.classical.calibration`
   adds the estimators of millisecond on-controller calibration in controller
   form: adaptive T1 tracking with assignment errors (`adaptive_t1_update`,
@@ -473,9 +473,9 @@ behavior may change in any 0.x release.
   is not measured yet, which compiles, schedules and exports while
   `simulate` refuses it by name, and its tuned gates,
   `{pulse.gates.CZ: FluxCZ(duration_ns, buffer_ns=None,
-  interaction_frequency_hz=None)}`; the `transmon_surface17` target gives its
+  interaction_frequency_hz=None)}`; the `transmon_surface17` quantum system gives its
   published CZ values, and `cudaq_pulse.quantum_systems.transmon.CZ_LAYERS` the
-  (auxiliary, data) pairs of each of its CZ time steps. A target's
+  (auxiliary, data) pairs of each of its CZ time steps. A quantum system's
   `residual_zz` lists `ResidualZZ(qudits, rate_hz)` entries, a static ZZ
   rate beyond what the couplings produce; the simulator's module carries
   them as typed `pulse.static_terms`
@@ -489,24 +489,24 @@ behavior may change in any 0.x release.
   problems raises `pulse.QuantumSystemDefinitionError` (a `ValueError`) listing all
   of them in `problems`, each a `pulse.Problem` with its path in the config
   (`layout[2]`), the offending value and a fix, and for a file its line and
-  column; an unknown key or target name suggests the closest one, and the
+  column; an unknown key or quantum system name suggests the closest one, and the
   reserved keys (`zones`, `sites`, `moves`, `transport`) are problems too.
   `python -m cudaq_pulse.doctor --system FILE [--json]` runs the same checks.
 - **Calibrations and the transmon model.** `cudaq_pulse.quantum_systems.Calibration`
   loads fitted values, each with its kind, source, uncertainty and cooldown,
-  apart from the published target, and `pulse.quantum_system` takes `calibration=`
+  apart from the published quantum system, and `pulse.quantum_system` takes `calibration=`
   and `cooldown=`. `cudaq_pulse.quantum_systems.transmon_model` computes
   flux-tunable transmon levels and charge-coupled pairs from circuit values.
   The shipped `transmon_surface17` calibration has one device-wide charge coupling,
   fitted to the measured `|11>`-`|20>` coupling of X2-D4, so the
-  `transmon_surface17` target's exchange (5.67-6.08 MHz) and idle ZZ (-4.5 to -7.3 kHz) depend on
+  `transmon_surface17` quantum system's exchange (5.67-6.08 MHz) and idle ZZ (-4.5 to -7.3 kHz) depend on
   each pair's frequencies; calibrated qubits convert detunings to and from flux quanta.
   It also holds in-model sudden-net-zero CZ knobs for all 24 pairs (mean
   duration 65.0 +- 4.8 ns against the published 68(7) ns), each with its
   predicted phase and leakage, flags and alternatives.
 - **Simulation.** `pulse.simulate` evolves a compiled call with T1, T2 or
   Hahn-echo dephasing, thermal populations, exchange couplings, residual ZZ
-  and any number of transmon levels (by default those the target's model
+  and any number of transmon levels (by default those the quantum system's model
   declares, 3 for a transmon; `levels=` sets them for every qudit or, as a
   dict, per qudit), either with a NumPy reference
   integrator (`backend="cpu"`) or on NVIDIA GPUs through cuDensityMat
@@ -725,13 +725,13 @@ behavior may change in any 0.x release.
   `cudaq_pulse.compiler`, `cudaq_pulse.runtime.simulate` and
   `cudaq_pulse.quantum_systems.transmon_model` list their public names in `__all__`,
   as the other documented modules do. `cudaq_pulse.quantum_systems.UnknownQuantumSystemError`
-  (an unregistered target name) and
+  (an unregistered quantum system name) and
   `cudaq_pulse.compiler.UnsupportedInterpreterError` (a Python whose bytecode
   the kernel tracer does not know) are public, and every public name is in
   the API reference, errors on their own page.
-- Target registration, the shipped targets and calibrations, and the kernel
+- Quantum system registration, the shipped quantum systems and calibrations, and the kernel
   tracer's caches are safe to use from several threads on free-threaded
-  CPython: each target and calibration is built once.
+  CPython: each quantum system and calibration is built once.
 - **Dialects and tools.** The Pulse, Classical, QOp and CuDensityMat MLIR
   dialects with their lowerings to LLVM; `cudaq-pulse-opt`, the MLIR driver, which
   also loads out-of-tree pass plugins and whose `--version` prints the

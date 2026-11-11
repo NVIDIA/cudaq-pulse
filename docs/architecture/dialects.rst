@@ -28,7 +28,7 @@ The pulse program as written: qudits, the lines and tones that drive and read
 them out, waveforms, and timing. Lines and tones are linear values, consumed
 once and returned updated by each op that uses them, so the order of the
 pulses on a line is explicit in the IR and ``pulse-verify`` can check it.
-Waveforms are ordinary values. Durations are in clock cycles of the target,
+Waveforms are ordinary values. Durations are in clock cycles of the quantum system,
 and scheduling records each timed op's ``start_cycles`` and ``duration_cycles``
 (and ``period_cycles`` in loops) as integers in the op's properties, printed
 in a ``<{...}>`` dictionary before its other attributes.
@@ -107,7 +107,7 @@ Backend-agnostic quantum operator algebra. ``pulse-to-qop`` builds one
 ``qop.lindblad`` per program: a Hamiltonian of ``qop.make_sum`` terms, each a
 ``qop.make_product`` of ``qop.spin`` or ``qop.matrix_leaf`` operators with a
 ``qop.const_scalar`` or, for a drive envelope, a ``qop.callback_scalar``
-coefficient, and the collapse operators of the target's T1 and T2. The
+coefficient, and the collapse operators of the quantum system's T1 and T2. The
 bosonic, fermionic, commutator and super-operator ops are planned surface for
 later backends; nothing produces or lowers them yet.
 

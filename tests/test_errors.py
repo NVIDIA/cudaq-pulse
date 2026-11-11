@@ -54,7 +54,10 @@ def test_the_value_and_type_errors_are_separate():
 def test_a_not_found_error_prints_without_quotes():
     error = pulse.NotFoundError("no calibration value 'q0.freq'")
     assert str(error) == "no calibration value 'q0.freq'"
-    assert str(UnknownQuantumSystemError("no registered target 'x'")) == "no registered target 'x'"
+    assert (
+        str(UnknownQuantumSystemError("no registered quantum system 'x'"))
+        == "no registered quantum system 'x'"
+    )
 
 
 def test_problems_are_listed_after_the_message():

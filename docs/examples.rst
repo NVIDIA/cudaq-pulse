@@ -166,8 +166,8 @@ Controller Backend
 
 See :doc:`user_guide/controller_backends`.
 
-Hardware Target Examples
-------------------------
+Transmon Quantum System Examples
+--------------------------------
 
 **Transmon** (``examples/transmon/``):
 
@@ -178,11 +178,11 @@ Hardware Target Examples
    * - File
      - Description
    * - ``transmon_surface17_rabi.py``
-     - Rabi oscillation on the 17-qubit transmon target
+     - Rabi oscillation on the 17-qubit ``transmon_surface17`` quantum system
    * - ``transmon_surface17_full_pipeline.py``
      - Each stage of the native lowering: Pulse MLIR, QOp, and LLVM IR
    * - ``transmon_surface17_evolve_gpu.py``
-     - ``pulse.simulate(..., backend="gpu")`` on the 17-qubit transmon target (needs an
+     - ``pulse.simulate(..., backend="gpu")`` on the 17-qubit ``transmon_surface17`` quantum system (needs an
        NVIDIA GPU and the ``[cu12]`` or ``[cu13]`` extra)
    * - ``transmon_surface17_surface_code_cycle.py``
      - Timeline of one error correction cycle from the 17-qubit lattice and CZ schedule

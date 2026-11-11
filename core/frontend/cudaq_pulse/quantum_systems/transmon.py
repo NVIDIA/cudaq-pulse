@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Transmon QPU target definitions.
+"""Transmon quantum systems.
 
-The default target is the 17-qubit distance-three surface-code quantum system of
+``transmon_surface17`` is the 17-qubit distance-three surface-code quantum system of
 Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708, built from the
 values the paper publishes (``_transmon_surface17``, with a citation for each).
 """
@@ -106,7 +106,7 @@ def _described_surface17(calibration: Any = "transmon_surface17") -> _Descriptio
 
 
 _BUILT: dict[str | None, _Description] = {}
-# Reentrant: building a calibrated target builds the published one.
+# Reentrant: building a calibrated system builds the published one.
 _BUILT_LOCK = threading.RLock()
 
 
@@ -196,7 +196,7 @@ def _build_published_surface17() -> _Description:
 def transmon_surface17_idle_zz_hz(
     calibration: Any = "transmon_surface17",
 ) -> dict[tuple[int, int], float]:
-    """Idle ZZ of each coupled pair of the ``transmon_surface17`` target, keyed by the
+    """Idle ZZ of each coupled pair of the ``transmon_surface17`` quantum system, keyed by the
     coupling's (auxiliary, data) qudit indices.
 
     zeta = E_11 - E_10 - E_01 + E_00 of the dressed levels of the

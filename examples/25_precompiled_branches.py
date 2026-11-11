@@ -104,7 +104,7 @@ def compile_branch(kernel: pulse.Kernel[...], qudits: pulse.Register, trained: t
 
 
 def drifted(factors):
-    """The target with each qudit's drive strength multiplied by its factor."""
+    """The quantum system with each qudit's drive strength multiplied by its factor."""
     qudits = dict(quantum_system.physical_qudits)
     for q, factor in zip(qudit_indices, factors, strict=True):
         strength = quantum_system.drive_amplitude_scale(q) * factor

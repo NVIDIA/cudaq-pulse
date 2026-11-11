@@ -444,7 +444,7 @@ def emulate(
     delay in each direction, per link (name or id) or for all. *outcomes* gives the
     level a readout reports, from its qudit and the shot's generator
     (uniform 0/1 by default); a call that takes IQ points gets them drawn
-    at those levels from the target's dispersive readout model
+    at those levels from the quantum system's dispersive readout model
     (``IQModel``). The answer's latency is the request's
     transport delay, plus the service's time (``"measured"`` wall-clock, or
     ``"none"``), plus the answer's transport delay. *shots_count* is a positive int.

@@ -51,7 +51,7 @@ Running
 
 .. autoexception:: cudaq_pulse.InternalError
 
-Quantum systems and targets
+Quantum systems
 ---------------------------
 
 .. autoexception:: cudaq_pulse.QuantumSystemDefinitionError

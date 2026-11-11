@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""QPU target definitions: Hamiltonians, decoherence models, connectivity."""
+"""Quantum systems: their qudits, couplings, decoherence and calibrations."""
 
 from ._registry import UnknownQuantumSystemError, available_quantum_systems, register_quantum_system
 from .base import (

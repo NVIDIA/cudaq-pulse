@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Rabi oscillation on qubit D5 using the 17-qubit transmon target.
+"""Rabi oscillation on qubit D5 using the 17-qubit transmon quantum system.
 
 Demonstrates:
-  - Loading the pre-defined transmon target
+  - Loading the pre-defined transmon quantum system
   - Using the quantum system's X calibration, the published single-qubit pulse
     (40 ns DRAG, sigma = 10 ns), from get_calibration
   - Compiling (default passes, ALAP schedule) a single-qubit
@@ -18,14 +18,14 @@ import subprocess
 import cudaq_pulse as pulse
 from cudaq_pulse.quantum_systems import transmon_surface17
 
-target = transmon_surface17()
+qs = transmon_surface17()
 qs = pulse.quantum_system("transmon_surface17")
 qudit_idx = 4  # D5 -- central data qubit
 
-qudit_d5 = target.physical_qudits[qudit_idx]
+qudit_d5 = qs.physical_qudits[qudit_idx]
 clock_ghz = qs.clock_ghz  # the program clock the schedule counts cycles of
 
-print(f"Target: {target.name} ({len(target.physical_qudits)} qudits)")
+print(f"Quantum system: {qs.name} ({len(qs.physical_qudits)} qudits)")
 print(f"Qubit {qudit_d5.label} (idx {qudit_idx}):")
 print(f"  frequency = {qudit_d5.frequency_hz / 1e9:.3f} GHz")
 print(f"  anharmonicity = {qudit_d5.anharmonicity_hz / 1e6:.1f} MHz")

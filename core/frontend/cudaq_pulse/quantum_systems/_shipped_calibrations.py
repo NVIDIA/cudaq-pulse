@@ -12,7 +12,7 @@ the entry to paste when the file changes.
 
 SHIPPED: dict[str, tuple[str, str, tuple[str, ...], dict[str, tuple[float, tuple[float, ...]]]]] = {
     "transmon_surface17": (
-        "4c4689df44d31c71",
+        "9f1738f2a12cdd21",
         "2022-main",
         (
             "2022-main",

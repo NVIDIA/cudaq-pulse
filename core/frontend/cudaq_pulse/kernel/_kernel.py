@@ -15,7 +15,7 @@ the specialization. Every other parameter (unannotated qudits, ints,
 anything unannotated) is static: it can shape the program, so the kernel is
 specialized on its value.
 
-A specialization is found by its static values and the target, and is used
+A specialization is found by its static values and the quantum system, and is used
 while its guard holds: the globals, closure cells and attribute chains the
 kernel read when it was traced are re-read and compared on every call
 (``_guard.py``). A miss traces and builds the module under the dispatcher's
@@ -329,17 +329,17 @@ def _two_systems(name: str, found: QuantumSystem, quantum_system: QuantumSystem)
     """Why *name*() cannot take qudits of both *found* and *quantum_system*."""
     if found == quantum_system:
         return (
-            f"{name}() got qudits of two separate quantum systems of target "
-            f"{quantum_system.name!r} with "
+            f"{name}() got qudits of two separate quantum systems, both named "
+            f"{quantum_system.name!r}, with "
             "the same definition, as two pulse.quantum_system() calls make; pass handles "
             "of one quantum system"
         )
     from .._errors import _ranges
 
     both = (
-        f"both of target {quantum_system.name!r}"
+        f"both named {quantum_system.name!r}"
         if found.name == quantum_system.name
-        else f"of targets {found.name!r} and {quantum_system.name!r}"
+        else f"named {found.name!r} and {quantum_system.name!r}"
     )
     return (
         f"{name}() got qudits of two different quantum systems, {both}: one with layout "

@@ -144,7 +144,7 @@ The process quantum system
 --------------------------
 
 A script can leave the choice of quantum system to the command line with a *process
-target*:
+quantum system*:
 
 .. code-block:: bash
 
@@ -153,7 +153,7 @@ target*:
 
 The launcher sets ``CUDAQ_PULSE_QUANTUM_SYSTEM`` for the script and passes the
 script's own arguments through unparsed. ``pulse.quantum_system()`` with no
-argument returns the process quantum system's quantum system, whose handles the script then
+argument returns the process quantum system, whose handles the script then
 passes to its kernels; a kernel call with no qudit handles always raises
 ``NoQuantumSystemError``.
 

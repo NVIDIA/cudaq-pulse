@@ -4,7 +4,7 @@
 """The timeline of one error correction cycle of the 17-qubit surface code.
 
 Demonstrates:
-  - Building a 17-qubit pulse program from the target's lattice and CZ
+  - Building a 17-qubit pulse program from the quantum system's lattice and CZ
     schedule (Krinner et al., Nature 605, 669 (2022), Fig. 3a and Fig. 6c)
   - The Z half: pi/2 on the Z auxiliaries, CZ steps 1-2, an echo pi pulse
     on every data qubit, steps 3-4, pi/2

@@ -411,7 +411,7 @@ Clocks
 
 A kernel counts time in cycles of the quantum system's program clock,
 ``QuantumSystem.clock_ghz`` (``pulse.quantum_system(..., clock_ghz=)``, else the
-target's); a duration written as a time converts to them when the kernel
+quantum system's own); a duration written as a time converts to them when the kernel
 compiles (see :ref:`durations`). A controller may run its own clock,
 ``Controller.clock_ghz``, at a whole-cycle ratio of it; may start
 and time operations only every ``Controller.cycles_per_timestep`` of

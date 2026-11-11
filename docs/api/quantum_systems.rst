@@ -56,7 +56,7 @@ One nanosecond, microsecond, millisecond and second:
    :no-value:
 
 Errors are on :doc:`errors`; what a quantum system is built from is on
-:doc:`descriptions`.
+:doc:`quantum_system_components`.
 
 Control systems
 ---------------
@@ -70,7 +70,7 @@ outcome the controller reads to each receiving controller, counted in the
 sending controller's own cycles and keyed by the receiver's index in the
 control system (one number for every receiver; a receiver not listed: 0).
 ``QuantumSystem.as_dict()`` writes the whole QPU as one system file, format
-``cudaq-pulse.system/1``, which ``pulse.quantum_system()`` reads back, raising a
+``cudaq-pulse.system/1``, which ``QuantumSystem.load`` reads back, raising a
 ``QuantumSystemDefinitionError`` that lists every problem with its line.
 ``python -m cudaq_pulse.doctor --system FILE`` checks a system file.
 

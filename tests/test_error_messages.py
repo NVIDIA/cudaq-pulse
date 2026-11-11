@@ -117,7 +117,7 @@ def test_qudits_of_two_devices_of_one_target_name_their_layouts():
     with pytest.raises(pulse.QuantumSystemMismatchError) as info:
         k.lower(a.qudits[0], b.qudits[1])
     assert str(info.value) == (
-        "k() got qudits of two different quantum systems, both of target 'transmon_lattice:4': one "
+        "k() got qudits of two different quantum systems, both named 'transmon_lattice:4': one "
         "with layout 0..3, the other with layout 2..3; pass handles of one quantum system"
     )
 

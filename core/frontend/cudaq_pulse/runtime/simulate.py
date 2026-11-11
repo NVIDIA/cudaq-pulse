@@ -203,7 +203,7 @@ def simulate(
     quantum_system: Any = None,
     branches: BranchCoverage | str = BranchCoverage.ALL,
 ) -> SimulationResult:
-    """Simulate one kernel call on the target it is compiled for.
+    """Simulate one kernel call on the quantum system it is compiled for.
 
     ``simulate(kernel, *args)`` compiles the call as ``kernel.lower(*args)``
     does and simulates it, as ``compile(kernel)`` takes the kernel first and
@@ -224,7 +224,7 @@ def simulate(
         other parameters. For a module with run-time parameters, their
         values, in the order of ``program.parameters``.
     levels:
-        Levels per qudit. By default each qudit has the levels its target's
+        Levels per qudit. By default each qudit has the levels its quantum system's
         simulation model declares for it (``QuantumSystem.model``; 3 for
         a ``TransmonModel``); an int sets every qudit's, and a dict by quantum system
         qudit index sets those it names. A transmon with three or more
@@ -233,7 +233,7 @@ def simulate(
         A state vector or density matrix over ``lowered.qudits``, the
         qudits the program uses, with the first the least significant
         digit (the layout of ``SimulationResult.density_matrix``). By default each qudit starts in
-        its thermal mixture: its excited level holds the target's
+        its thermal mixture: its excited level holds the quantum system's
         ``thermal_population`` p, and higher levels follow the same
         Boltzmann ratio p / (1 - p) per level (``|0...0>`` when every p is
         0). T1 then relaxes it back there, with downward and upward rates

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""End-to-end GPU time evolution on the 17-qubit transmon target.
+"""End-to-end GPU time evolution on the 17-qubit transmon quantum system.
 
 HARDWARE REQUIREMENT: This example requires an NVIDIA GPU and
 the `[cu12]` or `[cu13]` extra. If either is missing it raises an error

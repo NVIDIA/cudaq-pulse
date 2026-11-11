@@ -13,7 +13,7 @@ API Reference
    classical
    controller
    quantum_systems
-   descriptions
+   quantum_system_components
    kernel
    ops
    viz

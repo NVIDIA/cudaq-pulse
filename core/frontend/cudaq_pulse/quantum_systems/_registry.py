@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """The process quantum system, chosen outside user code.
 
-``quantum_system()`` with no argument returns the quantum system of the target named by
+``quantum_system()`` with no argument returns the quantum system named by
 the ``CUDAQ_PULSE_QUANTUM_SYSTEM`` environment variable, which
 ``python -m cudaq_pulse --quantum-system NAME script.py`` sets for the script it
-runs. A name is a registered target, optionally with an argument after a
+runs. A name is a registered quantum system, optionally with an argument after a
 colon (``transmon_lattice:4``). There is no default: ``quantum_system()`` without
 one raises ``NoProcessQuantumSystemError``. Kernel calls never read the process quantum system;
 they run on the quantum system of their qudit handles.
@@ -35,7 +35,7 @@ class NoProcessQuantumSystemError(PulseError, RuntimeError):
 
 
 class UnknownQuantumSystemError(NotFoundError):
-    """A target name, given to ``quantum_system()``, in a system file or in
+    """A quantum system name, given to ``quantum_system()``, in a system file or in
     ``CUDAQ_PULSE_QUANTUM_SYSTEM``, is not registered; the message lists the
     registered ones."""
 
@@ -43,7 +43,7 @@ class UnknownQuantumSystemError(NotFoundError):
 def _no_argument(name: str, factory: Callable[[], Any]) -> QuantumSystemFactory:
     def make(arg: str | None) -> Any:
         if arg is not None:
-            raise InvalidValueError(f"target {name!r} takes no argument, got {arg!r}")
+            raise InvalidValueError(f"quantum system {name!r} takes no argument, got {arg!r}")
         return factory()
 
     return make
@@ -56,7 +56,7 @@ def _lattice(name: str, factory: Callable[..., Any]) -> QuantumSystemFactory:
         count, _, topology = (arg or "").partition(":")
         if not count.isdigit():
             raise InvalidValueError(
-                f"target {name!r} needs a qudit count, e.g. {name}:4 or {name}:4:ring"
+                f"quantum system {name!r} needs a qudit count, e.g. {name}:4 or {name}:4:ring"
             )
         return factory(int(count), topology=topology)
 
@@ -96,7 +96,7 @@ def register_quantum_system(name: str, factory: QuantumSystemFactory) -> None:
     quantum system a process uses is still chosen by the environment.
     """
     if not name or ":" in name or name != name.strip():
-        raise InvalidValueError(f"invalid target name {name!r}")
+        raise InvalidValueError(f"invalid quantum system name {name!r}")
     registry = _registry()
     with _lock:
         registry[name] = factory
@@ -120,7 +120,8 @@ def make_quantum_system(spec: str) -> _Description:
         close = _closest(name, names)
         hint = f"did you mean {close!r}? " if close else ""
         raise UnknownQuantumSystemError(
-            f"no registered target {spec!r}; {hint}the registered targets are {', '.join(names)}"
+            f"no registered quantum system {spec!r}; {hint}the registered names are "
+            f"{', '.join(names)}"
         )
     target = factory(arg if colon else None)
     if target.__class__ is _Description:
@@ -157,8 +158,8 @@ def current_quantum_system() -> QuantumSystem:
 
 def _no_quantum_system_message() -> str:
     return (
-        "quantum system() with no argument returns the process quantum system, and none is "
-        'configured: name a target, as quantum system("transmon_surface17"), '
+        "quantum_system() with no argument returns the process quantum system, and none is "
+        'configured: name one, as quantum_system("transmon_surface17"), '
         "or set one of:\n"
         f"    {ENV_VAR}=transmon_surface17 python script.py\n"
         "    python -m cudaq_pulse --quantum-system transmon_surface17 script.py\n"

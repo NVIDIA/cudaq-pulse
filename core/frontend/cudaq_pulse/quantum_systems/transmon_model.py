@@ -14,7 +14,7 @@ transmons couple through g_c n_a n_b, with no rotating-wave approximation;
 their 0-1 exchange is J_qq = g_c ``<0|n_a|1> <0|n_b|1>``.
 
 Energies are in Hz (E / h). Circuit values (E_C, E_J,max, d, g_c) are
-fitted, so they come from a calibration, never from a target's published
+fitted, so they come from a calibration, never from a system's published
 values.
 """
 

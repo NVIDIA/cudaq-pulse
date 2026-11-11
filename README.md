@@ -196,7 +196,7 @@ What installing and building retrieve:
 - The compiler, dialects, lowering experiments, and CPU unit tests are the
   primary research surface.
 - GPU evolution models transmons in per-qubit rotating frames, as qubits or
-  with any number of levels (including their anharmonicity). Target T1/T2
+  with any number of levels (including their anharmonicity). The quantum system's T1/T2
   data, exchange couplings, residual ZZ terms, and calibrated drive-amplitude
   scaling are supported. Programs that measure and branch on the result are
   evolved between measurements as an exact ensemble over outcomes, on the GPU
@@ -213,7 +213,7 @@ What installing and building retrieve:
 
 ## Repository contents
 
-- `core/frontend/` — Python DSL, compiler pipeline, targets, and
+- `core/frontend/` — Python DSL, compiler pipeline, quantum systems, and
   runtime
 - `core/mlir/` — Pulse, Classical, `QOp`, and CuDensityMat dialects, transformations,
   bindings, and `cudaq-pulse-opt`

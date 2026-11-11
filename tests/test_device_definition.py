@@ -302,8 +302,9 @@ def test_a_target_name_is_a_device(tmp_path: Path, monkeypatch):
     assert pulse.QuantumSystem.load("lab.json").layout == (4,)
     with pytest.raises(pulse.NotFoundError) as raised:
         pulse.quantum_system("lab.json")
-    assert "a string is a target name: to read a system file, use pulse.QuantumSystem.load(" in str(
-        raised.value
+    assert (
+        "a string is a registered quantum system name: to read a system file, use "
+        "pulse.QuantumSystem.load(" in str(raised.value)
     )
 
 
@@ -313,7 +314,7 @@ def test_no_argument_is_the_process_target(monkeypatch):
     monkeypatch.delenv("CUDAQ_PULSE_QUANTUM_SYSTEM")
     with pytest.raises(
         pulse.NoProcessQuantumSystemError,
-        match=r'name a target, as quantum system\("transmon_surface17',
+        match=r'name one, as quantum_system\("transmon_surface17',
     ):
         pulse.quantum_system()
 

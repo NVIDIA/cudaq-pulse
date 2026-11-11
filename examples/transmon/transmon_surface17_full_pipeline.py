@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Target-aware lowering demo on the 17-qubit transmon target.
+"""Calibration-aware lowering demo on the 17-qubit transmon quantum system.
 
   kernel -> pulse.compile (default passes, ALAP) -> Pulse MLIR
          -> QOp (operator algebra) -> CuDensityMat -> LLVM
 
 Prints the intermediate representations of the native lowering stack for a
 coupled pair, auxiliary X1 and data qubit D2. ``pulse.simulate(..., backend="gpu")``
-runs the same stack, adding the target's calibration (drive scales,
+runs the same stack, adding the quantum system's calibration (drive scales,
 couplings, T1/T2) as module attributes, and executes it.
 
 The quantum system's CZ is a flux pulse; flux lines are not modeled yet, so the
@@ -25,7 +25,7 @@ qs = pulse.quantum_system("transmon_surface17")
 clock_ghz = qs.clock_ghz  # the program clock the schedule counts cycles of
 qudit_aux, qudit_data = qs.qudit("X1"), qs.qudit("D2")
 coupling = qs.coupling(qudit_aux, qudit_data)
-# The transmon_surface17 target publishes each coupling's CZ; a generic coupling
+# The transmon_surface17 quantum system publishes each coupling's CZ; a generic coupling
 # has none (get_calibration raises NotFoundError).
 cz = coupling.get_calibration(pulse.gates.CZ)
 assert cz.interaction_frequency_hz is not None and coupling.strength_hz is not None

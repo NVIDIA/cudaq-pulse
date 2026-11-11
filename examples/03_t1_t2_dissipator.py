@@ -3,7 +3,7 @@
 """T1/T2 measurement with Lindblad dissipators.
 
 Prepares a qubit, waits, and measures. ``pulse.simulate()`` evolves each
-compiled experiment with the Lindblad dissipators of the target's T1 and T2
+compiled experiment with the Lindblad dissipators of the quantum system's T1 and T2
 and the qubit's thermal population, on the CPU. The T1 sweep is simulated
 and compared with the exponential decay T1 predicts; the Ramsey and echo
 experiments are compiled and printed.
