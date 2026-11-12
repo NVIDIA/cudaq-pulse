@@ -704,11 +704,11 @@ struct PulseToQOpPass
           << " is not supported by the simulator yet; only iq is";
       return signalPassFailure();
     }
-    // The frequencies of the simulated qubits, where they differ from the
-    // device the program was compiled for (NaN: as compiled).
-    if (auto plant = module->getAttrOfType<DenseF64ArrayAttr>(
-            "pulse.plant_qubit_freq_hz"))
-      for (auto [index, frequency] : llvm::enumerate(plant.asArrayRef()))
+    // The true frequencies of the simulated qudits, where they differ from
+    // the quantum system the program was compiled for (NaN: as compiled).
+    if (auto truth = module->getAttrOfType<DenseF64ArrayAttr>(
+            "pulse.true_qudit_freq_hz"))
+      for (auto [index, frequency] : llvm::enumerate(truth.asArrayRef()))
         if (!std::isnan(frequency))
           qubitFreqHz[static_cast<int64_t>(index)] = frequency;
     Operation *unanswered = nullptr;

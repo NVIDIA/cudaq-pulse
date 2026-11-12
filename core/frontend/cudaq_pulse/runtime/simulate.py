@@ -832,7 +832,7 @@ def _simulate_compiled(
         for q in qudits:
             frequencies[q] = float(target.qudits[q].frequency_hz)
         base += (
-            ", pulse.plant_qubit_freq_hz = array<f64: "
+            ", pulse.true_qudit_freq_hz = array<f64: "
             + ", ".join("0x7FF8000000000000" if math.isnan(f) else repr(f) for f in frequencies)
             + ">"
         )
