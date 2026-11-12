@@ -18,9 +18,6 @@ Builds on ``19_classical_calls.py``. On qubit 0 of the 17-qubit
 The estimators and outcome probabilities come from
 ``cudaq_pulse.classical.calibration``; the drift from
 ``cudaq_pulse.quantum_systems.drift``.
-
-NOTE: Requires cudaq-pulse native C++ bindings (see README for build
-instructions).
 """
 
 import math

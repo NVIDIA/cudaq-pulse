@@ -24,9 +24,6 @@ This example shows:
 3. The classical-call report, simulation with the Python bodies standing in
    for the services, and the emulation artifact and call manifest a
    controller or emulator runs the program from.
-
-NOTE: Requires cudaq-pulse native C++ bindings (see README for build
-instructions).
 """
 
 import json

@@ -56,9 +56,6 @@ wait the estimator chose, not also through the call's latency.
 The quantum system is qubit 0 of ``transmon_surface17`` with its T1 set
 to 18.3 us (the analytical decay estimate reported by Marciniak et al.),
 detuned by 60 kHz from the drive and with a 1.5% drive-amplitude error.
-
-NOTE: Requires cudaq-pulse native C++ bindings (see README for build
-instructions).
 """
 
 import dataclasses
