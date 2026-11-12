@@ -11,8 +11,8 @@ to play::
     readout(r, r.get_calibration(pulse.gates.READOUT))  # a ReadoutPulse
 
 Outside one, a qudit handle and a coupling give the same values:
-``dev.qudits[i].get_calibration(pulse.gates.X)`` and
-``dev.coupling(a, b).get_calibration(pulse.gates.CZ)`` (a ``FluxCZ``).
+``qs.qudits[i].get_calibration(pulse.gates.X)`` and
+``qs.coupling(a, b).get_calibration(pulse.gates.CZ)`` (a ``FluxCZ``).
 
 ``X``, ``X90``, ``Y`` and ``Y90`` are the gates of a drive line, ``READOUT``
 of a readout line and ``CZ`` of a coupling. What a quantum system does not publish

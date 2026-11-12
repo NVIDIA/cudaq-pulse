@@ -21,6 +21,12 @@ is scheduled together with the cycle.
 ``compile(..., flatten_schedules=True)`` schedules the same program as one
 ALAP schedule, for comparison: the layer's pulses are then pushed apart, each
 up to the cross-resonance pulse that needs its tone.
+
+Why cross-resonance on ``transmon_surface17``: that quantum system runs its
+stabilizer cycle with flux-pulsed CZs, and flux lines are not modeled yet (its
+``FluxCZ`` calibrations do not play). Cross-resonance needs only drive lines,
+so the cycle here is written with it. The amplitudes and durations are
+illustrative, not calibrated for the quantum system.
 """
 
 import cudaq_pulse as pulse

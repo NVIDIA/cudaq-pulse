@@ -11,10 +11,10 @@ Usage::
         drive_line = get_drive_line(qudit)
         drive(drive_line, gaussian(64, amplitude, 16.0))
 
-    dev = pulse.quantum_system("transmon_surface17")
-    rabi(dev.qudits[0], 0.5)            # compile on first call, then run
-    lowered = rabi.lower(dev.qudits[0], 0.5)
-    print(lowered.mlir())
+    qs = pulse.quantum_system("transmon_surface17")
+    rabi(qs.qudits[0], 0.5)            # compile on first call, then run
+    scheduled = rabi.lower(qs.qudits[0], 0.5)
+    print(scheduled.mlir())
 
 The kernel language (``drive``, ``gaussian``, ``get_drive_line``, ...) lives
 in ``cudaq_pulse.ops``; inside a ``@pulse.kernel`` its names are used bare.

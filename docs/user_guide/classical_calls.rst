@@ -36,9 +36,9 @@ implementation: simulation and emulation run it in place of the service.
    import cudaq_pulse as pulse
 
    @pulse.classical(
-       min_latency_ns=200,
-       nominal_latency_ns=300,
-       max_latency_ns=400,
+       min_latency_ns=3000,
+       nominal_latency_ns=3500,
+       max_latency_ns=4500,
        link="gpu",
    )
    def decode(syndrome: pulse.Bits) -> bool:
@@ -97,7 +97,7 @@ it); the function then has one version, named as declared:
 .. code-block:: python
    :class: fragment
 
-   @pulse.classical(max_latency_ns=900, link="gpu")
+   @pulse.classical(max_latency_ns=4500, link="gpu")
    def frozen(
        syndromes: pulse.Length[pulse.Bits, 24],
        counts: pulse.Length[list[int], 4],
@@ -141,11 +141,11 @@ that gives the result's shape:
    def table(index: pulse.Length[pulse.Bits, 3]) -> float:
        return float()
 
-   @pulse.classical.external(max_latency_ns=900, link="gpu")
+   @pulse.classical.external(max_latency_ns=4500, link="gpu")
    def decode(syndrome: pulse.Bits) -> tuple[float, pulse.Bits]:
        return (float(), syndrome[:2])
 
-   @pulse.classical.external(max_latency_ns=900, link="gpu")
+   @pulse.classical.external(max_latency_ns=4500, link="gpu")
    def echo(outcomes: pulse.Bits) -> pulse.Bits:
        return outcomes
 
@@ -155,7 +155,7 @@ states), an input or a slice of one. A ``None`` result needs no return.
 mypy and pyright check these bodies like any other. A list parameter of no
 stated length works as for ``pulse.classical``: ``decode`` called with 6 and
 with 8 bits is two versions, ``decode__6`` and ``decode__8``, each served
-under its own id and listed in the manifest with its layout. A quantum system that
+under its own id and listed in the manifest with its layout. A service that
 takes one size is declared with it, as ``table`` is. Calling an external
 function in Python is an error that says to give it a handler.
 
@@ -191,7 +191,7 @@ use the same functions as kernels.
 Links
 -----
 
-A link is a path to a classical quantum system with a cost: a fixed time per
+A link is a path to a classical service with a cost: a fixed time per
 request, a bandwidth, a feedback time from an answer arriving to a pulse
 using it, a number of requests it holds at once and the largest request it
 takes. They belong to the control system, by name:
@@ -230,7 +230,7 @@ In a kernel, ``fn.submit(...)`` sends the request and returns a future, and
        d = get_drive_line(q)
        r = get_readout_line(q)
        readout_time = 500 * pulse.ns
-       decode_deadline = 350 * pulse.ns
+       decode_deadline = 4 * pulse.us
        pi_time = 20 * pulse.ns
        pi_amplitude = 0.16  # square(pi_time, pi_amplitude) is a pi pulse
        m = readout(r, square(readout_time, 0.05))
@@ -246,7 +246,7 @@ In a kernel, ``fn.submit(...)`` sends the request and returns a future, and
 With ``timeout`` the result starts with a flag that is true when the
 answer came in time; the other values are zero when it did not, and the
 program takes its fallback. ``timeout`` is a duration like any other: an
-``int`` number of program cycles, or a time such as ``350 * pulse.ns``,
+``int`` number of program cycles, or a time such as ``4 * pulse.us``,
 which converts once when the kernel compiles. A future is taken in the loop iteration that
 submitted it. It may be passed to a kernel the program calls, or returned
 from one, and taken there; an answer taken inside a kernel called with its
@@ -347,7 +347,7 @@ it.
 .. code-block:: python
    :class: fragment
 
-   result = pulse.simulate(compiled, initial_state=plus, latency_branching=True)
+   result = pulse.simulate(scheduled, initial_state=plus, latency_branching=True)
    for branch in result.branches:
        print(branch.levels, branch.probability, branch.answers("decode"))
 
@@ -499,9 +499,9 @@ or id; a name the control system has no link for is an ``InvalidValueError``.
    from cudaq_pulse.classical import emulation
 
    run = emulation.emulate(
-       compiled,
+       scheduled,
        shots_count=200,
-       transport={"gpu": emulation.Transport(fixed_ns=120, jitter_ns=40)},
+       transport={"gpu": emulation.Transport(fixed_ns=1500, jitter_ns=300)},
        seed=1,
    )
    print(run.late_fraction, run.calls_per_second)
@@ -720,7 +720,7 @@ answer's length; under ASAP the excitation plays as early as it can, and
 the qubit also decays through the call's latency.
 
 A program that measures hundreds of times in one shot is simulated one
-path per shot: ``pulse.simulate(compiled, shots_count=n, branches="sampled")``. Idle
+path per shot: ``pulse.simulate(scheduled, shots_count=n, branches="sampled")``. Idle
 waits and square pulses are propagated exactly, so a shot's cost does not
 grow with its waits.
 

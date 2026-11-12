@@ -59,8 +59,8 @@ def kernel[**P](
             d = get_drive_line(q)
             drive(d, gaussian(40, amp, 10.0))
 
-        dev = cudaq_pulse.quantum_system("transmon_surface17")
-        rabi(dev.qudits[0], 0.3)
+        qs = cudaq_pulse.quantum_system("transmon_surface17")
+        rabi(qs.qudits[0], 0.3)
 
     A kernel called from another kernel is scheduled with it, unless it
     sets its own policy: with ``schedule="asap"`` or ``schedule="alap"`` it

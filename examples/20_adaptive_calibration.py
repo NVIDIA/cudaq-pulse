@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Adaptive calibration against a drifting quantum system.
 
-Builds on ``19_classical_calls.py``. On qubit 0 of the 17-qubit transmon
-twin (``transmon_surface17``), this example:
+Builds on ``19_classical_calls.py``. On qubit 0 of the 17-qubit
+``transmon_surface17`` quantum system, this example:
 
 1. Runs a frequency binary search inside one shot: after each Ramsey shot an
    estimator on the controller link updates a Gaussian posterior over the

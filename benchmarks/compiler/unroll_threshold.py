@@ -23,7 +23,7 @@ import time
 import cudaq_pulse as pulse
 from cudaq_pulse.quantum_systems import MicrowaveDrive, PhysicalQudit
 
-TARGET = pulse.quantum_system(
+QS = pulse.quantum_system(
     name="one",
     qudits={
         0: PhysicalQudit(
@@ -31,7 +31,7 @@ TARGET = pulse.quantum_system(
         )
     },
 )
-Q = TARGET.qudits[0]
+Q = QS.qudits[0]
 UNROLL_ALL = 10**9
 
 

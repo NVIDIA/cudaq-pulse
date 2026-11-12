@@ -174,10 +174,11 @@ cycle, each a tuple of (auxiliary, data) qudit pairs.
 ``python -m cudaq_pulse.doctor`` lists them and reports the process quantum system.
 
 The paper's J / 2 pi ~ 7 MHz is the ``|11> <-> |20>`` coupling of the CZ at
-each pair's interaction point (Lacroix, PhD thesis, ETH Zurich (2025), on the
-same quantum system); X2-D4's is measured, 7.4 MHz at 4.4 GHz (Hellings et al.,
+each pair's interaction point (N. Lacroix, PhD thesis, ETH Zurich (2025),
+Diss. ETH No. 31121, https://doi.org/10.3929/ethz-b-000740393, on the same
+device); X2-D4's is measured, 7.4 MHz at 4.4 GHz (Hellings et al.,
 arXiv:2503.04610). The simulated exchange comes from the
-quantum system's calibration (below): one device-wide charge coupling g_c, and the
+quantum system's calibration (below): one system-wide charge coupling g_c, and the
 exchange J_qq = g_c <0|n_a|1> <0|n_d|1> at the idle points is 5.67-6.08 MHz.
 The idle ZZ of the charge-coupled pairs is -4.5 to -7.3 kHz
 (``cudaq_pulse.quantum_systems.transmon.transmon_surface17_idle_zz_hz``), below the
@@ -221,7 +222,7 @@ flux quanta. Every value in the shipped file is published, digitized from a
 published figure, or fitted, and cites its source; fitted values also name
 the fitting method.
 
-The coupling is one device-wide charge coupling, g_c = 3.12 MHz
+The coupling is one system-wide charge coupling, g_c = 3.12 MHz
 (``coupling.charge_coupling_g_c.calibration_A``), fitted so that X2-D4's
 ``|11> <-> |20>`` coupling is Hellings et al.'s measured 7.4 MHz at 4.4 GHz.
 At each pair's own interaction point it gives J_2 = 7.3-9.6 MHz, the idle
@@ -237,7 +238,7 @@ no rotating-wave approximation, ideal flux line, no spectators) for a
 conditional phase of 180 degrees and the least leakage. Their mean
 duration, 2 t_p + t_mid, is 65.0 +- 4.8 ns against the published 68(7) ns.
 Each record names the coupling it was fitted with in ``coupling_used``,
-the device-wide g_c. Each record keeps its predicted phase and leakage and its ``flags``:
+the system-wide g_c. Each record keeps its predicted phase and leakage and its ``flags``:
 nine pairs leak at least 1e-4, a floor set by the 0.417 ns time grid, and
 Z2-D7 defaults to an unphysical B = 1.934 (its data qubit moves only 261
 MHz), with the in-range alternatives in ``alternatives``.

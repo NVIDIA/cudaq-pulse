@@ -49,7 +49,9 @@ cal = {
 }
 
 # Two links, by name: one to a GPU decoder, and the controller's own FPGA
-# logic. Functions name the link their requests travel on.
+# logic. Functions name the link their requests travel on. A GPU decoder
+# answers in a few microseconds (measured round trips are about 3-4 us), so
+# its budget is 4.5 us; the controller's logic answers within 200 ns.
 control_system = ControlSystem(
     links={
         "gpu": Link(fixed_ns=100, bytes_per_ns=10, feedback_ns=50),
@@ -61,7 +63,7 @@ control_system = ControlSystem(
 # ── 1. Real-time decoding with feed-forward ─────────────────────────────────
 
 
-@pulse.classical(min_latency_ns=200, nominal_latency_ns=300, max_latency_ns=400, link="gpu")
+@pulse.classical(min_latency_ns=3000, nominal_latency_ns=3500, max_latency_ns=4500, link="gpu")
 def decode(syndrome: pulse.Bits) -> bool:
     """A toy decoder: correct when the syndrome bit is set."""
     return bool(syndrome[0])
@@ -73,7 +75,7 @@ def decoded_feed_forward(qudit):
     drive_line = get_drive_line(qudit)
     readout_line = get_readout_line(qudit)
 
-    decode_deadline = 350 * pulse.ns
+    decode_deadline = 4 * pulse.us
     m = readout(readout_line, square(cal["readout_duration"], 0.05))
     in_time, correction = decode.submit([m]).result(timeout=decode_deadline)
     sync(drive_line, readout_line)
@@ -198,7 +200,7 @@ if __name__ == "__main__":
     ).lower(q)
     print_report(decoded)
     # Branch on whether the answer is in time, with the decoder's latency
-    # model (triangular over 200-400 ns, mode 300 ns): P(L <= 350) = 0.875.
+    # model (triangular over 3-4.5 us, mode 3.5 us): P(L <= 4 us) = 0.833.
     result = pulse.simulate(
         decoded, initial_state=[2**-0.5, 2**-0.5, 0.0], latency_branching=True, dt_ns=dt_ns
     )
@@ -235,11 +237,11 @@ if __name__ == "__main__":
         export(decoded, "decoded_feed_forward", directory)
         export(tracker, "track_t1", directory)
     # Run the decoder program in virtual time against its Python body, with
-    # 120 ns fixed delay and 40 ns mean jitter each way on the link.
+    # 1.5 us fixed delay and 300 ns mean jitter each way on the link.
     run = emulation.emulate(
         decoded,
         shots_count=200,
-        transport=emulation.Transport(fixed_ns=120, jitter_ns=40),
+        transport=emulation.Transport(fixed_ns=1500, jitter_ns=300),
         service_time="none",
         seed=1,
     )

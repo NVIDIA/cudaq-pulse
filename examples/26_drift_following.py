@@ -47,12 +47,12 @@ from cudaq_pulse.classical import calibration as cal
 from cudaq_pulse.quantum_systems import transmon_surface17
 from cudaq_pulse.quantum_systems.drift import OrnsteinUhlenbeck, ParameterDrift
 
-target = transmon_surface17()
+qs = transmon_surface17()
 qudit_index = 0
 pulse_duration = 40 * pulse.ns
 pulse_sigma = 10 * pulse.ns
 area_ns = (pulse_sigma / pulse.ns) * math.sqrt(2 * math.pi) * math.erf(2 / math.sqrt(2))
-half_pi_amplitude = math.pi / 2 / (area_ns * target.drive_amplitude_scale(qudit_index))
+half_pi_amplitude = math.pi / 2 / (area_ns * qs.drive_amplitude_scale(qudit_index))
 fringe_wait = 1 * pulse.us
 
 drift = OrnsteinUhlenbeck(200e3, correlation_time=10 * pulse.s)
@@ -78,9 +78,9 @@ def fringe_top(qudit):
 
 def calibrated_system(offset_hz):
     """The quantum system whose qudit frequency is the nominal one plus *offset_hz*."""
-    nominal = target.physical_qudits[qudit_index]
+    nominal = qs.physical_qudits[qudit_index]
     qudit = nominal.replace(frequency_hz=nominal.frequency_hz + offset_hz)
-    return target.replace(qudits={**target.physical_qudits, qudit_index: qudit})
+    return qs.replace(qudits={**qs.physical_qudits, qudit_index: qudit})
 
 
 # ── The background worker ────────────────────────────────────────────────────
@@ -138,7 +138,7 @@ def run_batch(program, reset_time, qpu):
 
 
 def follow(swapping, seed=5):
-    qpu = target.replace(
+    qpu = qs.replace(
         parameter_drift={qudit_index: ParameterDrift(frequency=drift, t1=None, amplitude=None)},
         parameter_drift_seed=seed,
     )
@@ -216,8 +216,8 @@ if __name__ == "__main__":
         f"on {settled_on.max():.4f}"
     )
     # The same system without drift: on resonance.
-    resonant = fringe_top.lower(target.qudits[qudit_index])
-    floor = run_batch(resonant, shot_time - resonant.duration, target)
+    resonant = fringe_top.lower(qs.qudits[qudit_index])
+    floor = run_batch(resonant, shot_time - resonant.duration, qs)
     print(f"  (on resonance the error is {floor:.4f}: decay and thermal population)")
     tracking = np.sqrt(np.mean((on[settled:, 0] - on[settled:, 1]) ** 2))
     print(f"  calibration tracking error (rms, settled): {tracking / 1e3:.1f} kHz")

@@ -607,7 +607,7 @@ def _qudit_calibration(qudit: PhysicalQudit, gate: Any, transition: Any) -> Any:
     if name == "cz":
         raise InvalidValueError(
             f"{_gate_label('cz')} is calibrated on a coupling, not on {_qudit_name(qudit)}: "
-            "dev.coupling(a, b).get_calibration(pulse.gates.CZ)"
+            "qs.coupling(a, b).get_calibration(pulse.gates.CZ)"
         )
     found: Any = qudit.calibrations.get(_calibration_key(name, at))
     if found is not None:

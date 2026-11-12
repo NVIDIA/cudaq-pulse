@@ -3,7 +3,7 @@
 """Compiling every branch of an adaptive experiment ahead of time.
 
 Builds on ``24_pipelined_calibration.py``. A check measures whether each of
-four qudits of the 17-qudit transmon twin (``transmon_surface17``) still has a
+four qudits of the 17-qudit ``transmon_surface17`` quantum system still has a
 good pi pulse. Which qudits fail decides the next calibration step: an
 amplitude sweep of amplified pi trains on exactly those qudits, with the
 others only checked. Four qudits give 15 possible next programs, plus "all

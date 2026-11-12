@@ -88,7 +88,7 @@ if __name__ == "__main__":
     backends.register("toy", ToyBackend)
     backend = backends.get("toy")
     qs = pulse.quantum_system(
-        name="toy-device",
+        name="toy-system",
         qudits={
             0: PhysicalQudit(
                 index=0, frequency_hz=5e9, anharmonicity_hz=-2e8, t1_us=0, t2_star_us=0

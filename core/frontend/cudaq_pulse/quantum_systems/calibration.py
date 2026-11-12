@@ -211,7 +211,7 @@ class Calibration:
         return tuple(self._couplings()["idle_exchange"])
 
     def charge_coupling_hz(self, pair: str) -> float:
-        """g_c of *pair* (``"X2-D4"``): the device-wide charge coupling."""
+        """g_c of *pair* (``"X2-D4"``): the system-wide charge coupling."""
         if pair not in self._couplings()["idle_exchange"]:
             raise NotFoundError(f"calibration {self.name!r} has no coupling for pair {pair!r}")
         couplings = self._couplings()

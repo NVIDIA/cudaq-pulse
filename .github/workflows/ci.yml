@@ -281,9 +281,10 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  # Kernels type-check clean in Pylance's and Cursor's default mode and in
-  # pyright's standard mode, with the package installed into a fresh
-  # environment and no configuration; a typo is still reported.
+  # Kernels type-check clean in Pylance's default mode (VS Code and
+  # VS Code-based editors) and in pyright's standard mode, with the package
+  # installed into a fresh environment and no configuration; a typo is still
+  # reported.
   editor-types:
     name: editor types (pyright, no configuration)
     if: ${{ !startsWith(github.ref, 'refs/heads/pull-request/') && !inputs.perf_baseline }}

@@ -248,7 +248,7 @@ def test_a_line_has_the_calibrations_of_its_kind():
         r = get_readout_line(q)
         r.get_calibration(pulse.gates.CZ)
 
-    with pytest.raises(pulse.CompilationError, match=r"dev.coupling\(a, b\)"):
+    with pytest.raises(pulse.CompilationError, match=r"qs.coupling\(a, b\)"):
         cz_on_a_line.lower(dev.qudits[0])
 
 

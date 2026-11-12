@@ -6,8 +6,8 @@ Usage: python tools/check-editor-types.py --python PYTHON [--pyright PYRIGHT]
 
 PYTHON is an environment with cudaq-pulse installed from a wheel or with
 ``cmake --install BUILD --component CudaqPulse``, as a user has it. From an
-empty project directory, pyright runs in "off" mode (the default of Pylance
-and Cursor) and in "standard" mode over every file of examples/ and the
+empty project directory, pyright runs in "off" mode (the default of Pylance,
+in VS Code and VS Code-based editors) and in "standard" mode over every file of examples/ and the
 Python code blocks of each docs page, joined in order into one module, and
 must report nothing. A probe with a typo and a misused operation must still
 report exactly those. Exits 1 listing every unexpected diagnostic.

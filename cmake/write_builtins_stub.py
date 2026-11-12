@@ -4,9 +4,9 @@
 
     python write_builtins_stub.py OPS_INIT_PY OUTPUT_PYI
 
-Pyright, Pylance, basedpyright and Cursor resolve a module named
-``__builtins__`` like any other import and add its names to the builtins of
-the user's files, so the stub at the root of site-packages makes the bare
+Pyright, Pylance and basedpyright (and so VS Code-based editors) resolve a
+module named ``__builtins__`` like any other import and add its names to the
+builtins of the user's files, so the stub at the root of site-packages makes the bare
 DSL names inside ``@pulse.kernel`` bodies defined and typed. It re-exports
 exactly ``cudaq_pulse.ops.__all__``, read from the source without importing
 the package.
@@ -24,9 +24,9 @@ HEADER = '''\
 """The cudaq-pulse kernel language, as builtins for type checkers.
 
 Generated from cudaq_pulse.ops.__all__ when cudaq-pulse is built; do not edit.
-Pyright, Pylance, basedpyright and Cursor read it from site-packages, so the
-operations used by bare name inside @pulse.kernel functions are defined and
-typed with no configuration. Python never imports it.
+Pyright, Pylance and basedpyright (and so VS Code-based editors) read it from
+site-packages, so the operations used by bare name inside @pulse.kernel
+functions are defined and typed with no configuration. Python never imports it.
 """
 
 '''

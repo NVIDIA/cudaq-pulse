@@ -133,8 +133,9 @@ GPU simulation via NVIDIA cuDensityMat is a preview capability; see
 IDE Setup
 ---------
 
-None is needed. Pylance, Cursor, pyright and basedpyright know the
-operations used by bare name inside ``@pulse.kernel`` functions, with
+None is needed. Pylance (in VS Code and VS Code-based editors), pyright and
+basedpyright know the operations used by bare name inside ``@pulse.kernel``
+functions, with
 completion, hover documentation and checked arguments, as soon as
 cudaq-pulse is installed. See :doc:`user_guide/editors`.
 

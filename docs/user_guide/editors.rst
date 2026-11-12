@@ -20,7 +20,7 @@ defined and typed, with completion, hover documentation and checked
 arguments, and nothing to set up:
 
 - Pylance (VS Code), in its default mode and every other mode
-- Cursor's Python language server
+- the Python language servers of other VS Code-based editors
 - pyright
 - basedpyright
 

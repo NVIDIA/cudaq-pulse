@@ -4,6 +4,12 @@
 
 Demonstrates cross-resonance driving: the control qubit's drive line
 is modulated at the target qubit's frequency (via the target's tone).
+
+Why cross-resonance on ``transmon_surface17``: that quantum system's own
+two-qubit gate is a flux-pulsed CZ, and flux lines are not modeled yet (its
+``FluxCZ`` calibrations do not play). Cross-resonance needs only drive lines,
+so it shows a two-qubit pulse sequence on the shipped quantum system. The
+amplitudes and durations here are illustrative, not calibrated for it.
 """
 
 import cudaq_pulse as pulse

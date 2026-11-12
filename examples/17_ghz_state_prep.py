@@ -8,6 +8,12 @@ Creates the N-qubit GHZ state |000...0> + |111...1> using:
 
 Demonstrates multi-qubit pulse programming with qudit handles, sync
 barriers, and the cross-resonance gate primitive.
+
+Why cross-resonance on ``transmon_surface17``: that quantum system's own
+two-qubit gate is a flux-pulsed CZ, and flux lines are not modeled yet (its
+``FluxCZ`` calibrations do not play). Cross-resonance needs only drive lines,
+so it shows a CNOT chain as pulses on the shipped quantum system. The
+amplitudes and durations here are illustrative, not calibrated for it.
 """
 
 import cudaq_pulse as pulse

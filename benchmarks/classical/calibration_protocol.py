@@ -38,7 +38,7 @@ sampled path per shot of the protocol:
 - the frequency binary search, 15 shots without reset,
   from a 1 MHz prior over detunings drawn from it;
 - the calibration chain of Marciniak et al. (2026) on the
-  17-qubit transmon twin's qubit 0 at T1 = 18.3 us; the paper reports T1 =
+  transmon_surface17 quantum system's qubit 0 at T1 = 18.3 us; the paper reports T1 =
   18.3 +- 4.7 us from the decay estimator;
 - for each step on its own: compile time, simulation time per protocol
   shot and per step, the step's time to decision on the quantum system's timeline,

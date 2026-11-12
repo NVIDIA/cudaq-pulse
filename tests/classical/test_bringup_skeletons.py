@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Skeletons of fast bring-up experiments, with toy estimators, each on a
-generic transmon and on the 17-qubit transmon twin.
+generic transmon and on the 17-qubit transmon_surface17 quantum system.
 
 Each skeleton is expressed, scheduled, simulated and, where it calls
 estimators while the QPU runs, exported for emulation. They check the

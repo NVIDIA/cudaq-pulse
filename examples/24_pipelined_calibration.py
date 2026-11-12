@@ -3,8 +3,8 @@
 """Closed-loop calibration with a compile pipeline in worker processes.
 
 Builds on ``20_adaptive_calibration.py``. An optimizer tunes the amplitude
-and the detuning of a pi pulse on one qudit of the 17-qudit transmon twin
-(``transmon_surface17``), measured through a train of 9 pi pulses, which adds up
+and the detuning of a pi pulse on one qudit of the 17-qudit
+``transmon_surface17`` quantum system, measured through a train of 9 pi pulses, which adds up
 both errors. Each batch runs a few of its suggestions; their results update
 it and it suggests the next batch. Two loops are compared:
 

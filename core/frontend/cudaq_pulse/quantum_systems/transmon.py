@@ -66,7 +66,7 @@ def transmon_surface17(calibration: Any = "transmon_surface17") -> QuantumSystem
     ``|11> <-> |20>`` coupling of the CZ at each pair's interaction point (7.4
     MHz measured on X2-D4 at 4.4 GHz, Hellings et al., arXiv:2503.04610).
     *calibration* (a ``Calibration``, the name of a shipped one, or None)
-    supplies the device-wide charge coupling g_c (fitted to the X2-D4
+    supplies the system-wide charge coupling g_c (fitted to the X2-D4
     measurement, 3.12 MHz in ``transmon_surface17``), and each coupling is the
     exchange J_qq = g_c ``<0|n_a|1> <0|n_d|1>`` at the qubits' idle points:
     5.67-6.08 MHz with the shipped ``transmon_surface17``. With

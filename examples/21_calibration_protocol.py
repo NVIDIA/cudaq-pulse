@@ -53,7 +53,7 @@ Compile with ALAP scheduling (the default): the pulse before each variable
 wait then ends where the wait starts, so the qubit decays for exactly the
 wait the estimator chose, not also through the call's latency.
 
-The quantum system is qubit 0 of the 17-qubit transmon twin with its T1 set
+The quantum system is qubit 0 of ``transmon_surface17`` with its T1 set
 to 18.3 us (the analytical decay estimate reported by Marciniak et al.),
 detuned by 60 kHz from the drive and with a 1.5% drive-amplitude error.
 
@@ -73,7 +73,7 @@ from cudaq_pulse.quantum_systems import transmon_surface17
 
 clock_ghz = 2.0  # the program clock: the estimators count waits and T1 in its cycles
 pulse_time = 20 * pulse.ns  # square pulses
-# square(pulse_time, nominal_pi_amplitude) is a pi pulse on the twin.
+# square(pulse_time, nominal_pi_amplitude) is a pi pulse on transmon_surface17.
 nominal_pi_amplitude = math.pi / 20
 readout_time = 300 * pulse.ns
 readout_amplitude = 0.05
@@ -445,7 +445,7 @@ def binary_search(q, rounds: int):
 
 
 def chain_system(qs, t1_us=18.3, offset_hz=60e3, amplitude_scale=1.015):
-    """Qubit 0 of *target* as the chain's quantum system: its T1, a detuning from
+    """Qubit 0 of *qs* as the chain's quantum system: its T1, a detuning from
     the drive, a drive-amplitude error and small readout errors."""
     qudit = qs.physical_qudits[0]
     scale = qs.drive_amplitude_scale(0) * amplitude_scale

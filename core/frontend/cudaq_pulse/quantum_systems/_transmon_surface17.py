@@ -135,9 +135,10 @@ _EDGES = (
 
 # Methods A (p. 8): J / 2 pi ~ 7 MHz between auxiliary and data qubits at the
 # interaction point, for the quantum system as a whole. That value is the
-# |11> <-> |20> matrix element of the CZ, about sqrt(2) J_qq (C. Lacroix, PhD
-# thesis, ETH Zurich (2025), Sec. 3.2, on the same quantum system). A calibration
-# fits the device-wide charge coupling to the X2-D4 measurement below.
+# |11> <-> |20> matrix element of the CZ, about sqrt(2) J_qq (N. Lacroix, PhD
+# thesis, ETH Zurich (2025), doi:10.3929/ethz-b-000740393, Secs. 2.2.3 and 3.3.1, on the same
+# device). A calibration fits the system-wide charge coupling to the X2-D4
+# measurement below.
 COUPLING_11_20_HZ = 7.0e6
 
 # Pairs with a measured |11> <-> |20> coupling J_2: Hellings et al.,

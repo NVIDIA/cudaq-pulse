@@ -521,7 +521,7 @@ class QuantumSystem:
 
     def qudit(self, label: str) -> Qudit:
         """The handle of the qudit labelled *label* (``PhysicalQudit.label``), as in
-        ``dev.qudit("D1")``; a ``NotFoundError`` names the labels there are."""
+        ``qs.qudit("D1")``; a ``NotFoundError`` names the labels there are."""
         qudits = self._description.qudits
         for handle in self.qudits:
             if qudits[handle.index].label == label:
@@ -542,7 +542,7 @@ class QuantumSystem:
 
     def coupling(self, a: Qudit, b: Qudit) -> Coupling:
         """The coupling of the quantum system's qudits *a* and *b* (handles, in either
-        order), as calibrated: ``dev.coupling(a, b).get_calibration(
+        order), as calibrated: ``qs.coupling(a, b).get_calibration(
         pulse.gates.CZ)`` is its CZ. A ``NotFoundError`` names the qudits *a*
         couples to."""
         for handle in (a, b):
@@ -568,7 +568,7 @@ class QuantumSystem:
         if (name == "readout") is not readout:
             line, other = ("readout", "drive") if readout else ("drive", "readout")
             if name == "cz":
-                fix = "it is a coupling's: dev.coupling(a, b).get_calibration(pulse.gates.CZ)"
+                fix = "it is a coupling's: qs.coupling(a, b).get_calibration(pulse.gates.CZ)"
             else:
                 fix = (
                     f"it is the {other} line's: "

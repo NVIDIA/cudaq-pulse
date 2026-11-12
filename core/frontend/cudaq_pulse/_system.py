@@ -7,7 +7,7 @@ reads out (``drive_lines``, ``readout_lines``: carrier indices of the
 quantum system), its latency to its peers, what it supports
 (``Capability``), what it computes (``Processor``) and the backend that
 lowers its programs. A ``ControlSystem`` is the controllers of one QPU, the links to
-the classical quantum systems beside them (by name) and the limits that apply to
+the classical services beside them (by name) and the limits that apply to
 all of them::
 
     controllers = [pulse.Controller(drive_lines=range(8), readout_lines=range(8))]
@@ -987,7 +987,7 @@ class ControlSystem:
     A system without controllers states only its links, lanes, reference
     clock and line delays, and nothing checks what its controllers can
     play.
-    ``links`` are the links to classical quantum systems, by name (``"feedback"``,
+    ``links`` are the links to classical services, by name (``"feedback"``,
     ``"controller"``); a classical function's ``link=`` names one, or gives
     its id: the links' positions, so the first is link 0, the default. A
     link id a program uses that is not listed gets ``Link()``.

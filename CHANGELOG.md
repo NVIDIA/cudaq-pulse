@@ -305,10 +305,10 @@ behavior may change in any 0.x release.
   results. A number the arms of an `if` on a measurement set differently
   (`if m: amp = 0.3` / `else: amp = 0.1`) holds the value of the arm that
   ran, as one `arith.select` on the measurement, in `elif` chains, nested
-  ifs and rolled loops too. Lowering keeps the select where the target
+  ifs and rolled loops too. Lowering keeps the select where the quantum system
   takes that amplitude, phase or frequency at run time, so every use reads
   the one value; otherwise, and for durations and waveform shapes, each op
-  that reads it runs in both arms of an `if` on the measurement. No target
+  that reads it runs in both arms of an `if` on the measurement. No quantum system
   takes one at run time yet. Either way the ops wait for the measurement
   and schedule and simulate alike. A name assigned in only one arm, with no
   value before the
@@ -404,9 +404,9 @@ behavior may change in any 0.x release.
   (sampled once per clock cycle).
 - **Editor support with no configuration.** The wheel installs
   `__builtins__.pyi` at the root of site-packages, generated at build time
-  from `cudaq_pulse.ops.__all__`, so Pylance, Cursor, pyright and
-  basedpyright know the operations used by bare name inside kernels: no
-  undefined-name warnings, with completion, hover documentation and checked
+  from `cudaq_pulse.ops.__all__`, so Pylance (in VS Code and VS Code-based
+  editors), pyright and basedpyright know the operations used by bare name
+  inside kernels: no undefined-name warnings, with completion, hover documentation and checked
   arguments. The names are builtins in the whole environment, outside
   kernels too; see the new Editor Support page. The getting-started advice
   to add a `pyrightconfig.json` is gone.

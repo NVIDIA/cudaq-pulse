@@ -190,8 +190,8 @@ def setup_editor(
         print(line, file=out)
 
     write(
-        "Pylance, Cursor, pyright and basedpyright need no setup: cudaq-pulse "
-        "installs __builtins__.pyi for them."
+        "Pylance (VS Code and VS Code-based editors), pyright and basedpyright need "
+        "no setup: cudaq-pulse installs __builtins__.pyi for them."
     )
     changes: list[Change] = []
     configured = False

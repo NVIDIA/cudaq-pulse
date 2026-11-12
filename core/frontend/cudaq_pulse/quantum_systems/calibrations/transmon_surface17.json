@@ -10,7 +10,7 @@
   "2022-a": "the other cooldown of the same device marked (a) in Krinner22 Tab. I; also Fig. 10 (drive crosstalk)",
   "2022-dephasing-run": "Krinner22 App. E3 measurement-induced dephasing run (X1 parked at 4.429 GHz); cooldown not stated",
   "2025-flux-tuning": "the cooldown of Hellings 2025 (X2 tuning curve, flux-line model, X2 CZ at 4.4 GHz); same device",
-  "2025-lower-sweet-spot": "the later cooldown of Remm 2025 Tab. I (X1 at its lower sweet spot); same device",
+  "2025-lower-sweet-spot": "the later cooldown of Remm et al., Phys. Rev. Research 8, 013044 (2026), arXiv:2502.17722, App. D Tab. I (X1 at its lower sweet spot); same device",
   "device": "cooldown-independent (design, wiring, circuit geometry)"
  },
  "coupling": {
@@ -20,7 +20,7 @@
     "value": 7000000.0,
     "units": "Hz",
     "kind": "published",
-    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121, doi:10.3929/ethz-b-000740393, §2.2.3 and §3.3.1 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
     "uncertainty": {
      "note": "'~' in source; device mean"
     },
@@ -1365,7 +1365,7 @@
     "value": 4429000000.0,
     "units": "Hz",
     "kind": "published",
-    "source": "Remm 2025 Tab. I",
+    "source": "Remm et al., Phys. Rev. Research 8, 013044 (2026), arXiv:2502.17722, App. D Tab. I",
     "uncertainty": {
      "sigma": 500000.0,
      "units": "Hz",
@@ -2140,7 +2140,7 @@
     "value": 4,
     "units": "1",
     "kind": "published",
-    "source": "Hellings et al., arXiv:2503.04610 (2025) §IV; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.3 ('N = 4 typical')",
+    "source": "Hellings et al., arXiv:2503.04610 (2025) §IV; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121, doi:10.3929/ethz-b-000740393, §3.3.1 ('typically N = 4')",
     "uncertainty": null,
     "cooldown": "2025-flux-tuning"
    },
@@ -2209,7 +2209,7 @@
  },
  "cz": {
   "knobs": {
-   "description": "Sudden-net-zero CZ (Negirneac et al., PRL 126, 220502 (2021)) as used on this device (N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.3.2; Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 App. C1): two plateaus of duration t_p, sign-flipped in flux (same frequency), joined by a transition section of duration t_mid at amplitude B; Gaussian-filtered edges sigma = 0.5 ns (Hellings et al., arXiv:2503.04610 (2025) App. J). Knobs: duration, transition amplitude, amplitude offset.",
+   "description": "Sudden-net-zero CZ (Negirneac et al., PRL 126, 220502 (2021)) as used on this device (N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121, doi:10.3929/ethz-b-000740393, §2.2.3 and §3.3; Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 App. C1): two plateaus of duration t_p, sign-flipped in flux (same frequency), joined by a transition section of duration t_mid at amplitude B; Gaussian-filtered edges sigma = 0.5 ns (Hellings et al., arXiv:2503.04610 (2025) App. J). Knobs: duration, transition amplitude, amplitude offset.",
    "units_note": "amplitude offset is expressed as a detuning in Hz; B is a fraction of the plateau flux amplitude, meaningful because d is known for both qubits; Calibration.flux_for_detuning and detuning_for_flux convert detunings to flux quanta for qubits with flux_quanta_capable",
    "published": {
     "flux_pulse_mean": {

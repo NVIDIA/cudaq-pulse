@@ -1347,7 +1347,7 @@ class _Tones(Mapping[tuple[int, int], IRValue]):
                 f"the carrier each call binds; line.tones has only the default "
                 f"{self._default!r}, line.tone. Pass the frequency of {transition!r} in as a "
                 "float parameter, e.g. f12_hz: float, called with "
-                "dev.transition_freq[q.logical, 1, 2], and play at it with "
+                "qs.transition_freq[q.logical, 1, 2], and play at it with "
                 "set_frequency(line.tone, f12_hz)"
             )
         if self._held.key[1] == "get_readout_line":

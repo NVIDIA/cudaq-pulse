@@ -307,11 +307,11 @@ the branch that ran:
            amp = 0.0
        drive(drive_line, square(40, amp))
 
-The number is one value the measurement selects. On a target that takes it
+The number is one value the measurement selects. On a quantum system that takes it
 at run time (an amplitude, a phase or a frequency), every op given it, or a
 waveform made from it, reads that value. Otherwise, and always for a
 duration or a waveform's shape, each such op runs in each branch with that
-branch's value, as if it were written in both. No target takes a selected
+branch's value, as if it were written in both. No quantum system takes a selected
 value at run time yet. Either way the op waits for the measurement, and
 the program schedules and simulates the same. A name assigned in only one branch, with no value
 before the ``if``, has none after it: reading it raises a
