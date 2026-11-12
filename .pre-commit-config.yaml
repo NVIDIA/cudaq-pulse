@@ -54,6 +54,11 @@ repos:
         entry: python3 tools/check-classical-remnants.py
         language: system
         files: \.(py|pyi|md|rst|txt|ipynb|td|h)$
+      - id: removed-names
+        name: docs and examples use no removed public names
+        entry: python3 tools/check-removed-names.py
+        language: system
+        files: ^(README\.md|(docs|examples)/.*\.(py|pyi|md|rst|txt|ipynb|svg))$
       - id: workflow-pins
         name: actions and images pinned by commit or digest
         entry: python3 tools/check-workflow-pins.py

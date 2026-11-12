@@ -276,6 +276,33 @@ def test_classical_remnants(tmp_path):
     assert [error.split(":")[1] for error in check(notebook)] == ["2"]
 
 
+def test_removed_names(tmp_path):
+    tool = _load("check-removed-names")
+    for page in ("user_guide/quantum_systems.rst", "user_guide/classical_calls.rst"):
+        assert tool.check(_TOOLS.parent / "docs" / page) == []
+    # Assembled at run time, as the docs must not spell them.
+    bad = [
+        "qs = pulse." + "device('transmon_" + "17q')",
+        "from cudaq_pulse." + "targets import Qubit",
+        "h = qs.qudit_" + "handles[0]",
+        "program = scheduled.export_" + "controller()",
+        "result = pulse.simulate(k, " + "shots=100)",
+    ]
+    good = [
+        "qs = pulse.quantum_system('transmon_surface17')",
+        "h = qs.qudits[0]",
+        "result = pulse.simulate(k, shots_count=100)",
+        "a transmon_" + "17q-style name  # rename-ok",
+    ]
+    path = tmp_path / "f.rst"
+    path.write_text("\n".join(bad + good) + "\n")
+    errors = tool.check(path)
+    assert [int(error.split(":")[1]) for error in errors] == [1, 1, 2, 3, 4, 5]
+    assert any("use transmon_surface17" in error for error in errors)
+    assert tool.covered(Path("docs/index.rst")) and tool.covered(Path("README.md"))
+    assert not tool.covered(Path("tests/test_x.py"))
+
+
 _SPDX = (
     "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. "
     "All rights reserved.",
