@@ -1,9 +1,21 @@
 # CUDA-Q pulse
 
-CUDA-Q pulse (`cudaq-pulse`) is a pulse-level quantum programming research
-package built on MLIR. It provides a Python kernel DSL, pulse and operator
-dialects, compiler passes, and an experimental GPU execution path on NVIDIA
-cuDensityMat.
+CUDA-Q pulse (`cudaq-pulse`) puts the pulses, the measurements and the
+classical calls between them in one Python program, compiled to open MLIR,
+then simulated, emulated, or exported to your controller. One compiled
+program, three destinations:
+
+- **Simulate** it with `pulse.simulate`: a NumPy reference on any machine, or
+  NVIDIA cuDensityMat on a GPU (a preview), over the measurement outcomes,
+  with the classical functions' Python bodies standing in for their services.
+- **Emulate** it with `classical.emulation.emulate`: the program runs in
+  virtual time against those services, with the request and answer bytes a
+  controller would send, and reports the answers that come late.
+- **Export** it with `export_to_controller()` to a controller backend, for a
+  control system described as data and checked when the program compiles.
+
+Underneath are a Python kernel DSL, the Pulse, Classical, QOp and
+CuDensityMat MLIR dialects, and their compiler passes.
 
 **Warning:** CUDA-Q pulse is **research-preview software**. It is not
 production software and is not a product-supported CUDA-Q feature. Its Python

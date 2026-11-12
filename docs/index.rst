@@ -5,14 +5,20 @@
 cudaq-pulse
 ===========
 
-**cudaq-pulse** is a pulse-level MLIR dialect and programming model for
-quantum control. Its Python DSL drives an MLIR-based compiler pipeline:
+**cudaq-pulse** puts the pulses, the measurements and the classical calls
+between them in one Python program, compiled to open MLIR, then simulated,
+emulated, or exported to your controller:
 
-1. Write a pulse kernel with the ``@pulse.kernel`` DSL.
-2. Call it, or compile it to Pulse-dialect MLIR with ``kernel.lower()`` or
-   ``pulse.compile()``.
-3. Inspect the schedule, or extend the pipeline with custom passes.
-4. Simulate it with the NumPy reference on any machine, or on an NVIDIA GPU.
+1. Write a pulse kernel with the ``@pulse.kernel`` DSL, calling classical
+   functions (``@pulse.classical``) where it needs their answers.
+2. Compile it with ``pulse.compile()`` and schedule it with ``lower()``;
+   inspect the schedule and the MLIR, or extend the pipeline with custom
+   passes.
+3. Send the one compiled program to any of three destinations: simulate it
+   (``pulse.simulate``, with the NumPy reference on any machine or on an
+   NVIDIA GPU), emulate it in virtual time against its classical services
+   (``classical.emulation.emulate``), or export it to a controller backend
+   (``export_to_controller()``).
 
 .. warning::
 
