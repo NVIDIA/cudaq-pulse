@@ -986,6 +986,9 @@ class PackedIRBuilder:
             if table is not None:
                 key, fixed_by = _fixed_key(function, table)
         if own and key in _RESERVED_KEYS:
+            route = getattr(function.implementation, "_route", None)
+            if route is not None:  # a CUDA-Q QEC function submitted with no arguments
+                route(())
             raise CompilationError(
                 f"{function.name} is dispatch key {key:#x}, which {_RESERVED_KEYS[key]} uses"
                 " for its decoder messages; rename it"

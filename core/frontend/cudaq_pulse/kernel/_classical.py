@@ -190,6 +190,10 @@ def submit(
     if len(args) != arity:
         # A template has args == (): its calls give the list lengths.
         plan = function._plan
+        if plan is None and getattr(function.implementation, "_route", None) is not None:
+            # A CUDA-Q QEC function: its arguments pick the version sent.
+            version, wired = function.implementation._route(args)  # type: ignore[union-attr]
+            return submit(builder, version, wired, None)
         if plan is None or len(args) != len(plan):
             arity = arity if plan is None else len(plan)
             raise CompilationError(

@@ -122,7 +122,8 @@ description's ``dispatch_keys``; every function on its links must be
 listed, with a fixed size, and the manifest marks each such entry with
 ``"dispatch_key_fixed_by"``. Two names of one program that hash to one key
 on one link are a compile error that asks to rename one; the keys of
-``classical.qec`` are reserved for its decoder messages.
+CUDA-Q QEC's decoding-server messages are reserved for its decoder calls
+(below).
 
 The hints are read when a program that calls the function is first
 compiled, and a mistake in them is raised there, naming the function. The
@@ -392,8 +393,8 @@ was compiled for, keeping the program as compiled: its qudits' frequencies,
 T1, T2, drive strength and readout parameters apply. That is how a drifting
 quantum system is simulated (see below).
 
-Native and QEC handlers
------------------------
+Native handlers
+---------------
 
 ``cudaq_pulse.classical.wire`` encodes requests and answers in the CUDA-Q
 real-time format: a 24-byte header, then the arguments packed by type.
@@ -402,16 +403,71 @@ the CUDA-Q host-call signature, ``void handler(const void *request, void
 *answer, size_t slot_bytes)``, so the same compiled handler serves
 simulation, emulation and a real dispatcher.
 
-``cudaq_pulse.classical.qec.Decoder`` declares the calls of a CUDA-QX
-real-time decoder (enqueue syndromes, get corrections, reset) with their wire
-ids, so a program built with it talks to a CUDA-QX decoding server
-unchanged. Its Python ``decode`` function runs with the state such a server
-keeps: a get decodes what was enqueued since the last decode or reset, and
-with nothing to decode answers NOT_READY, which a wait with a timeout takes
-as late. Each path keeps its own state in simulation, as does each shot in
-emulation; ``serve_udp`` keeps one per decoder. Its ``min_latency_ns``,
-``nominal_latency_ns``, ``max_latency_ns`` and ``timeout_ns`` are those of
-``get_corrections``, and work as a classical function's do.
+.. _cudaq-qec-decoders:
+
+CUDA-Q QEC decoders
+-------------------
+
+Decoders are defined in CUDA-Q QEC (``cudaq_qec``), and a pulse program
+calls them as a CUDA-Q kernel does: ``pulse.classical`` takes CUDA-Q QEC's
+real-time decoding functions themselves, with a link and a latency budget.
+A configured decoder answers in simulation and emulation, and on hardware
+the requests are the messages of CUDA-Q QEC's decoding server.
+
+.. code-block:: python
+   :class: fragment
+
+   import cudaq_qec
+
+   cudaq_qec.configure_decoders_from_file("decoders.yaml")   # decoder 0
+
+   enqueue_syndromes = pulse.classical(cudaq_qec.qec.enqueue_syndromes, link="gpu")
+   get_corrections = pulse.classical(cudaq_qec.qec.get_corrections, link="gpu",
+                                     max_latency_ns=75_000)
+
+   @pulse.kernel
+   def qec_round(data, ancillas, deadline_ns: int):
+       s0 = readout(get_readout_line(ancillas[0]), square(400 * pulse.ns, 0.05))
+       s1 = readout(get_readout_line(ancillas[1]), square(400 * pulse.ns, 0.05))
+       enqueue_syndromes.submit(0, [s0, s1], 0)       # decoder 0, round 0
+       in_time, fix = get_corrections.submit(0, 3, False).result(timeout=deadline_ns * pulse.ns)
+       ...
+
+The calls take CUDA-Q QEC's arguments:
+``enqueue_syndromes(decoder_id, syndromes, tag)`` sends one round's
+measurements and answers nothing; ``get_corrections(decoder_id,
+return_size, reset)`` answers ``return_size`` correction bits, and with
+``reset`` clears them once read; ``reset_decoder(decoder_id)`` starts the
+decoder over. The decoder id and ``return_size`` must be known when the
+kernel is compiled (a number, or a kernel argument given to ``lower``):
+each message's dispatch key is shared by all decoders, which the server
+tells apart by the id, and every pair is one version of the call
+(``get_corrections__0_3``: decoder 0, three bits). The calls without an
+answer need no ``max_latency_ns`` (it is 0 unless given); the other
+options work as a classical function's do. ``cudaq_qec`` is imported only
+when such a call has to be answered, and cudaq-pulse takes these functions
+from cudaq-qec 0.6.0 to 0.8.1.
+
+Simulation and emulation answer with the decoders the process configured
+(``cudaq_qec.configure_decoders``, ``configure_decoders_from_file`` or
+``configure_decoders_from_str``), through CUDA-Q QEC's simulation library,
+as a CUDA-Q kernel on a simulator does: each enqueued round is decoded and
+the corrections accumulate until a reset. One difference: where nothing was
+enqueued since the decoder was reset (by ``reset_decoder`` or a get with
+``reset``), the get answers NOT_READY, as the decoding server does, rather
+than the library's zeros; a wait with a timeout takes it as late. Each path
+in simulation, and each shot in emulation, starts from a reset decoder and
+replays its own earlier calls of it; ``serve_udp`` and a call outside a
+kernel use the library's one state. A handler given for a call
+(``handlers={"get_corrections": fn}``) answers instead, taking the
+message's fields: ``(decoder_id, tag, syndrome_mapping_id, count,
+syndromes)``, ``(decoder_id, return_size, reset)`` or ``(decoder_id,)``.
+
+CUDA-Q QEC installs on Linux (x86_64 and aarch64) with Python 3.11 to 3.13;
+``nv-qldpc-decoder`` also needs an NVIDIA GPU. Installed next to
+``cudaq-pulse[cu12]``, pip settles on cudaq-qec 0.6.0, the release whose
+CUDA-Q brings the cuDensityMat the GPU extra pins; next to plain
+``cudaq-pulse`` it takes the latest.
 
 Emulation
 ---------

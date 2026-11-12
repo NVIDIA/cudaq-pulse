@@ -725,18 +725,14 @@ def test_two_names_that_hash_alike_are_an_error():
 
 
 def test_a_name_that_hashes_to_a_reserved_key_is_an_error():
-    with pytest.raises(pulse.CompilationError, match="which cudaq_pulse.classical.qec uses"):
+    with pytest.raises(pulse.CompilationError, match="which CUDA-Q QEC's decoding server uses"):
         _program(_one("enqueue_syndromes", link=0))
 
 
 def test_the_reserved_keys_are_the_keys_of_the_decoder_protocol():
-    from cudaq_pulse.classical import _RESERVED_KEYS, qec
+    from cudaq_pulse.classical import _RESERVED_KEYS, _cudaqx
 
-    assert set(_RESERVED_KEYS) == {
-        qec.ENQUEUE_SYNDROMES_ID,
-        qec.GET_CORRECTIONS_ID,
-        qec.RESET_DECODER_ID,
-    }
+    assert set(_RESERVED_KEYS) == {m.key for m in _cudaqx._MESSAGES.values()}
 
 
 def test_a_template_on_a_processor_that_fixes_keys_needs_a_length():

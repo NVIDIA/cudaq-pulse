@@ -274,11 +274,13 @@ def dispatch_key(name: str) -> int:
 
 # Keys built-in protocols send, by the protocol: a user function given one
 # (by its name's hash or a controller) is a compile error. These are the
-# dispatch_key of enqueue_syndromes, get_corrections and reset_decoder.
+# dispatch_key of enqueue_syndromes, get_corrections, get_logical_measurements
+# and reset_decoder, which pulse.classical(cudaq_qec.qec.<name>) sends.
 _RESERVED_KEYS = {
-    0x7ED8BE82: "cudaq_pulse.classical.qec",
-    0x882D5BA1: "cudaq_pulse.classical.qec",
-    0x977A59CF: "cudaq_pulse.classical.qec",
+    0x7ED8BE82: "CUDA-Q QEC's decoding server",
+    0x882D5BA1: "CUDA-Q QEC's decoding server",
+    0x3056A149: "CUDA-Q QEC's decoding server",
+    0x977A59CF: "CUDA-Q QEC's decoding server",
 }
 
 #: A CUDA-QX decoder's status for corrections it has not decoded yet.
@@ -820,8 +822,8 @@ class ClassicalFunction[**P, R]:
         # The key it is dispatched by unless its controller fixes one: its
         # compiled name's hash, or a built-in protocol's key.
         self._dispatch_key = dispatch_key(name) if _dispatch_key is None else _dispatch_key
-        # For a built-in that shares its key (QEC's decoder calls): the first
-        # argument that picks it out, CUDA-QX's decoder id. None for a
+        # For a built-in that shares its key (CUDA-Q QEC's decoder calls): the
+        # first argument that picks it out, the decoder id. None for a
         # function with a key of its own.
         self._key_route = _key_route
         # For an on-device random source: how many equally likely values.
@@ -880,6 +882,9 @@ class ClassicalFunction[**P, R]:
                 f' pulse.simulate(..., handlers={{"{self.base_name}": fn}})'
             )
         if kwargs or len(args) != len(self.args):
+            if getattr(self.implementation, "_route", None) is not None:
+                # A CUDA-Q QEC function: its arguments pick the version.
+                return self.implementation(*args, **kwargs)
             # A template has args == (): its calls give the list lengths.
             expected = len(self.args) if self._plan is None else len(self._plan)
             if kwargs or len(args) != expected:
@@ -1315,6 +1320,11 @@ def function(implementation: Callable[..., Any] | None = None, /, **options: Any
 
 
 def _declare(fn: Callable[..., Any], options: dict[str, Any]) -> ClassicalFunction[..., Any]:
+    if fn.__class__ is not types.FunctionType:
+        from . import _cudaqx
+
+        if _cudaqx.is_cudaq_qec(fn):
+            return _cudaqx.declare(fn, options)
     if not isinstance(fn, types.FunctionType) or fn.__name__ == "<lambda>":
         raise InvalidTypeError(
             f"@pulse.classical takes a function defined with def, whose type hints say what it"
@@ -1443,7 +1453,6 @@ class ClassicalDecorator(_Declare, Protocol):
     calibration: types.ModuleType
     emulation: types.ModuleType
     loop: types.ModuleType
-    qec: types.ModuleType
     wire: types.ModuleType
 
 

@@ -28,7 +28,6 @@ PUBLIC_MODULES = [
     "cudaq_pulse.backends",
     "cudaq_pulse.classical",
     "cudaq_pulse.classical.wire",
-    "cudaq_pulse.classical.qec",
     "cudaq_pulse.classical.emulation",
     "cudaq_pulse.classical.calibration",
     "cudaq_pulse.classical.loop",

@@ -286,6 +286,9 @@ def classical_reduce(function: Any, protocol: int) -> Any:
 
         return (_unpickled_version, (template, function._key))
     implementation = function.implementation
+    own = getattr(implementation, "_pickle_function", None)
+    if own is not None:  # a CUDA-Q QEC function or one of its versions
+        return own(function)
     if implementation is not None:
         module = getattr(implementation, "__module__", None)
         qualname = getattr(implementation, "__qualname__", "")

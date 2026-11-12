@@ -12,12 +12,12 @@ import cudaq_pulse.controller as controller_module
 import numpy as np
 import pytest
 from cudaq_pulse import Controller, ControlSystem
-from cudaq_pulse.classical import qec
 from cudaq_pulse.controller import FORMAT, ControllerLimitError, check, sample_waveform, shape_key
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from tests._handles import Q
+from tests.classical.fake_cudaq_qec import qec
 from tests.property_settings import examples
 
 
@@ -672,9 +672,8 @@ def test_a_call_that_lowers_exports(shift, widths, tones, samples):
 
 # ── Classical calls ──────────────────────────────────────────────────────────
 
-decoder = qec.Decoder(
-    0, syndrome_count=1, correction_count=1, max_latency_ns=400, decode=lambda b: [b[0]]
-)
+enqueue_syndromes = pulse.classical(qec.enqueue_syndromes)
+get_corrections = pulse.classical(qec.get_corrections, max_latency_ns=400)
 
 
 @pulse.classical(max_latency_ns=400)
@@ -687,8 +686,8 @@ def decoded(q):
     d = get_drive_line(q)
     ro = get_readout_line(q)
     m = readout(ro, square(100, 0.05))
-    qec.enqueue_syndromes(decoder, [m], 0)
-    fix = qec.get_corrections(decoder).result()
+    enqueue_syndromes.submit(0, [m], 0)
+    fix = get_corrections.submit(0, 1, False).result()
     sync(d, ro)
     if fix[0]:
         drive(d, square(20, 0.3))

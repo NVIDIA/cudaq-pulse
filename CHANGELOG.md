@@ -571,9 +571,14 @@ behavior may change in any 0.x release.
   `ScheduledKernel.export_to_emulator()` writes the schedule, segments and call manifest
   for a controller; `classical.emulation.emulate` runs a program in virtual
   time against real services, in process or over UDP. Requests and answers
-  use the CUDA-Q real-time wire format (`classical.wire`);
-  `classical.qec.Decoder` talks to a CUDA-QX real-time decoder. The
+  use the CUDA-Q real-time wire format (`classical.wire`). The
   cuDensityMat runtime keeps a classical handler table per run.
+- **CUDA-Q QEC decoders.** `pulse.classical` takes CUDA-Q QEC's real-time
+  decoding functions (`cudaq_qec.qec.enqueue_syndromes`, `get_corrections`,
+  `reset_decoder`, cudaq-qec 0.6.0 to 0.8.1): a kernel calls a decoder
+  configured in CUDA-Q QEC with CUDA-Q QEC's arguments, its requests are the
+  decoding server's messages, and simulation and emulation answer with the
+  configured decoders through CUDA-Q QEC's simulation library.
 - **Calibrating while the QPU runs.** `classical.calibration` (adaptive T1,
   a frequency binary search, three-point decay and phase estimators,
   golden-section and Nelder-Mead steps), `classical.random_index` (an

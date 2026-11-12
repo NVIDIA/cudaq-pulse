@@ -14,9 +14,10 @@ import time
 import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse import ControlSystem, classical
-from cudaq_pulse.classical import Link, emulation, qec, wire
+from cudaq_pulse.classical import Link, emulation, wire
 
 from tests._handles import Q
+from tests.classical.fake_cudaq_qec import Decoders, answering, qec
 
 
 @pulse.classical(max_latency_ns=1000)
@@ -158,24 +159,29 @@ class _Status:
         return answer[:4] + struct.pack("<i", self.status) + answer[8:], 0.0
 
 
+@pytest.fixture
+def one_bit_decoder():
+    with answering(Decoders(d0=lambda bits: [1])):
+        yield
+
+
 def _decoded(timeout):
-    decoder = qec.Decoder(
-        0, syndrome_count=1, correction_count=1, max_latency_ns=300, decode=lambda b: [1]
-    )
+    enqueue_syndromes = pulse.classical(qec.enqueue_syndromes)
+    get_corrections = pulse.classical(qec.get_corrections, max_latency_ns=300)
 
     @pulse.kernel
     def k(q):
         d = get_drive_line(q)
         r = get_readout_line(q)
         m = readout(r, square(300, 0.05))
-        qec.enqueue_syndromes(decoder, [m])
+        enqueue_syndromes.submit(0, [m], 0)
         if timeout:
-            ok, fix = qec.get_corrections(decoder).result(timeout=200 * pulse.ns)
+            ok, fix = get_corrections.submit(0, 1, False).result(timeout=200 * pulse.ns)
             sync(d, r)
             if ok:
                 drive(d, square(400, 0.1))
         else:
-            fix = qec.get_corrections(decoder).result()
+            fix = get_corrections.submit(0, 1, False).result()
             sync(d, r)
             if fix[0]:
                 drive(d, square(400, 0.1))
@@ -183,9 +189,10 @@ def _decoded(timeout):
     low = pulse.compile(k).lower(Q[0])
     functions = low.classical
     inner = emulation.InProcess(functions, {fn.name: fn.implementation for fn in functions})
-    return low, inner, decoder.corrections_function.name
+    return low, inner, "get_corrections__0_1"
 
 
+@pytest.mark.usefixtures("one_bit_decoder")
 def test_a_decoder_not_ready_takes_the_timeout_arm():
     low, inner, name = _decoded(timeout=True)
     ready = emulation.emulate(low, shots_count=3, channel=inner, service_time="none", seed=2)
@@ -197,6 +204,7 @@ def test_a_decoder_not_ready_takes_the_timeout_arm():
         assert [c.in_time for c in slow] == [True, False] and slow[1].answer is None
 
 
+@pytest.mark.usefixtures("one_bit_decoder")
 def test_a_decoder_not_ready_without_a_timeout_is_an_error():
     low, inner, name = _decoded(timeout=False)
     with pytest.raises(pulse.ExecutionError, match=r"answered NOT_READY \(status 4\).*timeout="):
