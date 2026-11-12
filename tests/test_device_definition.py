@@ -272,6 +272,25 @@ def test_replace_makes_a_variant_of_a_quantum_system():
         qs.replace(calibration=None)
 
 
+def test_a_variant_is_the_quantum_system_its_keywords_build():
+    qs = pulse.quantum_system(TRANSMON_SURFACE17)
+    q4 = qs.physical_qudits[4].replace(frequency_hz=5.0e9)
+    variant = qs.replace(qudits={**qs.physical_qudits, 4: q4})
+    assert "fingerprint" not in vars(variant)
+    built = pulse.quantum_system(
+        name=qs.name,
+        qudits={**qs.physical_qudits, 4: q4},
+        couplings=qs.couplings,
+        residual_zz=qs.residual_zz,
+        model=qs.model,
+        attribution=qs.attribution,
+    )
+    assert variant == built and hash(variant) == hash(built)
+    assert variant.fingerprint == built.fingerprint != qs.fingerprint
+    assert variant.qudits[4] == built.qudits[4] and variant.qudits[4].quantum_system is variant
+    assert pickle.loads(pickle.dumps(variant)) == variant
+
+
 @pytest.mark.parametrize("keywords", [{}, {"layout": [0, 1]}, {"couplings": []}, {"qudits": {}}])
 def test_a_quantum_system_passed_to_quantum_system_says_to_replace_it(keywords):
     qs = pulse.quantum_system(TRANSMON_SURFACE17)

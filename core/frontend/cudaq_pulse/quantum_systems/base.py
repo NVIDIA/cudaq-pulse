@@ -1000,7 +1000,17 @@ class _Description:
     def replace(self, **changes: Any) -> _Description:
         """A copy with *changes*, built and checked as a new one, as
         ``dataclasses.replace`` makes one."""
-        return _Description(**{**{f: getattr(self, f) for f in _DESCRIPTION_FIELDS}, **changes})
+        values: dict[str, Any] = {
+            "name": self.name,
+            "qudits": self.qudits,
+            "couplings": self.couplings,
+            "residual_zz": self.residual_zz,
+            "model": self.model,
+            "attribution": self.attribution,
+            "clock_ghz": self.clock_ghz,
+        }
+        values.update(changes)
+        return _Description(**values)
 
     def __repr__(self) -> str:
         values = ", ".join(f"{f}={getattr(self, f)!r}" for f in _DESCRIPTION_FIELDS)

@@ -130,15 +130,16 @@ class DriftingPlant:
         from ..quantum_systems.base import MicrowaveDrive
 
         system = self._system
-        base = system.physical_qudits[self.qudit]
-        scale = system.drive_amplitude_scale(self.qudit) * self.state.amplitude_scale
+        described = system._description
+        base = described.qudits[self.qudit]
+        scale = described.drive_amplitude_scale(self.qudit) * self.state.amplitude_scale
         drive = base.drive if base.drive is not None else MicrowaveDrive()
         qudit = base.replace(
             t1_us=self.state.t1_us,
             frequency_hz=base.frequency_hz + self.state.frequency_offset_hz,
             drive=drive.replace(amplitude_scale_rad_per_ns=scale),
         )
-        qudits = dict(system.physical_qudits)
+        qudits = dict(described.qudits)
         qudits[self.qudit] = qudit
         return system.replace(qudits=qudits)
 

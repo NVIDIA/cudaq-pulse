@@ -40,7 +40,7 @@ from .quantum_systems._registry import (
     _registry,
     make_quantum_system,
 )
-from .quantum_systems.base import _TRANSMON, _Description
+from .quantum_systems.base import _DESCRIPTION_FIELDS, _TRANSMON, _Description
 from .quantum_systems.models import SimulationModel
 
 try:
@@ -351,6 +351,7 @@ class QuantumSystem:
         calibration: Any = None,
         control_system: ControlSystem | None = None,
         clock_ghz: float | None = None,
+        _variant: bool = False,
     ) -> None:
         if control_system is not None:
             from ._system import ControlSystem
@@ -389,19 +390,27 @@ class QuantumSystem:
         self.calibration = calibration
         self.layout = layout
         self.clock_ghz = float(target.clock_ghz)
+        self._arrays: tuple[Any, Any] | None = None
+        # The frequency tables a compiled module records, as
+        # _frequency_tables returns them: (count, 0-1 frequencies, readout
+        # tones); none before the first compile.
+        self._tables: tuple[int, Any, Any] = (-1, None, None)
+        # A variant (replace) makes the rest when it is first read
+        # (__getattr__): most are only simulated against, which reads none of it.
+        if not _variant:
+            self._finish()
+
+    def _finish(self) -> None:
+        """The frequencies, fingerprint, identity and qudit handles."""
+        target, layout, control_system = self._description, self.layout, self.control_system
         self.frequencies: Mapping[int, float] = target.frequencies
-        self.fingerprint = _fingerprint(target, layout, calibration)
+        self.fingerprint = _fingerprint(target, layout, self.calibration)
         # What equality compares: the fingerprint alone without a control
         # system, so comparing such quantum systems costs one string comparison.
         self._identity: Any = (
             self.fingerprint if control_system is None else (self.fingerprint, control_system)
         )
         self.qudits = _Handles(tuple(Qudit(self, p, i) for i, p in enumerate(layout)))
-        self._arrays: tuple[Any, Any] | None = None
-        # The frequency tables a compiled module records, as
-        # _frequency_tables returns them: (count, 0-1 frequencies, readout
-        # tones); none before the first compile.
-        self._tables: tuple[int, Any, Any] = (-1, None, None)
 
     def _frequency_arrays(self) -> tuple[Any, Any]:
         if self._arrays is None:
@@ -614,6 +623,12 @@ class QuantumSystem:
         ``drive_amplitude_scale(i)``."""
         if name == "physical_qudits":
             return self.__dict__["_description"].qudits
+        if (
+            name in ("qudits", "fingerprint", "_identity", "frequencies")
+            and "layout" in self.__dict__
+        ):
+            self._finish()
+            return self.__dict__[name]
         if name in {
             "couplings",
             "residual_zz",
@@ -643,25 +658,30 @@ class QuantumSystem:
         qudit. The values are the calibrated ones, so the variant has no
         ``calibration`` of its own."""
         described = self._description
-        values: dict[str, Any] = {
-            "name": self.name,
-            "qudits": described.qudits,
-            "couplings": described.couplings,
-            "residual_zz": described.residual_zz,
-            "model": described.model,
-            "attribution": described.attribution,
-            "layout": None if self.layout == tuple(sorted(described.qudits)) else self.layout,
-            "control_system": self.control_system,
-            "clock_ghz": self.clock_ghz,
-        }
-        unknown = sorted(changes.keys() - values.keys())
+        layout = changes.pop(
+            "layout", None if self.layout == tuple(sorted(described.qudits)) else self.layout
+        )
+        control_system = changes.pop("control_system", self.control_system)
+        # The program clock, when it is not the description's own.
+        clock_ghz = changes.pop(
+            "clock_ghz", None if self.clock_ghz == described.clock_ghz else self.clock_ghz
+        )
+        unknown = sorted(changes.keys() - _DESCRIPTION_FIELDS)
         if unknown:
             raise InvalidTypeError(
                 f"QuantumSystem.replace() got an unexpected keyword argument {unknown[0]!r}; "
-                f"it takes {', '.join(values)}"
+                f"it takes {', '.join(_DESCRIPTION_FIELDS[:-1])}, layout, control_system and "
+                "clock_ghz"
             )
-        values.update(changes)
-        return quantum_system(**values)
+        return QuantumSystem(
+            described.replace(**changes),
+            name=changes.get("name", self.name),
+            layout=layout,
+            source=f"{self.name}.replace()",
+            control_system=control_system,
+            clock_ghz=clock_ghz,
+            _variant=True,
+        )
 
     def as_dict(self) -> dict[str, Any]:
         """The quantum system as JSON-serializable data, which ``QuantumSystem.from_dict``
