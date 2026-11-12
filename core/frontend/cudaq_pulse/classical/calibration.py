@@ -13,6 +13,9 @@ between calls.
   qubit's detuning, updated from one Ramsey shot, and the wait and phase of
   the next shot (a binary search: each shot says which side of the estimate
   the detuning is on).
+- ``survival_probability``, ``ramsey_probability`` and ``rabi_probability``:
+  the outcome probabilities of those experiments with ideal pulses, for
+  drawing shots without simulating them (``rng.random() < p``).
 - ``three_point_decay``: the decay time of ``A exp(-t / T) + B`` from three
   equally spaced points.
 - ``three_point_phase``: the phase error ``e`` of ``a - b cos(theta + e)``
@@ -55,9 +58,12 @@ __all__ = [
     "golden_section_step",
     "nelder_mead_step",
     "pi_train_amplitude",
+    "rabi_probability",
     "ramsey_detuning",
+    "ramsey_probability",
     "ramsey_setting",
     "sparse_phase",
+    "survival_probability",
     "t1_update",
     "t1_wait",
     "three_point_decay",
@@ -172,6 +178,32 @@ def ramsey_setting(
         wait_ns = min(wait_ns, max_wait_ns)
     phase = (-2 * math.pi * mean_hz * wait_ns * 1e-9 + math.pi / 2) % (2 * math.pi)
     return wait_ns, phase
+
+
+# ── Outcome probabilities ───────────────────────────────────────────────────
+
+
+def survival_probability(wait_ns: float | Time, t1_us: float) -> float:
+    """P(still excited) after exciting a qudit of *t1_us* and waiting
+    *wait_ns* (a time, or a number of ns): exp(-wait / T1), the likelihood
+    ``t1_update`` uses. A T1 of 0 is no decay."""
+    t1_ns = t1_us * 1e3
+    return math.exp(-float(wait_ns) / t1_ns) if t1_ns > 0 else 1.0
+
+
+def ramsey_probability(wait_ns: float | Time, phase: float, detuning_hz: float) -> float:
+    """P(1) of a Ramsey shot that waits *wait_ns* (a time, or a number of
+    ns) between two pi/2 pulses, the second advanced by *phase*, on a qudit
+    *detuning_hz* off the drive: (1 - cos(2 pi D t + phase)) / 2, the
+    likelihood ``frequency_update`` uses. Ideal pulses, no decay."""
+    return 0.5 * (1 - math.cos(math.tau * detuning_hz * float(wait_ns) * 1e-9 + phase))
+
+
+def rabi_probability(angle: float, amplitude_scale: float) -> float:
+    """P(1) after a resonant rotation meant to be *angle* (rad), on a qudit
+    whose drive is *amplitude_scale* times the calibrated one: sin(scale x
+    angle / 2) ** 2."""
+    return math.sin(amplitude_scale * angle / 2) ** 2
 
 
 # ── Three-point estimators ──────────────────────────────────────────────────
