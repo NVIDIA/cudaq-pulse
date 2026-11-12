@@ -31,7 +31,7 @@ PUBLIC_MODULES = [
     "cudaq_pulse.classical.emulation",
     "cudaq_pulse.classical.calibration",
     "cudaq_pulse.classical.loop",
-    "cudaq_pulse.runtime.drift",
+    "cudaq_pulse.quantum_systems.drift",
 ]
 
 _DIRECTIVE = re.compile(r"^\.\. auto(\w+):: (\S+)", re.M)

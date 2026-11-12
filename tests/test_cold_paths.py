@@ -467,6 +467,15 @@ def test_simulating_without_shots_loads_no_random_generator(tmp_path):
     assert _loaded(shots_count, tmp_path, modules) != []
 
 
+def test_a_system_without_drift_loads_no_drift_module(tmp_path):
+    # Parameter drift is loaded only by a system built with it.
+    modules = ("cudaq_pulse.quantum_systems.drift",)
+    code = _PLAIN + "p.simulate(low, shots_count=10, seed=1)\nlow.export_to_controller()\n"
+    assert _loaded(code, tmp_path, modules) == []
+    drifting = _PLAIN + "p.quantum_system('transmon_surface17', parameter_drift=True)\n"
+    assert _loaded(drifting, tmp_path, modules) == list(modules)
+
+
 def test_simulating_loads_no_numpy_typing(tmp_path):
     # numpy.typing compiles regular expressions on import; the simulator
     # names its types for checkers only.

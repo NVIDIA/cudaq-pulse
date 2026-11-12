@@ -467,16 +467,31 @@ class _Dispatcher:
         entry = self._entries.get(key)
         if entry is not None and entry.guard.check():
             entry.tick = next(_ticks)
+            if target._drift:
+                from ..quantum_systems.drift import _entry_for
+
+                return _entry_for(entry, target)
             return entry
         with self._lock:
             entry = self._entries.get(key)
             if entry is not None and entry.guard.check():
+                if target._drift:
+                    from ..quantum_systems.drift import _entry_for
+
+                    return _entry_for(entry, target)
                 return entry
             entry = kernel._specialize(values, target, self.options)
             self.misses += 1
             # Tracing may have made float parameters static.
             static = kernel._split[0]
             key = (target.fingerprint, static, *[_static_key(values[i]) for i in static])
+            if target._drift:
+                # Kept for the twin: no cached program plays another system's drift.
+                from ..quantum_systems.drift import _kept
+
+                kept, entry = _kept(entry, target, kernel)
+                self._insert(key, kept)
+                return entry
             self._insert(key, entry)
         return entry
 

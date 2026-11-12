@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Closed loops between shots: no recompiling, a parameter store, an
-estimate log, and tracking a drifting plant against its truth."""
+estimate log, and tracking a drifting quantum system against its truth."""
 
 from __future__ import annotations
 
@@ -9,18 +9,19 @@ import math
 import time
 
 import cudaq_pulse as pulse
+import numpy as np
 import pytest
 from cudaq_pulse.classical import calibration as cal
 from cudaq_pulse.classical.loop import EstimateLog, ParameterStore
 from cudaq_pulse.quantum_systems import PhysicalQudit
-from cudaq_pulse.runtime.drift import DriftingPlant, TelegraphT1
+from cudaq_pulse.quantum_systems.drift import ParameterDrift, TelegraphT1
 
 PI_AMP = math.pi / 20
 
 
-def _target():
+def _target(t1_us=20.0):
     qudit = PhysicalQudit(
-        index=0, frequency_hz=5e9, anharmonicity_hz=-2e8, t1_us=20.0, t2_star_us=0.0
+        index=0, frequency_hz=5e9, anharmonicity_hz=-2e8, t1_us=t1_us, t2_star_us=0.0
     )
     return pulse.quantum_system(name="sim", qudits={0: qudit})
 
@@ -88,23 +89,29 @@ def test_tracking_a_switching_t1_against_its_truth():
     # The between-shot loop of adaptive T1 tracking on the surrogate: one
     # shot per iteration, the wait from the posterior, the posterior reset
     # to a weak prior every 200 shots so it follows a switching T1.
-    plant = DriftingPlant(_target(), t1=TelegraphT1(5.0, 30.0, rate_hz=0.5), seed=7)
+    # T1 switches between 30 us and 5 us, staying about 2 s in each.
+    t1 = TelegraphT1(low_fraction=1 / 6, dwell_time=2 * pulse.s)
+    qs = _target(t1_us=30.0).replace(
+        parameter_drift=ParameterDrift(frequency=None, t1=t1, amplitude=None),
+        parameter_drift_seed=7,
+    )
+    shots = np.random.default_rng(7)
     store = ParameterStore(alpha=1.0, beta=10_000.0)
     log = EstimateLog()
     for i in range(10_000):
         alpha, beta = store.values("alpha", "beta")
         wait_ns = cal.t1_wait(alpha, beta)
-        survived = plant.sample(plant.p_survive(wait_ns))
+        survived = shots.random() < cal.survival_probability(wait_ns, qs.true_qudits[0].t1_us)
         alpha, beta = cal.t1_update(alpha, beta, bool(survived), wait_ns)
         if (i + 1) % 200 == 0:
-            log.record(i, "t1_us", beta / alpha / 1e3, truth=plant.state.t1_us)
+            log.record(i, "t1_us", beta / alpha / 1e3, truth=qs.true_qudits[0].t1_us)
             alpha, beta = 2.0, 2.0 * beta / alpha
         store.update({"alpha": alpha, "beta": beta}, iteration=i)
-        plant.advance(1e-3)
+        qs.advance(1 * pulse.ms)
     estimates = log.series("t1_us")
     assert len(estimates) == 50
     # Classify each block as the short or the long T1; mostly right, except
-    # in blocks where the plant switched.
+    # in blocks where T1 switched.
     right = sum((e.value > 12.0) == (e.truth > 12.0) for e in estimates)
     assert right >= 40
     assert log.tracking_error("t1_us") < 10.0

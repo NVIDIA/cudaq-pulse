@@ -53,9 +53,11 @@ if TYPE_CHECKING:
     from array import array
 
     from ._system import ControlSystem
+    from ._units import Time
     from .gates import Gate
     from .quantum_systems.base import Coupling, DragPulse, PhysicalQudit, ReadoutPulse, ResidualZZ
     from .quantum_systems.calibration import Calibration
+    from .quantum_systems.drift import ParameterDriftModel
 
     type _MaybeSystem = QuantumSystem | None
 
@@ -333,10 +335,22 @@ class QuantumSystem:
     arrays.
     ``control_system`` is the ``ControlSystem`` that plays it, if given;
     ``compile(kernel, quantum_system=dev)`` checks every program against it.
+
+    A quantum system built with ``parameter_drift=`` drifts (see
+    ``cudaq_pulse.quantum_systems.drift``): ``physical_qudits`` are its
+    calibrated values, all that compiling reads, and ``true_qudits`` the
+    values ``simulate`` plays, which drift as it runs and as
+    ``advance(duration)`` moves time on; ``parameter_drift`` is the model of
+    each drifting qudit and ``parameter_drift_time`` the drift time so far.
+    It equals its non-drifting twin: the same fingerprint, compiled programs
+    and exports. Without drift, ``true_qudits`` is ``physical_qudits``,
+    ``parameter_drift`` and ``parameter_drift_time`` are ``None`` and
+    ``advance`` raises.
     """
 
     # The registered name the quantum system was made from, as ``as_dict`` writes it.
     _spec: str | None = None
+    _drift = False
     # What a kernel whose qudits are runtime parameters depends on, made by
     # the first such kernel (_programs._structure).
     _structure: str | None = None
@@ -613,6 +627,16 @@ class QuantumSystem:
         def connectivity_graph(self) -> dict[int, list[int]]: ...
         def drive_amplitude_scale(self, qudit_index: int) -> float: ...
 
+        # Parameter drift: read by __getattr__ without drift, and set by the
+        # drifting subclass (quantum_systems.drift).
+        @property
+        def true_qudits(self) -> Mapping[int, PhysicalQudit]: ...
+        @property
+        def parameter_drift(self) -> Mapping[int, ParameterDriftModel] | None: ...
+        @property
+        def parameter_drift_time(self) -> Time | None: ...
+        def advance(self, duration: Time) -> None: ...
+
     def __getattr__(self, name: str) -> Any:
         """The description's fields, properties and methods, read from the
         description the quantum system was built from when asked for:
@@ -644,6 +668,22 @@ class QuantumSystem:
             "drive_amplitude_scale",
         }:
             return getattr(self.__dict__["_description"], name)
+        if name == "true_qudits":
+            return self.__dict__["_description"].qudits
+        if name == "parameter_drift" or name == "parameter_drift_time":
+            return None
+        if name == "advance":
+            system = self.name
+
+            def advance(duration: Any) -> None:
+                from ._errors import UnsupportedError
+
+                raise UnsupportedError(
+                    f"quantum system {system!r} is built without parameter drift, so it has no "
+                    "drift time to advance; pass parameter_drift= to pulse.quantum_system"
+                )
+
+            return advance
         raise AttributeError(
             f"'QuantumSystem' object has no attribute {name!r}", name=name, obj=self
         )
@@ -656,8 +696,17 @@ class QuantumSystem:
         ``control_system`` and ``clock_ghz``, with *changes* in their place:
         ``qs.replace(qudits={**qs.physical_qudits, 0: qudit})`` changes one
         qudit. The values are the calibrated ones, so the variant has no
-        ``calibration`` of its own."""
+        ``calibration`` of its own.
+
+        ``parameter_drift`` and ``parameter_drift_seed`` give the variant
+        drift, as ``pulse.quantum_system`` takes them; a variant without them
+        does not drift. ``qs.replace(parameter_drift=True)`` changes nothing
+        else, so it keeps the calibration and the fingerprint."""
         described = self._description
+        if "parameter_drift" in changes or "parameter_drift_seed" in changes:
+            from .quantum_systems.drift import _replaced
+
+            return _replaced(self, changes)
         layout = changes.pop(
             "layout", None if self.layout == tuple(sorted(described.qudits)) else self.layout
         )
@@ -670,8 +719,8 @@ class QuantumSystem:
         if unknown:
             raise InvalidTypeError(
                 f"QuantumSystem.replace() got an unexpected keyword argument {unknown[0]!r}; "
-                f"it takes {', '.join(_DESCRIPTION_FIELDS[:-1])}, layout, control_system and "
-                "clock_ghz"
+                f"it takes {', '.join(_DESCRIPTION_FIELDS[:-1])}, layout, control_system, "
+                "clock_ghz, parameter_drift and parameter_drift_seed"
             )
         return QuantumSystem(
             described.replace(**changes),
@@ -1074,6 +1123,8 @@ def quantum_system(
     cooldown: str | None = None,
     control_system: ControlSystem | None = None,
     clock_ghz: float | None = None,
+    parameter_drift: bool | ParameterDriftModel | Mapping[int, ParameterDriftModel] = False,
+    parameter_drift_seed: int | None = None,
 ) -> QuantumSystem:
     """A quantum system: a registered one by name, or one built from its qudits.
 
@@ -1110,6 +1161,15 @@ def quantum_system(
     (2 GHz for one built here).
     Controller clocks that do not divide evenly into one need it, and the
     problem lists the clocks that work.
+
+    ``parameter_drift`` makes the simulated system's qudit parameters drift
+    (``cudaq_pulse.quantum_systems.drift``): ``True`` for the default
+    ``ParameterDrift()`` on every qudit, a drift model for that model on
+    every qudit, or ``{qudit: model}`` for only those qudits (keyed as
+    ``physical_qudits``). Compiling reads only the calibrated values, so the
+    system equals its non-drifting twin; ``simulate`` plays its true values,
+    ``QuantumSystem.true_qudits``. ``parameter_drift_seed`` (an int) makes
+    the drift repeat; by default each system drifts its own way.
 
     Arguments with problems raise ``QuantumSystemDefinitionError`` listing all of
     them, each at the argument it is in.
@@ -1154,6 +1214,8 @@ def quantum_system(
             and cooldown is None
             and control_system is None
             and clock_ghz is None
+            and not parameter_drift
+            and parameter_drift_seed is None
         ):
             return _calibrated(
                 make_quantum_system(name), name, f"quantum system {name}", None, None
@@ -1165,6 +1227,8 @@ def quantum_system(
             and cooldown is None
             and control_system is None
             and clock_ghz is None
+            and not parameter_drift
+            and parameter_drift_seed is None
         ):
             from .quantum_systems._registry import current_quantum_system
 
@@ -1213,6 +1277,11 @@ def quantum_system(
         raise QuantumSystemDefinitionError(
             f"{_count(len(problems), 'problem')} in pulse.quantum_system()", problems=problems
         )
+    if parameter_drift or parameter_drift_seed is not None:
+        from .quantum_systems.drift import _replaced
+
+        drift = {"parameter_drift": parameter_drift, "parameter_drift_seed": parameter_drift_seed}
+        return _replaced(found, drift)
     return found
 
 

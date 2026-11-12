@@ -11,7 +11,6 @@ estimators recover what the simulated quantum system is.
 
 from __future__ import annotations
 
-import dataclasses
 import json
 import math
 
@@ -24,12 +23,13 @@ from cudaq_pulse.classical import calibration as cal
 from cudaq_pulse.classical.loop import EstimateLog, ParameterStore
 from cudaq_pulse.quantum_systems import (
     DispersiveReadout,
+    MicrowaveDrive,
     ReadoutPulse,
     transmon_lattice,
     transmon_surface17,
 )
+from cudaq_pulse.quantum_systems.drift import OrnsteinUhlenbeck, ParameterDrift, TelegraphT1
 from cudaq_pulse.runtime._calls import IQModel
-from cudaq_pulse.runtime.drift import DriftingPlant, OrnsteinUhlenbeck, TelegraphT1
 
 PI_AMP = math.pi / 20  # square(40, PI_AMP) is a pi pulse (unit drive scale)
 CLOCK = 2.0  # GHz on both targets
@@ -166,10 +166,9 @@ def binary_search(q, rounds: int):
     readout(r, square(400, 0.05))
 
 
-def test_k12_frequency_binary_search_follows_a_detuned_plant(target):
+def test_k12_frequency_binary_search_follows_a_detuned_qudit(target):
     dev = _device(target)
     offset = 300e3
-    plant = DriftingPlant(target, frequency=OrnsteinUhlenbeck(1.0, 1.0), seed=0)
     detuned = target.replace(
         qudits={
             **target.physical_qudits,
@@ -182,11 +181,10 @@ def test_k12_frequency_binary_search_follows_a_detuned_plant(target):
         dev.qudits[0], 1
     )
     result = pulse.simulate(lowered, quantum_system=detuned, dt_ns=1.0, levels=2)
-    # The first shot's outcome follows the surrogate's fringe (decay lowers
-    # the contrast a little).
-    plant.state = dataclasses.replace(plant.state, frequency_offset_hz=offset)
+    # The first shot's outcome follows the ideal fringe (decay lowers the
+    # contrast a little).
     p1 = sum(b.probability for b in result.branches if b.levels[0] == 1)
-    assert p1 == pytest.approx(plant.p_ramsey(W0, PHASE0), abs=0.04)
+    assert p1 == pytest.approx(cal.ramsey_probability(W0, PHASE0, offset), abs=0.04)
     for branch in result.branches:
         (call,) = branch.calls
         mean, sigma, _, _ = call.answer
@@ -229,7 +227,7 @@ def test_k13_three_point_decay_and_phase_recover_the_device(target):
     ]
     t1_us = cal.three_point_decay(*p, spacing=spacing_cycles / CLOCK) / 1e3
     assert t1_us == pytest.approx(target.physical_qudits[0].t1_us, rel=0.02)
-    # A detuned plant puts a phase 2 pi d T on the Ramsey fringe.
+    # A detuned qudit puts a phase 2 pi d T on the Ramsey fringe.
     offset = 250e3
     detuned = target.replace(
         qudits={
@@ -402,44 +400,42 @@ def test_k15_the_closed_loop_runs_ten_thousand_iterations_on_one_compile(target)
     assert len(log) == 4
 
 
-# ── K16: tracking a drifting plant against its truth ────────────────────────
+# ── K16: tracking a drifting quantum system against its truth ───────────────
 
 
-def test_k16_tracking_a_drifting_plant_against_its_truth(target):
-    plant = DriftingPlant(
-        target,
-        t1=TelegraphT1(
-            target.physical_qudits[0].t1_us / 4, target.physical_qudits[0].t1_us, rate_hz=0.5
-        ),
-        frequency=OrnsteinUhlenbeck(100e3, correlation_s=5.0),
-        seed=21,
+def test_k16_tracking_a_drifting_quantum_system_against_its_truth(target):
+    drift = ParameterDrift(
+        frequency=OrnsteinUhlenbeck(100e3, correlation_time=5 * pulse.s),
+        t1=TelegraphT1(low_fraction=0.25, dwell_time=2 * pulse.s),
+        amplitude=None,
     )
+    qs = target.replace(parameter_drift={0: drift}, parameter_drift_seed=21)
+    calibrated = qs.physical_qudits[0]
+    shots = np.random.default_rng(21)
     log = EstimateLog()
     alpha, beta = 1.0, 10_000.0
     mean, sigma = 0.0, 1e6
     for i in range(6000):
+        true = qs.true_qudits[0]
+        offset_hz = true.frequency_hz - calibrated.frequency_hz
         wait_ns = cal.t1_wait(alpha, beta)
-        alpha, beta = cal.t1_update(
-            alpha, beta, bool(plant.sample(plant.p_survive(wait_ns))), wait_ns
-        )
+        survived = shots.random() < cal.survival_probability(wait_ns, true.t1_us)
+        alpha, beta = cal.t1_update(alpha, beta, bool(survived), wait_ns)
         t, phase = cal.ramsey_setting(mean, sigma, max_wait_ns=2000.0)
-        mean, sigma = cal.frequency_update(
-            mean, sigma, plant.sample(plant.p_ramsey(t, phase)), t, phase
-        )
+        outcome = int(shots.random() < cal.ramsey_probability(t, phase, offset_hz))
+        mean, sigma = cal.frequency_update(mean, sigma, outcome, t, phase)
         if (i + 1) % 150 == 0:
-            log.record(i, "t1_us", beta / alpha / 1e3, truth=plant.state.t1_us)
-            log.record(
-                i, "offset_hz", mean, uncertainty=sigma, truth=plant.state.frequency_offset_hz
-            )
+            log.record(i, "t1_us", beta / alpha / 1e3, truth=true.t1_us)
+            log.record(i, "offset_hz", mean, uncertainty=sigma, truth=offset_hz)
             alpha, beta = 2.0, 2.0 * beta / alpha
             sigma = max(sigma, 200e3)  # forget, to follow the drift
-        plant.advance(1e-3)
+        qs.advance(1 * pulse.ms)
     assert len(log.series("t1_us")) == 40
-    split = (plant.t1.low_us + plant.t1.high_us) / 2
+    split = calibrated.t1_us * (1 + 0.25) / 2
     right = sum((e.value > split) == (e.truth > split) for e in log.series("t1_us"))
     assert right >= 30
     assert log.tracking_error("offset_hz") < 50e3
-    assert len(plant.truth_trace()["time_s"]) == 6001
+    assert qs.parameter_drift_time == 6000 * pulse.ms
 
 
 # ── K17: hidden and exposed latency ─────────────────────────────────────────
@@ -566,10 +562,13 @@ def test_k19_pauli_benchmarking_returns_to_zero_unless_miscalibrated(target):
     assert len(ideal.branches) == 64  # every sequence of three Paulis
     # Each sequence and its recovery multiply to the identity.
     assert ideal.density_matrix[0, 0].real == pytest.approx(1.0, abs=0.01)
-    plant = DriftingPlant(target, amplitude=OrnsteinUhlenbeck(1e-9, 1.0), seed=1)
-    plant.state = dataclasses.replace(plant.state, amplitude_scale=1.1)
+    qudit = target.physical_qudits[0]
+    drive = (qudit.drive or MicrowaveDrive()).replace(
+        amplitude_scale_rad_per_ns=1.1 * target.drive_amplitude_scale(0)
+    )
+    overdriven = target.replace(qudits={**target.physical_qudits, 0: qudit.replace(drive=drive)})
     drifted = pulse.simulate(
-        lowered, initial_state=[1, 0], dt_ns=1.0, quantum_system=plant.now(), levels=2
+        lowered, initial_state=[1, 0], dt_ns=1.0, quantum_system=overdriven, levels=2
     )
     assert drifted.density_matrix[0, 0].real < ideal.density_matrix[0, 0].real - 0.01
     shots_count = pulse.simulate(

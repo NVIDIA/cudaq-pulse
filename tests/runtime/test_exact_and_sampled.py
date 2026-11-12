@@ -113,11 +113,11 @@ def test_a_long_idle_decays_exactly_and_quickly():
     assert elapsed < 2.0
 
 
-def test_a_detuned_plant_is_propagated_like_stepping(monkeypatch):
+def test_a_detuned_system_is_propagated_like_stepping(monkeypatch):
     lowered = on(_target(), _mixed_pulses, Q[0])
-    plant = _target(offset_hz=250e3)
-    stepped = _simulated(lowered, monkeypatch, maps=False, exact=False, quantum_system=plant)
-    rho = _simulated(lowered, monkeypatch, quantum_system=plant)
+    detuned = _target(offset_hz=250e3)
+    stepped = _simulated(lowered, monkeypatch, maps=False, exact=False, quantum_system=detuned)
+    rho = _simulated(lowered, monkeypatch, quantum_system=detuned)
     np.testing.assert_allclose(rho, stepped, atol=1e-7)
 
 

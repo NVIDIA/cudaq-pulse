@@ -74,15 +74,15 @@ def _coarse(call):
 _STEP_5 = {-200.0e6: 0.5 / 12, -400.0e6: 0.5 / 24}
 
 
-def test_a_recalibrated_plant_changes_the_step_and_the_warning(steps):
+def test_a_recalibrated_system_changes_the_step_and_the_warning(steps):
     lowered = on(_target(), _flip, Q[0])
     calibrated, recalibrated = _target(), _target(alpha_hz=-400.0e6)
-    for plant in (calibrated, recalibrated, calibrated, recalibrated):
-        pulse.simulate(lowered, levels=5, quantum_system=plant)
-        assert steps[-1] == _STEP_5[plant.physical_qudits[0].anharmonicity_hz]
+    for simulated in (calibrated, recalibrated, calibrated, recalibrated):
+        pulse.simulate(lowered, levels=5, quantum_system=simulated)
+        assert steps[-1] == _STEP_5[simulated.physical_qudits[0].anharmonicity_hz]
     spreads = [
-        _coarse(lambda p=plant: pulse.simulate(lowered, levels=3, dt_ns=0.25, quantum_system=p))
-        for plant in (calibrated, recalibrated, calibrated, recalibrated)
+        _coarse(lambda p=simulated: pulse.simulate(lowered, levels=3, dt_ns=0.25, quantum_system=p))
+        for simulated in (calibrated, recalibrated, calibrated, recalibrated)
     ]
     assert spreads == [[], ["400 MHz"], [], ["400 MHz"]]
 
@@ -221,15 +221,15 @@ def test_a_step_by_qudit_levels_is_resolved_like_one_for_all(steps):
 
 
 def test_kept_steps_hold_no_target_and_go_with_it(steps):
-    target, plant = _target(), _target(alpha_hz=-400.0e6)
+    target, simulated = _target(), _target(alpha_hz=-400.0e6)
     lowered = on(target, _flip, Q[0])
     pulse.simulate(lowered, levels=5)
-    pulse.simulate(lowered, levels=5, quantum_system=plant)
-    ids = {id(target._description), id(plant._description)}
+    pulse.simulate(lowered, levels=5, quantum_system=simulated)
+    ids = {id(target._description), id(simulated._description)}
     assert len([k for k in simulate_module._STEPS if ids & set(k[:2])]) == 2
     assert ids <= simulate_module._WATCHED.keys()
-    refs = [weakref.ref(target), weakref.ref(plant), weakref.ref(lowered.quantum_system)]
-    del target, plant, lowered
+    refs = [weakref.ref(target), weakref.ref(simulated), weakref.ref(lowered.quantum_system)]
+    del target, simulated, lowered
     gc.collect()
     assert [r() for r in refs] == [None, None, None]
     assert not [k for k in simulate_module._STEPS if ids & set(k[:2])]
@@ -259,13 +259,13 @@ def test_threads_sharing_kept_steps_each_get_their_target_s(monkeypatch):
 
     monkeypatch.setattr(simulate_module, "_simulate_compiled", spy)
     lowered = on(_target(), _flip, Q[0])
-    plants = [_target(), _target(alpha_hz=-400.0e6)]
+    systems = [_target(), _target(alpha_hz=-400.0e6)]
     start = threading.Barrier(4)
 
     def run(first):
         start.wait()
         for i in range(40):
-            pulse.simulate(lowered, levels=5, quantum_system=plants[(first + i) % 2])
+            pulse.simulate(lowered, levels=5, quantum_system=systems[(first + i) % 2])
 
     threads = [threading.Thread(target=run, args=(n % 2,)) for n in range(4)]
     for t in threads:

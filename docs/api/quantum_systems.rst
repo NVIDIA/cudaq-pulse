@@ -101,6 +101,12 @@ with ``[processors.dispatch_keys]`` beneath it.
 .. autoclass:: cudaq_pulse.Link
    :no-index:
 
+Parameter drift
+---------------
+
+.. automodule:: cudaq_pulse.quantum_systems.drift
+   :members: ParameterDrift, OrnsteinUhlenbeck, TelegraphT1, ParameterDriftModel
+
 Calibrations and the transmon circuit model
 -------------------------------------------
 

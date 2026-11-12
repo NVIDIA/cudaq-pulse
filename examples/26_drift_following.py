@@ -21,12 +21,15 @@ apart, which end in |1> when the drive is on resonance. A frequency error
 turns it away from |1>, so 1 - P(1) measures how well the calibration
 follows the drift.
 
-What is simulated: the simulator plays the QPU. Each batch's error is
-``pulse.simulate`` of the program in use against the drifting system's true
-parameters, and the Ramsey shots are drawn from the true system's analytic
-surrogate (ideal pulses, no decay). The drift is far faster than a real
-quantum system's, so the run fits in seconds; the batches are real 20 ms waits, and
-the worker, the pickling and the compiles are real.
+What is simulated: the simulator plays the QPU, a quantum system built with
+``parameter_drift=``. Programs are compiled from the worker's estimate;
+each batch is ``pulse.simulate`` of the program in use for 400 shots of
+50 us on the drifting system, which plays its true parameters and moves
+its drift clock on by the batch's 20 ms. The Ramsey shots are drawn from
+the true frequency with ``cal.ramsey_probability`` (ideal pulses, no
+decay). The drift is far faster than a real quantum system's, so the run
+fits in seconds; the batches also take 20 ms of wall time, and the worker,
+the pickling and the compiles are real.
 
 Programs are swapped between batches, by the host. Swapping one in between
 shots, inside a running controller program, needs runtime support that
@@ -42,7 +45,7 @@ import cudaq_pulse as pulse
 import numpy as np
 from cudaq_pulse.classical import calibration as cal
 from cudaq_pulse.quantum_systems import transmon_surface17
-from cudaq_pulse.runtime.drift import DriftingPlant, OrnsteinUhlenbeck
+from cudaq_pulse.quantum_systems.drift import OrnsteinUhlenbeck, ParameterDrift
 
 target = transmon_surface17()
 qudit_index = 0
@@ -52,8 +55,10 @@ area_ns = (pulse_sigma / pulse.ns) * math.sqrt(2 * math.pi) * math.erf(2 / math.
 half_pi_amplitude = math.pi / 2 / (area_ns * target.drive_amplitude_scale(qudit_index))
 fringe_wait = 1 * pulse.us
 
-drift = OrnsteinUhlenbeck(200e3, correlation_s=10.0)
-batch_time = 20 * pulse.ms  # 400 shots of 50 us on the QPU
+drift = OrnsteinUhlenbeck(200e3, correlation_time=10 * pulse.s)
+shots_per_batch = 400
+shot_time = 50 * pulse.us  # the program, then the reset before the next shot
+batch_time = shots_per_batch * shot_time
 batches = 200
 settled = 10  # batches the first estimate takes
 ramsey_shots = 16
@@ -117,15 +122,33 @@ def calibration_worker(records_in, updates_out):
 # ── The loop ─────────────────────────────────────────────────────────────────
 
 
-def error_against(program, drifting):
-    result = pulse.simulate(program, levels=3, dt_ns=0.25, quantum_system=drifting.now())
+def run_batch(program, reset_time, qpu):
+    """One batch of shots of *program* on *qpu*, whose drift time moves on by
+    it; *reset_time* is the rest of each shot's ``shot_time``."""
+    result = pulse.simulate(
+        program,
+        levels=3,
+        dt_ns=0.25,
+        quantum_system=qpu,
+        shots_count=shots_per_batch,
+        seed=0,
+        reset_time=reset_time,
+    )
     return 1 - result.level_population(1)
 
 
 def follow(swapping, seed=5):
-    drifting = DriftingPlant(target, qudit_index, frequency=drift, seed=seed)
+    qpu = target.replace(
+        parameter_drift={qudit_index: ParameterDrift(frequency=drift, t1=None, amplitude=None)},
+        parameter_drift_seed=seed,
+    )
+    calibrated_hz = qpu.physical_qudits[qudit_index].frequency_hz
+    shots = np.random.default_rng(seed)
     in_use_hz = 0.0
     program = fringe_top.lower(calibrated_system(0.0).qudits[qudit_index])
+    # A recalibration moves only the frequency, so every program the worker
+    # sends has this one's duration.
+    reset_time = shot_time - program.duration
     mean_hz, sigma_hz = 0.0, prior_sigma_hz
     spawn = multiprocessing.get_context("spawn")
     records_in, updates_out = spawn.Queue(), spawn.Queue()
@@ -146,16 +169,15 @@ def follow(swapping, seed=5):
                 in_use_hz, program = fresh
                 swaps += 1
                 lags.append(batch - sent)
-        trace.append(
-            (drifting.state.frequency_offset_hz, in_use_hz, error_against(program, drifting))
-        )
+        true_offset_hz = qpu.true_qudits[qudit_index].frequency_hz - calibrated_hz
         records = []
         for _ in range(ramsey_shots):
             wait_ns, phase = cal.ramsey_setting(mean_hz, sigma_hz, max_wait_ns=2000.0)
-            records.append((wait_ns, phase, drifting.sample(drifting.p_ramsey(wait_ns, phase))))
+            p1 = cal.ramsey_probability(wait_ns, phase, true_offset_hz)
+            records.append((wait_ns, phase, int(shots.random() < p1)))
         records_in.put((batch, records))
+        trace.append((true_offset_hz, in_use_hz, run_batch(program, reset_time, qpu)))
         time.sleep(max(0.0, started + batch_time / pulse.s - time.monotonic()))
-        drifting.advance(batch_time / pulse.s)
     records_in.put(None)
     while not isinstance(counts := updates_out.get(), dict):
         pass
@@ -193,10 +215,9 @@ if __name__ == "__main__":
         f"on {settled_on.mean():.4f}; worst off {settled_off.max():.4f}, "
         f"on {settled_on.max():.4f}"
     )
-    floor = error_against(
-        fringe_top.lower(calibrated_system(0.0).qudits[qudit_index]),
-        DriftingPlant(target, qudit_index),
-    )
+    # The same system without drift: on resonance.
+    resonant = fringe_top.lower(target.qudits[qudit_index])
+    floor = run_batch(resonant, shot_time - resonant.duration, target)
     print(f"  (on resonance the error is {floor:.4f}: decay and thermal population)")
     tracking = np.sqrt(np.mean((on[settled:, 0] - on[settled:, 1]) ** 2))
     print(f"  calibration tracking error (rms, settled): {tracking / 1e3:.1f} kHz")

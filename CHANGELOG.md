@@ -600,13 +600,35 @@ behavior may change in any 0.x release.
   a frequency binary search, three-point decay and phase estimators,
   golden-section and Nelder-Mead steps), `classical.random_index` (an
   on-device random source), `classical.loop` (a parameter store whose values
-  programs read at run time, and an estimate log) and `runtime.drift` (a
-  drifting quantum system with its truth trace and surrogates). Every time an
+  programs read at run time, and an estimate log), and the outcome
+  probabilities of those experiments with ideal pulses
+  (`survival_probability`, `ramsey_probability`, `rabi_probability`), for
+  drawing shots without simulating them. Every time an
   estimator takes is a `pulse.Time` or a number of ns
   (`ramsey_detuning(mean_hz, theta, 2 * pulse.us)`); converting it costs a
   controller nothing. Examples
   `19_classical_calls.py` and `20_adaptive_calibration.py`, and the
   "Classical Calls at QPU Runtime" guide.
+- **Parameter drift.** `pulse.quantum_system(..., parameter_drift=True,
+  parameter_drift_seed=5)` (or `qs.replace(parameter_drift=...)`) builds a
+  simulated quantum system whose qudit frequencies, T1 and drive amplitudes
+  drift: `True` for the default `ParameterDrift()` on every qudit, a model
+  for every qudit, or `{qudit: model}`. Compiling reads only its calibrated
+  values (`qs.physical_qudits`), so it has its non-drifting twin's
+  fingerprint, compiled programs and exports; `pulse.simulate` plays its
+  true values (`qs.true_qudits`, the same `PhysicalQudit` type), which start
+  at the calibration. Drift time follows the run clock: each `simulate`
+  advances it by `shots_count` times the program's duration plus
+  `reset_time` (a new `simulate` keyword, by default five times the longest
+  calibrated T1 of the program's qudits), holding the true values for the
+  call and splitting a call longer than the drift's correlation time into
+  chunks of shots; `qs.advance(20 * pulse.ms)` moves time on between
+  experiments and `qs.parameter_drift_time` reads it. The defaults
+  (`cudaq_pulse.quantum_systems.drift`: `OrnsteinUhlenbeck` frequency and
+  amplitude, `TelegraphT1`) are slow, transmon-sized drift; a model of your
+  own is any object with `start(calibrated, rng)` and
+  `advance(true, calibrated, seconds, rng)`. Example
+  `26_drift_following.py` follows a drifting qudit by swapping programs.
 - **Controller backends.** `ScheduledKernel.export_to_controller()` exports a
   scheduled kernel for an out-of-tree controller backend, format
   `cudaq-pulse.controller/1` (`cudaq_pulse.controller.FORMAT`): the lines

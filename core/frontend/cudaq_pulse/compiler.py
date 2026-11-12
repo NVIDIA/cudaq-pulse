@@ -872,19 +872,20 @@ class ScheduledKernel:
         values."""
         # The clock exactly as its float holds it, as Fraction(clock_ghz) is.
         numerator, denominator = self.quantum_system.clock_ghz.as_integer_ratio()
-        schedule = self.schedule
-        if type(schedule) is list:
+        module = self._concrete() if self._retimed or self.carriers else self._module
+        with self._lock:
+            events = module.event_tree(_LISTED_EVENTS)
+        if type(events) is list:
             end: int | None = 0
-            for event in schedule:
-                if event.start_cycles is None or event.duration_cycles is None:
+            for _, _, _, start, length in events:
+                if start is None or length is None:
                     end = None
                     break
-                end = max(end, event.start_cycles + event.duration_cycles)
+                end = max(end, start + length)
         else:
             from ._loops import Schedule
 
-            assert isinstance(schedule, Schedule)
-            end = schedule.latest_end()
+            end = Schedule(events[0], ScheduledEvent).latest_end()
         if end is None:
             raise ValueError(
                 "the module is scheduled when it has the values of its float "

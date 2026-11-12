@@ -202,6 +202,7 @@ def simulate(
     latency_branching: bool = False,
     quantum_system: Any = None,
     branches: BranchCoverage | str = BranchCoverage.ALL,
+    reset_time: Time | None = None,
 ) -> SimulationResult:
     """Simulate one kernel call on the quantum system it is compiled for.
 
@@ -294,9 +295,10 @@ def simulate(
         A ``QuantumSystem`` to simulate instead of the one the program
         was compiled for: its qudits' frequencies, T1, T2, thermal
         populations, drive strength and readout parameters apply, while the
-        program (its tones and pulses) stays as compiled. This is how a
-        drifting quantum system is simulated without compiling again; see
-        ``cudaq_pulse.runtime.drift``.
+        program (its tones and pulses) stays as compiled. A system with
+        parameter drift (``cudaq_pulse.quantum_systems.drift``) plays its
+        true values, ``true_qudits``, whether it is this one or the one the
+        program is compiled for, and the call advances its drift time.
     latency_branching:
         With a timeout, branch on whether the answer came in time with the
         probability of the function's latency model; by default, without
@@ -311,6 +313,17 @@ def simulate(
         exponential. The state is then the average over the shots'
         branches, and ``result.branches`` gives each one's share of the
         shots. It needs ``shots_count``. A ``BranchCoverage`` or its string.
+    reset_time:
+        The time between shots, after each run of the program, as
+        ``200 * pulse.us``: a system with parameter drift advances its drift
+        time by ``shots_count`` (or one) times the program's duration plus
+        this. By default 5 times the longest calibrated T1 of the program's
+        qudits, a passive reset. It changes nothing else, and nothing for a
+        system without drift. A call whose shots take longer than the
+        shortest correlation time of the drift models is split into chunks
+        of whole shots, each at least that long, and each plays the true
+        values at its start; the result merges them, weighted by shots, with
+        the records in shot order.
     """
     from ..compiler import ScheduledKernel
     from ..kernel._kernel import CompiledKernel, Kernel
@@ -335,6 +348,30 @@ def simulate(
             "simulate(lowered.generic, 0.5), or the module of one call; "
             f"got {type(program).__name__}"
         )
+    if reset_time is not None:
+        options: dict[str, Any] = {
+            "levels": levels,
+            "initial_state": initial_state,
+            "shots_count": shots_count,
+            "seed": seed,
+            "backend": backend,
+            "t_start": 0.0,
+            "t_end": t_end,
+            "dt_ns": dt_ns,
+            "integrator": integrator,
+            "dephasing": dephasing,
+            "handlers": handlers,
+            "readout": readout,
+            "latency_branching": latency_branching,
+            "branches": branches,
+        }
+        system = lowered.quantum_system if quantum_system is None else quantum_system
+        if getattr(system, "_drift", False) is True:
+            return system._simulated(_simulate_lowered, lowered, reset_time, options)  # type: ignore[no-any-return]
+        from ..quantum_systems.drift import _reset_ns
+
+        _reset_ns(reset_time, lowered, system)
+        return _simulate_lowered(lowered, quantum_system=quantum_system, **options)
     return _simulate_lowered(
         lowered,
         levels=levels,
@@ -403,11 +440,16 @@ def _simulate_lowered(
             "simulate(program, 0.5), or lower the kernel with them"
         )
     compiled_for = lowered.quantum_system
-    target = (
-        compiled_for._description
-        if quantum_system is None
-        else _check_quantum_system(lowered, quantum_system)
-    )
+    if quantum_system is None:
+        if compiled_for._drift:
+            options = compiled_for._options(locals())
+            return compiled_for._simulated(_simulate_lowered, lowered, None, options)  # type: ignore[no-any-return]
+        target = compiled_for._description
+    else:
+        target = _check_quantum_system(lowered, quantum_system)
+        if quantum_system._drift:
+            options = quantum_system._options(locals())
+            return quantum_system._simulated(_simulate_lowered, lowered, None, options)  # type: ignore[no-any-return]
     try:
         step = _STEPS.get(
             (

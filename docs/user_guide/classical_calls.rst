@@ -390,8 +390,9 @@ segment with its answers bound, on the CPU or the GPU.
 
 ``quantum_system=`` simulates another quantum system than the one the program
 was compiled for, keeping the program as compiled: its qudits' frequencies,
-T1, T2, drive strength and readout parameters apply. That is how a drifting
-quantum system is simulated (see below).
+T1, T2, drive strength and readout parameters apply. A program compiled from
+an estimate is simulated this way on a quantum system that drifts (see
+below).
 
 Native handlers
 ---------------
@@ -600,13 +601,77 @@ when it is known.
        ...
        store.set("wait_ns", next_wait, iteration=i)
 
-**A drifting quantum system.** ``cudaq_pulse.runtime.drift.DriftingPlant`` moves one
-qubit's T1 (``TelegraphT1``, switching between two values), frequency and
-drive amplitude (``OrnsteinUhlenbeck``) as time advances, and records every
-state in ``drifting.truth``. ``drifting.now()`` is the quantum system now, for
-``pulse.simulate(..., quantum_system=...)``; ``p_survive``, ``p_ramsey`` and
-``p_rabi`` give the standard experiments' outcome probabilities directly, for
-loops of many iterations.
+**A drifting quantum system.** ``pulse.quantum_system(...,
+parameter_drift=True)`` builds a simulated quantum system whose qudit
+parameters drift as a chip's do. It holds two sets of values:
+``qs.physical_qudits``, the calibrated ones, which are all that compiling
+reads, and ``qs.true_qudits``, the same ``PhysicalQudit`` type, which
+``pulse.simulate`` plays. So a drifting system has the fingerprint, the
+compiled programs and the exports of its non-drifting twin, and a program
+compiled for it plays its calibration against the truth. The truth starts at
+the calibrated values and moves with drift time:
+
+- each ``simulate`` call advances drift time by its shots: ``shots_count``
+  (or one) times the program's duration plus ``reset_time``, the time
+  between shots (by default five times the longest calibrated T1 of the
+  program's qudits, a passive reset). The true values are held for the call;
+  a call longer than the shortest correlation time of the drift is split
+  into chunks of whole shots, each at least that long and each played at the
+  true values at its start.
+- ``qs.advance(20 * pulse.ms)`` moves time on between experiments. It takes
+  a time, not a bare number, and raises on a system without drift.
+  ``qs.parameter_drift_time`` is the drift time so far.
+
+.. code-block:: python
+   :class: fragment
+
+   from cudaq_pulse.quantum_systems.drift import OrnsteinUhlenbeck, ParameterDrift
+
+   # Qudit 0's frequency wanders by 200 kHz with a 10 s correlation time.
+   fast = ParameterDrift(frequency=OrnsteinUhlenbeck(200e3, 10 * pulse.s), t1=None, amplitude=None)
+   qs = pulse.quantum_system("transmon_surface17", parameter_drift={0: fast}, parameter_drift_seed=5)
+   program = fringe.lower(qs.qudits[0])                 # the calibrated values
+   result = pulse.simulate(program, shots_count=400)    # the true values; time moves on
+   offset_hz = qs.true_qudits[0].frequency_hz - qs.physical_qudits[0].frequency_hz
+   qs.advance(20 * pulse.ms)
+
+``parameter_drift`` takes ``True`` (the default ``ParameterDrift()`` on every
+qudit), one model for every qudit, or ``{qudit: model}``; ``qs.replace(
+parameter_drift=True)`` gives drift to a system a factory built.
+``parameter_drift_seed`` repeats a run, with each qudit on its own random
+stream. A drifting system pickles with its truth and random state, so a
+worker continues where it was. The default ``ParameterDrift()`` moves the
+frequency by about 20 kHz with an hour's correlation time, halves T1 and back
+with a ten-minute dwell time, and moves the drive amplitude by about 0.2% over
+an hour: slow drift, of the size reported for transmons in P. V. Klimov et
+al., Phys. Rev. Lett. 121, 090502 (2018), J. J. Burnett et al., npj Quantum
+Information 5, 54 (2019) and S. Schlör et al., Phys. Rev. Lett. 123, 190502
+(2019). Examples that want visible drift in seconds pass faster parts.
+
+A model of your own is any object with ``start(calibrated, rng)`` and
+``advance(true, calibrated, seconds, rng)``, each returning the qudit's
+``PhysicalQudit`` (``true.replace(...)`` of any field the simulator reads),
+and optionally a ``correlation_time``:
+
+.. code-block:: python
+   :class: fragment
+
+   @dataclasses.dataclass(frozen=True)
+   class LinearFrequencyDrift:
+       hz_per_s: float
+
+       def start(self, calibrated, rng):
+           return calibrated
+
+       def advance(self, true, calibrated, seconds, rng):
+           return true.replace(frequency_hz=true.frequency_hz + self.hz_per_s * seconds)
+
+   qs = pulse.quantum_system("transmon_surface17", parameter_drift={3: LinearFrequencyDrift(50.0)})
+
+Loops of many iterations draw shots without simulating them from
+``cal.survival_probability``, ``cal.ramsey_probability`` and
+``cal.rabi_probability`` at the true values, with their own generator:
+``rng.random() < cal.ramsey_probability(wait_ns, phase, offset_hz)``.
 
 A calibration chain on the controller
 -------------------------------------

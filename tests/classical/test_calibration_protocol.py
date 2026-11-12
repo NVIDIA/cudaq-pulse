@@ -55,9 +55,14 @@ def test_the_pi_train_corrects_a_drive_amplitude_error():
     lowered = pulse.compile(_pi_step, quantum_system=dev, control_system=P["control_system"]).lower(
         q
     )
-    plant = P["chain_system"](target, amplitude_scale=1.02)
+    true_system = P["chain_system"](target, amplitude_scale=1.02)
     result = pulse.simulate(
-        lowered, quantum_system=plant, shots_count=2, seed=3, branches="sampled", readout="model"
+        lowered,
+        quantum_system=true_system,
+        shots_count=2,
+        seed=3,
+        branches="sampled",
+        readout="model",
     )
     for branch in result.branches:
         corrected, relative_sigma = branch.calls[-1].answer

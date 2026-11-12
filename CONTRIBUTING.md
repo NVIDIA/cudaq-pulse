@@ -548,7 +548,7 @@ pre-releases `X.Y.Z{a,b,rc}N` and post releases `X.Y.Z.postN`.
   `cudaq_pulse.backends`, `cudaq_pulse.classical`,
   `cudaq_pulse.classical.wire`, `cudaq_pulse.classical.emulation`,
   `cudaq_pulse.classical.calibration`, `cudaq_pulse.classical.loop` and
-  `cudaq_pulse.runtime.drift`), their
+  `cudaq_pulse.quantum_systems.drift`), their
   documented behavior, the `cudaq_pulse.backends` entry-point group, the
   controller export format (whose version is `cudaq_pulse.controller.FORMAT`),
   the documented environment variables, and the `cudaq-pulse-opt` and
