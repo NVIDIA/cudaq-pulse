@@ -117,14 +117,15 @@ def test_the_release_notes_hold_every_unreleased_entry():
     assert [line for line in entries if line not in notes.splitlines()] == []
 
 
-@pytest.mark.parametrize("page", ["README.md", "docs/getting_started.rst"])
-def test_the_install_commands_name_the_next_release(page):
-    version, _ = _next_release((_TOOLS.parent / "CHANGELOG.md").read_text())
+@pytest.mark.parametrize(
+    "page", ["README.md", "docs/getting_started.rst", "docs/user_guide/gpu_execution.rst"]
+)
+def test_the_install_commands_install_from_pypi(page):
     text = (_TOOLS.parent / page).read_text()
-    assert f"releases/expanded_assets/v{version}" in text
-    pins = re.findall(r'pip install "cudaq-pulse(?:\[\w+\])?==([^"]+)"', text)
-    assert pins and set(pins) == {version}
-    assert not re.search(r"pip install (?:\"?)cudaq-pulse(?:\[\w+\])?(?:\"?)\s*$", text, re.M)
+    commands = re.findall(r"pip install (\"?cudaq-pulse\S*)", text)
+    assert commands
+    assert all(re.fullmatch(r'cudaq-pulse|"cudaq-pulse\[\w+\]"', c) for c in commands), commands
+    assert "expanded_assets" not in text and "--find-links" not in text
 
 
 @pytest.mark.parametrize(

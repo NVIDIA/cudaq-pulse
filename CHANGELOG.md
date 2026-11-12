@@ -795,7 +795,9 @@ behavior may change in any 0.x release.
   `pip install cudaq-pulse` installs automatically (`cudaq-pulse` requires
   it at the same version). Each
   wheel carries its license files and `THIRD_PARTY_NOTICES`, generated from
-  what its binaries link, with each third-party license's text.
+  what its binaries link, with each third-party license's text. The wheels
+  are on PyPI (`pip install cudaq-pulse`, with `[cu12]`, `[cu13]` or `[gpu]`
+  for GPU simulation); each GitHub release also carries them and the sdist.
 
 ### Fixed
 

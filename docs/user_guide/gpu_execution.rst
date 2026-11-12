@@ -17,16 +17,13 @@ research and should not be treated as a production simulator.
 Installation
 ------------
 
-The wheels are attached to each release on the `GitHub releases page
-<https://github.com/NVIDIA/cudaq-pulse/releases>`_ (cudaq-pulse is coming to
-PyPI); ``pip`` installs the one for your platform from the release, as in
+Install cudaq-pulse from PyPI with the extra for your CUDA major, as in
 :doc:`../getting_started`:
 
 .. code-block:: bash
 
-   RELEASE=https://github.com/NVIDIA/cudaq-pulse/releases/expanded_assets/v0.1.0
-   pip install "cudaq-pulse[cu12]==0.1.0" --find-links "$RELEASE"   # CUDA 12 libraries
-   pip install "cudaq-pulse[cu13]==0.1.0" --find-links "$RELEASE"   # CUDA 13 libraries
+   pip install "cudaq-pulse[cu12]"   # CUDA 12 libraries
+   pip install "cudaq-pulse[cu13]"   # CUDA 13 libraries
 
 The Linux wheels include a cuDensityMat runtime library for each of CUDA 12
 and CUDA 13. The ``cu12`` and ``cu13`` extras install cuDensityMat and the

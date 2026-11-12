@@ -17,36 +17,28 @@ linked MLIR, so `pip` is the only installer you need.
 
 ## Install
 
-The wheels are attached to each release on the
-[GitHub releases page](https://github.com/NVIDIA/cudaq-pulse/releases);
-cudaq-pulse is coming to PyPI. To install from a GitHub release, point `pip`
-at it, and `pip` picks the wheel for your platform:
+Install from PyPI; `pip` picks the wheel for your platform:
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-RELEASE=https://github.com/NVIDIA/cudaq-pulse/releases/expanded_assets/v0.1.0
 
 # Compiler and CPU simulation: compile kernels, inspect the MLIR, simulate
 # with the NumPy reference, run cudaq-pulse-opt.
-pip install "cudaq-pulse==0.1.0" --find-links "$RELEASE"
+pip install cudaq-pulse
 
 # Plus GPU simulation (Linux), with the CUDA 12 or CUDA 13 libraries.
-pip install "cudaq-pulse[cu12]==0.1.0" --find-links "$RELEASE"
-pip install "cudaq-pulse[cu13]==0.1.0" --find-links "$RELEASE"
+pip install "cudaq-pulse[cu12]"
+pip install "cudaq-pulse[cu13]"
 
 # Check what was installed and whether it works.
 python -m cudaq_pulse.doctor
 ```
 
-Keep the version pin: it stops `pip` from choosing a different package of
-the same name from PyPI. `cudaq-pulse-opt`, the MLIR driver, comes along
-automatically: it is in `cudaq-pulse-tools`, a wheel of its own on the
-release, one per platform for every Python, which `cudaq-pulse` requires at
-the same version. The CUDA
-libraries and the other dependencies come from PyPI. You can also download
-the two wheels for your platform from the release and install both files,
-`pip install ./cudaq_pulse-0.1.0-<platform>.whl ./cudaq_pulse_tools-0.1.0-<platform>.whl`,
-or with `"./cudaq_pulse-0.1.0-<platform>.whl[cu12]"` for GPU simulation.
+`cudaq-pulse-opt`, the MLIR driver, comes along automatically: it is in
+`cudaq-pulse-tools`, a wheel of its own, one per platform for every Python,
+which `cudaq-pulse` requires at the same version. Each release on the
+[GitHub releases page](https://github.com/NVIDIA/cudaq-pulse/releases) also
+carries the wheels and the source distribution.
 
 `[gpu]` is an alias for `[cu12]`. The `cu12` and `cu13` extras install into
 the same directories, so install only one of them per environment.
