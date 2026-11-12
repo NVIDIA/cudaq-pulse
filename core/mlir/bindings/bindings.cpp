@@ -6460,6 +6460,26 @@ void freezeType(nb::handle cls) {
 #endif
 }
 
+// The span CUDA-Q passes a std::vector<bool> to a device function as.
+struct DecoderBits {
+  std::uint8_t *buffer;
+  std::uint64_t length;
+};
+
+template <typename Call>
+void guardedDecoderCall(Call &&call) {
+  std::string message;
+  try {
+    call();
+    return;
+  } catch (const std::exception &error) {
+    message = error.what();
+  } catch (...) {
+    message = "the decoder raised an unknown C++ exception";
+  }
+  throw std::runtime_error(message);
+}
+
 } // namespace
 
 NB_MODULE(_cudaq_pulse_native, m) {
@@ -6718,6 +6738,52 @@ NB_MODULE(_cudaq_pulse_native, m) {
   m.def("verifies_everything", &verifyEverything,
         "Whether CUDAQ_PULSE_VERIFY=1 asks for the verifications that only "
         "catch a bug of the compiler itself");
+
+  // CUDA-Q QEC's simulation decoder functions (those a CUDA-Q kernel on a
+  // simulator calls, in cudaq-qec 0.6.0 to 0.8.1) throw C++ exceptions for an
+  // unconfigured decoder or a wrong size, which must not unwind through
+  // ctypes: they are called here, by address, and raised as RuntimeError.
+  m.def(
+      "decoder_reset",
+      [](std::uintptr_t address, std::uint64_t decoder_id) {
+        auto fn = reinterpret_cast<void (*)(std::uint64_t)>(address);
+        guardedDecoderCall([&] { fn(decoder_id); });
+      },
+      nb::arg("address"), nb::arg("decoder_id"),
+      "Call cudaq::qec::decoding::simulation::reset_decoder at address");
+  m.def(
+      "decoder_enqueue",
+      [](std::uintptr_t address, std::uint64_t decoder_id,
+         const nb::bytes &syndromes, std::uint64_t tag) {
+        auto fn = reinterpret_cast<void (*)(std::uint64_t, DecoderBits,
+                                            std::uint64_t)>(address);
+        std::vector<std::uint8_t> bits(
+            reinterpret_cast<const std::uint8_t *>(syndromes.c_str()),
+            reinterpret_cast<const std::uint8_t *>(syndromes.c_str()) +
+                syndromes.size());
+        guardedDecoderCall(
+            [&] { fn(decoder_id, {bits.data(), bits.size()}, tag); });
+      },
+      nb::arg("address"), nb::arg("decoder_id"), nb::arg("syndromes"),
+      nb::arg("tag"),
+      "Call simulation_enqueue_syndromes at address, one byte per syndrome "
+      "bit");
+  m.def(
+      "decoder_get",
+      [](std::uintptr_t address, std::uint64_t decoder_id, std::uint64_t count,
+         bool reset) {
+        auto fn = reinterpret_cast<void (*)(std::uint64_t, DecoderBits, bool)>(
+            address);
+        std::vector<std::uint8_t> bits(count, 0);
+        guardedDecoderCall(
+            [&] { fn(decoder_id, {bits.data(), bits.size()}, reset); });
+        return nb::bytes(reinterpret_cast<const char *>(bits.data()),
+                         bits.size());
+      },
+      nb::arg("address"), nb::arg("decoder_id"), nb::arg("count"),
+      nb::arg("reset"),
+      "Call simulation_get_corrections at address; the corrections, one byte "
+      "per bit");
 
   cudaq_pulse::loadLengthInference();
   m.def(
