@@ -19,6 +19,8 @@ _SLOW = {
     "25_precompiled_branches.py",
     "26_drift_following.py",
 }
+# Examples that call CUDA-Q QEC, which installs on Linux only.
+_CUDAQ_QEC = {"27_realtime_decoding.py"}
 # A build tree stages the package in build/<dir>/python and cudaq-pulse-opt in
 # build/<dir>/bin; an installation puts the tool on PATH itself.
 _BUILD_BIN = Path(cudaq_pulse.__file__).parent.parent.parent / "bin"
@@ -30,6 +32,8 @@ _BUILD_BIN = Path(cudaq_pulse.__file__).parent.parent.parent / "bin"
     ids=lambda p: str(p.relative_to(_EXAMPLES)),
 )
 def test_example_runs(path, monkeypatch, capsys):
+    if path.name in _CUDAQ_QEC:
+        pytest.importorskip("cudaq_qec", reason="needs CUDA-Q QEC (Linux)")
     if (_BUILD_BIN / "cudaq-pulse-opt").exists():
         monkeypatch.setenv("PATH", f"{_BUILD_BIN}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setenv("MPLBACKEND", "Agg")

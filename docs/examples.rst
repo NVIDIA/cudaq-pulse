@@ -124,6 +124,11 @@ Core Examples
      - Following a drifting qudit: a background process recompiles when the
        quantum system fingerprint changes, and the host swaps programs in between
        batches *(simulates)*
+   * - 27
+     - ``27_realtime_decoding.py``
+     - Real-time QEC decoding with a deadline and a fallback table: a
+       decoder configured in CUDA-Q QEC, called with CUDA-Q QEC's own
+       functions; needs cudaq-qec (Linux) and an NVIDIA GPU *(simulates)*
 
 Examples 24 to 26 send compiled programs between processes, which works
 because programs pickle; their worker processes use the ``spawn`` start

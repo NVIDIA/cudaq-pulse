@@ -578,7 +578,8 @@ behavior may change in any 0.x release.
   `reset_decoder`, cudaq-qec 0.6.0 to 0.8.1): a kernel calls a decoder
   configured in CUDA-Q QEC with CUDA-Q QEC's arguments, its requests are the
   decoding server's messages, and simulation and emulation answer with the
-  configured decoders through CUDA-Q QEC's simulation library.
+  configured decoders through CUDA-Q QEC's simulation library. Example
+  `27_realtime_decoding.py`.
 - **Calibrating while the QPU runs.** `classical.calibration` (adaptive T1,
   a frequency binary search, three-point decay and phase estimators,
   golden-section and Nelder-Mead steps), `classical.random_index` (an

@@ -25,6 +25,9 @@ import textwrap
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
+# Examples that call CUDA-Q QEC, which installs on Linux only and has no
+# types for its native functions (cudaq_qec.qec), so no editor sees them.
+_UNTYPED_DEPENDENCIES = {"27_realtime_decoding.py"}
 
 _PROBE = """\
 import cudaq_pulse as pulse
@@ -115,6 +118,7 @@ def main() -> int:
         sources = {
             f"examples__{p.relative_to(examples).as_posix().replace('/', '__')}": p.read_text()
             for p in sorted(examples.rglob("*.py"))
+            if p.name not in _UNTYPED_DEPENDENCIES
         }
         sources.update(docs_modules(_ROOT / "docs"))
         sources["probe.py"] = _PROBE
