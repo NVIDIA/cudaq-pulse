@@ -357,7 +357,27 @@ length; for one on its own clock, or with line delays, export
     ``answer_delay_ns`` and ``slots`` for ``Link.fixed_ns``,
     ``bytes_per_ns``, ``feedback_ns`` and ``slots``.
 ``lines``
-    Each line's ``qudits``, a list.
+    Each line's ``qudits``, a list, in the order the program first uses the
+    lines. A shared line (see `Shared lines`_) is listed once, with every
+    qudit it reaches and its ``max_concurrent_tones``, which a dedicated line
+    does not have.
+Events on a shared line
+    A play, readout, wait or frame update on a shared line has, after its
+    ``line``, its ``tone_slot`` (0 to the line's ``max_concurrent_tones``
+    minus 1: the tone it plays, which a controller maps to one of the line's
+    oscillators) and ``qudits``, the one qudit it is for. Tones that play at
+    the same time have different slots. Slots are given from the program
+    alone, so every export of it gives the same: a line playing one tone at
+    once gives every event slot 0; else each qudit keeps one slot for the
+    whole program when the line has enough for the qudits whose events
+    overlap (lowest free slot first, in the order of their first events);
+    else each tone takes the lowest free slot in start order, which a
+    rolled loop cannot hold (``UnsupportedError``: unroll it, or give the
+    line more tones). A sync lists each of its lines once; ``runtime_tones``
+    and ``frame_state`` entries name the line and, on a shared line, the
+    ``qudits`` (and ``tone_slot``) of their tone. On dedicated lines none of
+    these keys are present, and a program that plays no shared line exports
+    as it does on a system without them.
 Played events and frame updates
     ``tones``, a list of the tones the event plays (a frame update's
     frame), each with its ``frequency_hz``, its ``phase_rad`` in the loops'
@@ -596,6 +616,72 @@ undelayed one its carrier index. Compiling a kernel again with only other
 delays, such as a control system calibrated again, reuses its trace and
 optimized module and schedules it again, with the same result, byte for
 byte, as compiling it anew.
+
+Shared lines
+------------
+
+A line may reach several qudits: a readout feedline multiplexing the
+readout of the qudits along it, or a drive line combining several drive
+tones. ``ReadoutLine([0, 1, 2, 3], max_concurrent_tones=4, delay_ns=12.0)``
+reads out qudits 0 to 3 and plays up to four tones at once; a line reaching
+one qudit, ``ReadoutLine(5)`` or ``ReadoutLine([5])``, is dedicated, as
+before. ``max_concurrent_tones`` is 1 by default, and at most the qudits
+the line reaches. Every line has ``qudits``, a tuple, and
+``max_concurrent_tones``; only a dedicated line has ``qudit``, which is an
+error on a shared one. A qudit is reached by at most one line of each kind
+in the control system: a second one is an error (choosing between lines is
+not supported yet).
+
+A kernel is written as for dedicated lines: ``get_readout_line(q)`` of a
+qudit on the feedline gives one of its tones, for ``q``, with ``q``'s
+frequency, and each call gives a line of its own::
+
+    from cudaq_pulse.controller import ReadoutLine
+
+    box = pulse.Controller(
+        drive_lines=[0, 1, 2, 3],
+        readout_lines=[ReadoutLine([0, 1, 2, 3], max_concurrent_tones=4)],
+    )
+
+    @pulse.kernel
+    def measure(a, b, c, d):
+        lines = [get_readout_line(a), get_readout_line(b), get_readout_line(c), get_readout_line(d)]
+        sync(lines[0], lines[1], lines[2], lines[3])
+        for line in lines:
+            readout(line, square(400, 0.05))
+
+The compiler checks every line that reaches more than one qudit, whatever
+its ``max_concurrent_tones``, for the tones it plays at once: more than
+``max_concurrent_tones`` drives or readouts on it overlapping in time is a
+``ControllerLimitError`` naming the line, the cycle and the qudits (with
+one tone at once, its qudits' pulses must not overlap at all). Pulses in
+the two arms of one branch never play together. The scheduler does not
+move pulses to keep within it: play some after the others end, with a
+sync between them. A dedicated line is never checked for it, and a
+program on dedicated lines costs nothing more to compile or export.
+
+The other limits of a ``Controller`` apply as follows on a shared line.
+Per tone, as each tone is its own sequencer: the spacing of its operations
+(``instruction_cycles``, ``min_idle_cycles``) and ``max_amplitude`` (the
+sum of concurrent tones is not checked yet). Per physical line: its
+waveform memory (``waveform_memory_samples`` with ``"per_line"``, the
+distinct shapes of all its tones) and ``max_tones_per_line`` (the distinct
+tone frequencies of all its tones). ``max_pulses`` counts every drive and
+readout, as on dedicated lines. A kernel with runtime qudits compiles on
+shared lines, and each call is checked for the tones at once when it binds
+its qudits.
+
+Format ``/2`` of the export lists a shared line once, with its
+``max_concurrent_tones``, and gives each event on it a ``tone_slot`` and
+the ``qudits`` it is for (see `The structured format`_); format ``/1``, which has one
+qudit per line, raises ``UnsupportedError`` for a program that plays a
+shared line. Format ``/2`` does not take line delays yet, so a program on a
+delayed shared line compiles and simulates but does not export yet. The
+simulator plays each tone on its own qudit. In a system file a shared line
+is ``{"qudits": [0, 1, 2, 3], "max_concurrent_tones": 4, "delay_ns": 12.0}``,
+without the keys at their defaults. ``examples/transmon/transmon_surface17_multiplexed_readout.py``
+reads out the four X-check ancillas of ``transmon_surface17`` on one
+feedline.
 
 Waveform memory
 ---------------

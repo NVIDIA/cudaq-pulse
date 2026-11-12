@@ -33,6 +33,22 @@ behavior may change in any 0.x release.
   coupling or qudit. A qudit's `metadata` holds the user's own JSON
   values, which the library never reads and which do not make two quantum systems
   differ; system files keep them.
+- **Shared lines.** A `DriveLine` or `ReadoutLine` may reach several
+  qudits and play several tones at once: a readout feedline is
+  `ReadoutLine([0, 1, 2, 3], max_concurrent_tones=4)` (1 by default, at most
+  the qudits it reaches). Every line has `qudits`; only a dedicated line has
+  `qudit`. A kernel's `get_readout_line(q)` of a qudit on it gives one of
+  its tones, for `q`. The compiler checks that a line reaching several
+  qudits plays at most `max_concurrent_tones` tones at once (a kernel with
+  runtime qudits, when a call binds them); spacing and `max_amplitude`
+  apply per tone, waveform memory and `max_tones_per_line` per physical
+  line. Format `/2` of the controller export lists a shared line once,
+  with its `max_concurrent_tones`, and gives each event on it its
+  `tone_slot` and `qudits`; format `/1` raises `UnsupportedError` for a
+  program on a shared line. System files hold one as `{"qudits": [...],
+  "max_concurrent_tones": 4, "delay_ns": 12.0}`. A qudit is reached by at
+  most one line of each kind. A program on a delayed shared line does not
+  export yet.
 - **Pickling, for process pools and caches on disk.** Kernels pickle as
   functions do: by reference, or with cloudpickle (Ray, Dask) by value
   when defined in `__main__`, at the prompt or inside a function. Quantum systems, qudit handles and registers

@@ -18,10 +18,10 @@ Export and limits
 .. autodata:: cudaq_pulse.controller.FORMAT
 
 .. autoclass:: cudaq_pulse.controller.DriveLine
-   :members: qudit, delay_ns
+   :members: qudits, qudit, delay_ns, max_concurrent_tones
 
 .. autoclass:: cudaq_pulse.controller.ReadoutLine
-   :members: qudit, delay_ns
+   :members: qudits, qudit, delay_ns, max_concurrent_tones
 
 .. autoclass:: cudaq_pulse.controller.WaveformMemoryScope
    :members:
