@@ -288,6 +288,11 @@ held in lists stay threaded through the loop:
            x = drag(cal["x_duration"], 0.5, cal["x_sigma"], cal["x_beta"])
            drive(drive_line, x)
 
+An ``if`` on the answer of a classical call is kept the same way
+(``if correction:``, ``if flip[0]:``, or the in-time flag of
+``result(timeout=...)``), and ``and``, ``or`` and ``not`` combine answers
+and measurement results in one condition; see :doc:`classical_calls`.
+
 Both branches are traced, and lines and tones they rebind become the
 results of the region. Both branches must continue after the ``if``. A
 number the branches set differently holds, after the ``if``, the value of
@@ -474,8 +479,9 @@ and will raise ``CompilationError``:
   patterns work)
 - Assignments to globals and to attributes (``obj.x = ...``), class
   definitions, ``async`` code and star imports
-- ``if`` conditions on anything that is only known at runtime other than a
-  measurement result
+- Ordering comparisons (``<``, ``>``, ``<=``, ``>=``) of measurement
+  results or boolean answers, which are known only when the program runs;
+  combine them with ``and``, ``or`` and ``not``
 
 The error names the construct and, where there is one, what to write
 instead.
