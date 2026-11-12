@@ -92,6 +92,18 @@ def test_guards_of_one_function_share_their_compiled_code():
     assert _guard._generated(a.plan).__code__ is _guard._generated(b.plan).__code__
 
 
+def test_guards_of_one_source_share_its_globals_and_differ_in_their_closures(monkeypatch):
+    # Guards that take turns at one code keep its global reads specialized.
+    module = sys.modules[__name__]
+    a = _guard._generated(_guard.build_guard(_reads).plan)
+    with monkeypatch.context() as m:
+        m.setattr(module, "SCALE", 3.0)
+        b = _guard._generated(_guard.build_guard(_reads).plan)
+        assert a.__globals__ is b.__globals__
+        assert (a(), b()) == (False, True)
+    assert (a(), b()) == (True, False)
+
+
 def test_the_compiled_code_cache_is_bounded(monkeypatch):
     _guard.build_guard(_reads)  # makes the cache
     monkeypatch.setattr(_guard, "_CODE", {})

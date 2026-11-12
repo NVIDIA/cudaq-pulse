@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     _Read = tuple[str, str, tuple[str, ...], bool]
     # Bound by _load (below).
     _generated: Callable[[tuple[tuple[Any, ...], ...]], Callable[[], bool]]
-    _CODE: dict[str, types.CodeType]
+    _CODE: dict[str, Callable[..., Callable[[], bool]]]
     _CODE_LIMIT: int
     _CODE_LOCK: threading.Lock
 
@@ -153,17 +153,20 @@ def _load() -> None:
 
     def generated(plan: tuple[tuple[Any, ...], ...]) -> Callable[[], bool]:
         """The guard's check as one generated function, its code compiled once
-        per source (a bounded cache, safe to share between threads)."""
-        src, env = _source(plan)
-        code = _CODE.get(src)
-        if code is None:
-            code = compile(src, "<pulse guard>", "exec")
+        per source (a bounded cache, safe to share between threads). The
+        guards of one source share its globals too: what differs between them
+        is in their closures, so a guard run after another of its source
+        finds the code's global reads still specialized for it."""
+        src, values = _source(plan)
+        make = _CODE.get(src)
+        if make is None:
+            namespace: dict[str, Any] = {"_B": vars(builtins), "_same": _same_contents}
+            exec(compile(src, "<pulse guard>", "exec"), namespace)
             with _CODE_LOCK:
                 if len(_CODE) >= _CODE_LIMIT:
                     _CODE.clear()
-                code = _CODE.setdefault(src, code)
-        exec(code, env)
-        check: Callable[[], bool] = env["_make"]()
+                make = _CODE.setdefault(src, namespace["_make"])
+        check: Callable[[], bool] = make(*values)
         return check
 
     _CODE, _CODE_LIMIT, _CODE_LOCK = {}, 256, threading.Lock()
@@ -257,34 +260,39 @@ def _closures(
     return check
 
 
-def _source(plan: tuple[tuple[Any, ...], ...]) -> tuple[str, dict[str, Any]]:
+def _source(plan: tuple[tuple[Any, ...], ...]) -> tuple[str, list[Any]]:
     """The generated form of *plan*: the same reads, in the same order, with
-    the same comparisons, as source and the values it names. The source
-    holds only the plan's shape and names, so guards of one kernel share it."""
-    env: dict[str, Any] = {"_B": vars(builtins), "_same": _same_contents}
+    the same comparisons, as the source of ``_make`` and the values it takes.
+    The source holds only the plan's shape and names, so guards of one kernel
+    share it; each guard's values are its closure's."""
+    names: list[str] = []
+    values: list[Any] = []
+
+    def take(name: str, value: Any) -> str:
+        names.append(name)
+        values.append(value)
+        return name
+
     lines: list[str] = []
     for k, (source, a, b, register, how, expected, snapshot) in enumerate(plan):
         if source is None:
-            env[f"_g{k}"] = expected
-            tests = " or ".join(f"{name!r} in _g{k}" for name in sorted(b))
+            g = take(f"_g{k}", expected)
+            tests = " or ".join(f"{name!r} in {g}" for name in sorted(b))
             lines.append(f"if {tests}: return False")
             continue
         if source == _GLOBAL:
-            env[f"_a{k}"] = a
-            expr = f"_a{k}[{b!r}]"
+            expr = f"{take(f'_a{k}', a)}[{b!r}]"
         elif source == _OR_BUILTIN:
-            env[f"_a{k}"] = a
-            expr = f"(_a{k}[{b!r}] if {b!r} in _a{k} else _B[{b!r}])"
+            m = take(f"_a{k}", a)
+            expr = f"({m}[{b!r}] if {b!r} in {m} else _B[{b!r}])"
         elif source == _CELL:
-            env[f"_a{k}"] = a
-            expr = f"_a{k}.cell_contents"
+            expr = f"{take(f'_a{k}', a)}.cell_contents"
         elif source == _ATTR:
             expr = f"r{a}.{b}"
         else:
-            env[f"_b{k}"] = b
-            expr = f"r{a}[_b{k}]"
+            expr = f"r{a}[{take(f'_b{k}', b)}]"
         var = f"r{register}" if register >= 0 else "v"
-        env[f"_e{k}"] = expected
+        take(f"_e{k}", expected)
         lines.append(f"{var} = {expr}")
         if how == _EQUAL_VALUE:
             lines.append(
@@ -296,11 +304,10 @@ def _source(plan: tuple[tuple[Any, ...], ...]) -> tuple[str, dict[str, Any]]:
         else:
             lines.append(f"if {var} is not _e{k}: return False")
         if snapshot is not None:
-            env[f"_s{k}"] = snapshot
-            lines.append(f"if not _same({var}, _s{k}): return False")
+            lines.append(f"if not _same({var}, {take(f'_s{k}', snapshot)}): return False")
     body = "".join(f"            {line}\n" for line in lines) or "            pass\n"
     src = (
-        "def _make():\n"
+        f"def _make({', '.join(names)}):\n"
         "    def _guard():\n"
         "        try:\n"
         f"{body}"
@@ -309,7 +316,7 @@ def _source(plan: tuple[tuple[Any, ...], ...]) -> tuple[str, dict[str, Any]]:
         "        return True\n"
         "    return _guard\n"
     )
-    return src, env
+    return src, values
 
 
 class Guard:
