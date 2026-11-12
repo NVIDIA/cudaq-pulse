@@ -528,10 +528,10 @@ def test_a_system_made_from_a_checked_one_is_checked_for_what_changed():
         residual_zz=[ResidualZZ((0, 2), 1.0e4)],
     )
     described = checked._description
-    assert dataclasses.replace(described, clock_ghz=1.0).couplings is described.couplings
+    assert described.replace(clock_ghz=1.0).couplings is described.couplings
     fewer = {i: q for i, q in described.qudits.items() if i < 2}
     with pytest.raises(QuantumSystemDefinitionError, match=r"couplings\[1\].qudits\[1\]: 2 is not"):
-        dataclasses.replace(described, qudits=fewer)
+        described.replace(qudits=fewer)
     restrengthened = [Coupling(c.qudits, math.nan, c.calibrations) for c in checked.couplings]
     problems = [str(p) for p in _problems_of(checked, restrengthened)]
     assert [p.split(":")[0] for p in problems] == [

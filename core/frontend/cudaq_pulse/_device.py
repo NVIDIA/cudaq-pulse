@@ -367,7 +367,7 @@ class QuantumSystem:
             if clock is None:
                 raise QuantumSystemDefinitionError(problems=problems)
             if clock != target.clock_ghz:
-                target = dataclasses.replace(target, clock_ghz=clock)
+                target = target.replace(clock_ghz=clock)
         layout = (
             tuple(sorted(target.qudits))
             if layout is None

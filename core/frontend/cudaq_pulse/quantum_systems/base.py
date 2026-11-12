@@ -14,7 +14,7 @@ from __future__ import annotations
 import math
 import numbers
 from collections.abc import Mapping, Sequence
-from dataclasses import FrozenInstanceError, dataclass, fields
+from dataclasses import FrozenInstanceError, dataclass
 from itertools import chain
 from operator import attrgetter, eq, is_, methodcaller
 from types import MappingProxyType
@@ -917,7 +917,18 @@ def _coupling_operator(model: Any) -> str | None:
     return None
 
 
-@dataclass(frozen=True, eq=False)
+# The fields of a _Description, in the order its constructor takes them.
+_DESCRIPTION_FIELDS = (
+    "name",
+    "qudits",
+    "couplings",
+    "residual_zz",
+    "model",
+    "attribution",
+    "clock_ghz",
+)
+
+
 class _Description:
     """What ``pulse.quantum_system`` builds a quantum system from: the values
     of its keywords, read-only (``qudits`` a read-only mapping, ``couplings``
@@ -929,30 +940,49 @@ class _Description:
     The couplings and residual ZZ entries are checked when it is built, and
     a ``QuantumSystemDefinitionError`` lists every problem, each at its path
     (``couplings[3].qudits[1]``).
+
+    A plain slotted class rather than a dataclass: every quantum system has
+    one, and making the dataclass cost more than importing the rest of the
+    module.
     """
 
-    name: str
-    qudits: Mapping[int, PhysicalQudit] = _EMPTY
-    couplings: Sequence[Coupling] = ()
-    residual_zz: Sequence[ResidualZZ] = ()
-    model: SimulationModel | type[SimulationModel] | None = _TRANSMON
-    attribution: str = ""
-    clock_ghz: float = 2.0
+    __slots__ = (*_DESCRIPTION_FIELDS, "__weakref__")
 
-    def __post_init__(self) -> None:
-        if not self.clock_ghz > 0:
-            raise InvalidValueError(f"clock_ghz must be positive, got {self.clock_ghz}")
-        model = self.model
+    name: str
+    qudits: Mapping[int, PhysicalQudit]
+    couplings: tuple[Coupling, ...]
+    residual_zz: tuple[ResidualZZ, ...]
+    model: SimulationModel | None
+    attribution: str
+    clock_ghz: float
+
+    def __init__(
+        self,
+        name: str,
+        qudits: Mapping[int, PhysicalQudit] = _EMPTY,
+        couplings: Sequence[Coupling] = (),
+        residual_zz: Sequence[ResidualZZ] = (),
+        model: SimulationModel | type[SimulationModel] | None = _TRANSMON,
+        attribution: str = "",
+        clock_ghz: float = 2.0,
+    ) -> None:
+        if not clock_ghz > 0:
+            raise InvalidValueError(f"clock_ghz must be positive, got {clock_ghz}")
         if isinstance(model, type) and issubclass(model, SimulationModel):
-            object.__setattr__(self, "model", model())
+            model = model()
         elif model is not None and not isinstance(model, SimulationModel):
             raise InvalidTypeError(
                 "model must be a SimulationModel class or instance, such as TransmonModel, "
                 f"or None; got {model!r}"
             )
-        object.__setattr__(self, "qudits", MappingProxyType(dict(self.qudits)))
-        object.__setattr__(self, "couplings", tuple(self.couplings))
-        object.__setattr__(self, "residual_zz", tuple(self.residual_zz))
+        set_ = object.__setattr__
+        set_(self, "name", name)
+        set_(self, "qudits", MappingProxyType(dict(qudits)))
+        set_(self, "couplings", tuple(couplings))
+        set_(self, "residual_zz", tuple(residual_zz))
+        set_(self, "model", model)
+        set_(self, "attribution", attribution)
+        set_(self, "clock_ghz", clock_ghz)
         # Every problem with the target's entries, each at its path in it.
         problems = _entries_problems(self)
         if problems:
@@ -961,18 +991,33 @@ class _Description:
                 problems=problems,
             )
 
+    def __setattr__(self, name: str, value: Any) -> NoReturn:
+        raise FrozenInstanceError(f"cannot assign to field {name!r}")
+
+    def __delattr__(self, name: str) -> NoReturn:
+        raise FrozenInstanceError(f"cannot delete field {name!r}")
+
+    def replace(self, **changes: Any) -> _Description:
+        """A copy with *changes*, built and checked as a new one, as
+        ``dataclasses.replace`` makes one."""
+        return _Description(**{**{f: getattr(self, f) for f in _DESCRIPTION_FIELDS}, **changes})
+
+    def __repr__(self) -> str:
+        values = ", ".join(f"{f}={getattr(self, f)!r}" for f in _DESCRIPTION_FIELDS)
+        return f"_Description({values})"
+
     def __eq__(self, other: object) -> bool:
         if type(other) is not type(self):
             return NotImplemented
-        return all(getattr(self, f.name) == getattr(other, f.name) for f in fields(self))
+        return all(getattr(self, f) == getattr(other, f) for f in _DESCRIPTION_FIELDS)
 
     def __hash__(self) -> int:
         return hash((self.name, self.clock_ghz, len(self.qudits), len(self.couplings)))
 
     def __reduce__(self) -> tuple[Any, ...]:
-        from .._pickling import frozen_reduce
+        from .._pickling import _plain, rebuilt
 
-        return frozen_reduce(self)
+        return (rebuilt, (_Description, {f: _plain(getattr(self, f)) for f in _DESCRIPTION_FIELDS}))
 
     @property
     def qudit_count(self) -> int:

@@ -298,7 +298,7 @@ class Calibration:
                 else:
                     c = replace(c, strength_hz=strength)
             couplings.append(c)
-        return replace(target, couplings=couplings)
+        return target.replace(couplings=couplings)
 
     @cached_property
     def _idle_exchange(self) -> Mapping[str, tuple[float, Any]]:

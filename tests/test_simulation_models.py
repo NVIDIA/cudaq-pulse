@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import dataclasses
 import math
 
 import cudaq_pulse as pulse
@@ -33,7 +32,7 @@ def test_each_model_class_declares_its_levels():
     assert SimulationModel.levels == 2
     assert TransmonModel.levels == 3
     assert TransmonModel().levels_of(5) == 3
-    assert "architecture" not in [f.name for f in dataclasses.fields(_Description)]
+    assert "architecture" not in _Description.__slots__
 
 
 def test_a_target_takes_a_model_class_or_instance_and_defaults_to_transmons():

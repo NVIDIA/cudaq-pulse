@@ -4,7 +4,6 @@
 compile once and bind their qudits at each call; unannotated ones are
 static."""
 
-import dataclasses
 import json
 import sys
 
@@ -74,7 +73,7 @@ def _recalibrated(quantum_system, carrier, shift_hz):
     target = quantum_system._description
     qudits = dict(target.qudits)
     qudits[carrier] = qudits[carrier].replace(frequency_hz=qudits[carrier].frequency_hz + shift_hz)
-    return QuantumSystem(dataclasses.replace(target, qudits=qudits), name=quantum_system.name)
+    return QuantumSystem(target.replace(qudits=qudits), name=quantum_system.name)
 
 
 @pytest.mark.parametrize("schedule", ["alap", "asap"])
