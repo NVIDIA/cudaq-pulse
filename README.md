@@ -15,17 +15,20 @@ program, three destinations:
   control system described as data and checked when the program compiles.
 
 Underneath are a Python kernel DSL, the Pulse, Classical, QOp and
-CuDensityMat MLIR dialects, and their compiler passes.
+CuDensityMat MLIR dialects, and their compiler passes. `cudaq-pulse` does not
+depend on CUDA-Q. The wheel contains its own statically linked MLIR, so `pip`
+is the only installer you need.
 
-**Warning:** CUDA-Q pulse is **research-preview software**. It is not
-production software and is not a product-supported CUDA-Q feature. Its Python
-APIs, MLIR dialects, runtime interfaces, build options, numerical behavior,
-and file layout may change incompatibly or be removed without notice. No
-stability, compatibility, performance, or production-readiness guarantee is
-provided.
+## Project Status
 
-`cudaq-pulse` does not depend on CUDA-Q. The wheel contains its own statically
-linked MLIR, so `pip` is the only installer you need.
+> [!NOTE]
+> CUDA-Q pulse is an early-stage research project. We are releasing it now
+> because the pulse layer is where much of the open work in quantum control
+> happens, and we want to build it in the open with the people who use it.
+> It is under active development: expect bugs, incomplete features, and
+> incompatible changes to the Python APIs, MLIR dialects and file formats
+> between releases. It is not a supported CUDA-Q product feature. We invite
+> you to try it with your own quantum systems and help shape its direction.
 
 ## Install
 

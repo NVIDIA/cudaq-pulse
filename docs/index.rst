@@ -20,14 +20,18 @@ emulated, or exported to your controller:
    (``classical.emulation.emulate``), or export it to a controller backend
    (``export_to_controller()``).
 
-.. warning::
+Project status
+--------------
 
-   CUDA-Q pulse is **research-preview software**, not production software or a
-   product-supported CUDA-Q feature. APIs, dialects, runtime interfaces,
-   numerical behavior, build options, and file layout may change incompatibly
-   or be removed without notice. No stability, compatibility, performance, or
-   production-readiness guarantee is provided. Expect the work to evolve as
-   the research matures.
+.. note::
+
+   CUDA-Q pulse is an early-stage research project. We are releasing it now
+   because the pulse layer is where much of the open work in quantum control
+   happens, and we want to build it in the open with the people who use it.
+   It is under active development: expect bugs, incomplete features, and
+   incompatible changes to the Python APIs, MLIR dialects and file formats
+   between releases. It is not a supported CUDA-Q product feature. We invite
+   you to try it with your own quantum systems and help shape its direction.
 
 .. toctree::
    :maxdepth: 2
