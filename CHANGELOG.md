@@ -516,7 +516,7 @@ behavior may change in any 0.x release.
   apart from the published quantum system, and `pulse.quantum_system` takes `calibration=`
   and `cooldown=`. `cudaq_pulse.quantum_systems.transmon_model` computes
   flux-tunable transmon levels and charge-coupled pairs from circuit values.
-  The shipped `transmon_surface17` calibration has one device-wide charge coupling,
+  The shipped `transmon_surface17` calibration has one system-wide charge coupling,
   fitted to the measured `|11>`-`|20>` coupling of X2-D4, so the
   `transmon_surface17` quantum system's exchange (5.67-6.08 MHz) and idle ZZ (-4.5 to -7.3 kHz) depend on
   each pair's frequencies; calibrated qubits convert detunings to and from flux quanta.
@@ -739,15 +739,25 @@ behavior may change in any 0.x release.
   emitted events back (`events()`) is checked for timing, order, program
   count and limits, and one with an emulator (`emulate()`) against the
   simulator. The report's `ok` and `str()` say what failed.
-- **Public API.** The top level is exactly `kernel`, `Kernel`, `compile`,
-  `CompiledKernel`, `ScheduledKernel`, `Pass`, `simulate`, `SimulationResult`,
-  `BranchCoverage`, `quantum_system`, `QuantumSystem`, `Qudit`, `Register`,
-  `PulseError`, `Problem`, `QuantumSystemDefinitionError`, `InvalidValueError`,
-  `InvalidTypeError`, `NotFoundError`, `IndexOutOfRangeError`,
-  `UnsupportedError`, `CompilationError`, `TimingError`, `ExecutionError`, `InternalError`,
-  `PulseWarning`, `UpgradeNotice`, `NoProcessQuantumSystemError`, `NoQuantumSystemError`,
-  `QuantumSystemMismatchError`, `GpuRuntimeError`, `viz`, `classical`,
-  `controller` and `backends`, plus `__version__`.
+- **Public API.** The top level is exactly:
+  - kernels and programs: `kernel`, `Kernel`, `compile`, `CompiledKernel`,
+    `ScheduledKernel`, `Pass`, `simulate`, `SimulationResult`,
+    `BranchCoverage`;
+  - quantum and control systems: `quantum_system`, `QuantumSystem`, `Qudit`,
+    `Register`, `Controller`, `ControlSystem`, `Processor`, `Capability`,
+    `Link`, and `gates`;
+  - time: `Time`, `ns`, `us`, `ms`, `s`, `round_duration`, `RoundDirection`;
+  - classical calls and exports: `classical`, `Bits`, `Length`, `Event`;
+  - errors and warnings: `PulseError`, `Problem`, `InvalidValueError`,
+    `InvalidTypeError`, `NotFoundError`, `IndexOutOfRangeError`,
+    `UnsupportedError`, `CompilationError`, `TimingError`, `ExecutionError`,
+    `InternalError`, `QuantumSystemDefinitionError`, `NoQuantumSystemError`,
+    `NoProcessQuantumSystemError`, `QuantumSystemMismatchError`,
+    `GpuRuntimeError`, `PulseWarning`, `UpgradeNotice`;
+  - modules: `viz`, `controller` and `backends`;
+
+  plus `__version__`.
+
   `simulate(program, *args, **options)` is the one way to simulate: it
   takes a kernel and its arguments as `compile` takes a kernel, or a
   program compiled already, such as one a worker process receives pickled,
@@ -762,17 +772,19 @@ behavior may change in any 0.x release.
   Every error cudaq-pulse raises on purpose derives from `PulseError` and
   has the built-in base of its kind: `InvalidValueError` is a `ValueError`,
   `InvalidTypeError` a `TypeError`, `NotFoundError` a `KeyError`,
-  `IndexOutOfRangeError` an `IndexError`, `UnsupportedError` a `NotImplementedError`, and `CompilationError`,
-  `ExecutionError` and `InternalError` are `RuntimeError`s. An
+  `IndexOutOfRangeError` an `IndexError`, `UnsupportedError` a
+  `NotImplementedError`, and `CompilationError`, `ExecutionError` and
+  `InternalError` are `RuntimeError`s. An
   `InternalError` is a bug in cudaq-pulse, and its message asks for a
   report. `Calibration.load` of a calibration that is neither shipped nor a
   file raises `NotFoundError`, and a malformed request or answer on a
   classical channel an `ExecutionError`. Every warning cudaq-pulse issues
   is a `PulseWarning`.
   `cudaq_pulse.compiler`, `cudaq_pulse.runtime.simulate` and
-  `cudaq_pulse.quantum_systems.transmon_model` list their public names in `__all__`,
-  as the other documented modules do. `cudaq_pulse.quantum_systems.UnknownQuantumSystemError`
-  (an unregistered quantum system name) and
+  `cudaq_pulse.quantum_systems.transmon_model` list their public names in
+  `__all__`, as the other documented modules do.
+  `cudaq_pulse.quantum_systems.UnknownQuantumSystemError` (an unregistered
+  quantum system name) and
   `cudaq_pulse.compiler.UnsupportedInterpreterError` (a Python whose bytecode
   the kernel tracer does not know) are public, and every public name is in
   the API reference, errors on their own page.
