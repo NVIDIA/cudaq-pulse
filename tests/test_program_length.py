@@ -13,6 +13,7 @@ import math
 import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse import CompilationError, Controller, ControlSystem
+from cudaq_pulse.controller import DriveLine
 
 from tests._handles import Q
 
@@ -53,6 +54,26 @@ def test_a_loop_length_past_2_63_does_not_wrap():
 
     with pytest.raises(CompilationError, match=PAST_THE_BACKSTOP):
         nested.lower(Q[0])
+
+
+def _delayed(cycles):
+    # Q's quantum system runs a 2 GHz clock: a cycle is 0.5 ns.
+    return ControlSystem(controllers=[Controller(drive_lines=[DriveLine(0, delay_ns=cycles / 2)])])
+
+
+@pytest.mark.parametrize("cycles", [2**61, 10**19, 2**64, 10**30])
+def test_a_line_delay_longer_than_a_program_is_an_error(cycles):
+    with pytest.raises(CompilationError, match=r"\(its delay_ns\), more than a program lasts"):
+        pulse.compile(_waits(1, 4), control_system=_delayed(cycles)).lower(Q[0])
+
+
+def test_a_rolled_loop_its_line_delay_takes_past_2_60_cycles_is_an_error():
+    # 64 trips of 2**53 cycles: 2**59 cycles, which a delay of 2**58 keeps short enough.
+    loop = pulse.compile(_waits(64, 2**53), control_system=_delayed(2**58), **_ROLLED)
+    assert loop.lower(Q[0]).duration / pulse.ns == pytest.approx((2**59 + 2**58) / 2)
+    longer = pulse.compile(_waits(64, 2**53), control_system=_delayed(2**59 + 2**20), **_ROLLED)
+    with pytest.raises(CompilationError, match=PAST_THE_BACKSTOP + " with its lines delayed"):
+        longer.lower(Q[0])
 
 
 def test_waits_of_run_time_length_are_checked_when_bound():

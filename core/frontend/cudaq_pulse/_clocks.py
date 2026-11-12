@@ -440,6 +440,11 @@ def line_delays(
                 f"{abs(rest) * own_ghz:g}, or calibrate the delay to {low:g} or "
                 f"{low + step_ns:g} ns"
             )
+        if abs(whole * grid) > 2**60:
+            raise InvalidValueError(
+                f"the {role} line of qudit {qudit} is delayed {ns:g} ns (its delay_ns), more "
+                f"than a program lasts: at most 2**60 cycles, {2**60 / program_ghz:.3g} ns"
+            )
         fine[(role, qudit)] = rest if fine_max > 0 else 0.0
         if whole:
             shifts[(role, qudit)] = whole * grid

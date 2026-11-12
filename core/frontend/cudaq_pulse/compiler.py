@@ -1263,9 +1263,15 @@ def build(
     try:
         module.schedule(*schedule_args)
     except Exception as e:
+        text = str(e)
+        # Delayed lines take the program past what a schedule counts, with
+        # every wait at its lowest length: with any values.
+        at = text.find("the program lasts more than 2**60 cycles with its lines delayed")
+        if at >= 0:
+            raise CompilationError(text[at:].partition("\n")[0]) from None
         # A timing budget counts every wait at its highest length, so it
         # fails the same way with any values.
-        if not parameters or any(name in str(e) for name in _BUDGETS):
+        if not parameters or any(name in text for name in _BUDGETS):
             raise
         scheduled = False
     metrics.schedule_ms = (time.perf_counter() - t0) * 1000

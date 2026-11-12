@@ -239,7 +239,9 @@ program op after op, every iteration of its loops (the longer arm of an
 ``if``), and a program longer than that is a ``CompilationError`` at the
 op or loop that passes it. A wait whose length a float sets counts at its
 lowest length; a call whose values make the program longer is a
-``ValueError`` when it binds them.
+``ValueError`` when it binds them. A line's ``delay_ns`` counts too: a
+delay longer than 2**60 cycles, or one that takes the scheduled program
+past them, is a ``CompilationError``.
 
 **For loops over Python values** known when the kernel is traced: lists,
 tuples, dictionaries, ``enumerate()``, ``zip()``, ``reversed()``, a qubit

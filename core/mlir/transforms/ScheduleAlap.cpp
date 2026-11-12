@@ -4645,8 +4645,13 @@ static mlir::LogicalResult checkBlockBudget(pulse::ScheduleBlockOp block) {
 }
 
 /// The end of the last execution of the last op of the scheduled
-/// `function`.
-static int64_t programLength(mlir::func::FuncOp function) {
+/// `function`, with each line delayed as `clocks` (its module's; none when
+/// null) delays it.
+static int64_t programLength(mlir::func::FuncOp function,
+                             const pulse::ClockAttributes *clocks = nullptr) {
+  std::optional<pulse::LineDelays> lines;
+  if (clocks && clocks->delayed())
+    lines.emplace(*clocks);
   int64_t length = 0;
   function.walk([&](mlir::Operation *op) {
     if (!isTimedOp(op))
@@ -4666,9 +4671,28 @@ static int64_t programLength(mlir::func::FuncOp function) {
     for (auto [k, period] : llvm::zip(last, pulse::periodCycles(op)))
       end += std::max<int64_t>(0, k * period);
     end += pulse::scheduledDuration(op).value_or(0);
+    if (lines)
+      end += lines->of(op);
     length = std::max(length, end);
   });
   return length;
+}
+
+/// The longest program a schedule counts, in cycles, as building the module
+/// checks it before its lines are delayed; a delay is at most as long, so
+/// the delayed length does not overflow.
+constexpr int64_t kLongestProgram = int64_t(1) << 60;
+
+/// Fail if the line delays of `clocks` take the scheduled `function` past
+/// kLongestProgram.
+static mlir::LogicalResult
+checkDelayedLength(mlir::func::FuncOp function,
+                   const pulse::ClockAttributes &clocks) {
+  if (!clocks.delayed() || programLength(function, &clocks) <= kLongestProgram)
+    return mlir::success();
+  return function->emitError()
+         << "the program lasts more than 2**60 cycles with its lines delayed "
+            "(their delay_ns), more than a schedule counts";
 }
 
 static mlir::LogicalResult checkProgramBudget(mlir::func::FuncOp function) {
@@ -4902,7 +4926,8 @@ static mlir::LogicalResult schedule(mlir::func::FuncOp function,
   if (mlir::failed(scheduleRegion(
           function.getBody(), function, resources, isAlap, data, timelines,
           pulse::LineGrid(clocks), pulse::Controllers(clocks))) ||
-      mlir::failed(checkProgramBudget(function)))
+      mlir::failed(checkProgramBudget(function)) ||
+      mlir::failed(checkDelayedLength(function, clocks)))
     return mlir::failure();
   bool placed = pulse::applyLineDelays(function, clocks);
   function->setAttr(

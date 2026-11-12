@@ -208,7 +208,9 @@ behavior may change in any 0.x release.
   it; trip counts multiply without overflow. A wait whose length a float
   sets is counted at its lowest length, and the call checks the length
   again with its value; in an `if` arm, it counts only as far as it makes
-  that arm the longer one.
+  that arm the longer one. A line's `delay_ns` counts too: a delay longer
+  than 2**60 cycles, or one that takes the scheduled program past them, is
+  a `CompilationError`.
 
 ### Changed
 

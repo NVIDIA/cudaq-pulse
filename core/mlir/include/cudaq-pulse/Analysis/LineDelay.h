@@ -20,6 +20,35 @@
 
 namespace pulse {
 
+/// The delay of each line of a module's control system, as `clocks` reads
+/// it.
+class LineDelays {
+public:
+  explicit LineDelays(const ClockAttributes &clocks)
+      : drive(clocks.driveDelay), readout(clocks.readoutDelay) {}
+
+  /// The delay of the line scheduled `op` plays on: 0 for an op no delay
+  /// moves.
+  int64_t of(mlir::Operation *op) {
+    if (!mlir::isa<DriveOp, ReadoutOp, WaitOp>(op) ||
+        op->hasAttr("classical.variable"))
+      return 0;
+    mlir::Operation *allocation = trace(op->getOperand(0));
+    if (!allocation)
+      return 0;
+    int64_t qudit = quditOf(allocation);
+    const llvm::SmallVector<int64_t> &shifts =
+        mlir::isa<GetDriveLineOp>(allocation) ? drive : readout;
+    if (qudit < 0 || qudit >= static_cast<int64_t>(shifts.size()))
+      return 0;
+    return shifts[qudit];
+  }
+
+private:
+  const llvm::SmallVector<int64_t> &drive, &readout;
+  AllocationTracer trace;
+};
+
 /// Shift the scheduled ops of every delayed line in `function` by its delay
 /// in `clocks`, its module's. Whether some op moved.
 inline bool applyLineDelays(mlir::Operation *function,
@@ -27,24 +56,12 @@ inline bool applyLineDelays(mlir::Operation *function,
   if (!clocks.delayed())
     return false;
   bool moved = false;
-  AllocationTracer trace;
+  LineDelays lines(clocks);
   function->walk([&](mlir::Operation *op) {
-    if (!mlir::isa<DriveOp, ReadoutOp, WaitOp>(op) ||
-        op->hasAttr("classical.variable"))
-      return;
     std::optional<int64_t> start = startCycles(op);
     if (!start)
       return;
-    mlir::Operation *allocation = trace(op->getOperand(0));
-    if (!allocation)
-      return;
-    int64_t qudit = quditOf(allocation);
-    const llvm::SmallVector<int64_t> &shifts =
-        mlir::isa<GetDriveLineOp>(allocation) ? clocks.driveDelay
-                                              : clocks.readoutDelay;
-    if (qudit < 0 || qudit >= static_cast<int64_t>(shifts.size()))
-      return;
-    int64_t shift = shifts[qudit];
+    int64_t shift = lines.of(op);
     if (shift != 0) {
       setStartCycles(op, *start + shift);
       moved = true;
