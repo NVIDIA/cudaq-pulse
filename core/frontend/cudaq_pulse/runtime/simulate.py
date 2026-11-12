@@ -389,7 +389,8 @@ def _simulate_lowered(
         raise InvalidValueError(
             f"unknown readout {readout!r}; choose 'ideal', 'model' or 'model_with_decay'"
         )
-    t_end = as_nanoseconds(t_end)
+    if t_end is not None:
+        t_end = as_nanoseconds(t_end)
     if integrator not in _VALID_INTEGRATORS:
         raise InvalidValueError(
             f"Unknown integrator {integrator!r}. "

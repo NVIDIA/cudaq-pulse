@@ -714,16 +714,6 @@ class QuantumSystem:
         return f"<QuantumSystem {self.name} ({len(self.layout)} qudits)>"
 
 
-def _from_spec(
-    spec: str,
-    source: str,
-    layout: Sequence[int] | None = None,
-    calibration: Any = None,
-    control_system: ControlSystem | None = None,
-) -> QuantumSystem:
-    return _calibrated(make_quantum_system(spec), spec, source, layout, calibration, control_system)
-
-
 def _calibrated(
     target: _Description,
     spec: str | None,
@@ -1124,7 +1114,6 @@ def quantum_system(
     Arguments with problems raise ``QuantumSystemDefinitionError`` listing all of
     them, each at the argument it is in.
     """
-    described: _Description | None = None
     if qudits is not None:
         if name.__class__ is not str:
             _not_a_name(name)
@@ -1132,7 +1121,7 @@ def quantum_system(
                 "pulse.quantum_system(qudits=...) builds a quantum system and needs its name=, "
                 f"got {type(name).__name__}"
             )
-        described = _Description(
+        described: _Description = _Description(
             name=name,
             qudits=qudits,
             couplings=couplings,
@@ -1142,7 +1131,8 @@ def quantum_system(
             # A clock that is no positive number is the program clock's problem.
             **(
                 {"clock_ghz": clock_ghz}
-                if isinstance(clock_ghz, (int, float))
+                if clock_ghz is not None
+                and isinstance(clock_ghz, (int, float))
                 and not isinstance(clock_ghz, bool)
                 and 0 < clock_ghz < float("inf")
                 else {}
@@ -1165,7 +1155,9 @@ def quantum_system(
             and control_system is None
             and clock_ghz is None
         ):
-            return _from_spec(name, f"quantum system {name}")
+            return _calibrated(
+                make_quantum_system(name), name, f"quantum system {name}", None, None
+            )
     elif name is None:
         if (
             layout is None
@@ -1206,7 +1198,7 @@ def quantum_system(
             + ", not data; QuantumSystem.from_dict(data) reads a system file's data"
         )
     arguments = {
-        "name": name if described is None else described,
+        "name": name if qudits is None else described,
         "layout": layout,
         "calibration": calibration,
         "cooldown": cooldown,

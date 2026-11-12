@@ -303,8 +303,9 @@ class _QuditTwiceError(Exception):
         self.qudit = qudit
 
 
-def _systems(arg: Any, qs: QuantumSystem | None, name: str, seen: set[int]) -> QuantumSystem | None:
-    """The quantum system of the handles in *arg*, checked against *qs*.
+def _systems(arg: Any, qs: QuantumSystem | None, fn: Any, seen: set[int]) -> QuantumSystem | None:
+    """The quantum system of the handles in *arg*, checked against *qs*, for
+    a call of the kernel *fn* (named in errors).
 
     *seen* collects the carriers passed so far: one qudit passed twice is
     an error, as it would be one degree of freedom bound to two names, and
@@ -318,10 +319,10 @@ def _systems(arg: Any, qs: QuantumSystem | None, name: str, seen: set[int]) -> Q
         quantum_system: QuantumSystem = arg.quantum_system
         if qs is None or qs is quantum_system:
             return quantum_system
-        raise QuantumSystemMismatchError(_two_systems(name, qs, quantum_system))
+        raise QuantumSystemMismatchError(_two_systems(fn.__name__, qs, quantum_system))
     if t is Register or t is tuple or t is list:
         for item in arg:
-            qs = _systems(item, qs, name, seen)
+            qs = _systems(item, qs, fn, seen)
     return qs
 
 
@@ -439,29 +440,28 @@ class _Dispatcher:
         self.general: ScheduledKernel | None = None
         _dispatchers.add(self)
 
-    def _device(self, values: tuple[Any, ...]) -> QuantumSystem:
-        name = self.kernel.__name__
+    def _device(self, values: tuple[Any, ...], kernel: Kernel[...]) -> QuantumSystem:
         found = None
         seen: set[int] = set()
         try:
-            for i in self.kernel._split[0]:
-                found = _systems(values[i], found, name, seen)
+            for i in kernel._split[0]:
+                found = _systems(values[i], found, kernel, seen)
         except _QuditTwiceError as twice:
-            names = self.kernel._names
-            arguments = [(names[i], values[i]) for i in self.kernel._split[0]]
-            raise _passed_twice(name, twice.qudit, arguments) from None
+            names = kernel._names
+            arguments = [(names[i], values[i]) for i in kernel._split[0]]
+            raise _passed_twice(kernel.__name__, twice.qudit, arguments) from None
         pin = self.pin
         if pin is not None:
             if found is not None and found is not pin:
-                raise _pin_mismatch(name, pin, found)
+                raise _pin_mismatch(kernel.__name__, pin, found)
             return pin
         if found is not None:
             return found
-        raise _no_device(name)
+        raise _no_device(kernel.__name__)
 
     def lookup(self, values: tuple[Any, ...]) -> _Entry:
         kernel = self.kernel
-        target = self._device(values)
+        target = self._device(values, kernel)
         static = kernel._split[0]
         key = (target.fingerprint, static, *[_static_key(values[i]) for i in static])
         entry = self._entries.get(key)

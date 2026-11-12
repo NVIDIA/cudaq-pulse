@@ -148,9 +148,9 @@ def current_quantum_system() -> QuantumSystem:
         raise NoProcessQuantumSystemError(_no_quantum_system_message())
     resolved = _resolved.get(spec)
     if resolved is None:
-        from .._device import _from_spec
+        from .._device import _calibrated
 
-        fresh = _from_spec(spec, f"env {ENV_VAR}={spec}")
+        fresh = _calibrated(make_quantum_system(spec), spec, f"env {ENV_VAR}={spec}", None, None)
         with _lock:
             resolved = _resolved.setdefault(spec, fresh)
     return resolved

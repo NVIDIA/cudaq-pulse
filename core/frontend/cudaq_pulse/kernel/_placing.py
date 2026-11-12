@@ -42,8 +42,7 @@ class _Placing(_Dispatcher):
     the module depends on lists only through their lengths and, with runtime
     qudits, on the quantum system only through its structure; each call binds them."""
 
-    def _device(self, values: tuple[Any, ...]) -> QuantumSystem:
-        kernel = self.kernel
+    def _device(self, values: tuple[Any, ...], kernel: Kernel[...]) -> QuantumSystem:
         slotted = kernel._slotted
         if len(slotted) == 1 and not kernel._split[0]:
             value = values[slotted[0]]
@@ -55,13 +54,12 @@ class _Placing(_Dispatcher):
                 if quantum_system != pin:
                     raise _pin_mismatch(kernel.__name__, pin, quantum_system)
                 return pin
-        name = kernel.__name__
         found: QuantumSystem | None = None
         seen: set[int] = set()
         wrong = None
         try:
             for i in kernel._split[0]:
-                found = _systems(values[i], found, name, seen)
+                found = _systems(values[i], found, kernel, seen)
             for i in kernel._slotted:
                 value = values[i]
                 if type(value) is not Qudit and not (
@@ -69,26 +67,28 @@ class _Placing(_Dispatcher):
                 ):
                     wrong = i
                     continue
-                found = _systems(value, found, name, seen)
+                found = _systems(value, found, kernel, seen)
         except _QuditTwiceError as twice:
             names = kernel._names
             met = [*kernel._split[0], *kernel._slotted]
-            raise _passed_twice(name, twice.qudit, [(names[i], values[i]) for i in met]) from None
+            raise _passed_twice(
+                kernel.__name__, twice.qudit, [(names[i], values[i]) for i in met]
+            ) from None
         pin = self.pin
         if wrong is not None:
             if found is None and pin is None:
-                raise _no_device(name)
+                raise _no_device(kernel.__name__)
             raise InvalidTypeError(
-                f"{name}(): argument {kernel._names[wrong]!r} must be a qudit handle "
+                f"{kernel.__name__}(): argument {kernel._names[wrong]!r} must be a qudit handle "
                 f"or a register of them, not {type(values[wrong]).__name__}"
             )
         if pin is not None:
             if found is not None and found != pin:
-                raise _pin_mismatch(name, pin, found)
+                raise _pin_mismatch(kernel.__name__, pin, found)
             return pin
         if found is not None:
             return found
-        raise _no_device(name)
+        raise _no_device(kernel.__name__)
 
     def _key(self, target: QuantumSystem, values: tuple[Any, ...]) -> Any:
         kernel = self.kernel
@@ -101,7 +101,7 @@ class _Placing(_Dispatcher):
 
     def lookup(self, values: tuple[Any, ...]) -> _Entry:
         kernel = self.kernel
-        target = self._device(values)
+        target = self._device(values, kernel)
         key = self._key(target, values)
         entry = self._entries.get(key)
         if entry is not None and entry.guard.check():
