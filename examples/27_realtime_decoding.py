@@ -103,9 +103,9 @@ def start_state():
     return state
 
 
-def simulate(program, label):
+def simulate(scheduled, label):
     res = pulse.simulate(
-        program, initial_state=start_state(), levels=2, latency_branching=True, dt_ns=2.0
+        scheduled, initial_state=start_state(), levels=2, latency_branching=True, dt_ns=2.0
     )
     used = sum(b.probability for b in res.branches if b.calls and b.calls[-1].in_time)
     restored = sum(res.density_matrix[i, i].real for i in range(32) if i & 0b111 == 0)
@@ -121,8 +121,8 @@ if __name__ == "__main__":
 
     print("1. Compile-time report, 80 us deadline")
     compiled = pulse.compile(qec_round, quantum_system=qs, control_system=links)
-    program = compiled.lower(data, ancillas, 80_000)
-    for call in program.classical_report():
+    scheduled = compiled.lower(data, ancillas, 80_000)
+    for call in scheduled.classical_report():
         print(f"   {call.function}: due at {call.due_cycles / qs.clock_ghz / 1e3:.1f} us")
 
     print("2. Decoder corrections, asked from the host")
