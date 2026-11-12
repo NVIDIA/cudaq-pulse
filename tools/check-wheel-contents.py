@@ -32,8 +32,10 @@ the CUDA wheels) and no GPL or LGPL library or license.
 
 For an sdist: LICENSE, NOTICE, THIRD_PARTY_NOTICES and LICENSES/; the
 license files of packaging/cudaq-pulse-tools as regular files, all but
-THIRD_PARTY_NOTICES byte for byte the repository's; and a PKG-INFO requiring
-exactly cudaq-pulse-tools==<its version>. Exits 1 listing every problem.
+THIRD_PARTY_NOTICES byte for byte the repository's; a PKG-INFO requiring
+exactly cudaq-pulse-tools==<its version>; and no lock file (uv.lock,
+poetry.lock, pdm.lock, Pipfile.lock, or a requirements*.txt with hashes).
+Exits 1 listing every problem.
 """
 
 from __future__ import annotations
@@ -87,6 +89,10 @@ _BUNDLED_CUDA = re.compile(
     re.IGNORECASE,
 )
 _GPL_EXPRESSION = re.compile(r"\b(L?GPL|AGPL)-")
+# Lock files pin the development tools and the optional CUDA wheels, and
+# composition scanners read them as components the sdist ships.
+_LOCK_FILE = re.compile(r"(^|/)(uv|poetry|pdm|Pipfile)\.lock$")
+_REQUIREMENTS = re.compile(r"(^|/)requirements[^/]*\.txt$")
 
 
 def _check_notices(
@@ -314,6 +320,13 @@ def check_sdist(path: Path) -> list[str]:
                 content = sdist.extractfile(member)
                 if content is None or content.read() != (_ROOT / f).read_bytes():
                     problems.append(f"{item} differs from the repository's {f}")
+        for name, member in sorted(members.items()):
+            if _LOCK_FILE.search(name):
+                problems.append(f"ships {name}, a lock file")
+            elif _REQUIREMENTS.search(name) and member.isfile():
+                content = sdist.extractfile(member)
+                if content is not None and b"--hash=" in content.read():
+                    problems.append(f"ships {name}, a requirements file with hashes")
     problems += [f"missing {f}" for f in _LICENSES if f not in members]
     if metadata is None:
         problems.append("missing PKG-INFO")

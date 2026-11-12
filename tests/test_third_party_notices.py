@@ -485,6 +485,23 @@ def test_the_sdist_requires_the_driver_at_its_version(tmp_path, checker):
     ]
 
 
+def test_the_sdist_ships_no_lock_file(tmp_path, checker):
+    hashed = b"numpy==2.5.4 \\\n    --hash=sha256:00\n"
+    files = _tools_licenses(checker) | {
+        "uv.lock": b"",
+        "examples/app/poetry.lock": b"",
+        "requirements-dev.txt": hashed,
+        "docs/requirements.txt": b"sphinx>=7\n",
+        "tests/uv.lock.txt": b"",
+    }
+    path = _sdist(tmp_path, checker, ["cudaq-pulse-tools==0.1.0"], files)
+    assert checker.check_sdist(path) == [
+        f"{path.name}: ships examples/app/poetry.lock, a lock file",
+        f"{path.name}: ships requirements-dev.txt, a requirements file with hashes",
+        f"{path.name}: ships uv.lock, a lock file",
+    ]
+
+
 def test_the_sdist_stores_the_driver_licenses_as_the_repository_texts(tmp_path, checker):
     requires = ["cudaq-pulse-tools==0.1.0"]
     tools = _tools_licenses(checker)
