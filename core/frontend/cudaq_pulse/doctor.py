@@ -406,8 +406,12 @@ def _control_summary(system: Any, file: Path) -> tuple[dict[str, Any], tuple[Pro
         entry: dict[str, Any] = {
             "model": controller.model,
             "version": controller.version,
-            "drive_lines": [line.qudit for line in controller.drive_lines],
-            "readout_lines": [line.qudit for line in controller.readout_lines],
+            "drive_lines": [q for line in controller.drive_lines for q in line.qudits]
+            if system._shares
+            else [line[0] for line in controller.drive_lines],
+            "readout_lines": [q for line in controller.readout_lines for q in line.qudits]
+            if system._shares
+            else [line[0] for line in controller.readout_lines],
             "backend": controller.backend,
         }
         if controller.backend is not None:

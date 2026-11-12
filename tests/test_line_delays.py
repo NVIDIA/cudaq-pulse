@@ -136,7 +136,7 @@ def test_a_rest_the_controller_cannot_add_fails_to_compile():
         (lambda: DriveLine(0, delay_ns=-1 * pulse.ns), pulse.InvalidValueError, "-1.0 ns"),
         (lambda: DriveLine(0, delay_ns=float("nan")), pulse.InvalidValueError, "a number of ns"),
         (lambda: ReadoutLine(-1), pulse.InvalidValueError, "negative carrier index"),
-        (lambda: DriveLine("d0"), pulse.InvalidTypeError, "carrier index of its qudit"),
+        (lambda: DriveLine("d0"), pulse.InvalidTypeError, "a qudit or a list of qudits"),
         (
             lambda: pulse.Controller(drive_lines=[ReadoutLine(0)]),
             pulse.InvalidTypeError,

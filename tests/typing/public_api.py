@@ -204,6 +204,11 @@ delayed = pulse.Controller(
     readout_lines=[pulse.controller.ReadoutLine(0, delay_ns=1.5)],
 )
 assert_type(delayed.drive_lines, Sequence[DriveLine | int])
+feedline = pulse.controller.ReadoutLine([0, 1, 2, 3], delay_ns=12.0, max_concurrent_tones=4)
+assert_type(feedline.qudits, tuple[int, ...])
+assert_type(feedline.max_concurrent_tones, int)
+assert_type(pulse.controller.DriveLine(range(4)).qudits, tuple[int, ...])
+pulse.controller.ReadoutLine([0, 1], 12.0, 2)  # type: ignore[call-arg]
 pulse.ControlSystem(line_delays_ns={("drive", 0): 1.5})  # type: ignore[call-arg]
 pulse.Link(fixed_ns=100 * pulse.ns, feedback_ns=20.0, per_controller=True)
 assert_type(box.supports_capability(pulse.Capability.BRANCH), bool)

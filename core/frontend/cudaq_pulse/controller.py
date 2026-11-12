@@ -854,11 +854,20 @@ def export(
     if version != 1:
         if version != 2:
             raise InvalidValueError(f"version must be 1 or 2, got {version!r}")
-        if system is not None and len(system.controllers) > 1:
-            raise UnsupportedError(
-                "format /2 is written for one controller; export version 1 for a control "
-                "system of several"
-            )
+        if system is not None:
+            if len(system.controllers) > 1:
+                raise UnsupportedError(
+                    "format /2 is written for one controller; export version 1 for a control "
+                    "system of several"
+                )
+            if controller is not None:
+                _controller_index(controller, 1)
+            program = _export_structured(lowered, sample_rate_ghz, emulation, role)
+            if not system._shares:
+                return program
+            from ._shared_lines import structured
+
+            return structured(program, system)
         if controller is not None:
             _controller_index(controller, 1)
         return _export_structured(lowered, sample_rate_ghz, emulation, role)
@@ -878,6 +887,10 @@ def export(
     # In the controller's own cycles from here on.
     lines, events, frames, off, problems = _walk(lowered, True, native, True, slots)
     if system is not None and not system._one_box:
+        if system._shares:
+            from ._shared_lines import refuse_format_1
+
+            refuse_format_1(lowered, system, lines)
         violations = system._violations(
             lowered, lines, events, clocks, off, problems, True, None, None
         )
@@ -1567,6 +1580,10 @@ def _export_part(
     assert system is not None
     clocks = (lowered._generic or lowered).clocks
     lines, events, owners, parts, index, frames = _part(lowered, controller)
+    if system._shares:
+        from ._shared_lines import refuse_format_1
+
+        refuse_format_1(lowered, system, lines)
     # The checks count each controller's events in its cycles, in place.
     checked = events if clocks is None else copy.deepcopy(events)
     violations = system._violations(lowered, lines, checked, clocks, (), (), True, None, None)
@@ -2323,12 +2340,18 @@ def check(lowered: ScheduledKernel, limits: Controller | None = None) -> Sequenc
 
     Of a module with float parameters (``lowered.generic``), the limits it
     exceeds whatever their values; a call's values are checked when it is
-    made, so a limit never fails first at export.
+    made, so a limit never fails first at export. A shared line of *limits*
+    is checked as compiling for it checks it (the tones it plays at once).
     """
     limits = limits if limits is not None else lowered.options.machine.controller
     if limits is None:
         return []
-    return _compile_check(lowered, limits)[0]
+    found = _compile_check(lowered, limits)[0]
+    if any(len(line) > 2 for line in limits._all_lines):
+        from ._shared_lines import against
+
+        return [*found, *against(lowered, limits)]
+    return found
 
 
 def _compile_check(
