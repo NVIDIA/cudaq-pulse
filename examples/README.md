@@ -46,6 +46,7 @@ the `cudaq-pulse-tools` wheel, which `cudaq-pulse` requires).
 | [`transmon/transmon_surface17_rabi.py`](transmon/transmon_surface17_rabi.py) | Rabi drive on the 17-qubit transmon quantum system | CPU |
 | [`transmon/transmon_surface17_full_pipeline.py`](transmon/transmon_surface17_full_pipeline.py) | Each stage of the lowering: Pulse, QOp and LLVM IR | CPU |
 | [`transmon/transmon_surface17_surface_code_cycle.py`](transmon/transmon_surface17_surface_code_cycle.py) | The timeline of one surface-code cycle | CPU |
+| [`transmon/transmon_surface17_multiplexed_readout.py`](transmon/transmon_surface17_multiplexed_readout.py) | One readout feedline shared by four qudits: the tones it plays at once, and its tone slots in the controller export | CPU |
 | [`transmon/transmon_surface17_evolve_gpu.py`](transmon/transmon_surface17_evolve_gpu.py) | `pulse.simulate(..., backend="gpu")` | GPU: Linux, an NVIDIA GPU and the `[cu12]` or `[cu13]` extra |
 
 Numbers 11 and 15 were removed and are not reused. The

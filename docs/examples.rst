@@ -191,6 +191,9 @@ Transmon Quantum System Examples
        NVIDIA GPU and the ``[cu12]`` or ``[cu13]`` extra)
    * - ``transmon_surface17_surface_code_cycle.py``
      - Timeline of one error correction cycle from the 17-qubit lattice and CZ schedule
+   * - ``transmon_surface17_multiplexed_readout.py``
+     - One readout feedline shared by the four X-check ancillas: the tones it plays at
+       once, and each readout's tone slot in the controller export
 
 Running Examples
 ----------------
