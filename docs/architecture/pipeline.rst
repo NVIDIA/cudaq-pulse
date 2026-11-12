@@ -87,8 +87,8 @@ For GPU execution, three dialect conversion passes lower the IR:
    library calls
 
 The execution lowering supports transmon models with any number of levels in
-a rotating frame. A program that measures is lowered one segment at a time
-along a measurement-outcome path, and the segments are joined by projecting
+a rotating frame. A program that measures is lowered one interval at a time
+along a measurement-outcome path, and the intervals are joined by projecting
 the state. Systems without a simulation model (a quantum system whose ``model`` is
 ``None`` or has no simulator) and unspecialized waveforms are rejected
 instead of silently approximated. See

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Simulation of pulse programs that measure and branch on the outcome.
 
-The program evolves in segments between measurements. A measurement of
+The program evolves in intervals between measurements. A measurement of
 qudit ``q`` at the end of its readout projects the state onto each level
 ``k`` of ``q``; each outcome continues along its own path, where branches on
 that measurement take the arm the outcome selects. Summing the unnormalized
@@ -12,7 +12,7 @@ state of every path gives the ensemble
 
 exactly, and with ``shots_count`` the branch weights also sample per-shot records.
 
-Segments are lowered by the native pipeline (pulse -> qop) along the path,
+Intervals are lowered by the native pipeline (pulse -> qop) along the path,
 then evolved either by a NumPy reference integrator (``backend="cpu"``) or
 by the cuDensityMat runtime (``backend="gpu"``), from the projected state.
 """
@@ -829,7 +829,7 @@ def _simulate_compiled(
     sampled: bool = False,
 ) -> SimulationResult:
     # A cached specialization's module is shared by every call of it, from
-    # any thread: a segment sets the module attributes it lowers with and
+    # any thread: an interval sets the module attributes it lowers with and
     # reads the lowering under the module's lock, in one step. The GPU path,
     # and a call whose values set wait lengths, bind the float arguments into
     # a private copy of the module.
@@ -901,7 +901,7 @@ def _simulate_compiled(
         engine = _CpuBackend(module, dims, dt_ns, base, lock, arguments)
     else:
         # A program with classical calls lowers only with their answers
-        # bound: the backend lowers its placeholders, as each segment does.
+        # bound: the backend lowers its placeholders, as each interval does.
         probe = module.placeholders() if functions else module
         engine = _GpuBackend(probe, dims, dt_ns, base, lock, integrator)
     state = engine.prepare(state)
@@ -1131,7 +1131,7 @@ def _level_mask(dims: tuple[int, ...], qudit: int, level: int) -> npt.NDArray[np
     return np.asarray((indices // stride) % dims[qudit] == level)
 
 
-def _segment_attributes(entries: list[list[int]], t0: float, t1: float, steps: int) -> str:
+def _interval_attributes(entries: list[list[int]], t0: float, t1: float, steps: int) -> str:
     path = ", ".join(f"array<i64: {', '.join(map(str, e))}>" for e in entries)
     return (
         f"{{pulse.path = [{path}], qop.t_start = {_f64(t0)}, qop.t_end = {_f64(t1)}, "
@@ -1140,11 +1140,11 @@ def _segment_attributes(entries: list[list[int]], t0: float, t1: float, steps: i
 
 
 class _Backend:
-    """Segment evolution and projection for one state representation.
+    """Interval evolution and projection for one state representation.
 
     *base* holds the module attributes of the target and levels, in MLIR
-    syntax without braces; every segment sets them, then its own. The text
-    of *base* is the same in every segment: the module's context parses it
+    syntax without braces; every interval sets them, then its own. The text
+    of *base* is the same in every interval: the module's context parses it
     once.
     """
 
@@ -1242,7 +1242,7 @@ def _step_times(t0: float, h: float, lo: int, hi: int) -> npt.NDArray[np.float64
 
 
 def _step_range(support: tuple[float, float], t0: float, h: float, steps: int) -> tuple[int, int]:
-    """The steps, of a segment from *t0* in steps of *h*, that a drive term
+    """The steps, of an interval from *t0* in steps of *h*, that a drive term
     with this support can be nonzero on."""
     start, end = support
     # Clamped as floats first: a term that plays throughout has a huge or
@@ -1273,7 +1273,7 @@ def _active_ranges(
 
 
 class _Stepper:
-    """Steps one segment's density matrix in order (see ``_propagate``):
+    """Steps one interval's density matrix in order (see ``_propagate``):
     exactly where the Lindbladian is constant, else with RK4, reusing kept
     maps on small registers."""
 
@@ -1469,14 +1469,14 @@ class _CpuBackend(_Backend):
     def evolve(self, state: Any, entries: list[list[int]], t0: float, t1: float) -> Any:
         steps = self.steps(t0, t1)
         with self.lock:
-            self.module.set_attributes(self.base, _segment_attributes(entries, t0, t1, steps))
+            self.module.set_attributes(self.base, _interval_attributes(entries, t0, t1, steps))
             _, hamiltonian, collapse, *_ = self.module.operator_program(self.arguments)
         static = np.zeros((self.dim, self.dim), dtype=np.complex128)
         driven = []
         for re, im, kind, params, factors in hamiltonian:
             if kind:
                 # An unrolled program lists every pulse it plays; only those
-                # that overlap the segment act in it.
+                # that overlap the interval act in it.
                 start, end = _propagate.support(params)
                 if end <= t0 or start >= t1:
                     continue
@@ -1497,7 +1497,7 @@ class _CpuBackend(_Backend):
 
 
 class _GpuBackend(_Backend):
-    """Each segment is lowered and JIT-run by the cuDensityMat runtime."""
+    """Each interval is lowered and JIT-run by the cuDensityMat runtime."""
 
     def __init__(
         self,
@@ -1516,9 +1516,9 @@ class _GpuBackend(_Backend):
         # Collapse operators depend on the target alone. A program that
         # measures lowers only along a measurement path over a window, so ask
         # along the empty path over an empty window at 0 ns, which ends before
-        # any measurement; every segment then sets its own path and window.
+        # any measurement; every interval then sets its own path and window.
         with lock:
-            module.set_attributes(self.base, _segment_attributes([], 0.0, 0.0, 1))
+            module.set_attributes(self.base, _interval_attributes([], 0.0, 0.0, 1))
             _, _, collapse, *_ = module.operator_program()
         self.dissipative = bool(collapse)
 
@@ -1529,7 +1529,7 @@ class _GpuBackend(_Backend):
 
     def evolve(self, state: Any, entries: list[list[int]], t0: float, t1: float) -> Any:
         mixed = state.ndim == 2
-        attributes = _segment_attributes(entries, t0, t1, self.steps(t0, t1))
+        attributes = _interval_attributes(entries, t0, t1, self.steps(t0, t1))
         attributes = attributes[:-1]
         if mixed and not self.dissipative:
             attributes += ", qop.mixed_state"
@@ -1542,7 +1542,7 @@ class _GpuBackend(_Backend):
         return result
 
     def _execute(self, text: str, state: Any, mixed: bool) -> Any:
-        """Run one segment, the module *text*, on the GPU from *state*."""
+        """Run one interval, the module *text*, on the GPU from *state*."""
         jit_module = self.compiler.compile_pulse_mlir(text)
         # cuDensityMat stores a density matrix with the ket index fastest.
         buffer = np.ascontiguousarray(state.ravel(order="F") if mixed else state)

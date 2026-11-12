@@ -90,7 +90,7 @@ def _target_attributes(
     dephasing: str = "t2_star",
 ) -> str:
     """Module attributes, in MLIR syntax and comma-separated, that the
-    cuDensityMat lowering reads, but for the time window, which each segment
+    cuDensityMat lowering reads, but for the time window, which each interval
     sets.
 
     *qudits* are the simulated qudits, one mode each in this order; the

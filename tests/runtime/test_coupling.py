@@ -289,7 +289,7 @@ def test_gpu_lowering_builds_the_cpu_operator(levels):
         drive(d0, gaussian(40, 0.05, 10.0))
 
     lowered = on(target, driven, Q[0], Q[1])
-    # A CPU run leaves the module with the attributes of its segment, which
+    # A CPU run leaves the module with the attributes of its interval, which
     # the GPU backend lowers the same way.
     pulse.simulate(lowered, levels=levels, t_end=20.0)
     dims = (levels, levels)

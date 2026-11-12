@@ -3,7 +3,7 @@
 """Simulation of programs that call classical functions, or that read out
 through a readout model.
 
-The program evolves in segments between events, in time order: the end of a
+The program evolves in intervals between events, in time order: the end of a
 readout and the start of a call. At a readout each outcome continues on its
 own path, as in ``simulate``; with a readout model the outcome a branch and a
 call see is the *reported* one, drawn from the assignment matrix, while the
@@ -165,7 +165,7 @@ def simulate_tree(
             end_cache[id(current)] = cached
         return cached[1]
 
-    def segment_module(current: Any) -> Any:
+    def interval_module(current: Any) -> Any:
         key = id(current)
         cached = placeholder_cache.get(key)
         if cached is None or cached[0] is not current:
@@ -275,7 +275,7 @@ def simulate_tree(
         take_call = call is not None and call_at < measure_at - 1e-9 and call_at <= end_here
         boundary = min(end_here, call_at if take_call else measure_at)
         if boundary > t:
-            engine.module = segment_module(current)
+            engine.module = interval_module(current)
             state = engine.evolve(state, entries, t, boundary)
             t = boundary
         if take_call:

@@ -1,12 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""The GPU simulation backend's setup and segment logic, without a GPU.
+"""The GPU simulation backend's setup and interval logic, without a GPU.
 
 ``_GpuBackend`` runs unchanged except for ``_execute``, the one call into
 cuDensityMat, which the CPU reference integrator stands in for. So these
 tests cover everything the GPU path does around the device: lowering the
-module before the first segment, choosing pure or mixed states, and setting
-each segment's measurement path and window.
+module before the first interval, choosing pure or mixed states, and setting
+each interval's measurement path and window.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ class _CpuStandIn(simulate_module._GpuBackend):
     """The GPU backend with the cuDensityMat run replaced by the CPU one."""
 
     def evolve(self, state, entries, t0, t1):
-        self._segment = (entries, t0, t1)
+        self._interval = (entries, t0, t1)
         return super().evolve(state, entries, t0, t1)
 
     arguments: list[float] = []
@@ -40,7 +40,7 @@ class _CpuStandIn(simulate_module._GpuBackend):
         header = text.split("\n", 1)[0]
         assert ("qop.mixed_state" in header) == (mixed and not self.dissipative)
         assert mixed == (state.ndim == 2)
-        rho = simulate_module._CpuBackend.evolve(self, self.density(state), *self._segment)
+        rho = simulate_module._CpuBackend.evolve(self, self.density(state), *self._interval)
         if mixed:
             return rho
         # Without collapse operators the state stays pure: return the vector.
@@ -265,7 +265,7 @@ def answered_wait(q0, tau: float):
     readout(r0, square(200, 0.05))
 
 
-# A program with classical calls evolves in segments between their answers,
+# A program with classical calls evolves in intervals between their answers,
 # each lowered with the answers so far bound.
 CALL_CASES = {
     "decoded_reset": ((decoded_reset,), {"initial_state": [2**-0.5, 2**-0.5]}),

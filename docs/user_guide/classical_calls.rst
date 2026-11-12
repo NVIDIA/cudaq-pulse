@@ -385,8 +385,9 @@ it.
   answers of one function, in call order.
 
 A whole program with unanswered calls does not lower to LLVM:
-``ScheduledKernel.mlir("llvm")`` points to ``pulse.simulate``, which lowers each
-segment with its answers bound, on the CPU or the GPU.
+``ScheduledKernel.mlir("llvm")`` points to ``pulse.simulate``, which lowers the
+program one interval between answers at a time, with the answers bound, on the
+CPU or the GPU.
 
 ``quantum_system=`` simulates another quantum system than the one the program
 was compiled for, keeping the program as compiled: its qudits' frequencies,

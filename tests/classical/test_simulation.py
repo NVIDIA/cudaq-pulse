@@ -430,7 +430,7 @@ def test_whole_program_lowering_rejects_unanswered_calls():
     dev = _device()
     lowered = pulse.compile(answered_wait, quantum_system=dev).lower(dev.qudits[0], 400.0)
     message = (
-        "a program with classical calls evolves in segments between their answers; "
+        "a program with classical calls evolves in intervals between their answers; "
         r"lower it with each answer bound, as pulse\.simulate\(\) does"
     )
     with pytest.raises(RuntimeError, match=message):
@@ -465,20 +465,20 @@ def test_a_bound_answer_waits_as_its_integer_arithmetic_gives():
         assert waits == [n // 2 + 1, n % 3 + 4], n
 
 
-def test_a_segment_with_bound_answers_lowers_to_llvm_without_classical_ops():
+def test_an_interval_with_bound_answers_lowers_to_llvm_without_classical_ops():
     from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline
 
     dev = _device()
     lowered = pulse.compile(decoded_reset, quantum_system=dev).lower(dev.qudits[0])
     module = lowered._concrete().simulation_module(*lowered.options.schedule_args())
-    segment = module.placeholders()
-    segment.set_attributes(
+    interval = module.placeholders()
+    interval.set_attributes(
         "{pulse.path = [array<i64: 0, 1>], qop.t_start = 0.0 : f64, "
         "qop.t_end = 600.0 : f64, qop.step_count = 10 : i64}"
     )
-    qop = MLIRPipeline().run_pulse_to_qop(segment.print())
+    qop = MLIRPipeline().run_pulse_to_qop(interval.print())
     assert "classical" not in qop
-    assert MLIRPipeline().jit_pulse(segment.print(), []) is not None
+    assert MLIRPipeline().jit_pulse(interval.print(), []) is not None
 
 
 @pytest.mark.gpu

@@ -722,7 +722,7 @@ struct PulseToQOpPass
     });
     if (unanswered) {
       unanswered->emitError(
-          "a program with classical calls evolves in segments between their "
+          "a program with classical calls evolves in intervals between their "
           "answers; lower it with each answer bound, as pulse.simulate() "
           "does");
       return signalPassFailure();
@@ -752,7 +752,7 @@ struct PulseToQOpPass
     auto pathAttr = module->getAttrOfType<ArrayAttr>("pulse.path");
     if (!readouts.empty() && !pathAttr) {
       readouts.front()->emitError(
-          "a program that measures evolves in segments between measurements; "
+          "a program that measures evolves in intervals between measurements; "
           "lower it along a measurement-outcome path (pulse.path), as "
           "pulse.simulate() does");
       return signalPassFailure();

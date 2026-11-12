@@ -152,7 +152,7 @@ The lowering passes through three dialect conversions:
    Converts supported drive operations and waveforms into backend-agnostic
    Hamiltonian and Lindblad operator algebra. A drive in a retained loop
    becomes one pulse-train coefficient. A program that measures is lowered
-   one segment at a time along a chosen outcome for each measurement; see
+   one interval at a time along a chosen outcome for each measurement; see
    :ref:`measurement-simulation`.
 
 **QOp -> CuDensityMat**
@@ -281,7 +281,7 @@ callbacks, and waveform-algebra nodes. Built-in waveforms and
 time-dependent coefficients per evolution: two per drive op (a drive
 repeated by a loop needs only one pair) and four per coupling between
 detuned qudits. A single evolution cannot contain a measurement: a
-program that measures is lowered and evolved one segment at a time (see
+program that measures is lowered and evolved one interval at a time (see
 :ref:`measurement-simulation`).
 
 The GPU test suite (``pytest tests -m gpu``, or the ``check-pulse-gpu`` target
@@ -303,7 +303,7 @@ Measurement and Feedback
 ------------------------
 
 ``pulse.simulate()`` evolves a program that measures, and branches on the
-results, in segments between measurements. A readout measures its qudit in
+results, in intervals between measurements. A readout measures its qudit in
 the computational basis when it completes: every level ``k`` is a separate
 outcome, and each continues along its own path, on which a branch on that
 measurement takes the arm the outcome selects. The unnormalized states of
@@ -338,7 +338,7 @@ of the outcomes from the same branch probabilities.
    result.records          # one row of outcomes per shot
 
 ``backend="cpu"`` integrates the same lowered operator with a NumPy RK4
-reference; ``backend="gpu"`` evolves each segment with cuDensityMat, starting
+reference; ``backend="gpu"`` evolves each interval with cuDensityMat, starting
 from the projected state. By default each qudit has the levels its quantum system's
 model declares (three for a transmon); ``levels=2`` simulates qubits, an int
 sets every qudit's levels and a dict by quantum system qudit index sets those it

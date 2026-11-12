@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// A program that measures lowers one segment at a time along an outcome
+// A program that measures lowers one interval at a time along an outcome
 // path: before the measurement, then after it for each outcome.
 // RUN: cudaq-pulse-opt --pulse-to-qop --split-input-file --verify-diagnostics %s | FileCheck %s
 
@@ -119,7 +119,7 @@ module @no_path attributes {pulse.clock_ghz = 1.000000e+00 : f64} {
   func.func @main(%x: !pulse.waveform) {
     %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
     %r0, %rt0 = pulse.get_readout_line %q {frequency_hz = 7.000000e+09 : f64} : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
-    // expected-error @+1 {{a program that measures evolves in segments between measurements; lower it along a measurement-outcome path (pulse.path), as pulse.simulate() does}}
+    // expected-error @+1 {{a program that measures evolves in intervals between measurements; lower it along a measurement-outcome path (pulse.path), as pulse.simulate() does}}
     %r1, %rt1, %m = pulse.readout %r0, %x, %rt0, iq <{duration_cycles = 300 : i64, start_cycles = 0 : i64}> : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     return
   }
