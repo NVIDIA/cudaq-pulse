@@ -4,7 +4,7 @@
 // A drive on a qudit that pulse.modes leaves out has no mode to act on.
 // RUN: cudaq-pulse-opt --split-input-file --pulse-to-qop --verify-diagnostics %s
 
-module attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.modes = array<i64: 3>} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>, pulse.modes = array<i64: 3>} {
   func.func @main() {
     %q = pulse.qudit_alloc {qudit = 13 : i64} : !pulse.qudit
     %d0, %t0 = pulse.get_drive_line %q {frequency_hz = 5.000000e+09 : f64} : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
@@ -21,7 +21,7 @@ module attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.modes = array<i64
 // -----
 
 // expected-error @+1 {{pulse.modes must list distinct qudit indices}}
-module attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.modes = array<i64: 3, 3>} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>, pulse.modes = array<i64: 3, 3>} {
   func.func @main() {
     return
   }

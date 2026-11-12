@@ -819,7 +819,7 @@ class Kernel[**P]:
             or not prior.guard.check()
         ):
             return None
-        lowered = with_line_delays(prior.lowered, options, prior.qudit_count)
+        lowered = with_line_delays(prior.lowered, options)
         if lowered is None:
             return None
         entry = _Entry(lowered, prior.guard, prior.returns, prior.pins, prior.runtime)

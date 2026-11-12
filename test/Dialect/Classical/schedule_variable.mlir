@@ -10,7 +10,7 @@
 // RUN: cudaq-pulse-opt --pulse-schedule-rcp %s | FileCheck %s --check-prefixes=CHECK,ASAP
 // RUN: cudaq-pulse-opt --pulse-schedule-alap --pulse-classical-check --pulse-verify %s > /dev/null
 
-module attributes {pulse.clock_ghz = 1.0 : f64} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>} {
 
 classical.callable @tau {dispatch_key = 1 : i64, device = 0 : i64,
     args = [], results = ["i64"], latency_min_ns = 0.0,

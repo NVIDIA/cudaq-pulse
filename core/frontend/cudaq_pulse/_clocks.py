@@ -53,6 +53,34 @@ def _ghz(value: float) -> str:
     return f"{value:g} GHz"
 
 
+def clock_period_fs(clock_ghz: float) -> str:
+    """The period in fs of a *clock_ghz* program clock as
+    ``#pulse.control_system`` writes it: the fraction of smallest
+    denominator whose clock is exactly *clock_ghz* (the first convergent of
+    its continued fraction that is), ``1250000/3`` for 2.4 GHz, ``500000``
+    for 2 GHz. The packed builder finds the same one."""
+    found = _PERIODS.get(clock_ghz)
+    if found is None:
+        x, y = clock_ghz.as_integer_ratio()
+        p0, p1, q0, q1 = 0, 1, 1, 0
+        while y:
+            term = x // y
+            p0, p1, q0, q1 = p1, term * p1 + p0, q1, term * q1 + q0
+            if float(p1) / float(q1) == clock_ghz:
+                break
+            x, y = y, x - term * y
+        numerator, denominator = 1_000_000 * q1, p1
+        common = math.gcd(numerator, denominator)
+        numerator, denominator = numerator // common, denominator // common
+        found = _PERIODS[clock_ghz] = (
+            str(numerator) if denominator == 1 else f"{numerator}/{denominator}"
+        )
+    return found
+
+
+_PERIODS: dict[float, str] = {}
+
+
 def clock_ratio(clock_ghz: float, program_ghz: float) -> Fraction:
     """``clock_ghz / program_ghz`` as a fraction; an error if it is not one."""
     # Imported here: a quantum system whose clock is only declared needs no fraction.
@@ -191,22 +219,6 @@ class ClockPlan:
     def lcm(self) -> int:
         """Where every line can meet."""
         return functools.reduce(math.lcm, (c.grid for c in self.controllers), 1)
-
-    def attributes(self, qudit_count: int) -> str | None:
-        """The module attributes that put the scheduler on the grids."""
-        if self.lcm == 1:
-            return None
-        if self.owners is None:
-            return f"{{pulse.line_grid = {self.controllers[0].grid} : i64}}"
-        # Every carrier a controller plays, for the qudits a call binds.
-        qudit_count = max(qudit_count, 1 + max((q for _, q in self.owners), default=-1))
-        if not qudit_count:
-            return f"{{pulse.line_grid = {self.lcm} : i64}}"
-        arrays = []
-        for role in ("drive", "readout"):
-            grids = ", ".join(str(self.grid_of(role, q)) for q in range(qudit_count))
-            arrays.append(f"pulse.{role}_line_grid = array<i64: {grids}>")
-        return f"{{pulse.line_grid = {self.lcm} : i64, " + ", ".join(arrays) + "}"
 
     def start_uncertainty_ns(
         self, skew_cycles: Mapping[str, int] | None = None
@@ -382,15 +394,15 @@ def line_delays(
     limits: Controller | None,
     plan: ClockPlan | None,
     program_ghz: float,
-    qudit_count: int,
     controllers: Sequence[Controller] | None = None,
     owners: Mapping[tuple[str, int], int] | None = None,
-) -> tuple[str | None, dict[tuple[str, int], float]]:
-    """The ``pulse.line_delays`` attribute that moves each delayed line by
-    whole steps of its grid (``None`` when none moves), and each line's fine
-    delay in ns, the rest. Raises ``ValueError`` for a rest its controller
-    can neither add nor tolerate. With several *controllers*, each line's
-    limits are those of the one *owners* ((role, qudit) -> index) names."""
+) -> tuple[dict[tuple[str, int], int], dict[tuple[str, int], float]]:
+    """How many program cycles each delayed line moves, whole steps of its
+    grid (none for a line that does not move), and each line's fine delay
+    in ns, the rest, both by (role, qudit). Raises ``ValueError`` for a rest
+    its controller can neither add nor tolerate. With several
+    *controllers*, each line's limits are those of the one *owners*
+    ((role, qudit) -> index) names."""
     fine_max = 0.0 if limits is None else limits.max_fine_delay_ns
     tolerance = 0.0 if limits is None else limits.alignment_tolerance_cycles
     shifts: dict[tuple[str, int], int] = {}
@@ -431,13 +443,7 @@ def line_delays(
         fine[(role, qudit)] = rest if fine_max > 0 else 0.0
         if whole:
             shifts[(role, qudit)] = whole * grid
-    if not shifts:
-        return None, fine
-    arrays = []
-    for role in ("drive", "readout"):
-        cycles = ", ".join(str(shifts.get((role, q), 0)) for q in range(qudit_count))
-        arrays.append(f"{role} = array<i64: {cycles}>")
-    return "{" + ", ".join(arrays) + "}", fine
+    return shifts, fine
 
 
 def off_grid(

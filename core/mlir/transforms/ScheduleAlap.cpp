@@ -63,8 +63,8 @@
 #define GET_TYPEDEF_CLASSES
 #include "cudaq-pulse/Dialect/Pulse/PulseTypes.h.inc"
 #define GET_OP_CLASSES
-#include "cudaq-pulse/Dialect/Pulse/PulseOps.h.inc"
 #include "cudaq-pulse/Dialect/Pulse/PulseAttrs.h"
+#include "cudaq-pulse/Dialect/Pulse/PulseOps.h.inc"
 
 #include "cudaq-pulse/Dialect/Classical/ClassicalDialect.h.inc"
 #define GET_TYPEDEF_CLASSES
@@ -348,8 +348,8 @@ public:
   /// one. Returns whether the calls' attributes changed.
   bool run(Timelines &result) {
     // Every call of a controller that blocks on calls holds every line.
-    everyLine = function->getParentOfType<mlir::ModuleOp>()->hasAttr(
-        classical::kBlocksOnCallsAttr);
+    everyLine =
+        pulse::blocksOnCalls(function->getParentOfType<mlir::ModuleOp>());
     // Without a run-time wait there is one timeline: skip the analysis.
     bool numbered = false;
     auto scan = function.walk([&](mlir::Operation *op) {
@@ -1155,9 +1155,8 @@ public:
         grid(grid),
         controllers(resources.enabled ? controllers : pulse::Controllers()) {
     auto module = region.getParentOp()->getParentOfType<mlir::ModuleOp>();
-    if (mlir::Attribute held =
-            module ? module->getAttr(classical::kBlocksOnCallsAttr) : nullptr)
-      holdControllers(held, controllers);
+    if (module && pulse::blocksOnCalls(module))
+      holdControllers(pulse::controlSystemOf(module), controllers);
     auto count = static_cast<size_t>(isolated() ? lanesPer->count : 1);
     floors.assign(count, 0);
     ends.assign(count, 0);
@@ -1382,21 +1381,22 @@ private:
 
   // ── Calls that hold controllers ───────────────────────────────────────
 
-  /// From `pulse.blocks_on_calls`: every call holds every line, or, on
-  /// several controllers whose lines are traced, the lines of those it
-  /// lists that the call involves (`heldBy`).
-  void holdControllers(mlir::Attribute held, const pulse::Controllers &all) {
-    auto listed = mlir::dyn_cast<mlir::DenseI64ArrayAttr>(held);
-    if (!Gridded || !listed || !all.enabled()) {
+  /// From the controllers of `system` that block on calls: every call holds
+  /// every line, or, on several controllers whose lines are traced, the
+  /// lines of those that block that the call involves (`heldBy`).
+  void holdControllers(pulse::ControlSystemAttr system,
+                       const pulse::Controllers &all) {
+    llvm::ArrayRef<pulse::ControllerAttr> listed = system.getControllers();
+    if (!Gridded || !all.enabled() ||
+        static_cast<int64_t>(listed.size()) != all.count()) {
       blocksOnCalls = true;
       return;
     }
     owners = all;
     auto count = static_cast<size_t>(all.count());
     blocking.assign(count, false);
-    for (int64_t c : listed.asArrayRef())
-      if (c >= 0 && c < all.count())
-        blocking[c] = true;
+    for (auto [c, controller] : llvm::enumerate(listed))
+      blocking[c] = controller.getBlocksOnCalls();
     heldEnds.assign(count, 0);
     heldFloors.assign(count, 0);
     heldCeilings.assign(count, kNever);
@@ -4545,10 +4545,11 @@ static void inlineScheduleBlock(pulse::ScheduleBlockOp block) {
 
 // ── Duration budgets ─────────────────────────────────────────────────────
 //
-// `max_duration_cycles` on a schedule block, or `pulse.max_duration_cycles`
-// on the module, bounds how long every execution of the block, or the whole
-// program, may take. A wait whose length is not known yet is scheduled at
-// its current length; the check adds what each execution of it can add.
+// `max_duration_cycles` on a schedule block, or on a controller of the
+// module's control system, bounds how long every execution of the block, or
+// the whole program, may take. A wait whose length is not known yet is
+// scheduled at its current length; the check adds what each execution of it can
+// add.
 
 /// How many cycles longer than scheduled `op` can take: 0 for an op of
 /// known length, -1 for a wait without a highest length.
@@ -4672,15 +4673,14 @@ static int64_t programLength(mlir::func::FuncOp function) {
 
 static mlir::LogicalResult checkProgramBudget(mlir::func::FuncOp function) {
   auto module = function->getParentOfType<mlir::ModuleOp>();
-  auto budget = module ? module->getAttrOfType<mlir::IntegerAttr>(
-                             "pulse.max_duration_cycles")
-                       : mlir::IntegerAttr();
+  std::optional<int64_t> budget =
+      module ? pulse::programBudget(module) : std::nullopt;
   if (!budget)
     return mlir::success();
   std::string what =
       "kernel '" + module.getSymName().value_or("main").str() + "'";
   return checkBudget(function, function, what, programLength(function),
-                     budget.getInt());
+                     *budget);
 }
 
 // ── Driver ───────────────────────────────────────────────────────────────
@@ -4802,11 +4802,15 @@ scheduleRounds(mlir::Region &region, mlir::Operation *root, Resources resources,
   return mlir::success();
 }
 
-/// Whether the module of `op` lists the controllers that block on calls.
+/// Whether some of the several controllers of the module of `op` block on
+/// calls.
 static bool holdsControllers(mlir::Operation *op) {
   auto module = op->getParentOfType<mlir::ModuleOp>();
-  return module && mlir::isa_and_present<mlir::DenseI64ArrayAttr>(
-                       module->getAttr(classical::kBlocksOnCallsAttr));
+  if (!module)
+    return false;
+  pulse::ControlSystemAttr system = pulse::controlSystemOf(module);
+  return system && system.getControllers().size() > 1 &&
+         pulse::blocksOnCalls(module);
 }
 
 static mlir::LogicalResult
@@ -4863,8 +4867,8 @@ static mlir::LogicalResult schedule(mlir::func::FuncOp function,
   if (mlir::failed(annotated))
     return mlir::failure();
   bool classical = *annotated;
-  bool blocksOnCalls = function->getParentOfType<mlir::ModuleOp>()->hasAttr(
-      classical::kBlocksOnCallsAttr);
+  bool blocksOnCalls =
+      pulse::blocksOnCalls(function->getParentOfType<mlir::ModuleOp>());
   if (classical)
     for (pulse::ScheduleBlockOp block : outermostBlocks(function.getBody())) {
       mlir::WalkResult found = block.walk([blocksOnCalls](mlir::Operation *op) {
@@ -4897,15 +4901,15 @@ static mlir::LogicalResult schedule(mlir::func::FuncOp function,
       function->getParentOfType<mlir::ModuleOp>());
   if (mlir::failed(scheduleRegion(
           function.getBody(), function, resources, isAlap, data, timelines,
-          pulse::LineGrid(clocks), pulse::Controllers(clocks.controllers))) ||
+          pulse::LineGrid(clocks), pulse::Controllers(clocks))) ||
       mlir::failed(checkProgramBudget(function)))
     return mlir::failure();
-  bool placed = pulse::applyLineDelays(function, clocks.delays);
-  function->setAttr(pulse::kScheduleStateAttr,
-                    pulse::ScheduleStateAttr::get(
-                        function.getContext(),
-                        placed ? pulse::ScheduleState::Placed
-                               : pulse::ScheduleState::Timed));
+  bool placed = pulse::applyLineDelays(function, clocks);
+  function->setAttr(
+      pulse::kScheduleStateAttr,
+      pulse::ScheduleStateAttr::get(function.getContext(),
+                                    placed ? pulse::ScheduleState::Placed
+                                           : pulse::ScheduleState::Timed));
   return mlir::success();
 }
 

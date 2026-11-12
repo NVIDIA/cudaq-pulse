@@ -33,9 +33,9 @@ func.func @stamps() {
 
 // Frames that persist leave the change nothing takes unmarked.
 
-// CHECK-LABEL: module attributes {pulse.persistent_frames}
+// CHECK-LABEL: module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000, controllers = [#pulse.controller<persistent_frames>]>}
 // CHECK-LABEL: func.func @persistent
-module attributes {pulse.persistent_frames} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000, controllers = [#pulse.controller<persistent_frames>]>} {
   func.func @persistent() {
     %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
     %d, %t = pulse.get_drive_line %q : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)

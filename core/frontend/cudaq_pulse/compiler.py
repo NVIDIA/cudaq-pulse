@@ -1231,14 +1231,11 @@ def build(
             if system is None or machine.controller is not None
             else system._links_attribute(machine, links, target.clock_ghz)
         )
-    if max_duration_cycles is not None:
-        module.set_attributes(f"{{pulse.max_duration_cycles = {int(max_duration_cycles)} : i64}}")
-    if machine.controller is not None:
-        if machine.controller.persistent_frames:
-            module.set_attributes("{pulse.persistent_frames}")
-        if machine.controller.blocks_on_calls:
-            module.set_attributes("{pulse.blocks_on_calls}")
-    fine_delays = None if plain else _clocked_module(module, machine, target, clocks, builder)
+    fine_delays = (
+        None
+        if plain and max_duration_cycles is None
+        else _clocked_module(module, machine, target, clocks, max_duration_cycles)
+    )
     metrics.ffi_ms = (time.perf_counter() - t0) * 1000
 
     t0 = time.perf_counter()
@@ -1374,31 +1371,78 @@ def _clocked_module(
     machine: _MachineModel,
     target: QuantumSystem,
     clocks: _clocks.ClockPlan | None,
-    builder: Any,
+    max_duration_cycles: int | None,
 ) -> Mapping[tuple[str, int], float] | None:
-    """Set the grid, controller and line delay attributes of *module*; the
-    fine delays."""
-    if clocks is not None:
-        grids = clocks.attributes(builder.qudit_count)
-        if grids is not None:
-            module.set_attributes(grids)
-    system = machine._system
-    if system is not None and machine.controller is None:
-        module.set_attributes(system._controllers_attribute(target.clock_ghz, builder.qudit_count))
+    """Give *module* its control system (``pulse.control_system``): the
+    controller and delay of each line, and each controller's grid, outcome
+    latencies, start uncertainty, frames, calls and *max_duration_cycles*,
+    where any differs from the default; the fine delays."""
+    from . import _clocks
+
+    shifts: Mapping[tuple[str, int], int] = {}
     fine_delays = None
     if machine._line_delays:
-        shifts, fine_delays = _line_delays(machine, target, clocks, builder.qudit_count)
-        if shifts is not None:
-            module.set_attributes(f"{{pulse.line_delays = {shifts}}}")
+        shifts, fine_delays = _line_delays(machine, target, clocks)
+    lines = _lines(machine, shifts)
+    system = machine._system
+    if system is not None and machine.controller is None:
+        controllers = system._controllers_attribute(target.clock_ghz, max_duration_cycles)
+    else:
+        controllers = _controller_attribute(machine.controller, clocks, max_duration_cycles)
+    if lines or controllers:
+        text = "{pulse.control_system = #pulse.control_system<clock_period_fs = "
+        text += _clocks.clock_period_fs(target.clock_ghz)
+        if lines:
+            text += f", lines = {lines}"
+        if controllers:
+            text += f", controllers = {controllers}"
+        module.set_attributes(text + ">}")
     return fine_delays
+
+
+def _controller_attribute(
+    controller: Controller | None,
+    clocks: _clocks.ClockPlan | None,
+    max_duration_cycles: int | None,
+) -> str:
+    """The ``controllers`` of a program's control system on one controller:
+    its grid, frames, calls and *max_duration_cycles*; empty when all are
+    the defaults."""
+    fields = []
+    if clocks is not None and clocks.controllers[0].grid > 1:
+        fields.append(f"grid_cycles = {clocks.controllers[0].grid}")
+    if controller is not None:
+        if controller.persistent_frames:
+            fields.append("persistent_frames")
+        if controller.blocks_on_calls:
+            fields.append("blocks_on_calls")
+    if max_duration_cycles is not None:
+        fields.append(f"max_duration_cycles = {int(max_duration_cycles)}")
+    return f"[#pulse.controller<{', '.join(fields)}>]" if fields else ""
+
+
+def _lines(machine: _MachineModel, shifts: Mapping[tuple[str, int], int]) -> str:
+    """The ``lines`` of a program's control system: each line the system
+    gives a controller of (on several) or that *shifts* moves, with its
+    controller and delay in program cycles; empty for none."""
+    system = machine._system if machine.controller is None else None
+    owners: Mapping[tuple[str, int], int] = {} if system is None else system._line_owners
+    lines = []
+    for role, qudit in sorted({*owners, *shifts}):
+        line = f"#pulse.line<{role}, qudits = [{qudit}]"
+        if shift := shifts.get((role, qudit)):
+            line += f", delay_cycles = {shift}"
+        if owner := owners.get((role, qudit)):
+            line += f", controller = {owner}"
+        lines.append(line + ">")
+    return f"[{', '.join(lines)}]" if lines else ""
 
 
 def _line_delays(
     machine: _MachineModel,
     target: QuantumSystem,
     clocks: _clocks.ClockPlan | None,
-    qudit_count: int,
-) -> tuple[str | None, dict[tuple[str, int], float]]:
+) -> tuple[dict[tuple[str, int], int], dict[tuple[str, int], float]]:
     from . import _clocks
 
     system = machine._system if machine.controller is None else None
@@ -1408,7 +1452,6 @@ def _line_delays(
             machine.controller,
             clocks,
             target.clock_ghz,
-            qudit_count,
             None if system is None else system.controllers,
             None if system is None else system._line_owners,
         )
@@ -1441,9 +1484,9 @@ def _check_controller(lowered: ScheduledKernel) -> ScheduledKernel:
     return (_CheckedPerCall if lowered._role is None else _CheckedPlaced)(lowered)
 
 
-def with_line_delays(lowered: _Kernel, options: CompileOptions, qudit_count: int) -> _Kernel | None:
-    """*lowered*, a scheduled module of *qudit_count* qudits, compiled again for
-    *options*, which differ from its own only in the machine's line delays:
+def with_line_delays(lowered: _Kernel, options: CompileOptions) -> _Kernel | None:
+    """*lowered*, a scheduled module, compiled again for *options*, which
+    differ from its own only in the machine's line delays:
     its module before scheduling is kept, and only scheduling, the checks and
     the exports are done again. ``None`` when scheduling it again fails, for
     a full compile to report, and for a module with list or qudit
@@ -1453,9 +1496,9 @@ def with_line_delays(lowered: _Kernel, options: CompileOptions, qudit_count: int
     target = lowered.quantum_system
     clocks = lowered.clocks
     fine_delays = None
-    shifts = None
+    shifts: Mapping[tuple[str, int], int] = {}
     if options.machine._line_delays:
-        shifts, fine_delays = _line_delays(options.machine, target, clocks, qudit_count)
+        shifts, fine_delays = _line_delays(options.machine, target, clocks)
     if clocks is None or clocks.readout_latency_cycles is None:
         schedule_args = options.schedule_args()
     else:
@@ -1465,7 +1508,9 @@ def with_line_delays(lowered: _Kernel, options: CompileOptions, qudit_count: int
     t0 = time.perf_counter()
     try:
         with lowered._lock:
-            module = lowered._module.with_line_delays(shifts or "", *schedule_args)
+            module = lowered._module.with_line_delays(
+                _lines(options.machine, shifts), *schedule_args
+            )
     except Exception:
         return None
     old = lowered.metrics

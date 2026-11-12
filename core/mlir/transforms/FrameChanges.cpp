@@ -52,6 +52,7 @@
 #define GET_TYPEDEF_CLASSES
 #include "cudaq-pulse/Dialect/Pulse/PulseTypes.h.inc"
 #define GET_OP_CLASSES
+#include "cudaq-pulse/Dialect/Pulse/PulseAttrs.h"
 #include "cudaq-pulse/Dialect/Pulse/PulseOps.h.inc"
 
 #include "cudaq-pulse/Dialect/Classical/ClassicalDialect.h.inc"
@@ -636,7 +637,7 @@ struct PulseFrameChangesPass
   void runOnOperation() override {
     mlir::ModuleOp module = getOperation();
     mlir::MLIRContext *context = &getContext();
-    bool persistent = module->hasAttr("pulse.persistent_frames");
+    bool persistent = pulse::persistentFrames(module);
     auto mark = mlir::UnitAttr::get(context);
     auto i64 = mlir::IntegerType::get(context, 64);
     int64_t nextId = 0;

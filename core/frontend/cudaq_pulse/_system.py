@@ -1327,41 +1327,34 @@ class ControlSystem:
             table.append(row)
         return table
 
-    def _controllers_attribute(self, program_ghz: float, qudit_count: int) -> str:
-        """The module attribute ``pulse.controllers`` of a program at
-        *program_ghz* on *qudit_count* qudits: the controller of each line, the
-        outcome latencies between controllers, how far apart their starts may
-        be (in program cycles) and each one's start uncertainty in ns; with
-        ``pulse.blocks_on_calls``, those that block on calls."""
+    def _controllers_attribute(self, program_ghz: float, max_duration_cycles: int | None) -> str:
+        """The ``controllers`` of the control system of a program at
+        *program_ghz* (``#pulse.control_system``): each controller's grid,
+        how long after one of its readouts the outcome is usable on each
+        controller and how far apart their starts may be (in program
+        cycles), its start uncertainty in ns, whether it blocks on calls, and
+        *max_duration_cycles*."""
         from fractions import Fraction
 
         clocks = self._clock_plan(program_ghz)
         uncertainty = self._start_uncertainty(clocks)
-        count = len(self.controllers)
-        owners = self._line_owners
-
-        def array(kind: str, values: Iterable[Any]) -> str:
-            text = ", ".join(map(str, values))
-            return f"array<{kind}: {text}>" if text else f"array<{kind}>"
-
-        fields = [
-            f"{role} = " + array("i64", (owners.get((role, q), -1) for q in range(qudit_count)))
-            for role in ("drive", "readout")
-        ]
-        latency = (v for row in self._outcome_latencies(clocks) for v in row)
-        spread = (
-            0 if a == b else math.ceil(uncertainty[a] + uncertainty[b])
-            for a in range(count)
-            for b in range(count)
-        )
-        ns = (repr(float(u / Fraction(program_ghz))) for u in uncertainty)
-        fields.append(f"outcome_latency = {array('i64', latency)}")
-        fields.append(f"spread = {array('i64', spread)}")
-        fields.append(f"uncertainty_ns = {array('f64', ns)}")
-        text = "{pulse.controllers = {" + ", ".join(fields) + "}"
-        if self._blocking:
-            text += f", pulse.blocks_on_calls = {array('i64', self._blocking)}"
-        return text + "}"
+        latencies = self._outcome_latencies(clocks)
+        everyone = range(len(self.controllers))
+        entries = []
+        for a, controller in enumerate(self.controllers):
+            fields = []
+            if clocks is not None and clocks.controllers[a].grid > 1:
+                fields.append(f"grid_cycles = {clocks.controllers[a].grid}")
+            spread = (0 if a == b else math.ceil(uncertainty[a] + uncertainty[b]) for b in everyone)
+            fields.append(f"outcome_latency_cycles = [{', '.join(map(str, latencies[a]))}]")
+            fields.append(f"spread_cycles = [{', '.join(map(str, spread))}]")
+            fields.append(f"uncertainty_ns = {float(uncertainty[a] / Fraction(program_ghz))!r}")
+            if controller.blocks_on_calls:
+                fields.append("blocks_on_calls")
+            if max_duration_cycles is not None:
+                fields.append(f"max_duration_cycles = {int(max_duration_cycles)}")
+            entries.append(f"#pulse.controller<{', '.join(fields)}>")
+        return f"[{', '.join(entries)}]"
 
     def _links_attribute(
         self, machine: _MachineModel, used: Sequence[int], program_ghz: float

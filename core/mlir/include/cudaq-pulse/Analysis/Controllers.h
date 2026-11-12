@@ -4,24 +4,22 @@
 // The controllers of a program whose lines several controllers play: which
 // one plays each line, and what crossing between two of them costs.
 //
-// The module attribute `pulse.controllers` is a dictionary of
-// `drive` / `readout` (i64 arrays indexed by qudit: the index of the
-// controller that plays the line, -1 for none), `outcome_latency` (i64, n*n,
-// reader-major: how long after a readout on controller r ends its outcome is
-// usable on controller c, in program cycles), `spread` (i64, n*n: how far
-// apart in time two controllers' starts may be, in program cycles, 0 on the
-// diagonal) and `uncertainty_ns` (f64, n: how well each controller's start
-// is known). A line of no known controller, such as a runtime qudit's, may
-// be on any. A module without it has one controller, and reading it is one
-// attribute lookup.
+// A module's control system (`pulse.control_system`) of several controllers
+// gives, on each one, `outcome_latency_cycles` (by controller: how long after
+// a readout on this one ends its outcome is usable there, in program
+// cycles), `spread_cycles` (by controller: how far apart in time the two
+// controllers' starts may be, 0 for itself) and `uncertainty_ns` (how well
+// its start is known), and on each line the controller that plays it. A line
+// of no known controller, such as a runtime qudit's, may be on any. A module
+// with one controller pays one attribute lookup.
 //
 // Include after the Pulse dialect op and type headers and LineTrace.h.
 
 #pragma once
 
+#include "cudaq-pulse/Analysis/LineGrid.h"
 #include "cudaq-pulse/Analysis/LineTrace.h"
 #include "llvm/ADT/SmallVector.h"
-#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
 #include <algorithm>
 #include <cstdint>
@@ -33,30 +31,24 @@ public:
   Controllers() = default;
 
   explicit Controllers(mlir::ModuleOp module)
-      : Controllers(module ? module->getAttrOfType<mlir::DictionaryAttr>(
-                                 "pulse.controllers")
-                           : mlir::DictionaryAttr()) {}
+      : Controllers(ClockAttributes(module)) {}
 
-  /// Of the module's `pulse.controllers` attribute `attr`, if any.
-  explicit Controllers(mlir::DictionaryAttr attr) {
-    if (!attr)
+  /// Of the control system `attrs` read, if it has several controllers.
+  explicit Controllers(const ClockAttributes &attrs) {
+    if (!attrs.system)
       return;
-    auto uncertainty = attr.getAs<mlir::DenseF64ArrayAttr>("uncertainty_ns");
-    auto outcome = attr.getAs<mlir::DenseI64ArrayAttr>("outcome_latency");
-    auto spreads = attr.getAs<mlir::DenseI64ArrayAttr>("spread");
-    if (!uncertainty || !outcome || !spreads)
-      return;
-    int64_t size = uncertainty.size();
-    if (size < 2 || outcome.size() != size * size ||
-        spreads.size() != size * size)
+    llvm::ArrayRef<ControllerAttr> controllers = attrs.system.getControllers();
+    auto size = static_cast<int64_t>(controllers.size());
+    if (size < 2 || controllers.front().getOutcomeLatencyCycles().empty())
       return;
     n = size;
-    uncertaintyNs.assign(uncertainty.asArrayRef().begin(),
-                         uncertainty.asArrayRef().end());
-    latency.assign(outcome.asArrayRef().begin(), outcome.asArrayRef().end());
-    spreadOf.assign(spreads.asArrayRef().begin(), spreads.asArrayRef().end());
-    drive = attr.getAs<mlir::DenseI64ArrayAttr>("drive");
-    readout = attr.getAs<mlir::DenseI64ArrayAttr>("readout");
+    for (ControllerAttr controller : controllers) {
+      uncertaintyNs.push_back(controller.getUncertaintyNs().convertToDouble());
+      llvm::append_range(latency, controller.getOutcomeLatencyCycles());
+      llvm::append_range(spreadOf, controller.getSpreadCycles());
+    }
+    drive = attrs.driveOwner;
+    readout = attrs.readoutOwner;
   }
 
   /// Whether the program's lines are on several controllers.
@@ -70,9 +62,9 @@ public:
     if (!allocation)
       return -1;
     int64_t qudit = quditOf(allocation);
-    mlir::DenseI64ArrayAttr owners =
+    const llvm::SmallVector<int64_t> &owners =
         mlir::isa<GetDriveLineOp>(allocation) ? drive : readout;
-    if (!owners || qudit < 0 || qudit >= static_cast<int64_t>(owners.size()))
+    if (qudit < 0 || qudit >= static_cast<int64_t>(owners.size()))
       return -1;
     int64_t owner = owners[qudit];
     return owner >= 0 && owner < n ? owner : -1;
@@ -126,7 +118,7 @@ private:
   int64_t n = 0;
   llvm::SmallVector<double> uncertaintyNs;
   llvm::SmallVector<int64_t> latency, spreadOf;
-  mlir::DenseI64ArrayAttr drive, readout;
+  llvm::SmallVector<int64_t> drive, readout;
 };
 
 } // namespace pulse

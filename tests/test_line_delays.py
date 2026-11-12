@@ -76,7 +76,7 @@ def test_whole_cycles_of_a_delay_move_the_lines_operations():
     lines = _lines(delayed)
     assert lines[("drive", 0)]["fine_delay_ns"] == 0.0
     assert lines[("drive", 1)]["fine_delay_ns"] == 0.0
-    assert "pulse.line_delays" in delayed.mlir()
+    assert "#pulse.line<drive, qudits = [0], delay_cycles = 3>" in delayed.mlir()
 
 
 def test_without_delays_nothing_changes():

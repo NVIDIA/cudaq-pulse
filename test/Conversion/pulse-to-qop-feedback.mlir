@@ -8,7 +8,7 @@
 // Measured 1: the conditional X plays after the readout.
 // CHECK-LABEL: module @excited
 // CHECK: qop.callback_scalar @drive_envelope_0_x {{.*}}array<f64: 3.000000e+02, 4.000000e+01
-module @excited attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.path = [array<i64: 0, 1>], qop.t_start = 3.000000e+02 : f64, qop.t_end = 3.400000e+02 : f64} {
+module @excited attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>, pulse.path = [array<i64: 0, 1>], qop.t_start = 3.000000e+02 : f64, qop.t_end = 3.400000e+02 : f64} {
   func.func @main() {
     %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
     %d0, %t0 = pulse.get_drive_line %q {frequency_hz = 5.000000e+09 : f64} : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
@@ -36,7 +36,7 @@ module @excited attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.path = [
 // Measured 0: nothing plays.
 // CHECK-LABEL: module @ground
 // CHECK-NOT: qop.callback_scalar
-module @ground attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.path = [array<i64: 0, 0>], qop.t_start = 3.000000e+02 : f64, qop.t_end = 3.400000e+02 : f64} {
+module @ground attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>, pulse.path = [array<i64: 0, 0>], qop.t_start = 3.000000e+02 : f64, qop.t_end = 3.400000e+02 : f64} {
   func.func @main() {
     %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
     %d0, %t0 = pulse.get_drive_line %q {frequency_hz = 5.000000e+09 : f64} : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
@@ -64,7 +64,7 @@ module @ground attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.path = [a
 // Before the measurement completes, the branch does not matter.
 // CHECK-LABEL: module @before
 // CHECK-NOT: qop.callback_scalar
-module @before attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.path = [], qop.t_start = 0.000000e+00 : f64, qop.t_end = 3.000000e+02 : f64} {
+module @before attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>, pulse.path = [], qop.t_start = 0.000000e+00 : f64, qop.t_end = 3.000000e+02 : f64} {
   func.func @main() {
     %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
     %d0, %t0 = pulse.get_drive_line %q {frequency_hz = 5.000000e+09 : f64} : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
@@ -90,7 +90,7 @@ module @before attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.path = []
 // -----
 
 // After it, an outcome is needed.
-module @undecided attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.path = [], qop.t_start = 0.000000e+00 : f64, qop.t_end = 3.400000e+02 : f64} {
+module @undecided attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>, pulse.path = [], qop.t_start = 0.000000e+00 : f64, qop.t_end = 3.400000e+02 : f64} {
   func.func @main() {
     %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
     %d0, %t0 = pulse.get_drive_line %q {frequency_hz = 5.000000e+09 : f64} : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
@@ -115,7 +115,7 @@ module @undecided attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.path =
 // -----
 
 // Without a path, a program that measures cannot be one evolution.
-module @no_path attributes {pulse.clock_ghz = 1.000000e+00 : f64} {
+module @no_path attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>} {
   func.func @main(%x: !pulse.waveform) {
     %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
     %r0, %rt0 = pulse.get_readout_line %q {frequency_hz = 7.000000e+09 : f64} : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)

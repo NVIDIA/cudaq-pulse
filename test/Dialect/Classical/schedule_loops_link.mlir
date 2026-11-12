@@ -9,7 +9,7 @@
 // RUN: cudaq-pulse-opt --pulse-schedule-rcp --pulse-classical-check %s > /dev/null
 // RUN: cudaq-pulse-opt '--pulse-schedule-rcp=alap' --pulse-classical-check %s > /dev/null
 
-module attributes {pulse.clock_ghz = 2.0 : f64,
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 500000>,
                    classical.links = {"0" = {fixed_ns = 4.0 : f64, slots = 1 : i64},
                                       "1" = {fixed_ns = 4.0 : f64, slots = 6 : i64}}} {
 

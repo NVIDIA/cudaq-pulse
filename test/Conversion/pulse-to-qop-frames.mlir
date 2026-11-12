@@ -10,7 +10,7 @@
 // an axis at -theta).
 // CHECK: @drive_envelope_0_x {{.*}}array<f64: 0.000000e+00, 4.000000e+01, {{([^,]*, )([^,]*, )([^,]*, )([^,]*, )([^,]*, )}}0.000000e+00,
 // CHECK: @drive_envelope_1_x {{.*}}array<f64: 4.000000e+01, 4.000000e+01, {{([^,]*, )([^,]*, )([^,]*, )([^,]*, )([^,]*, )}}-1.5707963267948966,
-module attributes {pulse.clock_ghz = 1.000000e+00 : f64} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>} {
   func.func @main() {
     %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
     %d0, %t0 = pulse.get_drive_line %q {frequency_hz = 5.000000e+09 : f64} : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
@@ -39,7 +39,7 @@ module attributes {pulse.clock_ghz = 1.000000e+00 : f64} {
 // CHECK: @drive_envelope_1_x {{.*}}array<f64: 1.400000e+02, 4.000000e+01, {{([^,]*, )([^,]*, )([^,]*, )([^,]*, )([^,]*, )}}0.000000e+00,
 // CHECK: @drive_envelope_2_x {{.*}}array<f64: 1.800000e+02, 4.000000e+01, {{([^,]*, )([^,]*, )([^,]*, )([^,]*, )([^,]*, )}}-1.1309733552923256,
 // CHECK: @drive_envelope_3_x {{.*}}array<f64: 3.200000e+02, 4.000000e+01, {{([^,]*, )([^,]*, )([^,]*, )([^,]*, )([^,]*, )}}-2.0106192982974678,
-module attributes {pulse.clock_ghz = 1.000000e+00 : f64} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>} {
   func.func @main() {
     %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
     %d0, %t0 = pulse.get_drive_line %q {frequency_hz = 5.000000e+09 : f64} : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
@@ -69,7 +69,7 @@ module attributes {pulse.clock_ghz = 1.000000e+00 : f64} {
 // CHECK: {{^// -{5}$}}
 // CHECK: @drive_envelope_0_x {{.*}}array<f64: 0.000000e+00, 4.000000e+01, {{([^,]*, )([^,]*, )([^,]*, )([^,]*, )([^,]*, )}}0.000000e+00,
 // CHECK: @drive_envelope_1_x {{.*}}array<f64: 1.400000e+02, 4.000000e+01, {{([^,]*, )([^,]*, )([^,]*, )([^,]*, )([^,]*, )}}-1.5707963267948966,
-module attributes {pulse.clock_ghz = 1.000000e+00 : f64} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>} {
   func.func @main() {
     %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
     %q1 = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qudit

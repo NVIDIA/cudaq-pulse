@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// On several controllers, pulse.blocks_on_calls lists those that block on
-// calls, and a call holds each of them that issues it (here controller 0,
+// On several controllers, those marked blocks_on_calls block on calls, and a call holds each of them that issues it (here controller 0,
 // which sends its measurement), reads a measurement it sends or plays an op
 // that uses its answer. Controller 1 plays with the answer and
 // blocks: the call waits for its drive, and its next drive for the answer.
@@ -12,12 +11,16 @@
 // RUN: cudaq-pulse-opt --pulse-schedule-asap --pulse-classical-check --pulse-verify %s > /dev/null
 // RUN: cudaq-pulse-opt --pulse-schedule-alap --pulse-classical-check --pulse-verify %s > /dev/null
 
-module attributes {pulse.clock_ghz = 1.0 : f64, pulse.qudit_count = 3 : i64,
-    pulse.controllers = {drive = array<i64: 0, 1, 2>, readout = array<i64: 0, 1, 2>,
-      outcome_latency = array<i64: 0, 0, 0, 0, 0, 0, 0, 0, 0>,
-      spread = array<i64: 0, 0, 0, 0, 0, 0, 0, 0, 0>,
-      uncertainty_ns = array<f64: 0.0, 0.0, 0.0>},
-    pulse.blocks_on_calls = array<i64: 1, 2>} {
+module attributes {pulse.qudit_count = 3 : i64,
+    pulse.control_system = #pulse.control_system<clock_period_fs = 1000000,
+      lines = [#pulse.line<drive, qudits = [0]>, #pulse.line<drive, qudits = [1], controller = 1>,
+               #pulse.line<drive, qudits = [2], controller = 2>, #pulse.line<readout, qudits = [0]>,
+               #pulse.line<readout, qudits = [1], controller = 1>,
+               #pulse.line<readout, qudits = [2], controller = 2>],
+      controllers = [
+        #pulse.controller<outcome_latency_cycles = [0, 0, 0], spread_cycles = [0, 0, 0]>,
+        #pulse.controller<outcome_latency_cycles = [0, 0, 0], spread_cycles = [0, 0, 0], blocks_on_calls>,
+        #pulse.controller<outcome_latency_cycles = [0, 0, 0], spread_cycles = [0, 0, 0], blocks_on_calls>]>} {
 
 classical.callable @decode {dispatch_key = 1, device = 0 : i64,
     args = ["bits:1"], results = ["f64"], latency_min_ns = 0.0,

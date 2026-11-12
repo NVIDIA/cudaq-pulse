@@ -4,7 +4,7 @@
 // RUN: cudaq-pulse-opt %s --split-input-file --pulse-schedule-asap --verify-diagnostics
 // RUN: cudaq-pulse-opt %s --split-input-file --pulse-schedule-alap --verify-diagnostics
 
-// max_duration_cycles on a schedule block, and pulse.max_duration_cycles on
+// max_duration_cycles on a schedule block, and on the controller of
 // the module, bound every execution of the block and the whole program.
 
 !d = !pulse.drive_line
@@ -90,7 +90,7 @@ func.func @unbounded_wait(%tau: f64, %d0: !d) {
 // -----
 
 // The program: 100 iterations of a 40-cycle drive end at 4000.
-module attributes {pulse.max_duration_cycles = 3999 : i64} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000, controllers = [#pulse.controller<max_duration_cycles = 3999>]>} {
   // expected-error @+1 {{kernel 'main' takes 4000 cycles, more than max_duration_cycles=3999}}
   func.func @program(%d0: !pulse.drive_line, %t0: !pulse.tone) {
     %c = arith.constant 40 : i64
@@ -110,7 +110,7 @@ module attributes {pulse.max_duration_cycles = 3999 : i64} {
 
 // -----
 
-module attributes {pulse.max_duration_cycles = 4000 : i64} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000, controllers = [#pulse.controller<max_duration_cycles = 4000>]>} {
   func.func @program_fits(%d0: !pulse.drive_line, %t0: !pulse.tone) {
     %c = arith.constant 40 : i64
     %a = arith.constant 0.1 : f64

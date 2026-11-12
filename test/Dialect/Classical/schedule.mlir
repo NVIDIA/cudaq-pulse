@@ -8,7 +8,7 @@
 // RUN: cudaq-pulse-opt --pulse-schedule-asap --pulse-classical-check --pulse-verify %s > /dev/null
 // RUN: cudaq-pulse-opt --pulse-schedule-alap --pulse-classical-check --pulse-verify %s > /dev/null
 
-module attributes {pulse.clock_ghz = 2.0 : f64} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 500000>} {
 
 classical.callable @decode {dispatch_key = 3007678287 : i64, device = 0 : i64,
     args = ["bits:1"], results = ["bits:1"], latency_min_ns = 500.0,

@@ -11,7 +11,7 @@
 // CHECK: qop.callback_scalar @drive_envelope_0_x {{.*}}cudm.callback_params = array<f64: {{.*}}, 0.0062831853071795866>
 // CHECK: qop.callback_scalar @drive_envelope_0_y {{.*}}cudm.callback_params = array<f64: {{.*}}, 0.0062831853071795866>
 // CHECK: qop.callback_scalar @drive_envelope_1_x {{.*}}cudm.callback_params = array<f64: {{.*}}, 0.000000e+00>
-module attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.quantum_system = #pulse.quantum_system<qudit_frequency_hz = [5.001000e+09, 5.100000e+09], level_counts = [2, 2], t1_ns = [1.000000e+04, 1.000000e+04]>} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>, pulse.quantum_system = #pulse.quantum_system<qudit_frequency_hz = [5.001000e+09, 5.100000e+09], level_counts = [2, 2], t1_ns = [1.000000e+04, 1.000000e+04]>} {
   func.func @main() {
     %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
     %q1 = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qudit
@@ -30,7 +30,7 @@ module attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.quantum_system = 
 // -----
 
 // CHECK: qop.callback_scalar @drive_envelope_0_x {{.*}}cudm.callback_params = array<f64: {{.*}}, 0.000000e+00>
-module attributes {pulse.clock_ghz = 1.000000e+00 : f64} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>} {
   func.func @main() {
     %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
     %d0, %t0 = pulse.get_drive_line %q0 {frequency_hz = 5.000000e+09 : f64} : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)

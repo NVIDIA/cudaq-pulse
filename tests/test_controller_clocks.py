@@ -149,8 +149,9 @@ def test_every_operation_starts_and_ends_on_its_own_controllers_grid(schedule):
     assert {e.qudit for e in events} == {0, 2}
     assert all(e.start % _grid(e.qudit) == 0 and e.end % _grid(e.qudit) == 0 for e in events)
     text = lowered.mlir()
-    assert "pulse.drive_line_grid = array<i64: 2, 2, 4, 4>" in text
-    assert "pulse.line_grid = 4 : i64" in text
+    assert "#pulse.line<drive, qudits = [2], controller = 1>" in text
+    assert "#pulse.controller<grid_cycles = 2, " in text
+    assert "#pulse.controller<grid_cycles = 4, " in text
 
 
 @pulse.kernel

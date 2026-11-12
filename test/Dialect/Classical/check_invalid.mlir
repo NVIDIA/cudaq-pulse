@@ -9,7 +9,7 @@
 // them. Long loops are checked from one copy of their body, or with
 // summarize-trips=0 iteration by iteration, with the same diagnostics.
 
-module attributes {pulse.clock_ghz = 1.0 : f64,
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>,
                    classical.links = {"0" = {slot_bytes = 32 : i64}}} {
   // expected-error @+1 {{a request of 'f' takes 40 bytes, but a slot of link 0 holds 32}}
   classical.callable @f {dispatch_key = 3809224601 : i64, device = 0 : i64,
@@ -20,7 +20,7 @@ module attributes {pulse.clock_ghz = 1.0 : f64,
 
 // -----
 
-module attributes {pulse.clock_ghz = 1.0 : f64,
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>,
                    classical.links = {"0" = {slot_bytes = 30 : i64}}} {
   // expected-error @+1 {{an answer of 'f' takes 32 bytes, but a slot of link 0 holds 30}}
   classical.callable @f {dispatch_key = 3809224601 : i64, device = 0 : i64,
@@ -33,7 +33,7 @@ module attributes {pulse.clock_ghz = 1.0 : f64,
 
 // A deadline shorter than the budget: 1 cycle to submit and 1000 to answer
 // is 1001, against a deadline of 800 (slack -201).
-module attributes {pulse.clock_ghz = 1.0 : f64} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>} {
   // expected-error @+1 {{'f' cannot meet its deadline: its answer is due 1001 cycles after the submission starts, but the deadline is 800 (slack -201)}}
   classical.callable @f {dispatch_key = 3809224601 : i64, device = 0 : i64,
       args = [], results = ["f64"], latency_min_ns = 0.0,
@@ -44,7 +44,7 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
 // -----
 
 // The link's feedback latency counts against the deadline too.
-module attributes {pulse.clock_ghz = 1.0 : f64,
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>,
                    classical.links = {"0" = {feedback_ns = 300.0 : f64}}} {
   // expected-error @+1 {{its answer is due 1301 cycles after the submission starts, but the deadline is 1200 (slack -101)}}
   classical.callable @f {dispatch_key = 3809224601 : i64, device = 0 : i64,
@@ -56,7 +56,7 @@ module attributes {pulse.clock_ghz = 1.0 : f64,
 // -----
 
 // S7: the answer is taken before it is due (10 + 1 + 100 = 111).
-module attributes {pulse.clock_ghz = 1.0 : f64} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>} {
   classical.callable @f {dispatch_key = 3809224601 : i64, device = 0 : i64,
       args = [], results = ["f64"], latency_min_ns = 0.0,
       latency_nominal_ns = 50.0, latency_max_ns = 100.0, mode = "bounded",
@@ -73,7 +73,7 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
 // -----
 
 // S7 in a loop: due 1 + 100 + 10k, taken 101 + 5k, late from k = 1 on.
-module attributes {pulse.clock_ghz = 1.0 : f64} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>} {
   classical.callable @f {dispatch_key = 3809224601 : i64, device = 0 : i64,
       args = [], results = ["f64"], latency_min_ns = 0.0,
       latency_nominal_ns = 50.0, latency_max_ns = 100.0, mode = "bounded",
@@ -96,7 +96,7 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
 // -----
 
 // S8: three requests in flight on a link with two slots.
-module attributes {pulse.clock_ghz = 1.0 : f64,
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>,
                    classical.links = {"0" = {slots = 2 : i64}}} {
   classical.callable @f {dispatch_key = 3809224601 : i64, device = 0 : i64,
       args = [], results = [], latency_min_ns = 0.0,
@@ -115,7 +115,7 @@ module attributes {pulse.clock_ghz = 1.0 : f64,
 // -----
 
 // S9: the second submission starts before the first is sent.
-module attributes {pulse.clock_ghz = 1.0 : f64,
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>,
                    classical.links = {"0" = {bytes_per_ns = 1.0 : f64}}} {
   classical.callable @f {dispatch_key = 3809224601 : i64, device = 0 : i64,
       args = [], results = [], latency_min_ns = 0.0,
@@ -133,7 +133,7 @@ module attributes {pulse.clock_ghz = 1.0 : f64,
 // -----
 
 // A future carried out of the loop that submitted it.
-module attributes {pulse.clock_ghz = 1.0 : f64} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>} {
   classical.callable @f {dispatch_key = 3809224601 : i64, device = 0 : i64,
       args = [], results = ["f64"], latency_min_ns = 0.0,
       latency_nominal_ns = 50.0, latency_max_ns = 100.0, mode = "bounded",
@@ -157,7 +157,7 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
 
 // reaction_deadline_ns: the answer is due 100 + 1 + 800 = 901, 801 cycles after the
 // readout it carries ends at 100, against 600.
-module attributes {pulse.clock_ghz = 1.0 : f64} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>} {
   classical.callable @f {dispatch_key = 3809224601 : i64, device = 0 : i64,
       args = ["bits:1"], results = ["bits:1"], latency_min_ns = 0.0,
       latency_nominal_ns = 800.0, latency_max_ns = 800.0, mode = "bounded",
@@ -175,7 +175,7 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
 
 // reaction_deadline_ns in a loop: the readout ends at 100 before the loop, and the
 // submission starts at 100 + 50k, so the last of 8 iterations is the worst.
-module attributes {pulse.clock_ghz = 1.0 : f64} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>} {
   classical.callable @f {dispatch_key = 3809224601 : i64, device = 0 : i64,
       args = ["bits:1"], results = ["bits:1"], latency_min_ns = 0.0,
       latency_nominal_ns = 100.0, latency_max_ns = 100.0, mode = "bounded",
@@ -199,7 +199,7 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
 
 // reaction_deadline_ns: a wait whose length is known only when the program runs, between
 // the readout and the submission, counts at its highest length: 101 + 300.
-module attributes {pulse.clock_ghz = 1.0 : f64} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>} {
   classical.callable @f {dispatch_key = 3809224601 : i64, device = 0 : i64,
       args = ["bits:1"], results = ["bits:1"], latency_min_ns = 0.0,
       latency_nominal_ns = 100.0, latency_max_ns = 100.0, mode = "bounded",
@@ -220,7 +220,7 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
 // -----
 
 // reaction_deadline_ns: a measurement out of a branch has no readout known statically.
-module attributes {pulse.clock_ghz = 1.0 : f64} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>} {
   classical.callable @f {dispatch_key = 3809224601 : i64, device = 0 : i64,
       args = ["bits:1"], results = ["bits:1"], latency_min_ns = 0.0,
       latency_nominal_ns = 100.0, latency_max_ns = 100.0, mode = "bounded",
@@ -245,7 +245,7 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
 // S8 in a long loop: two requests start every 40 cycles, each in flight for
 // 101, and the one before the loop is still in flight over the first three
 // iterations.
-module attributes {pulse.clock_ghz = 1.0 : f64,
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>,
                    classical.links = {"0" = {slots = 3 : i64}}} {
   classical.callable @f {dispatch_key = 3809224601 : i64, device = 0 : i64,
       args = [], results = [], latency_min_ns = 0.0,
@@ -272,7 +272,7 @@ module attributes {pulse.clock_ghz = 1.0 : f64,
 // S9 in a long loop: the second request of each iteration starts 2 cycles
 // after the first is sent in iteration 0 and 1 cycle earlier each
 // iteration, so from iteration 3 on before it is sent.
-module attributes {pulse.clock_ghz = 1.0 : f64} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>} {
   classical.callable @f {dispatch_key = 3809224601 : i64, device = 0 : i64,
       args = [], results = [], latency_min_ns = 0.0,
       latency_nominal_ns = 1.0, latency_max_ns = 1.0, mode = "bounded",
@@ -298,7 +298,7 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
 // loop, out of program order (which S11 reports too), is in flight from 20025
 // to 20056, while only iterations 499 and 500 are; the loop's next request
 // makes four.
-module attributes {pulse.clock_ghz = 1.0 : f64,
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>,
                    classical.links = {"0" = {slots = 3 : i64}}} {
   classical.callable @f {dispatch_key = 3809224601 : i64, device = 0 : i64,
       args = [], results = [], latency_min_ns = 0.0,
@@ -333,7 +333,7 @@ module attributes {pulse.clock_ghz = 1.0 : f64,
 
 // S10: a call starts before the readout it sends ends, in a function with a
 // branch (a function without one relies on S10 nowhere).
-module attributes {pulse.clock_ghz = 1.0 : f64} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>} {
   classical.callable @f {dispatch_key = 3809224601 : i64, device = 0 : i64,
       args = ["bits:1"], results = ["bits:1"], latency_min_ns = 0.0,
       latency_nominal_ns = 100.0, latency_max_ns = 100.0, mode = "bounded",
@@ -353,7 +353,7 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
 
 // S10: a call starts before the answer it sends is taken at 150 (it is due
 // at 0 + 1 + 100), in a function with a branch.
-module attributes {pulse.clock_ghz = 1.0 : f64} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>} {
   classical.callable @f {dispatch_key = 3809224601 : i64, device = 0 : i64,
       args = ["f64"], results = ["f64"], latency_min_ns = 0.0,
       latency_nominal_ns = 100.0, latency_max_ns = 100.0, mode = "bounded",
@@ -373,7 +373,7 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
 // -----
 
 // S11: in a branch, a call starts before the one before it on its link ends.
-module attributes {pulse.clock_ghz = 1.0 : f64} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>} {
   classical.callable @f {dispatch_key = 3809224601 : i64, device = 0 : i64,
       args = [], results = [], latency_min_ns = 0.0,
       latency_nominal_ns = 50.0, latency_max_ns = 100.0, mode = "bounded",
@@ -396,7 +396,7 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
 
 // S12: a drive in a branch on an answer starts before it is taken at 150 (it
 // is due at 0 + 1 + 100).
-module attributes {pulse.clock_ghz = 1.0 : f64} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>} {
   classical.callable @f {dispatch_key = 3809224601 : i64, device = 0 : i64,
       args = [], results = ["f64"], latency_min_ns = 0.0,
       latency_nominal_ns = 100.0, latency_max_ns = 100.0, mode = "bounded",
@@ -423,7 +423,7 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
 // S12 in a long loop: each answer is taken at 100 + 10 k and the drive in the
 // branch on it starts at 150 + 9 k, before it from iteration 51 on. The
 // diagnostic names the last iteration.
-module attributes {pulse.clock_ghz = 1.0 : f64} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>} {
   classical.callable @f {dispatch_key = 3809224601 : i64, device = 0 : i64,
       args = [], results = ["f64"], latency_min_ns = 0.0,
       latency_nominal_ns = 50.0, latency_max_ns = 50.0, mode = "bounded",

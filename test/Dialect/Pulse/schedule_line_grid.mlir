@@ -9,7 +9,7 @@
 // RUN: cudaq-pulse-opt --pulse-schedule-asap --pulse-verify %s > /dev/null
 // RUN: cudaq-pulse-opt --pulse-schedule-alap --pulse-verify %s > /dev/null
 
-module attributes {pulse.line_grid = 1 : i64, pulse.drive_line_grid = array<i64: 4, 3>} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000, lines = [#pulse.line<drive, qudits = [0], controller = 1>, #pulse.line<drive, qudits = [1], controller = 2>], controllers = [#pulse.controller<>, #pulse.controller<grid_cycles = 4>, #pulse.controller<grid_cycles = 3>]>} {
 
 // The sync after 8 and 6 cycles meets at 12, the first time on both grids.
 // Under ALAP, the 3-cycle drive on qudit 1 ends early, at 18, the latest

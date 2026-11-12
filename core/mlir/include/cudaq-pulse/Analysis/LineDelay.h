@@ -4,33 +4,29 @@
 // The calibrated delay of each line, in whole program cycles: every drive,
 // readout and wait on the line starts that much later than scheduled.
 //
-// A module without delays has no `pulse.line_delays` attribute (read with its
-// other clock attributes, see ClockAttributes in LineGrid.h). Otherwise it is a
-// dictionary whose `drive` and `readout` entries (i64 arrays indexed by qudit)
-// give each line's delay. A wait whose length comes from a classical answer is
-// a barrier of every line and keeps its time.
+// A module's control system (`pulse.control_system`) gives each delayed
+// line's `delay_cycles`, read with its other line attributes (see
+// ClockAttributes in LineGrid.h). A wait whose length comes from a classical
+// answer is a barrier of every line and keeps its time.
 //
 // Include after the Pulse and Classical dialect op headers.
 
 #pragma once
 
+#include "cudaq-pulse/Analysis/LineGrid.h"
 #include "cudaq-pulse/Analysis/LineTrace.h"
 #include "cudaq-pulse/Analysis/Timing.h"
-#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
 
 namespace pulse {
 
 /// Shift the scheduled ops of every delayed line in `function` by its delay
-/// in `delays`, its module's `pulse.line_delays` (none when null). Whether
-/// some op moved.
+/// in `clocks`, its module's. Whether some op moved.
 inline bool applyLineDelays(mlir::Operation *function,
-                            mlir::DictionaryAttr delays) {
-  if (!delays)
+                            const ClockAttributes &clocks) {
+  if (!clocks.delayed())
     return false;
   bool moved = false;
-  auto drive = delays.getAs<mlir::DenseI64ArrayAttr>("drive");
-  auto readout = delays.getAs<mlir::DenseI64ArrayAttr>("readout");
   AllocationTracer trace;
   function->walk([&](mlir::Operation *op) {
     if (!mlir::isa<DriveOp, ReadoutOp, WaitOp>(op) ||
@@ -43,9 +39,10 @@ inline bool applyLineDelays(mlir::Operation *function,
     if (!allocation)
       return;
     int64_t qudit = quditOf(allocation);
-    mlir::DenseI64ArrayAttr shifts =
-        mlir::isa<GetDriveLineOp>(allocation) ? drive : readout;
-    if (!shifts || qudit < 0 || qudit >= static_cast<int64_t>(shifts.size()))
+    const llvm::SmallVector<int64_t> &shifts =
+        mlir::isa<GetDriveLineOp>(allocation) ? clocks.driveDelay
+                                              : clocks.readoutDelay;
+    if (qudit < 0 || qudit >= static_cast<int64_t>(shifts.size()))
       return;
     int64_t shift = shifts[qudit];
     if (shift != 0) {

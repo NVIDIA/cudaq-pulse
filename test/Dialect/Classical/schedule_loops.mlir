@@ -13,7 +13,7 @@
 // UNROLL: classical.callable @decode_wide
 // UNROLL-NOT: scf.for
 
-module attributes {pulse.clock_ghz = 1.0 : f64,
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>,
                    classical.links = {"0" = {slots = 2 : i64}}} {
 
 classical.callable @decode_wide {dispatch_key = 1, device = 1 : i64,

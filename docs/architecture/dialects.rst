@@ -60,6 +60,38 @@ attributes of their own: ``pulse.modes`` (the qudits simulated),
 ``pulse.thermal_populations``, ``pulse.coupling_pairs`` and
 ``pulse.coupling_strength_hz``.
 
+A module describes the control system it plays on in ``pulse.control_system``:
+the program clock, as its period in femtoseconds, an exact fraction
+(``clock_period_fs = 1250000/3`` is 2.4 GHz, ``500000`` is 2 GHz); its lines
+(``#pulse.line``: ``drive`` or ``readout``, the qudits it reaches, the most
+tones it plays at once, its delay in program cycles and the index of its
+controller); and its controllers (``#pulse.controller``: the program cycles
+between the instants it can start an operation, ``grid_cycles``; the outcome
+latency to and the start spread from each other controller and its start
+uncertainty; whether its frames persist between shots and whether it blocks
+on calls; and the longest the program may be, ``max_duration_cycles``):
+
+.. code-block:: text
+
+   module attributes {pulse.control_system = #pulse.control_system<
+       clock_period_fs = 500000,
+       lines = [#pulse.line<drive, qudits = [0], delay_cycles = 3>,
+                #pulse.line<readout, qudits = [0, 1, 2, 3], max_concurrent_tones = 4,
+                            controller = 1>],
+       controllers = [
+         #pulse.controller<outcome_latency_cycles = [0, 6], spread_cycles = [0, 6],
+                           uncertainty_ns = 1.0>,
+         #pulse.controller<grid_cycles = 2, outcome_latency_cycles = [6, 0],
+                           spread_cycles = [6, 0], uncertainty_ns = 2.0,
+                           blocks_on_calls>]>} {
+   }
+
+Fields at their default are left out: a compiled module without a controller
+has only its clock. A line the attribute does not list has no delay and, with
+one controller, is that controller's; with several, such as the line of a
+qudit a call binds at run time, it may be on any of them and moves on every
+one's grid.
+
 - Types: ``!pulse.qudit``, ``!pulse.drive_line``, ``!pulse.readout_line``,
   ``!pulse.tone``, ``!pulse.waveform``, ``!pulse.measurement``,
   ``!pulse.duration``, ``!pulse.timepoint``, ``!pulse.iq_data``.

@@ -11,7 +11,7 @@
 // CHECK: qop.callback_scalar @drive_envelope_0_x
 // CHECK: qop.callback_scalar @drive_envelope_0_y
 // LLVM: llvm.call @cudm_elementary_op_create
-module attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.quantum_system = #pulse.quantum_system<level_counts = [3], anharmonicity_hz = [-2.000000e+08], t1_ns = [1.000000e+04]>} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>, pulse.quantum_system = #pulse.quantum_system<level_counts = [3], anharmonicity_hz = [-2.000000e+08], t1_ns = [1.000000e+04]>} {
   func.func @main() {
     %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
     %d0, %t0 = pulse.get_drive_line %q {frequency_hz = 5.000000e+09 : f64} : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)

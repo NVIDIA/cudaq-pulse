@@ -5,10 +5,13 @@
 // RUN: cudaq-pulse-opt %s --pulse-schedule-asap --verify-diagnostics
 // RUN: cudaq-pulse-opt %s --pulse-schedule-alap --verify-diagnostics
 
-module attributes {pulse.clock_ghz = 1.0 : f64, pulse.qudit_count = 2 : i64,
-    pulse.controllers = {drive = array<i64: 0, 1>, readout = array<i64: 0, 1>,
-      outcome_latency = array<i64: 0, 0, 0, 0>, spread = array<i64: 0, 0, 0, 0>,
-      uncertainty_ns = array<f64: 0.5, 0.5>},
+module attributes {pulse.qudit_count = 2 : i64,
+    pulse.control_system = #pulse.control_system<clock_period_fs = 1000000,
+      lines = [#pulse.line<drive, qudits = [0]>, #pulse.line<drive, qudits = [1], controller = 1>,
+               #pulse.line<readout, qudits = [0]>, #pulse.line<readout, qudits = [1], controller = 1>],
+      controllers = [
+        #pulse.controller<outcome_latency_cycles = [0, 0], spread_cycles = [0, 0], uncertainty_ns = 0.5>,
+        #pulse.controller<outcome_latency_cycles = [0, 0], spread_cycles = [0, 0], uncertainty_ns = 0.5>]>,
     classical.links = {"0" = {fixed_ns = 0.0 : f64, bytes_per_ns = 0.0 : f64,
       feedback_ns = 0.0 : f64, slots = 1 : i64, slot_bytes = 1024 : i64,
       per_controller, name = "decoder"}}} {

@@ -14,7 +14,7 @@
 // CHECK: %[[T3:.*]] = pulse.shift_phase %[[T2]]
 // CHECK: pulse.iq_acquire %{{.*}}, %{{.*}}, %[[T3]] : !pulse.readout_line
 // CHECK: pulse.is_set %[[M]]
-module attributes {pulse.clock_ghz = 1.000000e+00 : f64} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>} {
   func.func @main() {
     %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
     %r0, %t0 = pulse.get_readout_line %q {frequency_hz = 7.000000e+09 : f64} : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)

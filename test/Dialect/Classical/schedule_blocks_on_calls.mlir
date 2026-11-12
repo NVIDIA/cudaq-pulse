@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// A controller that blocks on calls (pulse.blocks_on_calls): each call holds
+// A controller that blocks on calls (blocks_on_calls): each call holds
 // every line from its submission until its answer is due. At 2 GHz a
 // 1500 ns latency is 3000 cycles.
 // RUN: cudaq-pulse-opt --pulse-schedule-asap %s | FileCheck %s --check-prefixes=CHECK,ASAP
@@ -9,7 +9,7 @@
 // RUN: cudaq-pulse-opt --pulse-schedule-asap --pulse-classical-check --pulse-verify %s > /dev/null
 // RUN: cudaq-pulse-opt --pulse-schedule-alap --pulse-classical-check --pulse-verify %s > /dev/null
 
-module attributes {pulse.clock_ghz = 2.0 : f64, pulse.blocks_on_calls} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 500000, controllers = [#pulse.controller<blocks_on_calls>]>} {
 
 classical.callable @decode {dispatch_key = 3007678287 : i64, device = 0 : i64,
     args = ["bits:1"], results = ["bits:1"], latency_min_ns = 500.0,

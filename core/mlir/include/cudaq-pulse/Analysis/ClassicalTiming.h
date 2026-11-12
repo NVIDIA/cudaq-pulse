@@ -18,7 +18,7 @@
 // An answer's budget adds the start uncertainty between the controller that
 // sends the request and the one that takes the answer: none when one
 // controller does both, the link's `start_uncertainty_ns` when the module's
-// `pulse.controllers` (see Controllers.h) does not say which they are.
+// the control system (see Controllers.h) does not say which they are.
 //
 // `annotateClassicalCalls` writes on every `classical.submit` the attributes
 // scheduling reads: `classical.submit_cycles` (how long the submission holds
@@ -290,9 +290,7 @@ inline std::optional<double> waitTimeoutNs(SubmitOp submit) {
 }
 
 inline double moduleClockGHz(mlir::ModuleOp module) {
-  if (auto clock = module->getAttrOfType<mlir::FloatAttr>("pulse.clock_ghz"))
-    return clock.getValueAsDouble();
-  return 1.0;
+  return pulse::clockGHz(module);
 }
 
 /// Whether `module` declares any classical function: only then can it hold
@@ -521,13 +519,11 @@ inline constexpr const char *kBlockingWaitInBlock =
     "is fixed; return the future from the kernel and take the answer after "
     "it returns, or call the kernel without schedule=";
 
-/// The module attribute of a program for a controller that plays nothing
-/// while a call is out: each call holds every line from its submission
-/// until its answer is due. On several controllers (`pulse.controllers`) it
-/// is the i64 array of those that block, and a call holds the lines of each
-/// of them that issues it, reads a measurement it sends or plays an op that
-/// uses its answer.
-inline constexpr const char *kBlocksOnCallsAttr = "pulse.blocks_on_calls";
+/// A controller that plays nothing while a call is out (`blocks_on_calls`
+/// in the module's control system, see pulse::blocksOnCalls): each call
+/// holds every line from its submission until its answer is due. On several
+/// controllers, a call holds the lines of each of those that issues it,
+/// reads a measurement it sends or plays an op that uses its answer.
 inline constexpr const char *kBlockingCallInBlock =
     "the controller blocks on calls, holding every line while one is out, "
     "which a pulse.schedule_block, placed whole, cannot; call the kernel "

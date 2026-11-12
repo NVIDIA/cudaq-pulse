@@ -104,6 +104,120 @@ def QuantumSystemAttr : AttrDef<PulseDialect, "QuantumSystem"> {
 }
 
 //===----------------------------------------------------------------------===//
+// The control system a program plays on
+//===----------------------------------------------------------------------===//
+
+def LineKind : I32EnumAttr<"LineKind", "The kind of a line",
+  [
+    I32EnumAttrCase<"Drive", 0, "drive">,
+    I32EnumAttrCase<"Readout", 1, "readout">
+  ]> {
+  let cppNamespace = "::pulse";
+  let genSpecializedAttr = 0;
+}
+
+def LineAttr : AttrDef<PulseDialect, "Line"> {
+  let mnemonic = "line";
+  let summary = "A drive or readout line of a control system";
+  let description = [{
+    A `drive` or `readout` line: the `qudits` it reaches (by index on the
+    quantum system), the most tones it plays at once
+    (`max_concurrent_tones`, default 1), its calibrated delay in program
+    cycles (`delay_cycles`, default 0: every op on it starts that much later
+    than scheduled) and the index of the controller that plays it
+    (`controller`, default 0). Fields at their default are not printed.
+
+    Example: `#pulse.line<readout, qudits = [5], delay_cycles = 24,
+    controller = 1>`.
+  }];
+  let parameters = (ins
+    EnumParameter<LineKind>:$kind,
+    ArrayRefParameter<"int64_t", "qudits it reaches">:$qudits,
+    "int64_t":$max_concurrent_tones,
+    "int64_t":$delay_cycles,
+    "int64_t":$controller
+  );
+  let hasCustomAssemblyFormat = 1;
+  let genVerifyDecl = 1;
+}
+
+def ControllerAttr : AttrDef<PulseDialect, "Controller"> {
+  let mnemonic = "controller";
+  let summary = "A controller of a control system";
+  let description = [{
+    What scheduling needs to know of one controller, every field optional:
+
+    - `grid_cycles`: the program cycles between the instants it can start an
+      operation (default 1); each of its lines moves on that grid.
+    - `outcome_latency_cycles`: by controller, how long after a readout on
+      this one ends its outcome is usable there, in program cycles.
+    - `spread_cycles`: by controller, how far apart in time this one's start
+      and that one's may be, in program cycles.
+    - `uncertainty_ns`: how well its start is known.
+    - `persistent_frames`: its tones keep their frames from one shot to the
+      next.
+    - `blocks_on_calls`: it plays nothing while one of its classical calls is
+      out.
+    - `max_duration_cycles`: scheduling fails if the program is longer.
+
+    The two tables are given on every controller of a control system of
+    several, or on none.
+
+    Example: `#pulse.controller<grid_cycles = 2, outcome_latency_cycles =
+    [100, 140], spread_cycles = [0, 3], uncertainty_ns = 0.5>`.
+  }];
+  let parameters = (ins
+    "int64_t":$grid_cycles,
+    OptionalArrayRefParameter<"int64_t">:$outcome_latency_cycles,
+    OptionalArrayRefParameter<"int64_t">:$spread_cycles,
+    APFloatParameter<"start uncertainty in ns, an f64">:$uncertainty_ns,
+    "bool":$persistent_frames,
+    "bool":$blocks_on_calls,
+    "int64_t":$max_duration_cycles
+  );
+  let hasCustomAssemblyFormat = 1;
+  let genVerifyDecl = 1;
+}
+
+def ControlSystemAttr : AttrDef<PulseDialect, "ControlSystem"> {
+  let mnemonic = "control_system";
+  let summary = "The control system a program plays on";
+  let description = [{
+    The module attribute `pulse.control_system`: the program clock, as its
+    period in femtoseconds, an exact fraction (`clock_period_fs = 1250000/3`
+    is a 2.4 GHz clock; a whole period prints without `/1`); its `lines`
+    (`#pulse.line`); and its `controllers` (`#pulse.controller`). A line it
+    does not list has no delay and, with one controller, is that
+    controller's; with several, such as a run-time qudit's line, it may be
+    on any of them and moves on every one's grid.
+
+    Example:
+    ```mlir
+    module attributes {pulse.control_system = #pulse.control_system<
+        clock_period_fs = 500000,
+        lines = [#pulse.line<drive, qudits = [0], delay_cycles = 3>],
+        controllers = [#pulse.controller<grid_cycles = 2>]>} {}
+    ```
+  }];
+  let parameters = (ins
+    "int64_t":$clock_period_fs_numerator,
+    "int64_t":$clock_period_fs_denominator,
+    OptionalArrayRefParameter<"LineAttr">:$lines,
+    OptionalArrayRefParameter<"ControllerAttr">:$controllers
+  );
+  let hasCustomAssemblyFormat = 1;
+  let genVerifyDecl = 1;
+  let extraClassDeclaration = [{
+    /// The program clock in GHz: 1e6 over the period in fs.
+    double clockGHz() const;
+    /// The period in fs of a `clockGHz` clock, as the smallest fraction
+    /// `numerator / denominator` whose clock is exactly that double; none
+    /// for a clock too fast, too slow or not positive.
+    static std::optional<std::pair<int64_t, int64_t>> periodFs(double clockGHz);
+  }];
+}
+
+//===----------------------------------------------------------------------===//
 // How far a function is scheduled
 //===----------------------------------------------------------------------===//
 

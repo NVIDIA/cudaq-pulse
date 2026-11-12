@@ -800,7 +800,14 @@ behavior may change in any 0.x release.
   drive_scale_rad_per_ns = [..], static_terms = [..]>`, lists by qudit,
   each field optional): a compiled module gives the frequencies it is
   compiled for, a module lowered for simulation the simulated system,
-  whose frequencies may differ from its tones'. A function's
+  whose frequencies may differ from its tones'. It describes the control
+  system in `pulse.control_system` (`#pulse.control_system<clock_period_fs
+  = 1250000/3, lines = [#pulse.line<drive, qudits = [0], delay_cycles =
+  3>], controllers = [#pulse.controller<grid_cycles = 2, ...>]>`): the
+  program clock's period in femtoseconds as an exact fraction, each line's
+  qudits, tones at once, delay and controller, and each controller's grid,
+  outcome latencies, start spread and uncertainty, persistent frames,
+  blocking on calls and `max_duration_cycles`. A function's
   `pulse.schedule_state` (`#pulse.schedule_state<unscheduled|timed|placed>`,
   unscheduled when absent) says how far it is scheduled: scheduling marks it
   `timed`, or `placed` when a line delay moved some op; `pulse-verify`

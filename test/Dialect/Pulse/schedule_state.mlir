@@ -25,7 +25,7 @@ func.func @no_delays() {
 
 // -----
 
-module attributes {pulse.line_delays = {drive = array<i64: 3>, readout = array<i64: 0>}} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000, lines = [#pulse.line<drive, qudits = [0], delay_cycles = 3>]>} {
 // CHECK-LABEL: func.func @delayed
 // CHECK-SAME: attributes {pulse.schedule_state = #pulse.schedule_state<placed>}
 // CHECK: pulse.drive {{.*}}<{duration_cycles = 8 : i64, start_cycles = 3 : i64}>
@@ -45,7 +45,7 @@ func.func @delayed() {
 // -----
 
 // A delay of zero moves nothing: the function is timed.
-module attributes {pulse.line_delays = {drive = array<i64: 0>, readout = array<i64: 0>}} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000, lines = [#pulse.line<drive, qudits = [0]>]>} {
 // CHECK-LABEL: func.func @zero_delay
 // CHECK-SAME: attributes {pulse.schedule_state = #pulse.schedule_state<timed>}
 func.func @zero_delay() {

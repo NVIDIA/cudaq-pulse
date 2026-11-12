@@ -27,7 +27,7 @@
 // CUDM-LABEL: module
 // CUDM-COUNT-4: cudm.append_elementary_product {{.*}} cudm.callback_kind = 1 : i32{{.*}} modes_acted_on = array<i32: 0, 1>
 // CUDM: cudm.append_elementary_product {{.*}} coeff_real = 6.283185307179587E-5 : f64, duality = array<i32: 0, 0>, modes_acted_on = array<i32: 0, 1>
-module attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.coupling_pairs = array<i64: 0, 1>, pulse.coupling_strength_hz = array<f64: 5.000000e+06>, pulse.quantum_system = #pulse.quantum_system<static_terms = [#pulse.static_term<zz, qudits = [0, 1], rate_hz = 1.000000e+04>]>} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>, pulse.coupling_pairs = array<i64: 0, 1>, pulse.coupling_strength_hz = array<f64: 5.000000e+06>, pulse.quantum_system = #pulse.quantum_system<static_terms = [#pulse.static_term<zz, qudits = [0, 1], rate_hz = 1.000000e+04>]>} {
   func.func @main() {
     %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
     %q1 = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qudit
@@ -51,7 +51,7 @@ module attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.coupling_pairs = 
 // CHECK: qop.spin(%{{.*}}) {kind = #qop<handler_kind spin_y>}
 // CHECK: qop.spin(%{{.*}}) {kind = #qop<handler_kind spin_y>}
 // CHECK: qop.const_scalar {imag = 0.000000e+00 : f64, real = 0.015707963267948967 : f64}
-module attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.coupling_pairs = array<i64: 0, 1>, pulse.coupling_strength_hz = array<f64: 5.000000e+06>} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>, pulse.coupling_pairs = array<i64: 0, 1>, pulse.coupling_strength_hz = array<f64: 5.000000e+06>} {
   func.func @main() {
     %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
     %q1 = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qudit

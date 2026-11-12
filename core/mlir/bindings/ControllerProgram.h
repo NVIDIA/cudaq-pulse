@@ -391,7 +391,8 @@ struct ControllerWalk : ControllerExpressions {
   uint64_t nextUpdate = 0;
 
   /// Whether the controller's frames persist from one shot to the next
-  /// (`pulse.persistent_frames`): then the walk keeps the line each tone
+  /// (`persistent_frames` in the control system): then the walk keeps the
+  /// line each tone
   /// last played on, for finalFrames().
   bool persistent = false;
   std::map<mlir::Operation *, int64_t> playedOn;

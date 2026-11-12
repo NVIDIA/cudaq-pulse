@@ -188,7 +188,7 @@ def test_every_operation_starts_and_ends_on_its_controllers_grid(schedule):
     )
     events = [e for e in lowered.schedule if e.kind in ("drive", "readout", "wait")]
     assert events and all(e.start % 4 == 0 and e.end % 4 == 0 for e in events)
-    assert "pulse.line_grid = 4 : i64" in lowered.mlir()
+    assert "controllers = [#pulse.controller<grid_cycles = 4>]" in lowered.mlir()
     # The program clock runs on; only the starts moved.
     plain = pulse.compile(mixed, schedule=schedule).lower(Q[0], Q[1])
     assert len(plain.schedule) == len(lowered.schedule)
@@ -439,7 +439,7 @@ def test_a_single_clock_export_is_unchanged():
     program = lowered.export_to_controller()
     assert program["clock_ghz"] == 2.0
     assert "program_clock_ghz" not in program and "reference_clock_ghz" not in program
-    assert "line_grid" not in lowered.mlir()
+    assert "grid_cycles" not in lowered.mlir()
 
 
 def test_a_faster_controller_counts_more_cycles():
@@ -448,7 +448,7 @@ def test_a_faster_controller_counts_more_cycles():
     assert program["clock_ghz"] == 4.0 and program["program_clock_ghz"] == 2.0
     drive = next(e for e in program["events"] if e["kind"] == "drive")
     assert drive["duration_cycles"] == 82 and drive["waveform"]["params"]["duration"] == 82.0
-    assert "line_grid" not in lowered.mlir()
+    assert "grid_cycles" not in lowered.mlir()
 
 
 def test_a_run_time_wait_has_its_bounds_in_the_controllers_cycles():

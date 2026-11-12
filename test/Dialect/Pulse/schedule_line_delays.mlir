@@ -7,7 +7,7 @@
 // RUN: cudaq-pulse-opt --pulse-schedule-asap %s | FileCheck %s --check-prefixes=CHECK,ASAP
 // RUN: cudaq-pulse-opt --pulse-schedule-alap %s | FileCheck %s --check-prefixes=CHECK,ALAP
 
-module attributes {pulse.line_delays = {drive = array<i64: 3, 0>, readout = array<i64: 0, 5>}} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000, lines = [#pulse.line<drive, qudits = [0], delay_cycles = 3>, #pulse.line<readout, qudits = [1], delay_cycles = 5>]>} {
 
 // CHECK-LABEL: func.func @delayed_lines
 // ASAP: pulse.drive {{.*}}{duration_cycles = 8 : i64, start_cycles = 3 : i64}

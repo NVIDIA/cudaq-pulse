@@ -22,7 +22,7 @@ def _hamiltonian(text, line_count, policy):
     module.schedule(policy)
     freqs = ", ".join(f"{5.0e9 + 1.0e8 * i:e}" for i in range(line_count))
     module.set_attributes(
-        f"{{pulse.clock_ghz = 2.0 : f64, "
+        "{pulse.control_system = #pulse.control_system<clock_period_fs = 500000>, "
         f"pulse.quantum_system = #pulse.quantum_system<qudit_frequency_hz = [{freqs}]>}}"
     )
     return module.operator_program()

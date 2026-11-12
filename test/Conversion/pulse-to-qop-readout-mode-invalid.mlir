@@ -5,7 +5,7 @@
 // simulated as iq.
 // RUN: cudaq-pulse-opt --pulse-to-qop --verify-diagnostics %s
 
-module attributes {pulse.clock_ghz = 1.000000e+00 : f64} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>} {
   func.func @main() {
     %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
     %r0, %t0 = pulse.get_readout_line %q {frequency_hz = 7.000000e+09 : f64} : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)

@@ -8,7 +8,7 @@
 // RUN: cudaq-pulse-opt --pulse-schedule-asap --pulse-classical-check --pulse-verify %s > /dev/null
 // RUN: cudaq-pulse-opt --pulse-schedule-alap --pulse-classical-check --pulse-verify %s > /dev/null
 
-module attributes {pulse.clock_ghz = 1.0 : f64, classical.links = {"0" = {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>, classical.links = {"0" = {
     fixed_ns = 0.0 : f64, bytes_per_ns = 0.0 : f64, feedback_ns = 0.0 : f64,
     slots = 2 : i64, slot_bytes = 1024 : i64}}} {
 

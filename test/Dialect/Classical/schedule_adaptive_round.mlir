@@ -12,7 +12,7 @@
 // RUN: cudaq-pulse-opt --pulse-schedule-asap %s | FileCheck %s --check-prefixes=CHECK,ASAP
 // RUN: cudaq-pulse-opt --pulse-schedule-alap --pulse-classical-check --pulse-verify %s > /dev/null
 
-module attributes {pulse.clock_ghz = 2.0 : f64,
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 500000>,
     classical.links = {"0" = {bytes_per_ns = 0.0 : f64, feedback_ns = 8.0 : f64,
                               fixed_ns = 4.0 : f64, slots = 64 : i64,
                               slot_bytes = 1024 : i64}}} {

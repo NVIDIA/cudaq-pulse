@@ -636,13 +636,7 @@ struct PulseToQOpPass
       return signalPassFailure();
     }
 
-    double clockGHz = 1.0;
-    if (auto clock = module->getAttrOfType<FloatAttr>("pulse.clock_ghz"))
-      clockGHz = clock.getValueAsDouble();
-    if (clockGHz <= 0.0) {
-      module.emitError("pulse.clock_ghz must be positive");
-      return signalPassFailure();
-    }
+    const double clockGHz = pulse::clockGHz(module);
 
     const pulse::LineGrid lineGrid(module);
     // The simulated quantum system. Its frequencies are the qudits' own,

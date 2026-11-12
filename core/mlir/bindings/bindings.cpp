@@ -3085,8 +3085,7 @@ public:
     ControllerWalk walk(clock(), rolled ? ControllerWalk::Walk::Rolled
                                         : ControllerWalk::Walk::Every);
     walk.runTime = runTime_;
-    walk.persistent =
-        module_->getOperation()->hasAttr("pulse.persistent_frames");
+    walk.persistent = pulse::persistentFrames(*module_);
     if (segments)
       walk.segments.emplace(*module_);
     std::vector<ControllerLine> lines;
@@ -3556,20 +3555,38 @@ public:
     return result;
   }
 
-  /// This module with its line delays replaced by `delays` (a
-  /// `pulse.line_delays` dictionary, or empty for none) and scheduled again
-  /// with `policy`: everything before scheduling is kept.
-  PulseModule with_line_delays(const std::string &delays,
+  /// This module with the lines of its control system replaced by `lines`
+  /// (a list of `#pulse.line`, or empty for none), which carry the delays,
+  /// and scheduled again with `policy`: everything before scheduling is
+  /// kept.
+  PulseModule with_line_delays(const std::string &lines,
                                const std::string &policy, int64_t maxDrives,
                                int64_t maxReadouts, int64_t readoutLatency,
                                int64_t switchPenalty) {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
     auto copy = mlir::OwningOpRef<mlir::ModuleOp>(source().clone());
-    if (delays.empty())
-      copy->getOperation()->removeAttr("pulse.line_delays");
-    else
-      copy->getOperation()->setAttr("pulse.line_delays",
-                                    mlir::parseAttribute(delays, ctx_.get()));
+    llvm::SmallVector<pulse::LineAttr> parsed;
+    if (!lines.empty()) {
+      auto list = mlir::dyn_cast_or_null<mlir::ArrayAttr>(
+          mlir::parseAttribute(lines, ctx_.get()));
+      if (!list)
+        throw std::invalid_argument("with_line_delays: not a list of lines");
+      for (mlir::Attribute line : list) {
+        auto parsedLine = mlir::dyn_cast<pulse::LineAttr>(line);
+        if (!parsedLine)
+          throw std::invalid_argument("with_line_delays: not a #pulse.line");
+        parsed.push_back(parsedLine);
+      }
+    }
+    pulse::ControlSystemAttr system = pulse::controlSystemOf(*copy);
+    if (!system)
+      system = pulse::controlSystemAt(ctx_.get(), 1.0);
+    copy->getOperation()->setAttr(
+        pulse::kControlSystemAttr,
+        pulse::ControlSystemAttr::get(ctx_.get(),
+                                      system.getClockPeriodFsNumerator(),
+                                      system.getClockPeriodFsDenominator(),
+                                      parsed, system.getControllers()));
     PulseModule result(ctx_, std::move(copy));
     result.loops_ = loops_;
     result.runTime_ = runTime_;
@@ -4559,12 +4576,7 @@ private:
     return path;
   }
 
-  double clock() {
-    if (auto attr = module_->getOperation()->getAttrOfType<mlir::FloatAttr>(
-            "pulse.clock_ghz"))
-      return attr.getValueAsDouble();
-    return 1.0;
-  }
+  double clock() { return pulse::clockGHz(*module_); }
 
   mlir::func::FuncOp getFuncOp() {
     return module_->lookupSymbol<mlir::func::FuncOp>("main");
@@ -5021,7 +5033,13 @@ public:
     mlir::OwningOpRef<mlir::ModuleOp> owningModule(module);
     module->setAttr("pulse.qudit_count",
                     builder_->getI64IntegerAttr(qudit_count));
-    module->setAttr("pulse.clock_ghz", builder_->getF64FloatAttr(clock_ghz));
+    auto controlSystem =
+        pulse::controlSystemAt(builder_->getContext(), clock_ghz);
+    if (!controlSystem)
+      throw std::invalid_argument("packed: clock_ghz " +
+                                  std::to_string(clock_ghz) +
+                                  " has no exact period in femtoseconds");
+    module->setAttr(pulse::kControlSystemAttr, controlSystem);
 
     // The frequencies of qudits 0 to qudit_count - 1, in the module's
     // quantum system.
@@ -6603,7 +6621,7 @@ NB_MODULE(_cudaq_pulse_native, m) {
       .def("with_line_delays", &PulseModule::with_line_delays,
            nb::call_guard<nb::gil_scoped_release>(),
            "This module with other line delays, scheduled again",
-           nb::arg("delays"), nb::arg("policy"), nb::arg("max_drives") = 4,
+           nb::arg("lines"), nb::arg("policy"), nb::arg("max_drives") = 4,
            nb::arg("max_readouts") = 2, nb::arg("readout_latency") = 0,
            nb::arg("switch_penalty") = 0)
       .def("simulation_module", &PulseModule::simulation_module,

@@ -10,7 +10,7 @@
 // CHECK: qop.callback_scalar @drive_envelope_0_x {cudm.callback_kind = 7 : i32, cudm.callback_params = array<f64: 0.000000e+00, 4.000000e+00, {{.*}}, 0.026474907077537864, 0.026474907077537864>}
 // CHECK: qop.callback_scalar @drive_envelope_0_y
 // CHECK: qop.callback_scalar @drive_envelope_1_x {cudm.callback_kind = 7 : i32, cudm.callback_params = array<f64: 0.000000e+00, 4.000000e+00, {{.*}}, 0.02264518805967022, 0.029076997034290328, 0.029076997034290328, 0.02264518805967022>}
-module attributes {pulse.line_grid = 1 : i64, pulse.drive_line_grid = array<i64: 2, 0>} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000, lines = [#pulse.line<drive, qudits = [0], controller = 1>, #pulse.line<drive, qudits = [1]>], controllers = [#pulse.controller<>, #pulse.controller<grid_cycles = 2>]>} {
 func.func @main() {
   %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
   %q1 = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qudit
