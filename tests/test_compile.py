@@ -105,7 +105,10 @@ def test_a_module_records_0_hz_for_a_qudit_its_target_lacks():
     dev = _sparse_device()
     for _ in range(2):
         mlir = _drive_one.lower(dev.qudits[1]).mlir()
-        assert "pulse.qubit_freq_hz = array<f64: 5.000000e+09, 0.000000e+00, 5.200000e+09>" in mlir
+        assert (
+            "pulse.quantum_system = #pulse.quantum_system<"
+            "qudit_frequency_hz = [5.000000e+09, 0.000000e+00, 5.200000e+09]>"
+        ) in mlir
 
 
 def test_a_qudit_the_target_lacks_is_refused_however_its_tables_were_made():

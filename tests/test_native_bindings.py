@@ -94,7 +94,10 @@ def test_a_pass_by_name_takes_its_options():
 def test_compiled_module_is_named_after_the_kernel():
     compiled = _x.lower(Q[0], 0.1)
     assert compiled.mlir().startswith("module @_x")
-    assert "pulse.qubit_freq_hz = array<f64: 5.000000e+09>" in compiled.mlir()
+    assert (
+        "pulse.quantum_system = #pulse.quantum_system<qudit_frequency_hz = [5.000000e+09]>"
+        in compiled.mlir()
+    )
 
 
 @pulse.kernel

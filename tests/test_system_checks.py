@@ -153,8 +153,8 @@ def test_residual_zz_is_a_static_zz_term():
     attrs = _target_attributes(system._description, (0, 2), integrator="rk4")
     assert "crosstalk" not in attrs
     assert attrs.endswith(
-        "pulse.static_terms = [#pulse.static_term<zz, qudits = [2, 0], "
-        "rate_hz = -4.50000000000000000e+04>]"
+        "static_terms = [#pulse.static_term<zz, qudits = [2, 0], "
+        "rate_hz = -4.50000000000000000e+04>]>"
     )
 
 

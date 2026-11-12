@@ -487,7 +487,6 @@ def _simulate_lowered(
             handlers=handlers,
             readout=readout,
             latency_branching=latency_branching,
-            overridden=quantum_system is not None,
             sampled=branches == "sampled",
         )
     except _DivergedError as e:
@@ -827,7 +826,6 @@ def _simulate_compiled(
     handlers: Mapping[str, Callable[..., Any]] | None = None,
     readout: str = "ideal",
     latency_branching: bool = False,
-    overridden: bool = False,
     sampled: bool = False,
 ) -> SimulationResult:
     # A cached specialization's module is shared by every call of it, from
@@ -869,18 +867,10 @@ def _simulate_compiled(
     if not qudits:
         raise InvalidValueError("the program uses no qudits; there is nothing to simulate")
     mode = {q: i for i, q in enumerate(qudits)}
-    dims, extra = _level_attributes(target, qudits, levels)
-    base = _target_attributes(target, qudits, integrator=integrator, dephasing=dephasing)
-    base += ", " + extra
-    if overridden:
-        frequencies = [math.nan] * (max(qudits) + 1)
-        for q in qudits:
-            frequencies[q] = float(target.qudits[q].frequency_hz)
-        base += (
-            ", pulse.true_qudit_freq_hz = array<f64: "
-            + ", ".join("0x7FF8000000000000" if math.isnan(f) else repr(f) for f in frequencies)
-            + ">"
-        )
+    dims, level_fields = _level_attributes(target, qudits, levels)
+    base = _target_attributes(
+        target, qudits, integrator=integrator, dephasing=dephasing, levels=level_fields
+    )
 
     path_end = t_end is None and bool(functions)
     if t_end is None:

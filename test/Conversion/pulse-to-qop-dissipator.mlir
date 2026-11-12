@@ -4,8 +4,7 @@
 // RUN: cudaq-pulse-opt --pulse-to-qop %s | FileCheck %s
 
 module @dissipator_test attributes {
-    pulse.t1_times = [50.0e3 : f64],
-    pulse.t2_times = [30.0e3 : f64]
+    pulse.quantum_system = #pulse.quantum_system<t1_ns = [50.0e3], t2_ns = [30.0e3]>
 } {
 
 // CHECK-LABEL: func @main

@@ -18,6 +18,21 @@
 
 namespace pulse {
 
+/// The module attribute that describes the quantum system a program plays on.
+inline constexpr llvm::StringLiteral kQuantumSystemAttr =
+    "pulse.quantum_system";
+
+/// A quantum system of which a compiled module knows the frequencies of
+/// qudits 0 to `frequencies.size() - 1`.
+inline QuantumSystemAttr quantumSystemAt(mlir::MLIRContext *context,
+                                         llvm::ArrayRef<double> frequencies) {
+  return QuantumSystemAttr::get(
+      context,
+      frequencies.empty() ? mlir::DenseF64ArrayAttr()
+                          : mlir::DenseF64ArrayAttr::get(context, frequencies),
+      {}, {}, {}, {}, {}, {});
+}
+
 /// The function attribute that says how far a function is scheduled.
 inline constexpr llvm::StringLiteral kScheduleStateAttr =
     "pulse.schedule_state";

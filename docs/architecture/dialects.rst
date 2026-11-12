@@ -38,6 +38,28 @@ runs has its start and length; ``#pulse.schedule_state<placed>`` once each
 line's calibrated delay is applied to its ops' starts as well. Scheduling
 writes ``placed`` when a line delay moves some op, ``timed`` otherwise.
 
+A module describes the quantum system it plays on in ``pulse.quantum_system``,
+lists indexed by qudit, every field optional:
+
+.. code-block:: text
+
+   module attributes {pulse.quantum_system = #pulse.quantum_system<
+       qudit_frequency_hz = [5.0e+09, 5.1e+09], level_counts = [3, 3],
+       anharmonicity_hz = [-2.0e+08, -2.1e+08], t1_ns = [5.0e+04, 4.0e+04],
+       t2_ns = [3.0e+04, 2.5e+04], drive_scale_rad_per_ns = [1.0, 1.0],
+       static_terms = [#pulse.static_term<zz, qudits = [0, 1], rate_hz = 4.5e+04>]>} {
+   }
+
+A compiled module gives ``qudit_frequency_hz``, the frequencies it is compiled
+for. ``pulse.simulate`` gives the whole simulated system, whose frequencies are
+the qudits' own: on a system other than the one compiled for, or one whose
+parameters drift, they differ from the tones the program plays, and the
+simulation sees the detuning. ``pulse-to-qop`` puts a qudit the attribute gives
+no frequency for at its drive line's tone. The simulation choices stay
+attributes of their own: ``pulse.modes`` (the qudits simulated),
+``pulse.thermal_populations``, ``pulse.coupling_pairs`` and
+``pulse.coupling_strength_hz``.
+
 - Types: ``!pulse.qudit``, ``!pulse.drive_line``, ``!pulse.readout_line``,
   ``!pulse.tone``, ``!pulse.waveform``, ``!pulse.measurement``,
   ``!pulse.duration``, ``!pulse.timepoint``, ``!pulse.iq_data``.

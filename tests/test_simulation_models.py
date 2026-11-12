@@ -104,4 +104,4 @@ def test_qudits_a_program_leaves_out_keep_the_levels_they_would_have(model, leve
     )
     result = pulse.simulate(lowered, levels=levels)
     assert result.qudits == (2,)
-    assert f"pulse.levels = array<i64: {expected}>" in lowered.mlir()
+    assert f"level_counts = [{expected}]" in lowered.mlir()

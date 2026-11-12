@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Module attributes that carry a target's calibration into the lowering."""
+"""Module attributes that carry a quantum system's calibration into the lowering."""
 
 from __future__ import annotations
 
@@ -30,7 +30,8 @@ def _level_attributes(
     target: Any, qudits: tuple[int, ...], levels: int | dict[int, int] | None
 ) -> tuple[tuple[int, ...], str]:
     """Levels of each simulated qudit, in the order of *qudits*, and the
-    module attributes that model them (indexed by quantum system qudit).
+    ``#pulse.quantum_system`` fields that model them (indexed by quantum
+    system qudit).
 
     A qudit has the levels its target's model declares for it
     (``model.levels_of``) unless *levels* sets them: an int for every
@@ -53,13 +54,13 @@ def _level_attributes(
         by_index = [int(levels)] * extent
     for q, d in zip(qudits, dims, strict=False):
         by_index[q] = d
-    attrs = [f"pulse.levels = array<i64: {', '.join(map(str, by_index))}>"]
+    fields = [f"level_counts = [{', '.join(map(str, by_index))}]"]
     if any(d > 2 for d in dims):
         alphas = [0.0] * _extent(qudits)
         for q in qudits:
             alphas[q] = float(target.qudits[q].anharmonicity_hz)
-        attrs.append(f"pulse.anharmonicity_hz = {_f64_array(alphas)}")
-    return dims, ", ".join(attrs)
+        fields.append(f"anharmonicity_hz = {_f64_list(alphas)}")
+    return dims, ", ".join(fields)
 
 
 def _extent(qudits: tuple[int, ...]) -> int:
@@ -82,23 +83,31 @@ def _f64_array(values: list[float]) -> str:
     return "array<f64: " + ", ".join(_f64_literal(v) for v in values) + ">"
 
 
+def _f64_list(values: list[float]) -> str:
+    return "[" + ", ".join(map(_f64_literal, values)) + "]"
+
+
 def _target_attributes(
     target: Any,
     qudits: tuple[int, ...],
     *,
     integrator: str,
     dephasing: str = "t2_star",
+    levels: str = "",
 ) -> str:
     """Module attributes, in MLIR syntax and comma-separated, that the
     cuDensityMat lowering reads, but for the time window, which each interval
-    sets.
+    sets: ``pulse.quantum_system`` with the *levels* fields
+    (``_level_attributes``), and beside it what it does not describe.
 
     *qudits* are the simulated qudits, one mode each in this order; the
-    others are left out, along with their couplings. Qudits dephase at their
-    Ramsey T2* (*dephasing* ``"t2_star"``) or their Hahn-echo T2
-    (``"t2_echo"``).
+    others are left out, along with their couplings. Each simulated qudit is
+    at its frequency on *target*, which may differ from the frequency the
+    program was compiled for; the others' are 0 Hz. Qudits dephase at their Ramsey T2* (*dephasing*
+    ``"t2_star"``) or their Hahn-echo T2 (``"t2_echo"``).
     """
     qudit_count = _extent(qudits)
+    frequencies = ["0.0"] * qudit_count
     t1_ns = [0.0] * qudit_count
     t2_ns = [0.0] * qudit_count
     thermal = [0.0] * qudit_count
@@ -108,18 +117,23 @@ def _target_attributes(
         t2_us = qudit.t2_star_us if dephasing == "t2_star" else qudit.t2_echo_us
         if t2_us is None:
             raise InvalidValueError(f"qudit {qi} has no Hahn-echo T2 to dephase at")
+        # A frequency is finite, so it is spelled as _f64_literal would.
+        frequencies[qi] = f"{qudit.frequency_hz:.17e}"
         # _f64_literal makes each a float.
         t1_ns[qi] = max(0.0, qudit.t1_us) * 1.0e3
         t2_ns[qi] = max(0.0, t2_us) * 1.0e3
         thermal[qi] = qudit.thermal_population
         drive_scales[qi] = target.drive_amplitude_scale(qi)
+    system = (
+        f"qudit_frequency_hz = [{', '.join(frequencies)}], {levels}{levels and ', '}"
+        f"t1_ns = [{', '.join(_f64_literal(v) for v in t1_ns)}], "
+        f"t2_ns = [{', '.join(_f64_literal(v) for v in t2_ns)}], "
+        f"drive_scale_rad_per_ns = [{', '.join(_f64_literal(v) for v in drive_scales)}]"
+    )
     attrs = [
         f"qop.qudit_count = {len(qudits)} : i64",
         f"pulse.modes = array<i64: {', '.join(map(str, qudits))}>",
         f'qop.integrator = "{integrator}"',
-        "pulse.t1_times = [" + ", ".join(map(_f64, t1_ns)) + "]",
-        "pulse.t2_times = [" + ", ".join(map(_f64, t2_ns)) + "]",
-        f"pulse.drive_scale_rad_per_ns = {_f64_array(drive_scales)}",
     ]
     if any(thermal):
         attrs.append(f"pulse.thermal_populations = {_f64_array(thermal)}")
@@ -154,5 +168,5 @@ def _target_attributes(
             f"rate_hz = {_f64_literal(x.rate_hz)}>"
             for x in residual
         )
-        attrs.append(f"pulse.static_terms = [{terms}]")
-    return ", ".join(attrs)
+        system += f", static_terms = [{terms}]"
+    return f"{', '.join(attrs)}, pulse.quantum_system = #pulse.quantum_system<{system}>"

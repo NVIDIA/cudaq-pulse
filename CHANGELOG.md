@@ -498,9 +498,9 @@ behavior may change in any 0.x release.
   (auxiliary, data) pairs of each of its CZ time steps. A quantum system's
   `residual_zz` lists `ResidualZZ(qudits, rate_hz)` entries, a static ZZ
   rate beyond what the couplings produce; the simulator's module carries
-  them as typed `pulse.static_terms`
-  (`#pulse.static_term<zz, qudits = [a, b], rate_hz = ...>`, checked when
-  parsed), and their Hamiltonian term is `static_zz`. Couplings and residual ZZ entries
+  them as typed static terms of its quantum system
+  (`static_terms = [#pulse.static_term<zz, qudits = [a, b], rate_hz = ...>]`,
+  checked when parsed), and their Hamiltonian term is `static_zz`. Couplings and residual ZZ entries
   are checked when the system is built, all of them at once: each is
   between two distinct qudits of the system (three or more are refused in
   this release), one per pair in either order, with finite strengths and
@@ -793,7 +793,14 @@ behavior may change in any 0.x release.
   tracer's caches are safe to use from several threads on free-threaded
   CPython: each quantum system and calibration is built once.
 - **Dialects and tools.** The Pulse, Classical, QOp and CuDensityMat MLIR
-  dialects with their lowerings to LLVM. A function's
+  dialects with their lowerings to LLVM. A module describes the quantum
+  system it plays on in `pulse.quantum_system`
+  (`#pulse.quantum_system<qudit_frequency_hz = [..], level_counts = [..],
+  anharmonicity_hz = [..], t1_ns = [..], t2_ns = [..],
+  drive_scale_rad_per_ns = [..], static_terms = [..]>`, lists by qudit,
+  each field optional): a compiled module gives the frequencies it is
+  compiled for, a module lowered for simulation the simulated system,
+  whose frequencies may differ from its tones'. A function's
   `pulse.schedule_state` (`#pulse.schedule_state<unscheduled|timed|placed>`,
   unscheduled when absent) says how far it is scheduled: scheduling marks it
   `timed`, or `placed` when a line delay moved some op; `pulse-verify`

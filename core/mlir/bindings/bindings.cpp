@@ -76,6 +76,7 @@
 #include "cudaq-pulse/Dialect/Pulse/PulseTypes.h.inc"
 
 #define GET_OP_CLASSES
+#include "cudaq-pulse/Dialect/Pulse/PulseAttrs.h"
 #include "cudaq-pulse/Dialect/Pulse/PulseOps.h.inc"
 
 #include "cudaq-pulse/Dialect/Classical/ClassicalDialect.h.inc"
@@ -4150,9 +4151,11 @@ public:
       arg.replaceAllUsesWith(alloc.getResult());
     }
     module->setAttr("pulse.qudit_count", builder.getI64IntegerAttr(n));
-    module->setAttr("pulse.qubit_freq_hz",
-                    builder.getDenseF64ArrayAttr(llvm::ArrayRef<double>(
-                        slots.frequencies, static_cast<size_t>(n))));
+    module->setAttr(
+        pulse::kQuantumSystemAttr,
+        pulse::quantumSystemAt(
+            module.getContext(),
+            llvm::ArrayRef<double>(slots.frequencies, static_cast<size_t>(n))));
   }
 
   /// Make `main` take no arguments, once every use of them is replaced.
@@ -5020,12 +5023,13 @@ public:
                     builder_->getI64IntegerAttr(qudit_count));
     module->setAttr("pulse.clock_ghz", builder_->getF64FloatAttr(clock_ghz));
 
-    // Encode the frequencies of qudits 0 to qudit_count - 1 as module attribute
+    // The frequencies of qudits 0 to qudit_count - 1, in the module's
+    // quantum system.
     const double *fdata = qubit_freqs.data();
     size_t flen = static_cast<size_t>(qudit_count);
     llvm::SmallVector<double> freqVec(fdata, fdata + flen);
-    module->setAttr("pulse.qubit_freq_hz",
-                    builder_->getDenseF64ArrayAttr(freqVec));
+    module->setAttr(pulse::kQuantumSystemAttr,
+                    pulse::quantumSystemAt(builder_->getContext(), freqVec));
     // A readout line's tone, by qudit: the readout frequency where given.
     const double *readoutData = readout_freqs ? readout_freqs->data() : fdata;
     size_t readoutLen = readout_freqs ? readout_freqs->shape(0) : flen;

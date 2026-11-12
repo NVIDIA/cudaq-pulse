@@ -61,7 +61,7 @@ def test_simulate_annotates_the_module_with_the_target():
     lowered = on(_qudit_target(), _jit_test_kernel, Q[0])
     pulse.simulate(lowered, dt_ns=0.25)
     mlir = lowered.mlir()
-    assert "pulse.t1_times" in mlir
+    assert "t1_ns = [" in mlir
     assert 'qop.integrator = "rk4"' in mlir
 
 
@@ -86,6 +86,6 @@ def test_simulate_lowers_multilevel_transmons():
     result = pulse.simulate(lowered, dt_ns=0.25, levels=3)
     assert result.density_matrix.shape == (3, 3)
     mlir = lowered.mlir()
-    assert "pulse.levels = array<i64: 3>" in mlir
+    assert "level_counts = [3]" in mlir
     qop = MLIRPipeline().run_pulse_to_qop(mlir)
     assert "qop.mode_extents = array<i64: 3>" in qop and "tensor<3x3x2xf64>" in qop

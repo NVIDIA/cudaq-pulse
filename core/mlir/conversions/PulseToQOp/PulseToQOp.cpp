@@ -645,21 +645,24 @@ struct PulseToQOpPass
     }
 
     const pulse::LineGrid lineGrid(module);
-    DenseMap<int64_t, double> qubitFreqHz;
+    // The simulated quantum system. Its frequencies are the qudits' own,
+    // which differ from the tones the program was compiled at when it is
+    // simulated on another system; a qudit it gives none for is at its drive
+    // line's tone.
+    auto system = module->getAttrOfType<pulse::QuantumSystemAttr>(
+        pulse::kQuantumSystemAttr);
+    auto field = [&](auto get) {
+      return system ? get(system) : decltype(get(system))();
+    };
+    DenseMap<int64_t, double> quditFreqHz;
     if (auto frequencies =
-            module->getAttrOfType<DenseF64ArrayAttr>("pulse.qubit_freq_hz")) {
+            field([](auto qs) { return qs.getQuditFrequencyHz(); }))
       for (auto [index, frequency] : llvm::enumerate(frequencies.asArrayRef()))
-        qubitFreqHz[static_cast<int64_t>(index)] = frequency;
-    }
+        quditFreqHz[static_cast<int64_t>(index)] = frequency;
     DenseMap<int64_t, int64_t> levels;
-    if (auto attr = module->getAttrOfType<DenseI64ArrayAttr>("pulse.levels"))
-      for (auto [index, d] : llvm::enumerate(attr.asArrayRef())) {
-        if (d < 2) {
-          module.emitError("pulse.levels entries must be at least 2");
-          return signalPassFailure();
-        }
+    if (auto counts = field([](auto qs) { return qs.getLevelCounts(); }))
+      for (auto [index, d] : llvm::enumerate(counts.asArrayRef()))
         levels[static_cast<int64_t>(index)] = d;
-      }
     // The simulated qudits, one mode each in this order. Without it every
     // qudit index up to the largest is a mode.
     SmallVector<int64_t> modes;
@@ -685,7 +688,7 @@ struct PulseToQOpPass
       if (isa<pulse::GetDriveLineOp>(op)) {
         if (int64_t qi = pulse::quditOf(op); qi >= 0)
           if (auto freqAttr = op->getAttrOfType<FloatAttr>("frequency_hz"))
-            qubitFreqHz[qi] = freqAttr.getValueAsDouble();
+            quditFreqHz.try_emplace(qi, freqAttr.getValueAsDouble());
       }
       if (auto readout = dyn_cast<pulse::ReadoutOp>(op)) {
         if (readout.getMode() != pulse::ReadoutMode::IQ && !notIq)
@@ -702,13 +705,6 @@ struct PulseToQOpPass
           << " is not supported by the simulator yet; only iq is";
       return signalPassFailure();
     }
-    // The true frequencies of the simulated qudits, where they differ from
-    // the quantum system the program was compiled for (NaN: as compiled).
-    if (auto truth = module->getAttrOfType<DenseF64ArrayAttr>(
-            "pulse.true_qudit_freq_hz"))
-      for (auto [index, frequency] : llvm::enumerate(truth.asArrayRef()))
-        if (!std::isnan(frequency))
-          qubitFreqHz[static_cast<int64_t>(index)] = frequency;
     Operation *unanswered = nullptr;
     module.walk([&](Operation *op) {
       if (op->getName().getStringRef() == "classical.wait" &&
@@ -872,7 +868,7 @@ struct PulseToQOpPass
         int64_t first = pairs[2 * index];
         int64_t second = pairs[2 * index + 1];
         if (first < 0 || second < 0 || first == second ||
-            !qubitFreqHz.count(first) || !qubitFreqHz.count(second)) {
+            !quditFreqHz.count(first) || !quditFreqHz.count(second)) {
           module.emitError("interaction references an inactive qubit in ")
               << pairAttrName;
           return failure();
@@ -892,7 +888,7 @@ struct PulseToQOpPass
     int couplingIdx = 0;
     auto exchange = [&](int64_t a, int64_t b, double g) {
       const double detuning =
-          (qubitFreqHz[a] - qubitFreqHz[b]) * 2.0 * M_PI * 1.0e-9;
+          (quditFreqHz[a] - quditFreqHz[b]) * 2.0 * M_PI * 1.0e-9;
       if (detuning == 0.0) {
         allProducts.push_back(
             ops.product({{a, "spin_x"}, {b, "spin_x"}}, g / 2));
@@ -924,26 +920,16 @@ struct PulseToQOpPass
                                   "pulse.coupling_strength_hz", exchange)))
       return signalPassFailure();
 
-    // The static terms (pulse.static_terms), each between simulated qudits.
-    // A zz term of rate zeta, E11 - E10 - E01 + E00 = zeta, is zeta n_a n_b,
-    // which leaves the frequencies with the other qudit in |0> unchanged.
-    if (Attribute listed = module->getAttr("pulse.static_terms")) {
-      auto terms = dyn_cast<ArrayAttr>(listed);
-      if (!terms) {
-        module.emitError("pulse.static_terms must be a list of "
-                         "#pulse.static_term");
-        return signalPassFailure();
-      }
+    // The static terms of the quantum system, each between simulated
+    // qudits. A zz term of rate zeta, E11 - E10 - E01 + E00 = zeta, is
+    // zeta n_a n_b, which leaves the frequencies with the other qudit in |0>
+    // unchanged.
+    if (auto terms = field([](auto qs) { return qs.getStaticTerms(); })) {
       for (Attribute entry : terms) {
-        auto term = dyn_cast<pulse::StaticTermAttr>(entry);
-        if (!term) {
-          module.emitError("pulse.static_terms holds ")
-              << entry << ", not a #pulse.static_term";
-          return signalPassFailure();
-        }
+        auto term = cast<pulse::StaticTermAttr>(entry);
         ArrayRef<int64_t> qudits = term.getQudits();
         if (!llvm::all_of(
-                qudits, [&](int64_t q) { return qubitFreqHz.count(q) != 0; })) {
+                qudits, [&](int64_t q) { return quditFreqHz.count(q) != 0; })) {
           module.emitError("static term ")
               << term << " names a qudit the program does not use";
           return signalPassFailure();
@@ -963,7 +949,7 @@ struct PulseToQOpPass
 
     // A multilevel transmon's anharmonicity, (alpha / 2) n (n - 1).
     if (auto anharmonicity =
-            module->getAttrOfType<DenseF64ArrayAttr>("pulse.anharmonicity_hz"))
+            field([](auto qs) { return qs.getAnharmonicityHz(); }))
       for (auto [index, alpha] : llvm::enumerate(anharmonicity.asArrayRef()))
         if (alpha != 0.0 && ops.levelsOf(index) > 2 && ops.simulated(index))
           allProducts.push_back(
@@ -989,15 +975,15 @@ struct PulseToQOpPass
         return signalPassFailure();
       }
 
-      auto qubitFrequency = qubitFreqHz.find(qubitIdx);
-      if (qubitFrequency == qubitFreqHz.end()) {
+      auto qubitFrequency = quditFreqHz.find(qubitIdx);
+      if (qubitFrequency == quditFreqHz.end()) {
         op->emitError("cannot determine the physical qubit frequency for "
                       "rotating-frame lowering");
         return signalPassFailure();
       }
       double driveScale = 1.0;
-      if (auto scales = module->getAttrOfType<DenseF64ArrayAttr>(
-              "pulse.drive_scale_rad_per_ns")) {
+      if (auto scales =
+              field([](auto qs) { return qs.getDriveScaleRadPerNs(); })) {
         if (qubitIdx < 0 || static_cast<size_t>(qubitIdx) >= scales.size() ||
             scales.asArrayRef()[qubitIdx] <= 0.0) {
           op->emitError("drive amplitude scale is missing or non-positive");
@@ -1076,17 +1062,16 @@ struct PulseToQOpPass
     // 4. Dissipators from module attributes (T1, T2)
     SmallVector<Value> collapseOps;
 
-    auto t1AttrRaw = module->getAttrOfType<ArrayAttr>("pulse.t1_times");
-    if (!t1AttrRaw)
-      t1AttrRaw = module->getAttrOfType<ArrayAttr>("t1_times");
+    DenseF64ArrayAttr t1Ns = field([](auto qs) { return qs.getT1Ns(); });
+    DenseF64ArrayAttr t2Ns = field([](auto qs) { return qs.getT2Ns(); });
     // A qudit with thermal excited-state population p relaxes down at
     // (1 - p) / T1 and up at p / T1 (detailed balance): populations relax
     // to p at the measured rate 1 / T1.
     auto thermal =
         module->getAttrOfType<DenseF64ArrayAttr>("pulse.thermal_populations");
-    if (auto t1Attr = t1AttrRaw) {
-      for (int64_t qi = 0; qi < (int64_t)t1Attr.size(); qi++) {
-        double t1 = cast<FloatAttr>(t1Attr[qi]).getValueAsDouble();
+    if (t1Ns) {
+      for (int64_t qi = 0; qi < (int64_t)t1Ns.size(); qi++) {
+        double t1 = t1Ns[qi];
         if (t1 > 0 && ops.simulated(qi)) {
           double gamma = 1.0 / t1;
           double p =
@@ -1105,19 +1090,10 @@ struct PulseToQOpPass
       }
     }
 
-    auto t2AttrRaw = module->getAttrOfType<ArrayAttr>("pulse.t2_times");
-    if (!t2AttrRaw)
-      t2AttrRaw = module->getAttrOfType<ArrayAttr>("t2_times");
-    if (auto t2Attr = t2AttrRaw) {
-      for (int64_t qi = 0; qi < (int64_t)t2Attr.size(); qi++) {
-        double t2 = cast<FloatAttr>(t2Attr[qi]).getValueAsDouble();
-        double t1 = 0.0;
-        auto t1a = module->getAttrOfType<ArrayAttr>("pulse.t1_times");
-        if (!t1a)
-          t1a = module->getAttrOfType<ArrayAttr>("t1_times");
-        if (t1a)
-          if (qi < (int64_t)t1a.size())
-            t1 = cast<FloatAttr>(t1a[qi]).getValueAsDouble();
+    if (t2Ns) {
+      for (int64_t qi = 0; qi < (int64_t)t2Ns.size(); qi++) {
+        double t2 = t2Ns[qi];
+        double t1 = t1Ns && qi < (int64_t)t1Ns.size() ? t1Ns[qi] : 0.0;
         double gammaPhi = 0.0;
         if (t2 > 0) {
           gammaPhi = 1.0 / t2;

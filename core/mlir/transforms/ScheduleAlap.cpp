@@ -63,8 +63,8 @@
 #define GET_TYPEDEF_CLASSES
 #include "cudaq-pulse/Dialect/Pulse/PulseTypes.h.inc"
 #define GET_OP_CLASSES
-#include "cudaq-pulse/Dialect/Pulse/PulseAttrs.h"
 #include "cudaq-pulse/Dialect/Pulse/PulseOps.h.inc"
+#include "cudaq-pulse/Dialect/Pulse/PulseAttrs.h"
 
 #include "cudaq-pulse/Dialect/Classical/ClassicalDialect.h.inc"
 #define GET_TYPEDEF_CLASSES
@@ -4901,11 +4901,11 @@ static mlir::LogicalResult schedule(mlir::func::FuncOp function,
       mlir::failed(checkProgramBudget(function)))
     return mlir::failure();
   bool placed = pulse::applyLineDelays(function, clocks.delays);
-  function->setAttr(
-      pulse::kScheduleStateAttr,
-      pulse::ScheduleStateAttr::get(function.getContext(),
-                                    placed ? pulse::ScheduleState::Placed
-                                           : pulse::ScheduleState::Timed));
+  function->setAttr(pulse::kScheduleStateAttr,
+                    pulse::ScheduleStateAttr::get(
+                        function.getContext(),
+                        placed ? pulse::ScheduleState::Placed
+                               : pulse::ScheduleState::Timed));
   return mlir::success();
 }
 
