@@ -793,7 +793,13 @@ behavior may change in any 0.x release.
   tracer's caches are safe to use from several threads on free-threaded
   CPython: each quantum system and calibration is built once.
 - **Dialects and tools.** The Pulse, Classical, QOp and CuDensityMat MLIR
-  dialects with their lowerings to LLVM; `cudaq-pulse-opt`, the MLIR driver, which
+  dialects with their lowerings to LLVM. A function's
+  `pulse.schedule_state` (`#pulse.schedule_state<unscheduled|timed|placed>`,
+  unscheduled when absent) says how far it is scheduled: scheduling marks it
+  `timed`, or `placed` when a line delay moved some op; `pulse-verify`
+  requires a start and duration on every timed op of a timed or placed
+  function, and `pulse-merge-waits` takes only an unscheduled one. The
+  tools: `cudaq-pulse-opt`, the MLIR driver, which
   also loads out-of-tree pass plugins and whose `--version` prints the
   cudaq-pulse version and the LLVM it was built with; `python -m cudaq_pulse.doctor`, which
   reports what an installation contains and whether GPU execution works.

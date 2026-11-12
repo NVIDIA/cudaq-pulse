@@ -24,6 +24,7 @@
 #define GET_TYPEDEF_CLASSES
 #include "cudaq-pulse/Dialect/Pulse/PulseTypes.h.inc"
 #define GET_OP_CLASSES
+#include "cudaq-pulse/Dialect/Pulse/PulseAttrs.h"
 #include "cudaq-pulse/Dialect/Pulse/PulseOps.h.inc"
 
 #include "cudaq-pulse/Dialect/Classical/ClassicalDialect.h.inc"
@@ -82,16 +83,15 @@ public:
       checkOp(&op);
   }
 
-  /// A function is scheduled as a whole or not at all: once any of its
-  /// timed ops has a schedule, every one that runs needs one.
+  /// A timed or placed function (pulse.schedule_state) is scheduled as a
+  /// whole: every timed op that runs has a schedule.
   void checkFunction(mlir::func::FuncOp function) {
     checkBlock(function.getBody().front());
-    if (scheduled && unscheduled && report(unscheduled))
-      unscheduled
-              ->emitError("operation is not scheduled, but other "
-                          "operations of its function are")
-              .attachNote(scheduled->getLoc())
-          << "scheduled here";
+    pulse::ScheduleState state = pulse::scheduleStateOf(function);
+    if (state != pulse::ScheduleState::Unscheduled && unscheduled &&
+        report(unscheduled))
+      unscheduled->emitError("operation is not scheduled, but its function is ")
+          << pulse::stringifyScheduleState(state);
   }
 
 private:
@@ -126,8 +126,6 @@ private:
         unscheduled = op;
       return;
     }
-    if (!scheduled)
-      scheduled = op;
     if (!start)
       return error(op, "a scheduled operation needs start_cycles");
     if (!duration)
@@ -255,8 +253,8 @@ private:
 
   llvm::DenseMap<mlir::Operation *, int64_t> lastEnd;
   llvm::DenseSet<mlir::Operation *> reported;
-  /// The first timed op with a schedule and the first without, if any.
-  mlir::Operation *scheduled = nullptr, *unscheduled = nullptr;
+  /// The first timed op without a schedule, if any.
+  mlir::Operation *unscheduled = nullptr;
   llvm::SmallVector<int64_t, 2> iteration;
   int64_t measured = std::numeric_limits<int64_t>::min();
 };

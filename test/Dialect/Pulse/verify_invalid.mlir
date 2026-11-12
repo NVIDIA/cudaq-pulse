@@ -159,8 +159,8 @@ func.func @scheduled_drive_on_an_argument_line(%d: !pulse.drive_line, %t: !pulse
 
 // -----
 
-// A function is scheduled as a whole or not at all.
-func.func @partly_scheduled() {
+// A timed function is scheduled as a whole.
+func.func @partly_scheduled() attributes {pulse.schedule_state = #pulse.schedule_state<timed>} {
   %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
   %line, %tone = pulse.get_drive_line %q : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %c40 = arith.constant 40 : i64
@@ -171,9 +171,8 @@ func.func @partly_scheduled() {
   %w100 = pulse.duration_from_int %c100 : (i64) -> !pulse.duration
   %c30 = arith.constant 30 : i64
   %w30 = pulse.duration_from_int %c30 : (i64) -> !pulse.duration
-  // expected-note @+1 {{scheduled here}}
   %l1 = pulse.wait %line, %w100 <{duration_cycles = 100 : i64, start_cycles = 0 : i64}> : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
-  // expected-error @+1 {{operation is not scheduled, but other operations of its function are}}
+  // expected-error @+1 {{operation is not scheduled, but its function is timed}}
   %l2 = pulse.wait %l1, %w30 : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
   %l3, %t3 = pulse.drive %l2, %x, %tone <{duration_cycles = 40 : i64, start_cycles = 130 : i64}> : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
   return

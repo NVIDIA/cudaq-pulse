@@ -54,4 +54,43 @@ def StaticTermAttr : AttrDef<PulseDialect, "StaticTerm"> {
   }];
 }
 
+//===----------------------------------------------------------------------===//
+// How far a function is scheduled
+//===----------------------------------------------------------------------===//
+
+def ScheduleState : I32EnumAttr<"ScheduleState",
+  "How far a function is scheduled",
+  [
+    I32EnumAttrCase<"Unscheduled", 0, "unscheduled">,
+    I32EnumAttrCase<"Timed", 1, "timed">,
+    I32EnumAttrCase<"Placed", 2, "placed">
+  ]> {
+  let cppNamespace = "::pulse";
+  let genSpecializedAttr = 0;
+}
+
+def ScheduleStateAttr : EnumAttr<PulseDialect, ScheduleState,
+                                 "schedule_state"> {
+  let summary = "How far a function is scheduled";
+  let description = [{
+    The `pulse.schedule_state` of a `func.func`. Without one a function is
+    `unscheduled`: its timed ops may carry a start or a length, or not.
+    `timed`: every timed op that runs has its start and its length
+    (`pulse-verify` checks). `placed`: timed, and each line's calibrated
+    delay is applied to its ops' starts. `pulse-schedule-*` writes `placed`
+    when it moves some op by a line delay, `timed` otherwise; passes that
+    change lengths or the order of ops on a line, such as
+    `pulse-merge-waits`, take only an unscheduled function.
+
+    Example:
+    ```mlir
+    func.func @main() attributes {
+        pulse.schedule_state = #pulse.schedule_state<timed>} {
+      return
+    }
+    ```
+  }];
+  let assemblyFormat = "`<` $value `>`";
+}
+
 #endif // CUDAQ_PULSE_DIALECT_PULSE_ATTRS

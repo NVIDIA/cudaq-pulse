@@ -22,11 +22,13 @@
 namespace pulse {
 
 /// Shift the scheduled ops of every delayed line in `function` by its delay
-/// in `delays`, its module's `pulse.line_delays` (none when null).
-inline void applyLineDelays(mlir::Operation *function,
+/// in `delays`, its module's `pulse.line_delays` (none when null). Whether
+/// some op moved.
+inline bool applyLineDelays(mlir::Operation *function,
                             mlir::DictionaryAttr delays) {
   if (!delays)
-    return;
+    return false;
+  bool moved = false;
   auto drive = delays.getAs<mlir::DenseI64ArrayAttr>("drive");
   auto readout = delays.getAs<mlir::DenseI64ArrayAttr>("readout");
   AllocationTracer trace;
@@ -46,9 +48,12 @@ inline void applyLineDelays(mlir::Operation *function,
     if (!shifts || qudit < 0 || qudit >= static_cast<int64_t>(shifts.size()))
       return;
     int64_t shift = shifts[qudit];
-    if (shift != 0)
+    if (shift != 0) {
       setStartCycles(op, *start + shift);
+      moved = true;
+    }
   });
+  return moved;
 }
 
 } // namespace pulse

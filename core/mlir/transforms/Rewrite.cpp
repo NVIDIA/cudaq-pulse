@@ -12,6 +12,7 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/LoopInvariantCodeMotionUtils.h"
 
+#include "cudaq-pulse/Dialect/Pulse/PulseAttrs.h"
 #include "cudaq-pulse/Transforms/Passes.h"
 
 #include <string>
@@ -30,7 +31,8 @@ constexpr pulse::RewriteStage stages[] = {
      nullptr, /*foldConstants=*/false, /*removeUnused=*/true},
     {"pulse-merge-waits",
      "Join constant waits in a row on one line into one wait",
-     pulse::populateMergeWaitsPatterns},
+     pulse::populateMergeWaitsPatterns, false, false, false,
+     /*unscheduledOnly=*/true},
     {"pulse-simplify-control-flow",
      "Remove syncs that order nothing, inline schedule blocks that take no "
      "time, branch on is_set, and inline or remove loops that run once or "
@@ -55,6 +57,8 @@ struct PulseRewritePass
     for (const pulse::RewriteStage *stage : stages) {
       foldConstants |= stage->foldConstants;
       removeUnused |= stage->removeUnused;
+      if (stage->unscheduledOnly && !unscheduledOnly)
+        unscheduledOnly = stage;
     }
     if (stages.size() == 1) {
       argument = stages.front()->argument.str();
@@ -80,6 +84,17 @@ struct PulseRewritePass
   }
 
   void runOnOperation() override {
+    if (unscheduledOnly) {
+      pulse::ScheduleState state = pulse::scheduleStateOf(getOperation());
+      if (state != pulse::ScheduleState::Unscheduled) {
+        getOperation().emitError()
+            << unscheduledOnly->argument
+            << " takes an unscheduled function, and this one is "
+            << pulse::stringifyScheduleState(state)
+            << "; run it before pulse-schedule";
+        return signalPassFailure();
+      }
+    }
     mlir::GreedyRewriteConfig config;
     config.enableFolding(foldConstants).enableConstantCSE(foldConstants);
     if (!removeUnused)
@@ -93,6 +108,8 @@ struct PulseRewritePass
   llvm::SmallVector<const pulse::RewriteStage *, 4> stages;
   bool foldConstants = false;
   bool removeUnused = false;
+  /// The first of `stages` that takes only an unscheduled function.
+  const pulse::RewriteStage *unscheduledOnly = nullptr;
   std::string argument;
   std::string description;
   mlir::FrozenRewritePatternSet patterns;

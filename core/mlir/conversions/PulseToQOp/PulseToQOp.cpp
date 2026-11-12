@@ -29,11 +29,9 @@
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
-#include "cudaq-pulse/Dialect/Pulse/PulseAttrEnums.h.inc"
+#include "cudaq-pulse/Dialect/Pulse/PulseAttrs.h"
 #include "cudaq-pulse/Dialect/Pulse/PulseDialect.h.inc"
 #include "cudaq-pulse/Dialect/Pulse/PulseEnums.h.inc"
-#define GET_ATTRDEF_CLASSES
-#include "cudaq-pulse/Dialect/Pulse/PulseAttrs.h.inc"
 #define GET_TYPEDEF_CLASSES
 #include "cudaq-pulse/Dialect/Pulse/PulseTypes.h.inc"
 #define GET_OP_CLASSES

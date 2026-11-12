@@ -55,7 +55,9 @@ pulse-remove-unused
 
 pulse-merge-waits
    Merges waits in a row on one line, each of a constant length and neither
-   variable, into one.
+   variable, into one. It takes only an unscheduled function (no
+   ``pulse.schedule_state``): a merged wait would leave the schedule's times
+   behind.
 
 pulse-simplify-control-flow
    Removes a ``pulse.sync`` of one line and a sync of the lines another sync
@@ -114,7 +116,9 @@ Checks
 pulse-verify
    Checks that waveform durations are positive, that each drive and readout
    line is consumed once at each step, and, on a scheduled module, that the
-   intervals on each physical line neither overlap nor move backwards.
+   intervals on each physical line neither overlap nor move backwards. In a
+   function marked ``timed`` or ``placed`` (``pulse.schedule_state``), every
+   timed operation that runs needs its start and duration.
 
 pulse-classical-check
    On a scheduled module that declares classical calls: checks slot sizes,
@@ -127,7 +131,9 @@ Schedules
 
 Each schedule assigns ``start_cycles`` and ``duration_cycles`` to every timed
 operation, respecting data dependencies, syncs, the order of pulses on each
-tone and the policies of schedule blocks. A wait for an answer or for a
+tone and the policies of schedule blocks, then moves the ops of each delayed
+line by its delay and marks the function ``pulse.schedule_state``:
+``placed`` when a delay moved some op, ``timed`` otherwise. A wait for an answer or for a
 blocking call holds back only the lines of its timeline, which it opens a new
 segment for; see :doc:`../user_guide/classical_calls`.
 

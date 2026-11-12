@@ -38,6 +38,9 @@ struct RewriteStage {
   /// A call's values that reach the ops these patterns match run them again
   /// (see foldBinding in the extension).
   bool onBinding = false;
+  /// The rewrite changes the lengths of ops or their order on a line, so it
+  /// takes only an unscheduled function (pulse.schedule_state).
+  bool unscheduledOnly = false;
 };
 
 /// The pattern passes: pulse-fold-constants, pulse-remove-unused,

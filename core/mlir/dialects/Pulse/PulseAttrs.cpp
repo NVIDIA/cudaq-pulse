@@ -3,13 +3,12 @@
 
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/TypeSwitch.h"
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
 
-#include "cudaq-pulse/Dialect/Pulse/PulseAttrEnums.h.inc"
 #include "cudaq-pulse/Dialect/Pulse/PulseDialect.h.inc"
 
-#define GET_ATTRDEF_CLASSES
-#include "cudaq-pulse/Dialect/Pulse/PulseAttrs.h.inc"
+#include "cudaq-pulse/Dialect/Pulse/PulseAttrs.h"
 
 using namespace mlir;
 

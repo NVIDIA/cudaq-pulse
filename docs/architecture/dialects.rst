@@ -31,7 +31,12 @@ pulses on a line is explicit in the IR and ``pulse-verify`` can check it.
 Waveforms are ordinary values. Durations are in clock cycles of the quantum system,
 and scheduling records each timed op's ``start_cycles`` and ``duration_cycles``
 (and ``period_cycles`` in loops) as integers in the op's properties, printed
-in a ``<{...}>`` dictionary before its other attributes.
+in a ``<{...}>`` dictionary before its other attributes. A function's
+``pulse.schedule_state`` says how far it is scheduled: without one it is
+``unscheduled``; ``#pulse.schedule_state<timed>`` once every timed op that
+runs has its start and length; ``#pulse.schedule_state<placed>`` once each
+line's calibrated delay is applied to its ops' starts as well. Scheduling
+writes ``placed`` when a line delay moves some op, ``timed`` otherwise.
 
 - Types: ``!pulse.qudit``, ``!pulse.drive_line``, ``!pulse.readout_line``,
   ``!pulse.tone``, ``!pulse.waveform``, ``!pulse.measurement``,
