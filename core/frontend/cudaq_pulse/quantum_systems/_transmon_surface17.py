@@ -288,4 +288,4 @@ EDGES = tuple(
     for auxiliary, data, step, frequency_ghz, error_pct in _EDGES
 )
 
-INDEX = {label: i for i, label in enumerate(LABELS)}
+INDEX = dict(zip(LABELS, range(len(LABELS)), strict=True))
