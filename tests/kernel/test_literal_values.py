@@ -154,17 +154,32 @@ def test_a_real_number_of_any_type_still_compiles(body):
     assert kernel.lower(Q[0]) is not None
 
 
-@pytest.mark.parametrize(
-    "body",
-    [
-        "drive(d, square(8, x))",
-        "drive(d, gaussian(40, 0.1, x))",
-        "drive(d, wf_scale(square(8, 0.1), x))",
-        "shift_phase(d.tone, x)",
-        "set_frequency(d.tone, x)",
-    ],
-)
-@pytest.mark.parametrize("value", [NAN, INF, -INF])
+_FLOAT_USES = [
+    "drive(d, square(8, x))",
+    "drive(d, gaussian(40, 0.1, x))",
+    "drive(d, wf_scale(square(8, 0.1), x))",
+    "shift_phase(d.tone, x)",
+    "set_frequency(d.tone, x)",
+]
+
+
+@pytest.mark.parametrize("body", _FLOAT_USES)
+def test_a_nan_float_argument_fails_where_it_is_bound(body):
+    compiled = pulse.compile(_kernel(body, "q, x: float"))
+    compiled.lower(Q[0], 0.5)
+    message = r"(argument|the value of) 'x' is nan; a float argument must be a number"
+    for use in (
+        lambda: compiled.lower(Q[0], NAN),
+        lambda: compiled(Q[0], NAN),
+        lambda: pulse.simulate(compiled, Q[0], NAN),
+        lambda: compiled.lower(Q[0], 0.5).generic.bind([NAN]),
+    ):
+        with pytest.raises(pulse.InvalidValueError, match=message):
+            use()
+
+
+@pytest.mark.parametrize("body", _FLOAT_USES)
+@pytest.mark.parametrize("value", [INF, -INF])
 def test_a_float_argument_that_is_not_finite_fails_where_the_program_is_used(body, value):
     compiled = pulse.compile(_kernel(body, "q, x: float"))
     lowered = compiled.lower(Q[0], value)

@@ -300,7 +300,7 @@ def test_a_wait_from_an_answer_and_a_float_compiles_once():
             1500.0,
             r"next_tau\[0\] \+ tau \(its answers at 0\) = 1500.0 .* above its highest length 1000",
         ),
-        (float("nan"), "must be a finite number"),
+        (float("nan"), "argument 'tau' is nan; a float argument must be a number"),
         (float("-inf"), "must be a finite number"),
     ],
 )

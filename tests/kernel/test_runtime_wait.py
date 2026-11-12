@@ -371,7 +371,7 @@ def test_bounds_check_a_length_known_while_compiling():
             r"be negative",
         ),
         (-40.0, r"rounds to -40 clock cycles; a wait cannot be negative"),
-        (float("nan"), r"the wait length tau is nan; it must be a finite number of clock cycles"),
+        (float("nan"), r"t1\(\): argument 'tau' is nan; a float argument must be a number"),
         (float("inf"), r"the wait length tau is inf"),
         (2.0**60, r"outside its bounds \(0, None\)"),
     ],

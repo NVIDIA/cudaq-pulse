@@ -590,7 +590,7 @@ def _bind_count_error(parameters: tuple[str, ...], values: Any) -> InvalidTypeEr
 
 def _bind_checked(parameters: tuple[str, ...], values: Any) -> list[float]:
     """*values* as floats, one per parameter, or the error for their count or
-    naming the first parameter whose value is not a real number."""
+    naming the first parameter whose value is not a real number, or is NaN."""
     try:
         fits = len(values) == len(parameters)
     except TypeError:
@@ -607,7 +607,12 @@ def _bind_checked(parameters: tuple[str, ...], values: Any) -> list[float]:
             raise InvalidTypeError(
                 f"bind(): the value of {name!r} must be a real number, got complex {v!r}"
             )
-        out.append(float(v))
+        v = float(v)
+        if v != v:
+            raise InvalidValueError(
+                f"bind(): the value of {name!r} is nan; a float argument must be a number"
+            )
+        out.append(v)
     return out
 
 
@@ -715,9 +720,9 @@ class ScheduledKernel:
         the parameters, and a wait length computed from the values that is not
         a non-negative number of cycles within the wait's bounds a
         ``ValueError``. A value that is not a real number (a bool or a str) is
-        an ``InvalidTypeError``, and a NaN or infinity an
-        ``InvalidValueError``, each naming the parameter, where the module is
-        used: run, simulated, exported or printed."""
+        an ``InvalidTypeError``, and a NaN an ``InvalidValueError``, each
+        naming the parameter; an infinity is an ``InvalidValueError`` naming
+        it where the module is used: run, simulated, exported or printed."""
         try:
             arity = self._arity
             arguments = tuple(values)
@@ -729,6 +734,9 @@ class ScheduledKernel:
             return self._with_values(_bind_checked(self.parameters, values))
         if len(arguments) != arity:
             raise _bind_count_error(self.parameters, arguments)
+        for v in arguments:
+            if v.__class__ is float and v != v:
+                _bind_checked(self.parameters, arguments)
         # The view is made here as in _with_values: a call to it would be a
         # third of a bind.
         waits = self.waits
@@ -757,9 +765,9 @@ class ScheduledKernel:
         return view
 
     def _with_values(self, values: Sequence[float]) -> ScheduledKernel:
-        """``bind`` for *values* known to be one real number per parameter,
-        such as a kernel call's. Whether each is a finite float is checked
-        where the module uses them (``_concrete`` and simulation)."""
+        """``bind`` for *values* known to be one real number per parameter and
+        none NaN, such as a kernel call's. Whether each is a finite float is
+        checked where the module uses them (``_concrete`` and simulation)."""
         waits = self.waits
         if waits is not None:
             waits.check(values)

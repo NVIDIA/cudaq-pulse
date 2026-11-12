@@ -452,6 +452,12 @@ runtime parameters, so a sweep over a delay compiles once:
   time that is a whole number of cycles (see :ref:`durations`), and
   ``bounds`` checks it while tracing.
 
+A float argument of a call is a number: a NaN given to ``k(...)``,
+``lower(...)`` or ``bind(...)`` raises ``InvalidValueError`` (a
+``ValueError``) naming the argument when it is bound, and an infinity
+does where the program is used (run, simulated, exported or printed).
+NaN in classical data is allowed (see :doc:`classical_calls`).
+
 Operations check their arguments when they are traced. Passing a tone
 where a line belongs, a number where a waveform belongs, or a readout line
 to ``drive`` raises a ``CompilationError`` that names the operation and

@@ -516,10 +516,9 @@ class _Dispatcher:
         kernel = self.kernel
         values = kernel._bind(*args, **kwargs)
         entry = self.lookup(values)
-        lowered = entry.lowered
         if entry.runtime:
-            lowered = lowered._with_values(kernel._runtime_values(values, entry.runtime))
-        return lowered
+            return entry.lowered._with_values(kernel._runtime_values(values, entry.runtime))
+        return entry.lowered
 
     def clear(self) -> None:
         with self._lock:
@@ -705,7 +704,7 @@ class Kernel[**P]:
         out = []
         for i in runtime:
             v = values[i]
-            if type(v) is not float:
+            if v.__class__ is not float or v != v:
                 from .._units import Time
 
                 if v.__class__ is Time:
@@ -725,6 +724,13 @@ class Kernel[**P]:
                             f"real number, not {type(v).__name__}"
                         ) from None
                 v = float(v)
+                if v != v:
+                    from .._errors import InvalidValueError
+
+                    raise InvalidValueError(
+                        f"{self.__name__}(): argument {self._names[i]!r} is nan; a float "
+                        "argument must be a number"
+                    )
             out.append(v)
         return out
 

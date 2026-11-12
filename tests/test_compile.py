@@ -290,7 +290,6 @@ def test_bind_names_the_parameters_when_the_count_does_not_fit(values, message):
         ),
         ([0.2, 1j], pulse.InvalidTypeError, r"'detuning' must be a real number, got complex"),
         ([0.2, None], pulse.InvalidTypeError, r"'detuning' must be a real number, got NoneType"),
-        ([math.nan, 1e6], pulse.InvalidValueError, r"argument 'amplitude' is nan; a float"),
         ([0.2, -math.inf], pulse.InvalidValueError, r"argument 'detuning' is -inf; a float"),
     ],
 )
@@ -299,6 +298,14 @@ def test_a_bound_value_that_does_not_fit_fails_where_the_module_is_used(values, 
     for use in (bound.mlir, lambda: pulse.simulate(bound)):
         with pytest.raises(error, match=message):
             use()
+
+
+def test_a_nan_value_fails_where_it_is_bound():
+    generic = _two_amplitudes.lower(Q[0], 0.1, 1e6).generic
+    with pytest.raises(pulse.InvalidValueError, match=r"bind\(\): the value of 'detuning' is nan"):
+        generic.bind([0.2, math.nan])
+    with pytest.raises(pulse.InvalidValueError, match=r"argument 'amplitude' is nan"):
+        _two_amplitudes.lower(Q[0], math.nan, 1e6)
 
 
 def test_generic_is_the_module_every_call_rebinds_from():
