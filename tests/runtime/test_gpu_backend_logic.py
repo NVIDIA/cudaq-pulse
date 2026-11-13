@@ -121,25 +121,31 @@ _DIAG = np.diag
 # (kernel, qubits, simulate() arguments, expected density matrix or None,
 # expected branch weights or None)
 CASES = {
-    "active_reset_excited": (_active_reset(_PI), 1, {"shots": 200}, _DIAG([1, 0]), {(1,): 1.0}),
+    "active_reset_excited": (
+        _active_reset(_PI),
+        1,
+        {"shots_count": 200},
+        _DIAG([1, 0]),
+        {(1,): 1.0},
+    ),
     "active_reset_superposition": (
         _active_reset(_HALF_PI),
         1,
-        {"shots": 400},
+        {"shots_count": 400},
         _DIAG([1, 0]),
         {(0,): 0.5, (1,): 0.5},
     ),
     "conditional_flip": (
         conditional_flip,
         2,
-        {"shots": 100},
+        {"shots_count": 100},
         _DIAG([0.5, 0, 0, 0.5]),
         {(0,): 0.5, (1,): 0.5},
     ),
     "repeated_reset_loop": (
         repeated_reset,
         1,
-        {"shots": 100},
+        {"shots_count": 100},
         _DIAG([1, 0]),
         {(0, 0, 0): 0.5, (1, 0, 0): 0.5},
     ),
@@ -153,15 +159,15 @@ CASES = {
     "qutrit_measure": (
         measure,
         1,
-        {"levels": 3, "initial_state": np.ones(3) / math.sqrt(3), "shots": 300},
+        {"levels": 3, "initial_state": np.ones(3) / math.sqrt(3), "shots_count": 300},
         np.eye(3) / 3,
         {(0,): 1 / 3, (1,): 1 / 3, (2,): 1 / 3},
     ),
-    "qutrit_active_reset": (_active_reset(_PI), 1, {"levels": 3, "shots": 100}, None, None),
+    "qutrit_active_reset": (_active_reset(_PI), 1, {"levels": 3, "shots_count": 100}, None, None),
     "mixed_dims_conditional_flip": (
         conditional_flip,
         2,
-        {"levels": {0: 3, 1: 2}, "shots": 100},
+        {"levels": {0: 3, 1: 2}, "shots_count": 100},
         None,
         None,
     ),
@@ -202,8 +208,8 @@ def test_the_gpu_backend_simulates_a_program_that_measures(name, gpu_on_cpu):
         assert gpu_weights.keys() == branches.keys()
         for outcome, p in branches.items():
             assert gpu_weights[outcome] == pytest.approx(p, abs=_ATOL)
-    if "shots" in kwargs:
-        assert gpu.records.shape == (kwargs["shots"], len(gpu.measurements))
+    if "shots_count" in kwargs:
+        assert gpu.records.shape == (kwargs["shots_count"], len(gpu.measurements))
 
 
 @pytest.mark.parametrize("t_start", [0.0, 130.0, 500.0])

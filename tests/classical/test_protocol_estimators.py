@@ -170,10 +170,10 @@ def test_the_sparse_phase_estimator_is_exact_whatever_the_amplitude_and_offset(t
 
 def test_the_sparse_phase_error_matches_its_spread():
     rng = np.random.default_rng(14)
-    theta0, shots = 0.4, 64
+    theta0, shots_count = 0.4, 64
     p = np.array([0.5 - 0.45 * math.cos(theta0 + d) for d in (-math.pi / 2, 0.0, math.pi / 2)])
-    counts = rng.binomial(shots, p, (20_000, 3)) / shots
-    found = [cal.sparse_phase(*row, shots) for row in counts]
+    counts = rng.binomial(shots_count, p, (20_000, 3)) / shots_count
+    found = [cal.sparse_phase(*row, shots_count) for row in counts]
     thetas = np.array([t for t, _ in found])
     assert np.std(thetas) == pytest.approx(np.median([s for _, s in found]), rel=0.15)
 

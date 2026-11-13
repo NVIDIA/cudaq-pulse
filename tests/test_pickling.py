@@ -958,7 +958,7 @@ def test_a_simulation_result_unpickles_with_its_branches_and_level_populations()
 
 
 def test_branches_level_populations_and_branch_coverage_pickle_on_their_own():
-    result = pulse.simulate(reset, Q[0], initial_state=_PLUS, shots=20, seed=1, levels=2)
+    result = pulse.simulate(reset, Q[0], initial_state=_PLUS, shots_count=20, seed=1, levels=2)
     for value in (
         result.branches,
         result.branches[0],

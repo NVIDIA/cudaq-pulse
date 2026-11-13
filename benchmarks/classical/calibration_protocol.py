@@ -134,10 +134,10 @@ def step_tracked(q):
     tracked_t1(q, PI_AMP, 3.0, 3.0 * 20_000.0 * CLOCK, 0.03, 0.02, P["settle_time"])
 
 
-def _shares(result, shots):
+def _shares(result, shots_count):
     """Each path's last calls and its number of shots."""
     for branch in result.branches:
-        yield branch.calls, round(branch.probability * shots)
+        yield branch.calls, round(branch.probability * shots_count)
 
 
 def adaptive_t1(n, seed):
@@ -148,7 +148,7 @@ def adaptive_t1(n, seed):
     )
     start = time.perf_counter()
     result = pulse.simulate(
-        lowered, shots=n, seed=seed, branches="sampled", readout="model", levels=2
+        lowered, shots_count=n, seed=seed, branches="sampled", readout="model", levels=2
     )
     seconds = time.perf_counter() - start
     estimates, posteriors = [], []
@@ -187,7 +187,7 @@ def binary_search(n, seed):
         result = pulse.simulate(
             lowered,
             plant=P["search_plant"](target, offset),
-            shots=1,
+            shots_count=1,
             seed=seed * 100_003 + k,
             branches="sampled",
             readout="model",
@@ -221,7 +221,7 @@ def chain(n, seed):
         result = pulse.simulate(
             lowered,
             plant=plant,
-            shots=1,
+            shots_count=1,
             seed=seed * 7919 + k,
             branches="sampled",
             readout="model",
@@ -270,13 +270,19 @@ def steps(seed):
         "adaptive T1": (step_tracked, P["tracker_shots"]),
     }
     out = {}
-    for name, (kernel, shots) in shots_per_step.items():
+    for name, (kernel, shots_count) in shots_per_step.items():
         start = time.perf_counter()
         lowered = pulse.compile(kernel, device=dev, control_system=P["control_system"]).lower(q)
         compile_s = time.perf_counter() - start
         start = time.perf_counter()
         result = pulse.simulate(
-            lowered, plant=plant, shots=1, seed=seed, branches="sampled", readout="model", levels=2
+            lowered,
+            plant=plant,
+            shots_count=1,
+            seed=seed,
+            branches="sampled",
+            readout="model",
+            levels=2,
         )
         simulate_s = time.perf_counter() - start
         # Tracing allocations slows NumPy several times over: measure apart,
@@ -284,18 +290,24 @@ def steps(seed):
         _propagate.clear_cache()
         tracemalloc.start()
         pulse.simulate(
-            lowered, plant=plant, shots=1, seed=seed, branches="sampled", readout="model", levels=2
+            lowered,
+            plant=plant,
+            shots_count=1,
+            seed=seed,
+            branches="sampled",
+            readout="model",
+            levels=2,
         )
         peak = tracemalloc.get_traced_memory()[1]
         tracemalloc.stop()
         m = lowered.metrics
         out[name] = {
-            "shots": shots,
+            "shots_count": shots_count,
             "ops": m.op_count,
             "trace_ms": m.trace_ms,
             "compile_ms": compile_s * 1e3,
             "simulate_s": simulate_s,
-            "simulate_ms_per_shot": simulate_s / shots * 1e3,
+            "simulate_ms_per_shot": simulate_s / shots_count * 1e3,
             "time_to_decision_ms": result.times_ns[1] / 1e6,
             "simulate_peak_MB": peak / 2**20,
         }

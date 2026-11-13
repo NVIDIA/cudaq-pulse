@@ -127,7 +127,9 @@ if __name__ == "__main__":
     # either way the qubit ends in |0>.
     reset_demo = pulse.device(target)
     lowered = pulse.compile(active_reset, device=reset_demo).lower(reset_demo.qudits[0])
-    result = pulse.simulate(lowered, initial_state=[2**-0.5, 2**-0.5, 0.0], shots=1000, seed=7)
+    result = pulse.simulate(
+        lowered, initial_state=[2**-0.5, 2**-0.5, 0.0], shots_count=1000, seed=7
+    )
     for branch in result.branches:
         print(f"  measured {branch.levels}: p = {branch.probability:.3f}")
     print(f"  final |0> population: {result.level_population(0):.4f}")

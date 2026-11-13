@@ -49,7 +49,7 @@ pulse_sigma = 10 * pulse.ns
 readout_duration = 300 * pulse.ns
 scales = np.linspace(0.95, 1.05, 9)
 spec = 0.93  # a qudit whose amplified train reaches P(1) below this is recalibrated
-shots = 400
+shots_count = 400
 rounds = 4
 workers = 4
 sample_rate_ghz = 2.0
@@ -189,7 +189,7 @@ if __name__ == "__main__":
     for round_ in range(1, rounds + 1):
         factors = 1 + 0.02 * rng.standard_normal(len(qudit_indices))
         plant = drifted(factors)
-        measured = [rng.binomial(shots, p) / shots for p in populations(check, plant)]
+        measured = [rng.binomial(shots_count, p) / shots_count for p in populations(check, plant)]
         outcome = tuple(i for i, p in enumerate(measured) if p < spec)
         sweep = table.get(outcome)
         shown = " ".join(f"{p:.3f}" for p in measured)
@@ -201,7 +201,10 @@ if __name__ == "__main__":
             f"    recalibrate qudits {list(outcome)}: {len(sweep)} ready programs, "
             f"{len(sweep[0][1]['events'])} controller events each"
         )
-        p1 = rng.binomial(shots, [populations(bound, plant) for bound, _ in sweep]) / shots
+        p1 = (
+            rng.binomial(shots_count, [populations(bound, plant) for bound, _ in sweep])
+            / shots_count
+        )
         for i in outcome:
             print(
                 f"    qudit {i}: amplitude x{best_scale(p1[:, i]):.4f} "

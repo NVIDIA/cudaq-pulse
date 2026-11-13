@@ -289,7 +289,7 @@ class _CoarseStepWarning(PulseWarning, RuntimeWarning):
 
 
 def _positive_int(name: str, value: Any) -> int:
-    """*value*, a count such as ``shots``, as an int of at least 1; otherwise
+    """*value*, a count such as ``shots_count``, as an int of at least 1; otherwise
     the error saying what it got."""
     if isinstance(value, bool) or not isinstance(value, numbers.Integral):
         raise InvalidTypeError(f"{name} must be a positive int, got {value!r}")

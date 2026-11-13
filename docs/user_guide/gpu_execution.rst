@@ -314,7 +314,7 @@ all paths sum to the ensemble
 
    \rho' = \sum_m U_m P_m \rho P_m^\dagger U_m^\dagger
 
-with no sampling error. Requesting ``shots`` also samples per-shot records
+with no sampling error. Requesting ``shots_count`` also samples per-shot records
 of the outcomes from the same branch probabilities.
 
 .. code-block:: python
@@ -331,7 +331,7 @@ of the outcomes from the same branch probabilities.
            drive(drive_line, square(pi_time, math.pi / 20.0))
 
    lowered = active_reset.lower(dev.qudits[0])
-   result = pulse.simulate(lowered, shots=1000, backend="cpu")
+   result = pulse.simulate(lowered, shots_count=1000, backend="cpu")
    result.density_matrix   # ensemble state at the end
    result.level_population(1)   # P(1) of the one qudit; level_population(1, qudit=q) for one of several
    result.level_populations()   # [P(0), P(1), P(2)] for a three-level qudit

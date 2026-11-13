@@ -260,6 +260,6 @@ def test_a_frame_op_in_an_arm_waits_for_the_measurement(kernel, control, n, sche
     last = lowered.schedule[-1]
     assert last.kind == "drive"
     assert last.start_cycles >= max(e.start_cycles + e.duration_cycles for e in readouts)
-    actual = pulse.simulate(lowered, shots=400, seed=5).density_matrix
-    reference = pulse.simulate(expected, shots=400, seed=5).density_matrix
+    actual = pulse.simulate(lowered, shots_count=400, seed=5).density_matrix
+    reference = pulse.simulate(expected, shots_count=400, seed=5).density_matrix
     np.testing.assert_allclose(actual, reference, atol=1e-12)

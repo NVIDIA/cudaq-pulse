@@ -117,12 +117,12 @@ def test_a_random_source_follows_every_value_without_shots():
 def test_a_random_source_draws_per_shot():
     dev = _device()
     lowered = pulse.compile(random_rotation, device=dev).lower(dev.qudits[0])
-    result = pulse.simulate(lowered, shots=4000, seed=2, levels=2)
+    result = pulse.simulate(lowered, shots_count=4000, seed=2, levels=2)
     assert result.records is not None and len(result.records) == 4000
     # The ensemble state is exact; the shots split about evenly.
     assert result.density_matrix[1, 1].real == pytest.approx(_expected_p1())
-    a = pulse.simulate(lowered, shots=100, seed=9, levels=2)
-    b = pulse.simulate(lowered, shots=100, seed=9, levels=2)
+    a = pulse.simulate(lowered, shots_count=100, seed=9, levels=2)
+    b = pulse.simulate(lowered, shots_count=100, seed=9, levels=2)
     assert np.array_equal(a.records, b.records)
 
 
@@ -131,7 +131,7 @@ def test_a_random_source_is_marked_in_the_manifest_and_emulated_locally():
     lowered = pulse.compile(random_rotation, device=dev).lower(dev.qudits[0])
     (entry,) = emulation.manifest(lowered)["functions"]
     assert entry["random"] == 4
-    run = emulation.emulate(lowered, shots=2000, seed=4)
+    run = emulation.emulate(lowered, shots_count=2000, seed=4)
     counts = np.bincount([shot[0].answer for shot in run.calls], minlength=4)
     assert counts.sum() == 2000 and counts.min() > 400
     assert run.late_fraction == 0.0

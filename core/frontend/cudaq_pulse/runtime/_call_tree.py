@@ -134,7 +134,7 @@ def simulate_tree(
     state: Any,
     t_start: float,
     t_end: float | None,
-    shots: int | None,
+    shots_count: int | None,
     rng: np.random.Generator,
     functions: Sequence[ClassicalFunction[..., Any]],
     handlers: Mapping[str, Callable[..., Any]],
@@ -231,7 +231,7 @@ def simulate_tree(
             )
             return
         p_ok = latency_in_time_probability(function, limit)
-        if shots is None and not latency_branching:
+        if shots_count is None and not latency_branching:
             p_ok = 1.0 if function.nominal_latency_ns <= limit else 0.0
         outcomes_ok = [(True, p_ok), (False, 1.0 - p_ok)]
         counts = (
@@ -329,9 +329,9 @@ def simulate_tree(
                     current, path, truth, state, t, count, weight, calls, call, inputs, answer
                 )
                 return
-            if shots is None or iq_model is None:
+            if shots_count is None or iq_model is None:
                 raise InvalidValueError(
-                    f"{callee}: IQ points are drawn per shot; simulate with shots"
+                    f"{callee}: IQ points are drawn per shot; simulate with shots_count"
                 )
             drives = {(i, tuple(it)): (f, a) for i, it, f, a in current.readout_drives(entries)}
 
@@ -412,5 +412,5 @@ def simulate_tree(
                 calls,
             )
 
-    run(module, [], {}, state, t_start, shots or 0, 1.0, [])
+    run(module, [], {}, state, t_start, shots_count or 0, 1.0, [])
     return leaves, seen

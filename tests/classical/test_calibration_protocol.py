@@ -56,7 +56,7 @@ def test_the_pi_train_corrects_a_drive_amplitude_error():
     lowered = pulse.compile(_pi_step, device=dev, control_system=P["control_system"]).lower(q)
     plant = P["chain_plant"](target, amplitude_scale=1.02)
     result = pulse.simulate(
-        lowered, plant=plant, shots=2, seed=3, branches="sampled", readout="model"
+        lowered, plant=plant, shots_count=2, seed=3, branches="sampled", readout="model"
     )
     for branch in result.branches:
         corrected, relative_sigma = branch.calls[-1].answer
@@ -80,15 +80,17 @@ def test_adaptive_t1_tracks_the_papers_device_on_the_controller():
     target = dataclasses.replace(base, qudits={**base.qudits, 0: device_qudit})
     dev, q = _device(target)
     lowered = pulse.compile(_adaptive_t1, device=dev, control_system=P["control_system"]).lower(q)
-    shots = 32
-    result = pulse.simulate(lowered, shots=shots, seed=4, branches="sampled", readout="model")
+    shots_count = 32
+    result = pulse.simulate(
+        lowered, shots_count=shots_count, seed=4, branches="sampled", readout="model"
+    )
     estimates = []
     for branch in result.branches:
         assert len(branch.answers("adaptive_t1")) == P["tracker_shots"]
         compiled = {c.compiled_name for c in branch.calls if c.function == "adaptive_t1"}
         assert compiled == {"adaptive_t1__1"}
         shape, rate, _ = branch.calls[-1].answer
-        estimates += [rate / shape / CLOCK / 1e3] * round(branch.probability * shots)
+        estimates += [rate / shape / CLOCK / 1e3] * round(branch.probability * shots_count)
     # The paper: 159 us, 68% interval [131, 202] us; the benchmark's 400
     # seeds give a median near 151 us at a true 160 us.
     assert 125 < np.median(estimates) < 190
@@ -104,7 +106,7 @@ def test_the_binary_search_narrows_on_the_controller():
         result = pulse.simulate(
             lowered,
             plant=P["search_plant"](target, offset),
-            shots=1,
+            shots_count=1,
             seed=seed,
             branches="sampled",
             readout="model",

@@ -50,12 +50,12 @@ class ToyBackend:
     def events(self, artifact: list[list[dict[str, Any]]]) -> list[list[dict[str, Any]]]:
         return artifact
 
-    def emulate(self, artifact: Any, *, shots: int) -> list[list[int]]:
+    def emulate(self, artifact: Any, *, shots_count: int) -> list[list[int]]:
         readouts = sum(1 for e in artifact[0] if e["kind"] == "readout")
-        return [[0] * readouts for _ in range(shots)]
+        return [[0] * readouts for _ in range(shots_count)]
 
-    def run(self, artifact: Any, *, shots: int = 1) -> Any:
-        return self.emulate(artifact, shots=shots)
+    def run(self, artifact: Any, *, shots_count: int = 1) -> Any:
+        return self.emulate(artifact, shots_count=shots_count)
 
 
 @pytest.fixture
@@ -154,7 +154,7 @@ def test_emitted_pulses_must_respect_the_declared_limits():
 
 def test_an_emulator_that_disagrees_with_the_simulator_fails(monkeypatch):
     monkeypatch.setattr(_validation, "_simulated", lambda lowered: [0.5] * _readouts(lowered))
-    report = backends.validate(ToyBackend(), shots=200)
+    report = backends.validate(ToyBackend(), shots_count=200)
     assert "FAIL readout (/1): measurement 0: the emulator gives 1 in 0.000 of shots" in str(report)
 
 
@@ -179,8 +179,8 @@ def test_a_backend_that_refuses_everything_fails(ideal, monkeypatch):
 
 
 def test_validate_checks_its_arguments():
-    with pytest.raises(ValueError, match="shots must be positive"):
-        backends.validate(ToyBackend(), shots=0)
+    with pytest.raises(ValueError, match="shots_count must be positive"):
+        backends.validate(ToyBackend(), shots_count=0)
     with pytest.raises(backends.IncompatibleBackendError, match="is not a"):
         backends.validate(object())  # type: ignore[arg-type]
     with pytest.raises(backends.BackendNotFoundError):

@@ -10,7 +10,7 @@ state of every path gives the ensemble
 
     rho' = sum_m U_m P_m rho P_m^dagger U_m^dagger
 
-exactly, and with ``shots`` the branch weights also sample per-shot records.
+exactly, and with ``shots_count`` the branch weights also sample per-shot records.
 
 Segments are lowered by the native pipeline (pulse -> qop) along the path,
 then evolved either by a NumPy reference integrator (``backend="cpu"``) or
@@ -70,7 +70,7 @@ class BranchCoverage(StrEnum):
 
     #: Every outcome of every measurement: the exact ensemble.
     ALL = "all"
-    #: Only the outcomes the shots draw, at most ``shots`` branches.
+    #: Only the outcomes the shots draw, at most ``shots_count`` branches.
     SAMPLED = "sampled"
 
 
@@ -190,7 +190,7 @@ def simulate(
     *args: Any,
     levels: int | dict[int, int] | None = None,
     initial_state: npt.ArrayLike | None = None,
-    shots: int | None = None,
+    shots_count: int | None = None,
     seed: int | None = None,
     backend: str = "cpu",
     t_end: float | Time | None = None,
@@ -238,7 +238,7 @@ def simulate(
         Boltzmann ratio p / (1 - p) per level (``|0...0>`` when every p is
         0). T1 then relaxes it back there, with downward and upward rates
         (1 - p) / T1 and p / T1, whatever the initial state.
-    shots:
+    shots_count:
         Sample this many per-shot measurement records: a positive int.
         ``None`` (the default) samples none.
     seed:
@@ -288,7 +288,7 @@ def simulate(
         points synthesized per shot at each readout's true level, from its
         tone's frequency and its pulse's amplitude (``IQModel``; with
         ``"model_with_decay"``, relaxation during the window too); it needs
-        ``shots``, and each shot from the call on is simulated as its own
+        ``shots_count``, and each shot from the call on is simulated as its own
         trajectory.
     plant:
         A device description to simulate instead of the device the program
@@ -305,12 +305,12 @@ def simulate(
     branches:
         ``"all"`` (the default) follows every outcome of every measurement,
         so the state is the exact ensemble. ``"sampled"`` follows only the
-        outcomes the shots draw: at most ``shots`` branches, so a program
+        outcomes the shots draw: at most ``shots_count`` branches, so a program
         that measures many times inside one shot (an adaptive loop of
         readouts and calls) costs time linear in its measurements, not
         exponential. The state is then the average over the shots'
         branches, and ``result.branches`` gives each one's share of the
-        shots. It needs ``shots``. A ``BranchCoverage`` or its string.
+        shots. It needs ``shots_count``. A ``BranchCoverage`` or its string.
     """
     from ..compiler import Lowered
     from ..kernel._kernel import CompiledKernel, Kernel
@@ -339,7 +339,7 @@ def simulate(
         lowered,
         levels=levels,
         initial_state=initial_state,
-        shots=shots,
+        shots_count=shots_count,
         seed=seed,
         backend=backend,
         t_end=t_end,
@@ -359,7 +359,7 @@ def _simulate_lowered(
     *,
     levels: int | dict[int, int] | None = None,
     initial_state: npt.ArrayLike | None = None,
-    shots: int | None = None,
+    shots_count: int | None = None,
     seed: int | None = None,
     backend: str = "cpu",
     t_start: float = 0.0,
@@ -373,13 +373,13 @@ def _simulate_lowered(
     plant: Any = None,
     branches: BranchCoverage | str = BranchCoverage.ALL,
 ) -> SimulationResult:
-    if shots is not None and (shots.__class__ is not int or shots < 1):
-        shots = _positive_int("shots", shots)
+    if shots_count is not None and (shots_count.__class__ is not int or shots_count < 1):
+        shots_count = _positive_int("shots_count", shots_count)
     if branches not in ("all", "sampled"):
         raise InvalidValueError(f"unknown branches {branches!r}; choose 'all' or 'sampled'")
-    if branches == "sampled" and not shots:
+    if branches == "sampled" and not shots_count:
         raise InvalidValueError(
-            "branches='sampled' follows the branches of the shots; pass shots >= 1"
+            "branches='sampled' follows the branches of the shots; pass shots_count >= 1"
         )
     if backend not in ("cpu", "gpu"):
         raise InvalidValueError(f"unknown backend {backend!r}; choose 'cpu' or 'gpu'")
@@ -419,7 +419,7 @@ def _simulate_lowered(
             target,
             levels=levels,
             initial_state=initial_state,
-            shots=shots,
+            shots_count=shots_count,
             seed=seed,
             backend=backend,
             t_start=t_start,
@@ -744,7 +744,7 @@ def _simulate_compiled(
     *,
     levels: int | dict[int, int] | None,
     initial_state: npt.ArrayLike | None,
-    shots: int | None,
+    shots_count: int | None,
     seed: int | None,
     backend: str,
     t_start: float,
@@ -845,7 +845,7 @@ def _simulate_compiled(
             state,
             t_start,
             None if path_end else t_end,
-            shots,
+            shots_count,
             np.random.default_rng(seed),
             functions,
             handlers,
@@ -858,7 +858,7 @@ def _simulate_compiled(
             sampled,
         )
     # Only shots draw: numpy.random, and the hashing it imports, load for them.
-    rng: np.random.Generator = None if shots is None else np.random.default_rng(seed)  # type: ignore[assignment]
+    rng: np.random.Generator = None if shots_count is None else np.random.default_rng(seed)  # type: ignore[assignment]
     seen: dict[tuple[int, tuple[int, ...]], Measurement] = {}
     leaves: list[tuple[Any, list[tuple[tuple[int, tuple[int, ...]], int]], int]] = []
 
@@ -897,7 +897,7 @@ def _simulate_compiled(
                 run([*path, (key, k)], branch, max(end, t), int(counts[k]))
 
     norm = engine.weight(state)
-    run([], state, t_start, shots or 0)
+    run([], state, t_start, shots_count or 0)
 
     measurements = sorted(seen.values(), key=lambda m: (m.end_ns, m.readout, m.iteration))
     column = {(m.readout, m.iteration): i for i, m in enumerate(measurements)}
@@ -907,7 +907,7 @@ def _simulate_compiled(
     for leaf, path, count in leaves:
         density = engine.density(leaf)
         if sampled:
-            density = density * (count / (shots or 1) / float(np.real(np.trace(density))))
+            density = density * (count / (shots_count or 1) / float(np.real(np.trace(density))))
         rho += density
         outcomes = [-1] * len(measurements)
         for key, k in path:
@@ -915,7 +915,7 @@ def _simulate_compiled(
         branches.append(Branch(tuple(outcomes), float(np.real(np.trace(density)))))
         rows.extend([outcomes] * count)
     records = None
-    if shots is not None:
+    if shots_count is not None:
         records = np.array(rows, dtype=np.int64).reshape(len(rows), len(measurements))
         rng.shuffle(records)
     return SimulationResult(
@@ -937,7 +937,7 @@ def _simulate_tree(
     state: Any,
     t_start: float,
     t_end: float | None,
-    shots: int | None,
+    shots_count: int | None,
     rng: np.random.Generator,
     functions: tuple[Any, ...],
     handlers: Mapping[str, Callable[..., Any]] | None,
@@ -969,7 +969,7 @@ def _simulate_tree(
         state,
         t_start,
         t_end,
-        shots,
+        shots_count,
         rng,
         functions,
         chosen,
@@ -997,7 +997,9 @@ def _simulate_tree(
     for leaf in leaves:
         density = engine.density(leaf.state)
         if sampled:
-            density = density * (leaf.count / (shots or 1) / float(np.real(np.trace(density))))
+            density = density * (
+                leaf.count / (shots_count or 1) / float(np.real(np.trace(density)))
+            )
         else:
             density = leaf.weight * density
         rho += density
@@ -1009,7 +1011,7 @@ def _simulate_tree(
         )
         rows.extend([outcomes] * leaf.count)
     records = None
-    if shots is not None:
+    if shots_count is not None:
         records = np.array(rows, dtype=np.int64).reshape(len(rows), len(measurements))
         rng.shuffle(records)
     return SimulationResult(

@@ -184,12 +184,14 @@ def bench_simulate(repeats: int) -> None:
 
 def bench_emulate() -> None:
     lowered = pulse.compile(feedback).lower(_device().qudits[0])
-    local = emulation.emulate(lowered, shots=2000, seed=1)
+    local = emulation.emulate(lowered, shots_count=2000, seed=1)
     functions = lowered.classical
     handlers = {fn.name: fn.implementation for fn in functions}
     _, address, stop = emulation.serve_udp(functions, handlers)
     try:
-        udp = emulation.emulate(lowered, shots=500, seed=1, channel=emulation.UdpChannel(address))
+        udp = emulation.emulate(
+            lowered, shots_count=500, seed=1, channel=emulation.UdpChannel(address)
+        )
     finally:
         stop()
     print(

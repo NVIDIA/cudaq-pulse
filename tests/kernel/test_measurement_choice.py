@@ -470,8 +470,8 @@ def test_a_chosen_reset_simulates_like_the_op_in_the_arms():
             amp = _PI
         drive(d1, square(40, amp))
 
-    expected = _run(conditional_flip, 2, shots=200, seed=3).density_matrix
-    actual = _run(chosen_flip, 2, shots=200, seed=3).density_matrix
+    expected = _run(conditional_flip, 2, shots_count=200, seed=3).density_matrix
+    actual = _run(chosen_flip, 2, shots_count=200, seed=3).density_matrix
     np.testing.assert_allclose(actual, expected, atol=1e-12)
 
     @pulse.kernel
@@ -486,7 +486,7 @@ def test_a_chosen_reset_simulates_like_the_op_in_the_arms():
             amp = 0.0
         drive(d0, square(40, amp))
 
-    rho = _run(reset, shots=200, seed=2).density_matrix
+    rho = _run(reset, shots_count=200, seed=2).density_matrix
     np.testing.assert_allclose(rho, [[1, 0], [0, 0]], atol=1e-6)
 
 
@@ -741,8 +741,8 @@ def test_run_time_values_schedule_and_simulate_like_the_op_in_the_arms(
         if "fuse_pulses" not in passes:
             # Each use plays when it does in either arm.
             assert _timing(kept) == _timing(arms)
-        expected = pulse.simulate(arms, shots=200, seed=4, levels=2).density_matrix
-        actual = pulse.simulate(kept, shots=200, seed=4, levels=2).density_matrix
+        expected = pulse.simulate(arms, shots_count=200, seed=4, levels=2).density_matrix
+        actual = pulse.simulate(kept, shots_count=200, seed=4, levels=2).density_matrix
         np.testing.assert_allclose(actual, expected, atol=1e-12)
 
 

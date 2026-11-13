@@ -127,10 +127,10 @@ def test_measurements_report_device_qudits(measured):
     h, new = _slice((13, 3))
     other = 3 if measured == 13 else 13
     on_chip = pulse.simulate(
-        drive_and_measure.lower(q[measured], q[other]), shots=200, seed=5, levels=2
+        drive_and_measure.lower(q[measured], q[other]), shots_count=200, seed=5, levels=2
     )
     alone = pulse.simulate(
-        drive_and_measure.lower(h[new[measured]], h[new[other]]), shots=200, seed=5, levels=2
+        drive_and_measure.lower(h[new[measured]], h[new[other]]), shots_count=200, seed=5, levels=2
     )
     assert [m.qudit for m in on_chip.measurements] == [measured]
     assert [m.qudit for m in alone.measurements] == [new[measured]]

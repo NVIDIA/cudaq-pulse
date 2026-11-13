@@ -205,8 +205,8 @@ def test_a_check_of_run_time_frame_changes_in_branches_takes_bounded_memory():
         "the program exceeds the controller's limits:\n"
         "  line 0: its waveforms take 72 samples; the controller's waveform memory holds 64"
     )
-    for shots in (2, 400):
-        found = _in_a_child("retuned", shots, "waveform_memory_samples=64")
+    for shots_count in (2, 400):
+        found = _in_a_child("retuned", shots_count, "waveform_memory_samples=64")
         assert found == {"count": 1, "message": message}
 
 

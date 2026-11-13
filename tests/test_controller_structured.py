@@ -469,8 +469,8 @@ def test_a_backend_reading_only_the_structured_format_is_accepted():
         def emit(self, program):
             return program
 
-        def run(self, artifact, *, shots=1):
-            return [artifact] * shots
+        def run(self, artifact, *, shots_count=1):
+            return [artifact] * shots_count
 
     class Unknown(Structured):
         formats = ("cudaq-pulse.controller/9",)

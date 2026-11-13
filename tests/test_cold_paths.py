@@ -195,7 +195,7 @@ def test_exporting_an_emulated_program_loads_no_module(tmp_path):
     # The export lives in the wire format, which emulating loads too.
     code = (
         _PROGRAM + "from cudaq_pulse.classical import emulation\n"
-        "emulation.emulate(low, shots=2, seed=1)\nbefore = set(sys.modules)\n"
+        "emulation.emulate(low, shots_count=2, seed=1)\nbefore = set(sys.modules)\n"
         "low.export_controller(); low.export_emulation()\n"
         "new = [m for m in set(sys.modules) - before if m.startswith('cudaq_pulse.classical')]\n"
         "assert not new, new\n"
@@ -463,8 +463,8 @@ def test_simulating_without_shots_loads_no_random_generator(tmp_path):
     # only drawing shots (or a program's calls) uses a generator.
     modules = ("numpy.random", "hashlib")
     assert _loaded(_PLAIN + "p.simulate(low)\n", tmp_path, modules) == []
-    shots = _PLAIN + "p.simulate(low, shots=10, seed=1)\n"
-    assert _loaded(shots, tmp_path, modules) != []
+    shots_count = _PLAIN + "p.simulate(low, shots_count=10, seed=1)\n"
+    assert _loaded(shots_count, tmp_path, modules) != []
 
 
 def test_simulating_loads_no_numpy_typing(tmp_path):

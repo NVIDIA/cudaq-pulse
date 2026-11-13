@@ -276,7 +276,7 @@ def _execute(lowered: Lowered, returns: Any) -> Any:
     from ..runtime.simulate import _simulate_lowered
 
     measured = _has_measurements(returns)
-    result = _simulate_lowered(lowered, shots=1 if measured else None)
+    result = _simulate_lowered(lowered, shots_count=1 if measured else None)
     if not measured:
         return _materialize(returns, int)
     assert result.records is not None

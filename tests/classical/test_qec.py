@@ -165,7 +165,7 @@ def test_emulation_decodes_what_each_shot_enqueued():
 
     dev = _device(n=2)
     low = pulse.compile(k, device=dev).lower(*dev.qudits[:2])
-    run = emulation.emulate(low, shots=40, seed=3, service_time="none")
+    run = emulation.emulate(low, shots_count=40, seed=3, service_time="none")
     parities = set()
     for outcomes, calls in zip(run.outcomes, run.calls, strict=True):
         assert calls[-1].answer == [sum(outcomes) % 2]
@@ -233,7 +233,7 @@ def test_a_get_with_nothing_enqueued_is_late():
     low = _nothing_enqueued(timeout=True)
     (branch,) = pulse.simulate(low, levels=2).branches
     assert not branch.calls[-1].in_time and branch.calls[-1].answer is None
-    run = emulation.emulate(low, shots=2, service_time="none")
+    run = emulation.emulate(low, shots_count=2, service_time="none")
     assert [shot[-1].in_time for shot in run.calls] == [False, False]
     low = _nothing_enqueued(timeout=False)
     with pytest.raises(pulse.ExecutionError, match=r"nothing to decode \(NOT_READY"):
@@ -264,7 +264,7 @@ def test_a_get_decodes_what_was_enqueued_since_the_last_decode():
     low = pulse.compile(k, device=dev).lower(dev.qudits[0])
     for branch in pulse.simulate(low, levels=2).branches:
         assert [c.answer for c in branch.calls if c.function.startswith("get")] == [[1], [1]]
-    for shot in emulation.emulate(low, shots=4, seed=1, service_time="none").calls:
+    for shot in emulation.emulate(low, shots_count=4, seed=1, service_time="none").calls:
         assert [c.answer for c in shot if c.function.startswith("get")] == [[1], [1]]
 
 
@@ -284,7 +284,7 @@ def test_late_fraction_counts_the_answers_the_program_waits_on():
 
     dev = _device()
     low = pulse.compile(k, device=dev).lower(dev.qudits[0])
-    kw = {"shots": 5, "seed": 1, "service_time": "none"}
+    kw = {"shots_count": 5, "seed": 1, "service_time": "none"}
     run = emulation.emulate(low, transport=emulation.Transport(fixed_ns=500), **kw)
     for reset, enqueue, get in run.calls:
         # Sent without waiting: back after their budget, which counts for nothing.
@@ -351,7 +351,7 @@ def test_a_decoder_s_latencies_work_as_a_classical_function_s():
         # P(latency <= 3000) over a triangle on [1000, 5000] with its mode at 2000.
         expected = 1 - 2000**2 / (4000 * 3000) if branching else 1.0
         assert in_time == pytest.approx([expected, expected])
-    kw = {"shots": 2, "seed": 1, "service_time": "none", "handlers": handlers}
+    kw = {"shots_count": 2, "seed": 1, "service_time": "none", "handlers": handlers}
     budgets = [emulation.emulate(low, **kw).calls[0][-1].budget_ns for low in lows]
     assert budgets[0] == budgets[1] > 3000
 
@@ -386,6 +386,6 @@ def test_a_mapped_enqueue_sends_its_mapping_row():
     dev = _device()
     lowered = pulse.compile(rounds, device=dev).lower(dev.qudits[0])
     pulse.simulate(
-        lowered, handlers={decoder.enqueue_function.name: enqueue}, shots=1, seed=0, levels=2
+        lowered, handlers={decoder.enqueue_function.name: enqueue}, shots_count=1, seed=0, levels=2
     )
     assert set(seen) == {(3, 4, 2, 12)}

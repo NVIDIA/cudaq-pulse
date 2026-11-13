@@ -43,9 +43,9 @@ class DummyBackend:
             if e["kind"] in ("drive", "readout")
         )
 
-    def run(self, artifact: Any, *, shots: int = 1) -> dict[str, Any]:
+    def run(self, artifact: Any, *, shots_count: int = 1) -> dict[str, Any]:
         readouts = sum(1 for _, _, kind, _ in artifact if kind == "readout")
-        return {"played": list(artifact), "outcomes": [[0] * readouts for _ in range(shots)]}
+        return {"played": list(artifact), "outcomes": [[0] * readouts for _ in range(shots_count)]}
 
 
 class OldBackend(DummyBackend):

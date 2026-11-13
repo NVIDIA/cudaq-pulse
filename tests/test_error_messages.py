@@ -170,7 +170,7 @@ def idle():
 
 
 @pytest.mark.parametrize(
-    ("shots", "error"),
+    ("shots_count", "error"),
     [
         (0, pulse.InvalidValueError),
         (-1, pulse.InvalidValueError),
@@ -180,15 +180,15 @@ def idle():
     ],
 )
 @pytest.mark.parametrize("run", ["simulate", "emulate"])
-def test_shots_is_a_positive_int(idle, run, shots, error):
+def test_shots_is_a_positive_int(idle, run, shots_count, error):
     call = pulse.simulate if run == "simulate" else emulation.emulate
     with pytest.raises(error) as info:
-        call(idle, shots=shots)
-    assert str(info.value) == f"shots must be a positive int, got {shots!r}"
+        call(idle, shots_count=shots_count)
+    assert str(info.value) == f"shots_count must be a positive int, got {shots_count!r}"
 
 
 def test_no_shots_is_the_documented_simulate_default(idle):
-    assert pulse.simulate(idle, shots=None).records is None
+    assert pulse.simulate(idle, shots_count=None).records is None
 
 
 @pytest.mark.parametrize(

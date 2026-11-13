@@ -70,21 +70,21 @@ def _by_outcome(result):
     return total
 
 
-@pytest.mark.parametrize("shots", [None, 500])
-def test_a_decoder_reproduces_active_reset_exactly(shots):
+@pytest.mark.parametrize("shots_count", [None, 500])
+def test_a_decoder_reproduces_active_reset_exactly(shots_count):
     dev = _device()
     q = dev.qudits[0]
     a = pulse.simulate(
         pulse.compile(active_reset, device=dev).lower(q),
         initial_state=PLUS,
-        shots=shots,
+        shots_count=shots_count,
         seed=3,
         levels=2,
     )
     b = pulse.simulate(
         pulse.compile(decoded_reset, device=dev).lower(q),
         initial_state=PLUS,
-        shots=shots,
+        shots_count=shots_count,
         seed=3,
         levels=2,
     )
@@ -92,7 +92,7 @@ def test_a_decoder_reproduces_active_reset_exactly(shots):
     assert [(x.levels, x.probability) for x in b.branches] == [
         (x.levels, x.probability) for x in a.branches
     ]
-    if shots:
+    if shots_count:
         assert (b.records == a.records).all()
     assert [branch.answers("decoder") for branch in b.branches] == [[[0]], [[1]]]
 
@@ -251,11 +251,11 @@ def test_timeouts_take_the_fallback_at_the_modelled_rate():
     assert np.trace(exact.density_matrix).real == pytest.approx(1.0)
     p1 = sum(exact.density_matrix[i, i].real for i in (2, 3))
     assert p1 == pytest.approx(0.5, abs=1e-9)
-    shots = pulse.simulate(low, shots=4000, seed=11, levels=2)
-    ok_weight = sum(b.probability for b in shots.branches if b.calls[0].in_time)
+    shots_count = pulse.simulate(low, shots_count=4000, seed=11, levels=2)
+    ok_weight = sum(b.probability for b in shots_count.branches if b.calls[0].in_time)
     assert ok_weight == pytest.approx(0.5, abs=1e-9)
     # The sampled shots split between in time and late within 4 sigma.
-    excited = shots.density_matrix[2, 2].real + shots.density_matrix[3, 3].real
+    excited = shots_count.density_matrix[2, 2].real + shots_count.density_matrix[3, 3].real
     assert excited == pytest.approx(0.5, abs=1e-9)
     # Without shots or branching the nominal latency decides.
     nominal = pulse.simulate(low, levels=2)

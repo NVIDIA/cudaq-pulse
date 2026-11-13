@@ -59,9 +59,9 @@ amplitudes = pi_amplitude * np.linspace(0.85, 1.15, 25)
 detunings_hz = np.linspace(-2e6, 6e6, 25)
 settings = np.array([(a, d) for a in amplitudes for d in detunings_hz])
 settings_per_batch = 8
-shots = 100
+shots_count = 100
 shot_time = 50 * pulse.us  # the stand-in QPU's repetition period
-batch_time = settings_per_batch * shots * shot_time
+batch_time = settings_per_batch * shots_count * shot_time
 batches = 20
 workers = 4
 sample_rate_ghz = 2.0
@@ -164,8 +164,10 @@ def run_batch(prepared, seed):
     counts = []
     for program, controller_program in prepared:
         assert controller_program["events"], "a controller would load these events"
-        counts.append(int(rng.binomial(shots, excited_population(program, qpu_state["plant"]))))
-    ends = start + len(prepared) * shots * (shot_time / pulse.s)
+        counts.append(
+            int(rng.binomial(shots_count, excited_population(program, qpu_state["plant"])))
+        )
+    ends = start + len(prepared) * shots_count * (shot_time / pulse.s)
     overran = time.monotonic() - ends
     time.sleep(max(0.0, -overran))
     return counts, (start, time.monotonic()), max(0.0, overran)
@@ -198,7 +200,7 @@ def calibrate(pool, qpu, pipelined):
         counts, span, overran = running.result()
         spans.append(span)
         overruns.append(overran)
-        optimizer.observe(indices, np.array(counts) / shots)
+        optimizer.observe(indices, np.array(counts) / shots_count)
         if last:
             break
         if upcoming is None:
@@ -247,7 +249,7 @@ if __name__ == "__main__":
         f"  binding and exporting one setting: {1e3 * (time.perf_counter() - started) / 50:.3f} ms"
     )
     print(
-        f"  a batch is {settings_per_batch} settings x {shots} shots x {shot_time} "
+        f"  a batch is {settings_per_batch} settings x {shots_count} shots x {shot_time} "
         f"= {batch_time / pulse.ms:.0f} ms on the QPU"
     )
 

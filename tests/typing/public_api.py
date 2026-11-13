@@ -105,7 +105,7 @@ assert_type(compiled.parameters, tuple[str, ...])
 pulse.compile(rabi, schedule=1)  # type: ignore[arg-type]
 
 # Loaded lazily at runtime, but fully typed for checkers.
-assert_type(pulse.simulate(lowered, shots=10), pulse.SimulationResult)
+assert_type(pulse.simulate(lowered, shots_count=10), pulse.SimulationResult)
 # Every module has a generic one, which binds a call's new values.
 assert_type(lowered.generic, pulse.Lowered)
 assert_type(pulse.simulate(lowered.generic, 0.7), pulse.SimulationResult)

@@ -239,7 +239,7 @@ if __name__ == "__main__":
     # 120 ns fixed delay and 40 ns mean jitter each way on the link.
     run = emulation.emulate(
         decoded,
-        shots=200,
+        shots_count=200,
         transport=emulation.Transport(fixed_ns=120, jitter_ns=40),
         service_time="none",
         seed=1,

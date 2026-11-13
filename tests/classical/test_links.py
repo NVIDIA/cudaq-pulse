@@ -62,9 +62,9 @@ def test_transport_may_be_given_per_link_name():
     machine = ControlSystem(links={"controller": CONTROLLER})
     low = pulse.compile(_kernel(_function("controller")), control_system=machine).lower(Q[0])
     slow = emulation.Transport(fixed_ns=1000)
-    result = emulation.emulate(low, shots=5, transport={"controller": slow}, seed=1)
+    result = emulation.emulate(low, shots_count=5, transport={"controller": slow}, seed=1)
     assert result.late_fraction == 1.0
-    result = emulation.emulate(low, shots=5, transport={0: slow}, seed=1)
+    result = emulation.emulate(low, shots_count=5, transport={0: slow}, seed=1)
     assert result.late_fraction == 1.0
 
 

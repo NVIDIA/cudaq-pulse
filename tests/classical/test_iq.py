@@ -67,24 +67,24 @@ def test_discrimination_errors_match_the_gaussian_overlap():
     dev = _device(photon_number=0.3)
     q = dev.qudits[0]
     discriminate = _threshold(dev)
-    shots = 4000
+    shots_count = 4000
     result = pulse.simulate(
         pulse.compile(_iq_reset(discriminate), device=dev).lower(q),
         initial_state=PLUS,
-        shots=shots,
+        shots_count=shots_count,
         seed=11,
         levels=2,
     )
     c0, c1 = _centers(dev)
     expected = 0.5 * math.erfc(abs(c1 - c0) / 2)  # sigma^2 = 1/2 per quadrature
     assert 0.1 < expected < 0.25
-    tolerance = 4 * math.sqrt(expected * (1 - expected) / shots)
+    tolerance = 4 * math.sqrt(expected * (1 - expected) / shots_count)
     wrong = sum(b.probability for b in result.branches if b.calls[0].answer[0] != b.levels[0])
     assert wrong == pytest.approx(expected, abs=tolerance)
     # A wrong answer leaves |1> in place or flips |0> to |1>.
     p1 = float(np.real(result.density_matrix[1, 1]))
     assert p1 == pytest.approx(expected, abs=tolerance)
-    assert result.records is not None and len(result.records) == shots
+    assert result.records is not None and len(result.records) == shots_count
 
 
 def test_iq_points_scale_with_the_readout_amplitude():
@@ -106,7 +106,7 @@ def test_iq_points_scale_with_the_readout_amplitude():
             record.submit(result).result()
 
         pulse.simulate(
-            pulse.compile(probe, device=dev).lower(q, amplitude), shots=600, seed=5, levels=2
+            pulse.compile(probe, device=dev).lower(q, amplitude), shots_count=600, seed=5, levels=2
         )
 
     mean_low = np.mean(seen[0.05])
@@ -143,8 +143,8 @@ def test_iq_points_follow_a_readout_amplitude_computed_from_an_answer():
         record.submit(readout(r, square(1000, a * 0.5))).result()
 
     lowered = pulse.compile(probe, device=dev).lower(q)
-    emulation.emulate(lowered, shots=400, outcomes=lambda q, _, rng: 0, seed=2)
-    pulse.simulate(lowered, initial_state=[1, 0], shots=400, seed=2, levels=2)
+    emulation.emulate(lowered, shots_count=400, outcomes=lambda q, _, rng: 0, seed=2)
+    pulse.simulate(lowered, initial_state=[1, 0], shots_count=400, seed=2, levels=2)
     # Played at 0.1, twice the readout's amplitude: the points are twice as far.
     (c0, _), (r0, _) = _centers(dev, amplitude=0.1), _centers(dev, amplitude=0.05)
     assert c0 == pytest.approx(2 * r0)
@@ -168,11 +168,11 @@ def test_a_readout_the_model_cannot_evaluate_is_an_error():
     lowered = pulse.compile(probe, device=dev).lower(q)
     message = r"qudit 0 depend on its pulse's peak amplitude, .* READOUT calibration's amplitude"
     with pytest.raises(pulse.UnsupportedError, match=message):
-        pulse.simulate(lowered, shots=10, seed=2, levels=2)
+        pulse.simulate(lowered, shots_count=10, seed=2, levels=2)
     # Without a readout amplitude the pulse's does not matter.
     plain = _device()
     pulse.simulate(
-        pulse.compile(probe, device=plain).lower(plain.qudits[0]), shots=10, seed=2, levels=2
+        pulse.compile(probe, device=plain).lower(plain.qudits[0]), shots_count=10, seed=2, levels=2
     )
     # Nor, without a readout frequency, does the frequency; with one, an unknown
     # frequency is an error.
@@ -219,8 +219,8 @@ def test_iq_calls_need_shots_and_are_seeded():
     lowered = pulse.compile(_iq_reset(_threshold(dev)), device=dev).lower(q)
     with pytest.raises(ValueError, match="simulate with shots"):
         pulse.simulate(lowered, initial_state=PLUS, levels=2)
-    a = pulse.simulate(lowered, initial_state=PLUS, shots=50, seed=4, levels=2)
-    b = pulse.simulate(lowered, initial_state=PLUS, shots=50, seed=4, levels=2)
+    a = pulse.simulate(lowered, initial_state=PLUS, shots_count=50, seed=4, levels=2)
+    b = pulse.simulate(lowered, initial_state=PLUS, shots_count=50, seed=4, levels=2)
     assert np.array_equal(a.density_matrix, b.density_matrix)
 
 
@@ -236,7 +236,7 @@ def test_emulation_draws_iq_points_at_the_reported_levels():
 
     dev = _device()
     lowered = pulse.compile(_iq_reset(_threshold(dev)), device=dev).lower(dev.qudits[0])
-    result = emulation.emulate(lowered, shots=200, outcomes=lambda q, _, rng: 1, seed=3)
+    result = emulation.emulate(lowered, shots_count=200, outcomes=lambda q, _, rng: 1, seed=3)
     answers = [traces[0].answer for traces in result.calls]
     assert all(a == [1] for a in answers)  # 5 sigma apart: no errors expected
     points = [traces[0].inputs[0][0] for traces in result.calls]
@@ -268,7 +268,7 @@ def test_the_17_qudit_twin_separates_its_readout_states():
         record.submit([result]).result()
 
     lowered = pulse.compile(probe, device=dev).lower(q)
-    result = emulation.emulate(lowered, shots=200, outcomes=lambda q, _, rng: 0, seed=1)
+    result = emulation.emulate(lowered, shots_count=200, outcomes=lambda q, _, rng: 0, seed=1)
     points = [traces[0].inputs[0][0] for traces in result.calls]
     assert all(math.isfinite(p.real) and math.isfinite(p.imag) for p in points)
     # The readout line's own tone is at the resonator, so the points gather

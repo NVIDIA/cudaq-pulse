@@ -429,7 +429,7 @@ def _check_transport(transport: Any, machine: Any) -> None:
 def emulate(
     lowered: Any,
     *,
-    shots: int = 1,
+    shots_count: int = 1,
     channel: Any = None,
     handlers: Mapping[str, Callable[..., Any]] | None = None,
     transport: Transport | Mapping[int | str, Transport] | None = None,
@@ -437,7 +437,7 @@ def emulate(
     service_time: str = "measured",
     seed: int | None = None,
 ) -> EmulationResult:
-    """Run *lowered* for *shots* in virtual time against classical services.
+    """Run *lowered* for *shots_count* in virtual time against classical services.
 
     *channel* reaches the services (``InProcess`` of *handlers* by default,
     the functions' bodies unless given). *transport* models each link's
@@ -447,10 +447,10 @@ def emulate(
     at those levels from the target's dispersive readout model
     (``IQModel``). The answer's latency is the request's
     transport delay, plus the service's time (``"measured"`` wall-clock, or
-    ``"none"``), plus the answer's transport delay. *shots* is a positive int.
+    ``"none"``), plus the answer's transport delay. *shots_count* is a positive int.
     """
-    if shots.__class__ is not int or shots < 1:
-        shots = _positive_int("shots", shots)
+    if shots_count.__class__ is not int or shots_count < 1:
+        shots_count = _positive_int("shots_count", shots_count)
     functions = tuple(lowered.classical)
     by_name = {fn.name: fn for fn in functions}
     chosen = _handlers_for(functions, handlers)
@@ -499,7 +499,7 @@ def emulate(
     # Unique over the run, so that an answer to an earlier shot's request
     # is not taken for one to this shot's.
     request_id = 0
-    for _ in range(shots):
+    for _ in range(shots_count):
         module = base
         path: list[tuple[tuple[int, tuple[int, ...]], int]] = []
         shot_outcomes: list[int] = []

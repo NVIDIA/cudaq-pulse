@@ -78,7 +78,9 @@ def test_a_kept_condition_compiles_as_the_condition_in_the_if(condition, _):
     assert _mlir(kept) == _mlir(inline)
     assert "arith.select" not in kept.mlir() and "pulse.selected_values" not in kept.mlir()
     assert kept.export_controller() == inline.export_controller()
-    runs = [emulation.emulate(low, shots=8, seed=4, service_time="none") for low in (kept, inline)]
+    runs = [
+        emulation.emulate(low, shots_count=8, seed=4, service_time="none") for low in (kept, inline)
+    ]
     assert runs[0].outcomes == runs[1].outcomes and runs[0].ends_ns == runs[1].ends_ns
 
 

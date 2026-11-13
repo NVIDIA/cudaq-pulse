@@ -370,19 +370,19 @@ def _simulated(lowered: Lowered) -> list[float]:
 
 
 def _emulation(
-    backend: Backend, artifact: Any, lowered: Lowered, shots: int, tolerance: float
+    backend: Backend, artifact: Any, lowered: Lowered, shots_count: int, tolerance: float
 ) -> str | None:
     """How the backend's emulator differs from the simulator, or None."""
-    rows = [list(row) for row in backend.emulate(artifact, shots=shots)]  # type: ignore[attr-defined]
+    rows = [list(row) for row in backend.emulate(artifact, shots_count=shots_count)]  # type: ignore[attr-defined]
     expected = _simulated(lowered)
-    if len(rows) != shots:
-        return f"the emulator returned {len(rows)} shots, expected {shots}"
+    if len(rows) != shots_count:
+        return f"the emulator returned {len(rows)} shots, expected {shots_count}"
     if any(len(row) != len(expected) for row in rows):
         return f"the emulator reports a shot without {len(expected)} measurements"
     for k, p in enumerate(expected):
-        mean = sum(1 for row in rows if row[k] == 1) / shots
+        mean = sum(1 for row in rows if row[k] == 1) / shots_count
         # The tolerance, widened by three standard errors of the shots.
-        allowed = tolerance + 3.0 * math.sqrt(p * (1.0 - p) / shots)
+        allowed = tolerance + 3.0 * math.sqrt(p * (1.0 - p) / shots_count)
         if abs(mean - p) > allowed:
             return (
                 f"measurement {k}: the emulator gives 1 in {mean:.3f} of shots, "
@@ -398,7 +398,7 @@ def _emit(
     program: dict[str, Any],
     lowered: Lowered,
     limits: Controller | None,
-    shots: int,
+    shots_count: int,
     tolerance: float,
 ) -> bool:
     """Emit one program and check it; whether the backend emitted it."""
@@ -429,7 +429,7 @@ def _emit(
             report._add("FAIL", name, problem)
             return True
     if getattr(backend, "emulate", None) is not None:
-        problem = _emulation(backend, artifact, lowered, shots, tolerance)
+        problem = _emulation(backend, artifact, lowered, shots_count, tolerance)
         if problem is not None:
             report._add("FAIL", name, problem)
             return True
@@ -440,7 +440,7 @@ def _emit(
 def validate(
     backend: Backend,
     controller: Controller | None = None,
-    shots: int = 1000,
+    shots_count: int = 1000,
     tolerance: float = 0.05,
 ) -> _Report:
     """See ``cudaq_pulse.backends.validate``."""
@@ -464,7 +464,7 @@ def validate(
             program = lowered.export_controller(version=version)
             first = first or program
             emitted += _emit(
-                report, backend, name, program, lowered, _one(system), shots, tolerance
+                report, backend, name, program, lowered, _one(system), shots_count, tolerance
             )
     if first is not None:
         for name, (make, what) in _PROBES.items():
@@ -493,7 +493,7 @@ def validate(
 def opted_in(
     descriptions: Iterable[tuple[str, Mapping[str, Any], Controller]],
     get: Callable[[str], Backend],
-    shots: int = 1000,
+    shots_count: int = 1000,
     tolerance: float = 0.05,
 ) -> list[tuple[str, _Report]]:
     """The CI hook: for each controller description, its name, its parsed
@@ -504,5 +504,5 @@ def opted_in(
     for name, table, controller in descriptions:
         chosen = table.get("backend")
         if chosen:
-            out.append((name, validate(get(chosen), controller, shots, tolerance)))
+            out.append((name, validate(get(chosen), controller, shots_count, tolerance)))
     return out

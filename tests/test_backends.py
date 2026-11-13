@@ -73,7 +73,7 @@ def test_an_installed_backend_compiles_emits_and_runs(installed):
     compiled = pulse.compile(drive_and_measure, device=dev, control_system=backend.control_system())
     artifact = backend.emit(compiled.lower(dev.qudits[0]).export_controller())
     assert artifact == [(0, 0, "drive", "gaussian"), (40, 1, "readout", "square")]
-    assert backend.run(artifact, shots=3)["outcomes"] == [[0], [0], [0]]
+    assert backend.run(artifact, shots_count=3)["outcomes"] == [[0], [0], [0]]
 
 
 def test_the_backends_limits_reject_what_its_controller_cannot_play(installed):
@@ -106,7 +106,7 @@ def test_a_registered_backend_takes_precedence_and_can_be_removed(installed):
         def emit(self, program):
             return "other"
 
-        def run(self, artifact, *, shots=1):
+        def run(self, artifact, *, shots_count=1):
             return artifact
 
     backends.register("dummy", Other)

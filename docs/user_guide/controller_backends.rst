@@ -667,7 +667,7 @@ A backend is an object with a ``name`` and three methods, the
 control system to compile for (a ``ControlSystem``, or its one
 ``Controller``), ``emit(program)`` takes an
 exported program and returns the controller's, and ``run(artifact,
-shots=...)`` runs it. ``formats``, if present, lists the export formats it
+shots_count=...)`` runs it. ``formats``, if present, lists the export formats it
 reads. A program it cannot emit it refuses with
 ``IncompatibleBackendError``.
 
@@ -677,7 +677,7 @@ artifact back as one list of events per controller program, each a mapping
 with its ``kind`` (``cudaq_pulse.Event``, or the ``/1`` name), ``line``
 (the link of a call or answer), ``start_cycles`` and optionally
 ``duration_cycles``, every execution in program order.
-``emulate(artifact, shots=...)`` runs it on the backend's emulator and
+``emulate(artifact, shots_count=...)`` runs it on the backend's emulator and
 gives each shot's measurement outcomes, in the order the measurements end.
 
 This one emits one line of text per drive and readout:
@@ -714,8 +714,8 @@ This one emits one line of text per drive and readout:
                )
            return played
 
-       def run(self, artifact: Any, *, shots: int = 1) -> list[list[str]]:
-           return [list(artifact) for _ in range(shots)]
+       def run(self, artifact: Any, *, shots_count: int = 1) -> list[list[str]]:
+           return [list(artifact) for _ in range(shots_count)]
 
 Its distribution registers it under its name in the
 ``cudaq_pulse.backends`` entry-point group, naming the backend class or any
@@ -761,7 +761,7 @@ same name:
 
    compiled = pulse.compile(drive_and_measure, device=dev, control_system=backend.control_system())
    program = compiled.lower(dev.qudits[0]).export_controller()
-   print(backend.run(backend.emit(program), shots=1))
+   print(backend.run(backend.emit(program), shots_count=1))
    # [['0 drive line 0 gaussian at 5e+09 Hz', '40 readout line 1 square at 5e+09 Hz']]
 
 Validating a backend
@@ -801,10 +801,10 @@ which gives the emitted programs back, one list of events per controller
 ``duration_cycles``, every execution in program order), the number of
 programs and the timing and order of plays, acquisitions, calls and answers
 on each line must match the controller program, and the pulses must respect
-the controller's limits. With ``emulate(artifact, shots=...)``, which gives
+the controller's limits. With ``emulate(artifact, shots_count=...)``, which gives
 each shot's measurement outcomes in the order they end, the fraction of 1s
 of each must match ``cudaq_pulse.simulate`` within ``tolerance`` (0.05 by
-default) plus three standard errors of the ``shots``. Validating imports
+default) plus three standard errors of the ``shots_count``. Validating imports
 nothing until it is called.
 
 Errors

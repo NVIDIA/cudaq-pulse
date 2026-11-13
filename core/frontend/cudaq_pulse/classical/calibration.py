@@ -635,7 +635,7 @@ def binary_search_phase(mean_hz: float, wait_ns: float | Time) -> float:
 
 
 def decay_time(
-    p0: float, p1: float, p3: float, spacing: float | Time, shots: int
+    p0: float, p1: float, p3: float, spacing: float | Time, shots_count: int
 ) -> tuple[float, float, bool]:
     """The analytical decay estimator: the decay time T of
     ``A exp(-t / T) + C`` from its values at t0, t0 + spacing and
@@ -643,7 +643,7 @@ def decay_time(
 
     With c = (p3 - p0) / (p1 - p0) = x^2 + x + 1 and x = exp(-spacing / T),
     x = sqrt(c - 3/4) - 1/2. Returns T, its standard deviation from the
-    binomial noise of *shots* shots per point (error propagation), and
+    binomial noise of *shots_count* shots per point (error propagation), and
     whether an estimate was formed (1 < c < 3). T is in the unit of
     *spacing*: ns when it is a time.
     """
@@ -665,23 +665,25 @@ def decay_time(
     dc3 = inverse
     variance_c = (
         dc0 * dc0 * p0 * (1.0 - p0) + dc1 * dc1 * p1 * (1.0 - p1) + dc3 * dc3 * p3 * (1.0 - p3)
-    ) / shots
+    ) / shots_count
     slope = spacing / (x * log_x * log_x) * 0.5 / root
     return t, abs(slope) * math.sqrt(variance_c), True
 
 
-def sparse_phase(p_minus: float, p_zero: float, p_plus: float, shots: int) -> tuple[float, float]:
+def sparse_phase(
+    p_minus: float, p_zero: float, p_plus: float, shots_count: int
+) -> tuple[float, float]:
     """The sparse phase estimator: the phase theta0 of ``A cos(theta) + C``
     from its values at theta0 - pi/2, theta0 and theta0 + pi/2, whatever A
     and C are: atan2(p- - p+, 2 (p0 - (p- + p+) / 2)) (Marciniak et al.,
     Eq. 3; theta0 + pi for A < 0). Returns it and its standard deviation
-    from the binomial noise of *shots* shots per point."""
+    from the binomial noise of *shots_count* shots per point."""
     y = p_minus - p_plus
     x = 2.0 * p_zero - p_minus - p_plus
     theta = math.atan2(y, x)
-    v_minus = p_minus * (1.0 - p_minus) / shots
-    v_zero = p_zero * (1.0 - p_zero) / shots
-    v_plus = p_plus * (1.0 - p_plus) / shots
+    v_minus = p_minus * (1.0 - p_minus) / shots_count
+    v_zero = p_zero * (1.0 - p_zero) / shots_count
+    v_plus = p_plus * (1.0 - p_plus) / shots_count
     r2 = x * x + y * y
     if r2 == 0.0:
         return theta, math.pi

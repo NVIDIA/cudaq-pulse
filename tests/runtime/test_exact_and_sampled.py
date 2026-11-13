@@ -155,30 +155,30 @@ def _three_measurements(q0):
 def test_sampled_branches_have_the_frequencies_of_the_exact_branches():
     lowered = on(_target(t1_us=0.0, t2_us=0.0, thermal=0.0), _three_measurements, Q[0])
     exact = {b.levels: b.probability for b in pulse.simulate(lowered, levels=2).branches}
-    shots = 4000
-    sampled = pulse.simulate(lowered, shots=shots, seed=5, branches="sampled", levels=2)
-    assert len(sampled.branches) <= shots
+    shots_count = 4000
+    sampled = pulse.simulate(lowered, shots_count=shots_count, seed=5, branches="sampled", levels=2)
+    assert len(sampled.branches) <= shots_count
     assert sum(b.probability for b in sampled.branches) == pytest.approx(1.0)
     assert np.trace(sampled.density_matrix).real == pytest.approx(1.0)
     for branch in sampled.branches:
         p = exact[branch.levels]
-        assert abs(branch.probability - p) < 5 * math.sqrt(p / shots)
-    assert sampled.records is not None and sampled.records.shape == (shots, 3)
+        assert abs(branch.probability - p) < 5 * math.sqrt(p / shots_count)
+    assert sampled.records is not None and sampled.records.shape == (shots_count, 3)
 
 
 def test_sampled_branches_need_shots():
     lowered = on(_target(), _three_measurements, Q[0])
-    with pytest.raises(ValueError, match="shots"):
+    with pytest.raises(ValueError, match="shots_count"):
         pulse.simulate(lowered, branches="sampled", levels=2)
     with pytest.raises(ValueError, match="unknown branches 'some'; choose 'all' or 'sampled'"):
-        pulse.simulate(lowered, shots=1, branches="some", levels=2)
+        pulse.simulate(lowered, shots_count=1, branches="some", levels=2)
 
 
 def test_branch_coverage_takes_its_members_or_their_strings():
     lowered = on(_target(), _three_measurements, Q[0])
-    by_string = pulse.simulate(lowered, shots=50, seed=2, branches="sampled", levels=2)
+    by_string = pulse.simulate(lowered, shots_count=50, seed=2, branches="sampled", levels=2)
     by_member = pulse.simulate(
-        lowered, shots=50, seed=2, branches=pulse.BranchCoverage.SAMPLED, levels=2
+        lowered, shots_count=50, seed=2, branches=pulse.BranchCoverage.SAMPLED, levels=2
     )
     assert by_member.branches == by_string.branches
     assert pulse.BranchCoverage("all") is pulse.BranchCoverage.ALL
@@ -216,7 +216,7 @@ def test_a_long_adaptive_loop_follows_one_path_per_shot():
     lowered = pulse.compile(_adaptive_loop, device=dev, control_system=_MACHINE).lower(
         dev.qudits[0], 60
     )
-    result = pulse.simulate(lowered, shots=3, seed=1, branches="sampled", levels=2)
+    result = pulse.simulate(lowered, shots_count=3, seed=1, branches="sampled", levels=2)
     assert 1 <= len(result.branches) <= 3
     assert all(len(branch.calls) == 60 for branch in result.branches)
     assert result.records is not None and result.records.shape == (3, 60)

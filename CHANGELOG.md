@@ -778,7 +778,7 @@ behavior may change in any 0.x release.
   `Controller.max_instructions` operations (unset: no limit); a loop
   that unrolls past them stops tracing as soon as the program does, with a
   `CompilationError` at the loop's line naming the loop, about how many
-  operations it unrolls to and the limit. `simulate(shots=...)` and `emulate(shots=...)`
+  operations it unrolls to and the limit. `simulate(shots_count=...)` and `emulate(shots_count=...)`
   take a positive `int` (`InvalidTypeError` or `InvalidValueError`
   otherwise; `simulate`'s default `None` still samples nothing), and a
   qudit index past a device or register is an `IndexOutOfRangeError`, an

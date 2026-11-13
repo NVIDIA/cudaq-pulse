@@ -111,10 +111,10 @@ def test_frequency_update_matches_the_exact_posterior_moments(mean, sigma, t, ph
     assert s**2 == pytest.approx(exact_variance, rel=1e-6)
 
 
-def _search(seed, shots, detuning=1.234e6):
+def _search(seed, shots_count, detuning=1.234e6):
     rng = np.random.default_rng(seed)
     mean, sigma = 0.0, 4e6
-    for _ in range(shots):
+    for _ in range(shots_count):
         t, phase = cal.ramsey_setting(mean, sigma)
         p1 = 0.5 * (1 - math.cos(2 * math.pi * detuning * t * 1e-9 + phase))
         mean, sigma = cal.frequency_update(mean, sigma, int(rng.random() < p1), t, phase)

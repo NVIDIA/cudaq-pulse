@@ -17,7 +17,7 @@ protocol: ``control_system()`` is the control system to compile for (a
 ``ControlSystem``, or its one ``Controller``), so that programs the
 controller cannot play fail at compile time;
 ``emit(program)`` takes ``Lowered.export_controller()`` and returns the
-controller's program; ``run(artifact, shots=...)`` runs it::
+controller's program; ``run(artifact, shots_count=...)`` runs it::
 
     from cudaq_pulse import backends
 
@@ -25,7 +25,7 @@ controller's program; ``run(artifact, shots=...)`` runs it::
     system = backend.control_system()
     lowered = pulse.compile(kernel, device=dev, control_system=system).lower(q)
     artifact = backend.emit(lowered.export_controller())
-    result = backend.run(artifact, shots=100)
+    result = backend.run(artifact, shots_count=100)
 
 A backend may also list the export formats it reads in ``formats``
 (``"cudaq-pulse.controller/1"``, ``cudaq_pulse.controller.FORMAT``, and the
@@ -81,7 +81,7 @@ class Backend(Protocol):
         """The controller's program for ``Lowered.export_controller()``."""
         ...
 
-    def run(self, artifact: Any, *, shots: int = 1) -> Any:
+    def run(self, artifact: Any, *, shots_count: int = 1) -> Any:
         """Run an emitted program on the controller."""
         ...
 
@@ -196,7 +196,7 @@ def validate(
     backend: Backend | str,
     controller: Controller | None = None,
     *,
-    shots: int = 1000,
+    shots_count: int = 1000,
     tolerance: float = 0.05,
 ) -> _Report:
     """Run the export test corpus through *backend* (a ``Backend`` or the
@@ -219,7 +219,7 @@ def validate(
     programs and the timing and order of plays, acquisitions, calls and
     answers on each line must then match the controller program, and the
     pulses must respect the controller's limits. ``emulate(artifact,
-    shots=...)`` gives each shot's measurement outcomes, in the order they
+    shots_count=...)`` gives each shot's measurement outcomes, in the order they
     end; the fraction of 1s of each must match ``cudaq_pulse.simulate``
     within *tolerance* plus three standard errors.
 
@@ -227,8 +227,8 @@ def validate(
     per program, such as ``FAIL unsupported_event: emit() accepted
     'forward_outcome'; it should raise IncompatibleBackendError``.
     """
-    if shots < 1:
-        raise InvalidValueError(f"shots must be positive, got {shots}")
+    if shots_count < 1:
+        raise InvalidValueError(f"shots_count must be positive, got {shots_count}")
     if not tolerance >= 0:
         raise InvalidValueError(f"tolerance must be at least 0, got {tolerance}")
     found = get(backend) if isinstance(backend, str) else backend
@@ -239,4 +239,4 @@ def validate(
         )
     from . import _validation
 
-    return _validation.validate(found, controller, shots, tolerance)
+    return _validation.validate(found, controller, shots_count, tolerance)

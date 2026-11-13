@@ -97,7 +97,7 @@ def _call_inputs(
         elif spec.descriptor.startswith("iq"):
             if iq is None:
                 raise InvalidValueError(
-                    f"{function.name}: IQ points are drawn per shot; simulate with shots"
+                    f"{function.name}: IQ points are drawn per shot; simulate with shots_count"
                 )
             part = [_point(iq(key)) for key in part_keys]
         elif spec.source == "integer":

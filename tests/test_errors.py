@@ -60,9 +60,12 @@ def test_a_not_found_error_prints_without_quotes():
 def test_problems_are_listed_after_the_message():
     error = pulse.InvalidValueError(
         "2 problems in the options",
-        problems=[pulse.Problem("must be positive", path="shots", value=0), pulse.Problem("x")],
+        problems=[
+            pulse.Problem("must be positive", path="shots_count", value=0),
+            pulse.Problem("x"),
+        ],
     )
-    assert str(error) == "2 problems in the options:\n  shots: must be positive\n  x"
+    assert str(error) == "2 problems in the options:\n  shots_count: must be positive\n  x"
     assert error.problems[0].value == 0
 
 
@@ -83,9 +86,14 @@ def test_an_error_without_problems_has_an_empty_tuple_and_no_location():
 
 def test_a_problem_prints_its_location_path_and_fix():
     problem = pulse.Problem(
-        "must be positive", path="shots", fix="pass shots=1000", file="run.json", line=3, column=7
+        "must be positive",
+        path="shots_count",
+        fix="pass shots_count=1000",
+        file="run.json",
+        line=3,
+        column=7,
     )
-    assert str(problem) == "run.json:3:7: shots: must be positive; pass shots=1000"
+    assert str(problem) == "run.json:3:7: shots_count: must be positive; pass shots_count=1000"
     assert str(pulse.Problem("bad", file="f.json")) == "f.json: bad"
     assert pulse.Problem("bad").value is pulse.Problem.UNSET
 
@@ -110,7 +118,7 @@ ALL = [
 
 @pytest.mark.parametrize("cls", ALL, ids=lambda c: c.__name__)
 def test_each_error_survives_pickling_with_its_problems(cls):
-    problem = pulse.Problem("must be positive", path="shots", value=0, line=2)
+    problem = pulse.Problem("must be positive", path="shots_count", value=0, line=2)
     error = cls("1 problem", problems=[problem])
     copy = pickle.loads(pickle.dumps(error))
     assert type(copy) is cls

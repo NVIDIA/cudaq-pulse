@@ -65,7 +65,7 @@ class ToyBackend:
             )
         return "\n".join(lines) + "\n"
 
-    def run(self, artifact: Any, *, shots: int = 1) -> ToyResult:
+    def run(self, artifact: Any, *, shots_count: int = 1) -> ToyResult:
         played = []
         for text in str(artifact).splitlines():
             line, start, kind = text.split()[:3]
@@ -74,7 +74,7 @@ class ToyBackend:
         readouts = sum(1 for _, _, kind in played if kind == "readout")
         return ToyResult(
             played=tuple((line, start, kind) for start, line, kind in played),
-            outcomes=tuple((0,) * readouts for _ in range(shots)),
+            outcomes=tuple((0,) * readouts for _ in range(shots_count)),
         )
 
 
@@ -113,5 +113,5 @@ if __name__ == "__main__":
     compiled = pulse.compile(drive_and_measure, device=dev, control_system=backend.control_system())
     program = backend.emit(compiled.lower(dev.qudits[0]).export_controller())
     print(program, end="")
-    print(backend.run(program, shots=2))
+    print(backend.run(program, shots_count=2))
     backends.unregister("toy")

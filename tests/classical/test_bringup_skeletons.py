@@ -553,5 +553,7 @@ def test_k19_pauli_benchmarking_returns_to_zero_unless_miscalibrated(target):
         lowered, initial_state=[1, 0], dt_ns=1.0, plant=plant.description(), levels=2
     )
     assert drifted.density_matrix[0, 0].real < ideal.density_matrix[0, 0].real - 0.01
-    shots = pulse.simulate(lowered, initial_state=[1, 0], dt_ns=1.0, shots=200, seed=3, levels=2)
-    assert shots.records is not None and len(shots.records) == 200
+    shots_count = pulse.simulate(
+        lowered, initial_state=[1, 0], dt_ns=1.0, shots_count=200, seed=3, levels=2
+    )
+    assert shots_count.records is not None and len(shots_count.records) == 200

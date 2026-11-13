@@ -359,7 +359,7 @@ it.
   ``decode_surface returned 3 bits; its result is pulse.Length[pulse.Bits,
   2]``.
 - ``latency_branching=True`` branches a timeout on whether the answer came
-  in time, with the probability of the latency model; with ``shots`` that
+  in time, with the probability of the latency model; with ``shots_count`` that
   outcome is sampled.
 - ``readout="model"`` reports outcomes through each qubit's assignment
   errors, and ``"model_with_decay"`` adds relaxation during the readout.
@@ -368,7 +368,7 @@ it.
 - A function that takes IQ points (``complex`` or ``list[complex]``) gets
   them synthesized per shot from a
   dispersive readout model, at the true level of each readout, from the
-  frequency of its tone and the amplitude of its pulse. It needs ``shots``.
+  frequency of its tone and the amplitude of its pulse. It needs ``shots_count``.
   The model reads each qubit's ``DispersiveReadout`` and its ``READOUT``
   calibration (a ``ReadoutPulse``): it puts the resonator at the readout's
   ``frequency_hz`` and scales the points by the pulse's amplitude over the
@@ -442,7 +442,7 @@ or id; a name the control system has no link for is an ``InvalidValueError``.
 
    run = emulation.emulate(
        lowered,
-       shots=200,
+       shots_count=200,
        transport={"gpu": emulation.Transport(fixed_ns=120, jitter_ns=40)},
        seed=1,
    )
@@ -598,7 +598,7 @@ answer's length; under ASAP the excitation plays as early as it can, and
 the qubit also decays through the call's latency.
 
 A program that measures hundreds of times in one shot is simulated one
-path per shot: ``pulse.simulate(lowered, shots=n, branches="sampled")``. Idle
+path per shot: ``pulse.simulate(lowered, shots_count=n, branches="sampled")``. Idle
 waits and square pulses are propagated exactly, so a shot's cost does not
 grow with its waits.
 

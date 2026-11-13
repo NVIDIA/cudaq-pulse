@@ -108,7 +108,7 @@ def test_simulate_takes_the_kernel_and_its_arguments():
     np.testing.assert_array_equal(pulse.simulate(rabi, q, _PI, levels=2).density_matrix, expected)
     compiled = pulse.compile(rabi)
     np.testing.assert_array_equal(
-        pulse.simulate(compiled, q, _PI, shots=2, seed=1, levels=2).density_matrix, expected
+        pulse.simulate(compiled, q, _PI, shots_count=2, seed=1, levels=2).density_matrix, expected
     )
     with pytest.raises(pulse.InvalidTypeError, match="module of a call, which has its arguments"):
         pulse.simulate(rabi.lower(q, _PI), q, levels=2)
@@ -164,13 +164,13 @@ def test_simulate_binds_a_program_s_parameters_as_bind_does():
 
 
 def test_active_reset_returns_the_excited_state_to_ground():
-    result = _run(_active_reset(_PI), shots=200, seed=1)
+    result = _run(_active_reset(_PI), shots_count=200, seed=1)
     np.testing.assert_allclose(result.density_matrix, np.diag([1.0, 0.0]), atol=1e-7)
     assert result.records is not None and (result.records[:, 0] == 1).all()
 
 
 def test_active_reset_of_a_superposition():
-    result = _run(_active_reset(_HALF_PI), shots=4000, seed=2)
+    result = _run(_active_reset(_HALF_PI), shots_count=4000, seed=2)
     # Either outcome ends in |0>: the ensemble is pure.
     np.testing.assert_allclose(result.density_matrix, np.diag([1.0, 0.0]), atol=1e-7)
     probabilities = {b.levels: b.probability for b in result.branches}
@@ -181,7 +181,7 @@ def test_active_reset_of_a_superposition():
 
 
 def test_conditional_flip_correlates_the_qudits():
-    result = _run(conditional_flip, 2, shots=1000, seed=3)
+    result = _run(conditional_flip, 2, shots_count=1000, seed=3)
     expected = np.zeros((4, 4))
     expected[0, 0] = expected[3, 3] = 0.5  # |00> and |11>, qubit 0 least significant
     np.testing.assert_allclose(result.density_matrix, expected, atol=1e-7)
@@ -202,7 +202,7 @@ def test_decay_during_the_readout_sets_the_outcome_probability():
 
 def test_measuring_a_qutrit_dephases_all_three_levels():
     psi = np.ones(3) / math.sqrt(3)
-    result = _run(measure, levels=3, initial_state=psi, shots=3000, seed=4)
+    result = _run(measure, levels=3, initial_state=psi, shots_count=3000, seed=4)
     np.testing.assert_allclose(result.density_matrix, np.eye(3) / 3, atol=1e-8)
     assert {b.levels[0]: b.probability for b in result.branches} == pytest.approx(
         {0: 1 / 3, 1: 1 / 3, 2: 1 / 3}
@@ -225,7 +225,7 @@ def repeated_reset(q0):
 
 def test_resets_in_a_retained_loop():
     assert "scf.for" in repeated_reset.lower(Q[0]).mlir()
-    result = _run(repeated_reset, shots=500, seed=5)
+    result = _run(repeated_reset, shots_count=500, seed=5)
     np.testing.assert_allclose(result.density_matrix, np.diag([1.0, 0.0]), atol=1e-7)
     # Three measurements, one per iteration; after the first reset every
     # later one reads 0.
