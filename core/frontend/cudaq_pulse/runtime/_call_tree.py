@@ -74,7 +74,7 @@ class ReadoutModel:
     def __init__(
         self, target: Any, qudits: Sequence[int], dims: Sequence[int], decay: bool
     ) -> None:
-        from cudaq_pulse.targets.base import DispersiveReadout
+        from cudaq_pulse.quantum_systems.base import DispersiveReadout
 
         self.matrices: dict[int, np.ndarray] = {}
         for position, qudit in enumerate(qudits):

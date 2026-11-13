@@ -54,7 +54,7 @@ if TYPE_CHECKING:
     from .._device import Qudit
     from ..compiler import Lowered
     from ..kernel._kernel import CompiledKernel, Kernel
-    from ..targets.models import SimulationModel
+    from ..quantum_systems.models import SimulationModel
     from ._calls import CallRecord
 
 __all__ = ["Branch", "BranchCoverage", "Measurement", "SimulationResult", "simulate"]
@@ -509,7 +509,7 @@ def _forget(target_id: int, _: Any = None) -> None:
 
 
 def _read_only_models() -> tuple[type, ...]:
-    from ..targets.models import TransmonModel
+    from ..quantum_systems.models import TransmonModel
 
     return (TransmonModel,)
 
@@ -546,7 +546,7 @@ def _simulation_model(target: Any) -> Callable[..., SimulationResult]:
 def _check_quantum_system(lowered: Lowered, quantum_system: Any) -> Any:
     """The description of *quantum_system*, a quantum system or a device
     description, which defines every qudit of *lowered*."""
-    from ..targets import DeviceDescription
+    from ..quantum_systems import DeviceDescription
 
     if not isinstance(quantum_system, DeviceDescription):
         from .._device import QuantumSystem

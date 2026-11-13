@@ -11,9 +11,7 @@ import sys
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse.runtime._call_tree import ReadoutModel
-from cudaq_pulse.runtime._calls import IQModel
-from cudaq_pulse.targets import (
+from cudaq_pulse.quantum_systems import (
     DeviceDescription,
     DispersiveReadout,
     DragPulse,
@@ -23,6 +21,8 @@ from cudaq_pulse.targets import (
     Readout,
     transmon_17q,
 )
+from cudaq_pulse.runtime._call_tree import ReadoutModel
+from cudaq_pulse.runtime._calls import IQModel
 
 
 class _Fluorescence(Readout):

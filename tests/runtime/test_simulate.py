@@ -14,7 +14,7 @@ import warnings
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.targets import Coupling, DeviceDescription, MicrowaveDrive, PhysicalQudit
+from cudaq_pulse.quantum_systems import Coupling, DeviceDescription, MicrowaveDrive, PhysicalQudit
 
 from tests._handles import Q
 from tests.runtime._lowering import on
@@ -268,7 +268,7 @@ def test_gpu_backend_matches_the_reference(kernel, n):
 
 
 def test_each_qudit_has_its_model_s_levels_unless_simulate_sets_them():
-    from cudaq_pulse.targets import TransmonModel
+    from cudaq_pulse.quantum_systems import TransmonModel
 
     lowered = on(_target(1), measure, Q[0])
     assert pulse.simulate(lowered).dims == (TransmonModel.levels,) == (3,)

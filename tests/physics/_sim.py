@@ -3,7 +3,7 @@
 """Devices and runs in the reference conventions: amplitudes are Rabi rates."""
 
 import cudaq_pulse as pulse
-from cudaq_pulse.targets import Coupling, DeviceDescription, MicrowaveDrive, PhysicalQudit
+from cudaq_pulse.quantum_systems import Coupling, DeviceDescription, MicrowaveDrive, PhysicalQudit
 
 PASSES = (
     "verify",

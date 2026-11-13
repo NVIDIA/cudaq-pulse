@@ -10,7 +10,7 @@ from typing import ClassVar
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse.targets import (
+from cudaq_pulse.quantum_systems import (
     DeviceDescription,
     MicrowaveDrive,
     PhysicalQudit,

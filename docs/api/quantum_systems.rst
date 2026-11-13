@@ -56,7 +56,7 @@ One nanosecond, microsecond, millisecond and second:
    :no-value:
 
 Errors are on :doc:`errors`; the targets a device is built from are on
-:doc:`targets`.
+:doc:`descriptions`.
 
 Control systems
 ---------------
@@ -104,8 +104,8 @@ with ``[processors.dispatch_keys]`` beneath it.
 Calibrations and the transmon circuit model
 -------------------------------------------
 
-.. autoclass:: cudaq_pulse.targets.Calibration
+.. autoclass:: cudaq_pulse.quantum_systems.Calibration
    :members:
 
-.. automodule:: cudaq_pulse.targets.transmon_model
+.. automodule:: cudaq_pulse.quantum_systems.transmon_model
    :members: TransmonCircuit, ChargeCoupledPair, anchored_charge_coupling_hz

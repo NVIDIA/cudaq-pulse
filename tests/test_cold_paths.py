@@ -279,7 +279,7 @@ if sys.argv[1] == "eager":
 
 import cudaq_pulse.controller as c
 from cudaq_pulse import Problem
-from cudaq_pulse.targets import ResidualZZ
+from cudaq_pulse.quantum_systems import ResidualZZ
 
 classes = [ResidualZZ, c.FunctionUsage, c.ProcessorUsage, c.ControllerUsage, c.LimitExceeded,
            c.UsageReport, Problem]
@@ -412,7 +412,7 @@ def test_classes_most_programs_never_use_are_made_when_used():
         _PLAIN + "import cudaq_pulse.controller as c\n"
         "low.schedule; low.export_controller(); low.export_emulation(); c.resources(low)\n"
         f"names = [(n, getattr(c, n)) for n in {usage!r}]\n"
-        "names += [('ResidualZZ', p.targets.ResidualZZ), ('Problem', p.Problem)]\n"
+        "names += [('ResidualZZ', p.quantum_systems.ResidualZZ), ('Problem', p.Problem)]\n"
         "def unmade():\n"
         "    return sorted(n for n, cls in names\n"
         "                  if type(vars(cls)['__dataclass_fields__']) is not dict)\n"

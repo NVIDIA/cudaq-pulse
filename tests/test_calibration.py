@@ -10,10 +10,10 @@ from pathlib import Path
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse.targets import _transmon_17q as _k
-from cudaq_pulse.targets import transmon_17q
-from cudaq_pulse.targets.calibration import _SHIPPED, Calibration
-from cudaq_pulse.targets.transmon_model import anchored_charge_coupling_hz
+from cudaq_pulse.quantum_systems import _transmon_17q as _k
+from cudaq_pulse.quantum_systems import transmon_17q
+from cudaq_pulse.quantum_systems.calibration import _SHIPPED, Calibration
+from cudaq_pulse.quantum_systems.transmon_model import anchored_charge_coupling_hz
 
 KINDS = {"published", "digitized", "fitted"}
 _SHIPPED_17Q = Path(_SHIPPED, "transmon_17q.json")
@@ -165,7 +165,7 @@ def _index_entry(name):
 
 def test_the_shipped_calibration_index_is_of_the_shipped_files():
     from cudaq_pulse._source_stamp import CALIBRATIONS
-    from cudaq_pulse.targets._shipped_calibrations import SHIPPED
+    from cudaq_pulse.quantum_systems._shipped_calibrations import SHIPPED
 
     assert set(SHIPPED) == set(CALIBRATIONS)
     for name, entry in SHIPPED.items():
@@ -178,7 +178,7 @@ def test_the_shipped_calibration_index_is_of_the_shipped_files():
 
 def test_a_device_of_the_shipped_calibration_does_not_read_its_file(monkeypatch):
     from cudaq_pulse._source_stamp import CALIBRATIONS
-    from cudaq_pulse.targets import calibration, transmon
+    from cudaq_pulse.quantum_systems import calibration, transmon
 
     read = transmon_17q()
     read_device = pulse.quantum_system("transmon_17q")
@@ -194,7 +194,7 @@ def test_a_device_of_the_shipped_calibration_does_not_read_its_file(monkeypatch)
 
 
 def test_an_indexed_shipped_calibration_reads_its_file_for_other_values(monkeypatch, cal):
-    from cudaq_pulse.targets import calibration
+    from cudaq_pulse.quantum_systems import calibration
 
     monkeypatch.setattr(calibration, "_LOADED", {})
     shipped = calibration.shipped_calibration("transmon_17q", "2022-a")

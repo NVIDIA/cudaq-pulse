@@ -452,10 +452,10 @@ behavior may change in any 0.x release.
   equal ones, do not mix in one call or in a kernel compiled for one
   (`QuantumSystemMismatchError`), and an empty `layout` is a
   `QuantumSystemDefinitionError`. Target descriptions are
-  `cudaq_pulse.targets.DeviceDescription`; the shipped target,
+  `cudaq_pulse.quantum_systems.DeviceDescription`; the shipped target,
   `"transmon_17q"`, is a 17-qubit transmon device built from
   Krinner et al., Nature 605, 669 (2022).
-  A target's `model` (`cudaq_pulse.targets.TransmonModel` by default, a
+  A target's `model` (`cudaq_pulse.quantum_systems.TransmonModel` by default, a
   `SimulationModel` class or instance, or `None`) says how the simulator
   treats its qudits and which operator its couplings are (the exchange
   g (a^dagger b + a b^dagger), in the rotating-wave approximation, for
@@ -469,7 +469,7 @@ behavior may change in any 0.x release.
   `simulate` refuses it by name, and its tuned gates,
   `{pulse.gates.CZ: FluxCZ(duration_ns, buffer_ns=None,
   interaction_frequency_hz=None)}`; the `transmon_17q` target gives its
-  published CZ values, and `cudaq_pulse.targets.transmon.CZ_LAYERS` the
+  published CZ values, and `cudaq_pulse.quantum_systems.transmon.CZ_LAYERS` the
   (auxiliary, data) pairs of each of its CZ time steps. A target's
   `residual_zz` lists `ResidualZZ(qudits, rate_hz)` entries, a static ZZ
   rate beyond what the couplings produce; the simulator's module carries
@@ -487,10 +487,10 @@ behavior may change in any 0.x release.
   column; an unknown key or target name suggests the closest one, and the
   reserved keys (`zones`, `sites`, `moves`, `transport`) are problems too.
   `python -m cudaq_pulse.doctor --system FILE [--json]` runs the same checks.
-- **Calibrations and the transmon model.** `cudaq_pulse.targets.Calibration`
+- **Calibrations and the transmon model.** `cudaq_pulse.quantum_systems.Calibration`
   loads fitted values, each with its kind, source, uncertainty and cooldown,
   apart from the published target, and `pulse.quantum_system` takes `calibration=`
-  and `cooldown=`. `cudaq_pulse.targets.transmon_model` computes
+  and `cooldown=`. `cudaq_pulse.quantum_systems.transmon_model` computes
   flux-tunable transmon levels and charge-coupled pairs from circuit values.
   The shipped `transmon_17q` calibration has one device-wide charge coupling,
   fitted to the measured `|11>`-`|20>` coupling of X2-D4, so the
@@ -718,8 +718,8 @@ behavior may change in any 0.x release.
   classical channel an `ExecutionError`. Every warning cudaq-pulse issues
   is a `PulseWarning`.
   `cudaq_pulse.compiler`, `cudaq_pulse.runtime.simulate` and
-  `cudaq_pulse.targets.transmon_model` list their public names in `__all__`,
-  as the other documented modules do. `cudaq_pulse.targets.UnknownQuantumSystemError`
+  `cudaq_pulse.quantum_systems.transmon_model` list their public names in `__all__`,
+  as the other documented modules do. `cudaq_pulse.quantum_systems.UnknownQuantumSystemError`
   (an unregistered target name) and
   `cudaq_pulse.compiler.UnsupportedInterpreterError` (a Python whose bytecode
   the kernel tracer does not know) are public, and every public name is in

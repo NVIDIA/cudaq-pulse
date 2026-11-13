@@ -171,7 +171,7 @@ To execute on a GPU (requires cuDensityMat runtime):
 
    import math
    import cudaq_pulse as pulse
-   from cudaq_pulse.targets import MicrowaveDrive, PhysicalQudit, DeviceDescription
+   from cudaq_pulse.quantum_systems import MicrowaveDrive, PhysicalQudit, DeviceDescription
 
    target = DeviceDescription(
        name="one-qubit-demo",

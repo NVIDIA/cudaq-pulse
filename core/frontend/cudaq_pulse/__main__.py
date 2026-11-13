@@ -13,7 +13,7 @@ import os
 import runpy
 import sys
 
-from .targets._registry import ENV_VAR, available_quantum_systems, make_quantum_system
+from .quantum_systems._registry import ENV_VAR, available_quantum_systems, make_quantum_system
 
 
 def main(argv: list[str] | None = None) -> int:

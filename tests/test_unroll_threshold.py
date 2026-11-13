@@ -10,7 +10,7 @@ from cudaq_pulse import ControlSystem
 from cudaq_pulse.classical import Link
 from cudaq_pulse.kernel._unroll import DEFAULT_UNROLL_THRESHOLD
 from cudaq_pulse.kernel.bytecode_bridge import compile_kernel_bytecode
-from cudaq_pulse.targets import Coupling, DeviceDescription, MicrowaveDrive, PhysicalQudit
+from cudaq_pulse.quantum_systems import Coupling, DeviceDescription, MicrowaveDrive, PhysicalQudit
 
 TARGET = DeviceDescription(
     name="unroll-pair",

@@ -46,7 +46,7 @@ if str(_ROOT) not in sys.path:
 import cudaq_pulse as pulse  # noqa: E402
 from cudaq_pulse import Controller, ControlSystem  # noqa: E402
 from cudaq_pulse.kernel import packed_ir_builder  # noqa: E402
-from cudaq_pulse.targets import DeviceDescription, PhysicalQudit  # noqa: E402
+from cudaq_pulse.quantum_systems import DeviceDescription, PhysicalQudit  # noqa: E402
 
 Op = Callable[[int], object]
 

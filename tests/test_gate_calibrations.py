@@ -13,7 +13,7 @@ import sys
 import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse.gates import CZ, READOUT, X90, Y90, Gate, X, Y
-from cudaq_pulse.targets import (
+from cudaq_pulse.quantum_systems import (
     Coupling,
     DeviceDescription,
     DispersiveReadout,
@@ -57,7 +57,7 @@ def test_the_gates_are_one_name_each():
 
 
 def test_the_gate_values_are_the_ones_targets_check():
-    from cudaq_pulse.targets.base import _GATES
+    from cudaq_pulse.quantum_systems.base import _GATES
 
     assert set(_GATES) == {str(g) for g in Gate}
 

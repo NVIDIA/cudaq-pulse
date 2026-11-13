@@ -63,7 +63,7 @@ if TYPE_CHECKING:
     from ._op_tables import OpCycles
     from .compiler import Lowered, _MachineModel
     from .controller import WaveformMemoryScope
-    from .targets.base import DeviceDescription
+    from .quantum_systems.base import DeviceDescription
 else:
     from ._errors import _dataclass_when_used
 
@@ -2342,7 +2342,7 @@ def _plain(value: Any) -> Any:
 def _component_kinds() -> dict[str, dict[str, type[Any]]]:
     """The modality components of a qudit a system file holds, by the member
     they set and the kind it writes."""
-    from .targets.base import DispersiveReadout, MicrowaveDrive
+    from .quantum_systems.base import DispersiveReadout, MicrowaveDrive
 
     return {"drive": {"microwave": MicrowaveDrive}, "readout": {"dispersive": DispersiveReadout}}
 
@@ -2391,7 +2391,7 @@ def _qudit_data(q: Any) -> dict[str, Any]:
 
 def _model_kinds() -> dict[str, type]:
     """The simulation models a system file holds, by the kind it writes."""
-    from .targets.models import SimulationModel, TransmonModel
+    from .quantum_systems.models import SimulationModel, TransmonModel
 
     return {"transmon": TransmonModel, "generic": SimulationModel}
 
@@ -2435,7 +2435,7 @@ def _device_data(quantum_system: QuantumSystem) -> dict[str, Any]:
     import json
 
     from . import __version__
-    from .targets.calibration import Calibration
+    from .quantum_systems.calibration import Calibration
 
     data: dict[str, Any] = {"format": SYSTEM_FORMAT, "written_by": f"cudaq-pulse {__version__}"}
     spec = quantum_system._spec
@@ -2550,7 +2550,7 @@ class _Reader:
             return None
 
     def quantum_system(self, data: Any, path: str) -> DeviceDescription | None:
-        from .targets.base import Coupling, DeviceDescription, PhysicalQudit, ResidualZZ
+        from .quantum_systems.base import Coupling, DeviceDescription, PhysicalQudit, ResidualZZ
 
         system = self.mapping(data, path, _SYSTEM_KEYS)
         if system is None:
@@ -2634,7 +2634,7 @@ class _Reader:
     def calibrations(self, data: Any, path: str, owner: str) -> dict[Any, Any]:
         """The calibrations of a qudit or coupling (*owner*), by gate (or
         ``(gate, transition)``), from their entries in the file."""
-        from .targets.base import _CALIBRATION_TYPES, _COUPLING_GATES, _QUDIT_GATES
+        from .quantum_systems.base import _CALIBRATION_TYPES, _COUPLING_GATES, _QUDIT_GATES
 
         allowed = _QUDIT_GATES if owner == "qudit" else _COUPLING_GATES
         found: dict[Any, Any] = {}

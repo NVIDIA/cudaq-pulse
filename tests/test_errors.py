@@ -11,8 +11,8 @@ import pytest
 from cudaq_pulse.backends import BackendNotFoundError
 from cudaq_pulse.kernel._bytecode_normalize import UnsupportedInterpreterError
 from cudaq_pulse.kernel.ir_builder import SymbolicValueError
+from cudaq_pulse.quantum_systems import UnknownQuantumSystemError
 from cudaq_pulse.runtime import GpuRuntimeError
-from cudaq_pulse.targets import UnknownQuantumSystemError
 
 CAUGHT_AS = [
     (pulse.InvalidValueError, ValueError),
@@ -151,7 +151,7 @@ def test_an_internal_error_asks_for_a_report():
 
 def test_library_errors_are_pulse_errors_of_their_kind():
     from cudaq_pulse.classical import emulation
-    from cudaq_pulse.targets import Calibration, transmon_generic
+    from cudaq_pulse.quantum_systems import Calibration, transmon_generic
 
     with pytest.raises(pulse.NotFoundError, match="no calibration 'missing'"):
         Calibration.load("missing")

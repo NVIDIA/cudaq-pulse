@@ -23,7 +23,7 @@ import numpy as np
 import pytest
 from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline
 from cudaq_pulse.kernel.ir_builder import CompilationError
-from cudaq_pulse.targets import DeviceDescription, MicrowaveDrive, PhysicalQudit
+from cudaq_pulse.quantum_systems import DeviceDescription, MicrowaveDrive, PhysicalQudit
 
 from tests._handles import Q
 from tests._ir import python_ir

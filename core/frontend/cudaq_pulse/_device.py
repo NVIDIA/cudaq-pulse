@@ -34,14 +34,14 @@ from ._errors import (
     _count,
     _ranges,
 )
-from .targets._registry import (
+from .quantum_systems._registry import (
     NoProcessQuantumSystemError,
     UnknownQuantumSystemError,
     _registry,
     make_quantum_system,
 )
-from .targets.base import DeviceDescription
-from .targets.models import SimulationModel
+from .quantum_systems.base import DeviceDescription
+from .quantum_systems.models import SimulationModel
 
 try:
     # hashlib's own blake2b, without hashlib's import of OpenSSL (a millisecond).
@@ -54,8 +54,8 @@ if TYPE_CHECKING:
 
     from ._system import ControlSystem
     from .gates import Gate
-    from .targets.base import Coupling, DragPulse, PhysicalQudit, ReadoutPulse, ResidualZZ
-    from .targets.calibration import Calibration
+    from .quantum_systems.base import Coupling, DragPulse, PhysicalQudit, ReadoutPulse, ResidualZZ
+    from .quantum_systems.calibration import Calibration
 
     type _MaybeSystem = QuantumSystem | None
 
@@ -525,7 +525,7 @@ class QuantumSystem:
     ) -> DragPulse | ReadoutPulse:
         """``line.get_calibration(gate, transition)`` of the drive (or
         readout) line of carrier *index*, while a kernel is traced."""
-        from .targets.base import _DRIVE_GATES, _gate_label, _gate_name, _qudit_calibration
+        from .quantum_systems.base import _DRIVE_GATES, _gate_label, _gate_name, _qudit_calibration
 
         name = _gate_name(gate)
         if (name == "readout") is not readout:
@@ -657,7 +657,7 @@ def _from_spec(
     calibration: Any = None,
     control_system: ControlSystem | None = None,
 ) -> QuantumSystem:
-    from .targets._registry import make_quantum_system
+    from .quantum_systems._registry import make_quantum_system
 
     return _calibrated(make_quantum_system(spec), spec, source, layout, calibration, control_system)
 
@@ -678,7 +678,7 @@ def _calibrated(
     if calibration is not None:
         target = calibration.apply(target)
     elif spec == "transmon_17q":
-        from .targets.calibration import shipped_calibration
+        from .quantum_systems.calibration import shipped_calibration
 
         calibration = shipped_calibration("transmon_17q")
     name = target.name if spec is None else spec
@@ -699,7 +699,7 @@ def _calibrated(
 def _target(
     spec: Any, problems: list[Problem], key: str = "quantum_system"
 ) -> DeviceDescription | None:
-    from .targets._registry import available_quantum_systems, make_quantum_system
+    from .quantum_systems._registry import available_quantum_systems, make_quantum_system
 
     if isinstance(spec, DeviceDescription):
         return spec
@@ -799,7 +799,7 @@ def _empty(layout: Sequence[Any], problems: list[Problem]) -> tuple[int, ...] | 
 def _calibration(config: Mapping[str, Any], problems: list[Problem]) -> Any:
     """The config's calibration: a Calibration, or a shipped name or a path,
     for the config's ``cooldown`` (the file's default if absent)."""
-    from .targets.calibration import Calibration
+    from .quantum_systems.calibration import Calibration
 
     given = config.get("calibration")
     cooldown = config.get("cooldown")
@@ -1011,7 +1011,7 @@ def quantum_system(
 
     ``device("transmon_17q")`` is the device of a registered target,
     with every carrier in order (a name takes its argument after a colon, as
-    in ``"transmon_generic:4"``); ``cudaq_pulse.targets.available_quantum_systems()``
+    in ``"transmon_generic:4"``); ``cudaq_pulse.quantum_systems.available_quantum_systems()``
     lists the names. A string is always a name: ``QuantumSystem.load(path)`` reads
     a system file, and ``QuantumSystem.from_dict(data)`` its data. ``device()`` is
     the process quantum system, named by ``CUDAQ_PULSE_QUANTUM_SYSTEM`` (``python -m
@@ -1053,10 +1053,10 @@ def quantum_system(
             and control_system is None
             and clock_ghz is None
         ):
-            from .targets._registry import current_quantum_system
+            from .quantum_systems._registry import current_quantum_system
 
             return current_quantum_system()
-        from .targets._registry import ENV_VAR, _no_quantum_system_message
+        from .quantum_systems._registry import ENV_VAR, _no_quantum_system_message
 
         description = os.environ.get(ENV_VAR)
         if not description:

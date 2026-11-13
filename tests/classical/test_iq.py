@@ -9,8 +9,13 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
+from cudaq_pulse.quantum_systems import (
+    DeviceDescription,
+    DispersiveReadout,
+    PhysicalQudit,
+    ReadoutPulse,
+)
 from cudaq_pulse.runtime._calls import IQModel
-from cudaq_pulse.targets import DeviceDescription, DispersiveReadout, PhysicalQudit, ReadoutPulse
 
 PI_AMP = math.pi / 20
 PLUS = [2**-0.5, 2**-0.5]
@@ -252,7 +257,7 @@ def test_emulation_draws_iq_points_at_the_reported_levels():
 
 def test_the_17_qudit_twin_separates_its_readout_states():
     from cudaq_pulse.classical import emulation
-    from cudaq_pulse.targets import transmon_17q
+    from cudaq_pulse.quantum_systems import transmon_17q
 
     dev = pulse.quantum_system(transmon_17q())
     q = dev.qudits[0]

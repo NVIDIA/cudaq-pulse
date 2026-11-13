@@ -7,8 +7,8 @@ import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse import _build_config
 from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline
+from cudaq_pulse.quantum_systems.base import DeviceDescription, PhysicalQudit
 from cudaq_pulse.runtime import gpu
-from cudaq_pulse.targets.base import DeviceDescription, PhysicalQudit
 
 from tests._handles import Q
 from tests.runtime._lowering import evolve, on

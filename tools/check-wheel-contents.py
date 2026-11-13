@@ -258,7 +258,7 @@ def check_wheel(path: Path) -> list[str]:
         "cudaq_pulse/__init__.py",
         "cudaq_pulse/py.typed",
         "cudaq_pulse/_native/_cudaq_pulse_native.pyi",
-        "cudaq_pulse/targets/calibrations/transmon_17q.json",
+        "cudaq_pulse/quantum_systems/calibrations/transmon_17q.json",
     ]
     if linux:
         required += [f"cudaq_pulse/lib/libcudm-runtime-cu{major}.so" for major in (12, 13)]

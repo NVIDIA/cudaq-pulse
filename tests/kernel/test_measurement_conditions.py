@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 from cudaq_pulse.classical import emulation
 from cudaq_pulse.kernel.ir_builder import CompilationError
-from cudaq_pulse.targets import DeviceDescription, PhysicalQudit
+from cudaq_pulse.quantum_systems import DeviceDescription, PhysicalQudit
 
 PI_AMP = math.pi / 20  # square(40, PI_AMP) is a pi pulse
 

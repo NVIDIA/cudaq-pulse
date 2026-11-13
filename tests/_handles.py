@@ -5,7 +5,7 @@
 import dataclasses
 
 import cudaq_pulse as pulse
-from cudaq_pulse.targets import DeviceDescription, PhysicalQudit
+from cudaq_pulse.quantum_systems import DeviceDescription, PhysicalQudit
 
 
 def ladder_target(n: int = 64) -> DeviceDescription:

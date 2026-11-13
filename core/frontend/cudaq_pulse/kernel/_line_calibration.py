@@ -66,7 +66,7 @@ def play_calibrated(emitter: PulseIREmitter, fname: str, call_args: list[Any]) -
 def calibrated_waveform(emitter: PulseIREmitter, pulse: Any) -> IRValue | None:
     """The waveform *pulse* plays, if it is a calibrated pulse (``DragPulse``,
     ``ReadoutPulse``); None for any other value."""
-    from ..targets.base import DragPulse, FluxCZ, ReadoutPulse
+    from ..quantum_systems.base import DragPulse, FluxCZ, ReadoutPulse
 
     cls = pulse.__class__
     if cls is FluxCZ:

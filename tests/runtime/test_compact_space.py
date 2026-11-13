@@ -11,7 +11,7 @@ import dataclasses
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.targets import DeviceDescription
+from cudaq_pulse.quantum_systems import DeviceDescription
 
 _TRANSMON_17Q = pulse.quantum_system("transmon_17q")
 

@@ -20,7 +20,7 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse.kernel.ir_builder import CompilationError
-from cudaq_pulse.targets import DeviceDescription, PhysicalQudit
+from cudaq_pulse.quantum_systems import DeviceDescription, PhysicalQudit
 
 from tests._handles import Q
 

@@ -81,7 +81,7 @@ class ToyBackend:
 if __name__ == "__main__":
     import cudaq_pulse as pulse
     from cudaq_pulse import backends
-    from cudaq_pulse.targets import DeviceDescription, PhysicalQudit
+    from cudaq_pulse.quantum_systems import DeviceDescription, PhysicalQudit
 
     # Installed, the backend is found by its entry point; here it is
     # registered in the process.

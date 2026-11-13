@@ -12,8 +12,8 @@ import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse.classical import calibration as cal
 from cudaq_pulse.classical.loop import EstimateLog, ParameterStore
+from cudaq_pulse.quantum_systems import DeviceDescription, PhysicalQudit
 from cudaq_pulse.runtime.drift import DriftingPlant, TelegraphT1
-from cudaq_pulse.targets import DeviceDescription, PhysicalQudit
 
 PI_AMP = math.pi / 20
 

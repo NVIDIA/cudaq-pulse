@@ -156,7 +156,7 @@ def device_reduce(quantum_system: Any) -> tuple[Any, ...]:
 def rebuilt_shipped_calibration(name: str, cooldown: str, digest: str, version: str) -> Any:
     """The calibration *name* (*cooldown*) that this package ships, if it is
     the file of that *digest* that cudaq-pulse *version* shipped."""
-    from .targets.calibration import _shipped_unread
+    from .quantum_systems.calibration import _shipped_unread
 
     found = _shipped_unread(name, cooldown, digest)
     if found is None:

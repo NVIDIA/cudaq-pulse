@@ -19,7 +19,7 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline, evaluate_callback
-from cudaq_pulse.targets import (
+from cudaq_pulse.quantum_systems import (
     Coupling,
     DeviceDescription,
     MicrowaveDrive,

@@ -26,7 +26,7 @@ length to whole timesteps of the line, for controllers that start
 operations only every few program cycles.
 Compiler types (``CompileMetrics``, ``ScheduledEvent``,
 ``DEFAULT_PASSES``) are in ``cudaq_pulse.compiler``, device descriptions and
-calibrations in ``cudaq_pulse.targets``. ``pulse.classical`` declares the
+calibrations in ``cudaq_pulse.quantum_systems``. ``pulse.classical`` declares the
 classical functions a kernel calls while the QPU runs; ``pulse.Bits`` and
 ``pulse.Length`` (``typing.Annotated``, for a fixed list length) type their
 parameters and results. ``pulse.gates`` names the gates a device is
@@ -72,15 +72,15 @@ from .kernel._kernel import CompiledKernel as CompiledKernel
 from .kernel._kernel import Kernel as Kernel
 from .ops import RoundDirection as RoundDirection
 from .ops import round_duration as round_duration
-from .targets._registry import NoProcessQuantumSystemError as NoProcessQuantumSystemError
+from .quantum_systems._registry import NoProcessQuantumSystemError as NoProcessQuantumSystemError
 
-# The built-in models are immutable, as built-in types are (targets.models).
+# The built-in models are immutable, as built-in types are (quantum_systems.models).
 # Kept after the imports above, which load the native module and the models
 # in their order.
-from . import _native, targets  # isort: skip
+from . import _native, quantum_systems  # isort: skip
 
-_native.freeze_type(targets.models.SimulationModel)
-_native.freeze_type(targets.models.TransmonModel)
+_native.freeze_type(quantum_systems.models.SimulationModel)
+_native.freeze_type(quantum_systems.models.TransmonModel)
 
 # A module can't be declared callable, so checkers see the decorator's type.
 if TYPE_CHECKING:

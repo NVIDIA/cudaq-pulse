@@ -61,8 +61,8 @@ from pathlib import Path
 
 import cudaq_pulse as pulse
 import numpy as np
+from cudaq_pulse.quantum_systems import transmon_17q
 from cudaq_pulse.runtime import _propagate
-from cudaq_pulse.targets import transmon_17q
 
 _EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "21_calibration_protocol.py"
 P = runpy.run_path(str(_EXAMPLE), run_name="calibration_protocol")

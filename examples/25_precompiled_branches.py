@@ -39,7 +39,7 @@ import time
 
 import cudaq_pulse as pulse
 import numpy as np
-from cudaq_pulse.targets import MicrowaveDrive, transmon_17q
+from cudaq_pulse.quantum_systems import MicrowaveDrive, transmon_17q
 
 target = transmon_17q()
 qudit_indices = (0, 1, 2, 3)

@@ -18,9 +18,9 @@ import numpy as np
 import pytest
 from cudaq_pulse import ControlSystem
 from cudaq_pulse.classical import Link
+from cudaq_pulse.quantum_systems import DeviceDescription, MicrowaveDrive, PhysicalQudit
 from cudaq_pulse.runtime import _propagate
 from cudaq_pulse.runtime import simulate as simulate_module
-from cudaq_pulse.targets import DeviceDescription, MicrowaveDrive, PhysicalQudit
 
 from tests._handles import Q
 from tests.runtime._lowering import on

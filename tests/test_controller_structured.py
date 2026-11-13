@@ -13,7 +13,7 @@ import pytest
 from cudaq_pulse import Controller, ControlSystem, backends
 from cudaq_pulse.classical import Link
 from cudaq_pulse.controller import FORMAT, ControllerLimitError, check, unroll
-from cudaq_pulse.targets import DeviceDescription, PhysicalQudit
+from cudaq_pulse.quantum_systems import DeviceDescription, PhysicalQudit
 
 from tests.test_controller import answered, chained, chosen_by_readout, frame_in_arms, settings
 

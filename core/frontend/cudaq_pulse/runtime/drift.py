@@ -125,7 +125,7 @@ class DriftingPlant:
 
     def now(self) -> Any:
         """The device description with the qudit's current true parameters."""
-        from ..targets.base import MicrowaveDrive
+        from ..quantum_systems.base import MicrowaveDrive
 
         base = self._target.qudits[self.qudit]
         scale = self._target.drive_amplitude_scale(self.qudit) * self.state.amplitude_scale

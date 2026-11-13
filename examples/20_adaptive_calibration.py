@@ -29,8 +29,8 @@ from cudaq_pulse import ControlSystem
 from cudaq_pulse.classical import Link
 from cudaq_pulse.classical import calibration as cal
 from cudaq_pulse.classical.loop import EstimateLog, ParameterStore
+from cudaq_pulse.quantum_systems import transmon_17q
 from cudaq_pulse.runtime.drift import DriftingPlant, OrnsteinUhlenbeck, TelegraphT1
-from cudaq_pulse.targets import transmon_17q
 
 # square(pi_duration, pi_amp) is a pi pulse; at half the amplitude, a pi/2.
 pulse_cal = {

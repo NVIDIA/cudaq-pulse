@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 import pytest
-from cudaq_pulse.targets.transmon_model import ChargeCoupledPair, TransmonCircuit
+from cudaq_pulse.quantum_systems.transmon_model import ChargeCoupledPair, TransmonCircuit
 
 GOLDEN = json.loads((Path(__file__).parent / "transmon_golden.json").read_text())
 TOL = GOLDEN["tolerances"]

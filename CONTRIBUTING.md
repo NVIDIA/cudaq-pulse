@@ -542,8 +542,8 @@ pre-releases `X.Y.Z{a,b,rc}N` and post releases `X.Y.Z.postN`.
 
 - **What is covered.** The public API is the names in the `__all__` of
   `cudaq_pulse` and of its documented submodules (`cudaq_pulse.ops`,
-  `cudaq_pulse.compiler`, `cudaq_pulse.targets`,
-  `cudaq_pulse.targets.transmon_model`, `cudaq_pulse.runtime`,
+  `cudaq_pulse.compiler`, `cudaq_pulse.quantum_systems`,
+  `cudaq_pulse.quantum_systems.transmon_model`, `cudaq_pulse.runtime`,
   `cudaq_pulse.runtime.simulate`, `cudaq_pulse.viz`, `cudaq_pulse.controller`,
   `cudaq_pulse.backends`, `cudaq_pulse.classical`,
   `cudaq_pulse.classical.wire`, `cudaq_pulse.classical.qec`,

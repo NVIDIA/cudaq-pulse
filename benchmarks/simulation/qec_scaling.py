@@ -22,7 +22,7 @@ import cudaq_pulse as pulse
 
 def _device(frequencies: dict[int, float]) -> pulse.QuantumSystem:
     """A device with these drive frequencies, indexed by qudit."""
-    from cudaq_pulse.targets import DeviceDescription, PhysicalQudit
+    from cudaq_pulse.quantum_systems import DeviceDescription, PhysicalQudit
 
     qudits = {q: PhysicalQudit(q, f, -300e6, 50.0, 30.0) for q, f in frequencies.items()}
     return pulse.quantum_system(DeviceDescription(name="bench", qudits=qudits))

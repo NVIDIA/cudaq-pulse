@@ -50,7 +50,7 @@ def test_import_and_compile_do_not_load_numpy_or_the_gpu_runtime(tmp_path):
 def test_a_device_config_without_a_control_system_loads_no_clock_modules(tmp_path):
     loaded = _run(
         "import sys, cudaq_pulse as p\n"
-        "from cudaq_pulse.targets import PhysicalQudit, DeviceDescription\n"
+        "from cudaq_pulse.quantum_systems import PhysicalQudit, DeviceDescription\n"
         "@p.kernel\n"
         "def k(q):\n"
         "    d = get_drive_line(q)\n"
@@ -149,8 +149,8 @@ def test_dir_lists_no_internals():
         "cudaq_pulse.ops",
         "cudaq_pulse.runtime",
         "cudaq_pulse.runtime.simulate",
-        "cudaq_pulse.targets",
-        "cudaq_pulse.targets.transmon_model",
+        "cudaq_pulse.quantum_systems",
+        "cudaq_pulse.quantum_systems.transmon_model",
         "cudaq_pulse.viz",
     ],
 )

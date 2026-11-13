@@ -15,10 +15,10 @@ import weakref
 
 import cudaq_pulse as pulse
 import pytest
+from cudaq_pulse.quantum_systems import Coupling, DeviceDescription, PhysicalQudit
+from cudaq_pulse.quantum_systems._registry import _registry, _resolved, register_quantum_system
+from cudaq_pulse.quantum_systems.models import SimulationModel, TransmonModel
 from cudaq_pulse.runtime import simulate as simulate_module
-from cudaq_pulse.targets import Coupling, DeviceDescription, PhysicalQudit
-from cudaq_pulse.targets._registry import _registry, _resolved, register_quantum_system
-from cudaq_pulse.targets.models import SimulationModel, TransmonModel
 
 from tests._handles import Q
 from tests.runtime._lowering import on

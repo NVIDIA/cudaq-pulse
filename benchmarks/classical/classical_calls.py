@@ -27,7 +27,7 @@ import tracemalloc
 
 import cudaq_pulse as pulse
 from cudaq_pulse.classical import emulation
-from cudaq_pulse.targets import DeviceDescription, PhysicalQudit
+from cudaq_pulse.quantum_systems import DeviceDescription, PhysicalQudit
 
 PI_AMP = math.pi / 20
 

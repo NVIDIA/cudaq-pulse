@@ -20,7 +20,7 @@ import pytest
 from cudaq_pulse import Controller, ControlSystem, _validation
 from cudaq_pulse.compiler import DEFAULT_PASSES, Pass
 from cudaq_pulse.controller import unroll
-from cudaq_pulse.targets import DeviceDescription, PhysicalQudit
+from cudaq_pulse.quantum_systems import DeviceDescription, PhysicalQudit
 
 from tests import _child
 from tests._work import python_work

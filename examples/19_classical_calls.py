@@ -37,7 +37,7 @@ from pathlib import Path
 import cudaq_pulse as pulse
 from cudaq_pulse import ControlSystem
 from cudaq_pulse.classical import Link, emulation
-from cudaq_pulse.targets import DeviceDescription, PhysicalQudit
+from cudaq_pulse.quantum_systems import DeviceDescription, PhysicalQudit
 
 # A 20 ns pi pulse: with H = amplitude * X / 2, this amplitude (rad/ns)
 # rotates by pi.

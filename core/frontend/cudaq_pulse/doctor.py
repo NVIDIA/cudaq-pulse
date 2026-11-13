@@ -184,7 +184,11 @@ def _context_budget(write: Callable[[str], None]) -> bool:
 def _kernel_settings(write: Callable[[str], None]) -> bool:
     """Print the process quantum system and cache size; return False if either is invalid."""
     from .kernel._kernel import CACHE_SIZE_ENV, _cache_size
-    from .targets._registry import ENV_VAR, available_quantum_systems, current_quantum_system
+    from .quantum_systems._registry import (
+        ENV_VAR,
+        available_quantum_systems,
+        current_quantum_system,
+    )
 
     ok = True
     write(f"Quantum systems available: {', '.join(available_quantum_systems())}")

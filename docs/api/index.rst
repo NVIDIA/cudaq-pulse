@@ -13,7 +13,7 @@ API Reference
    classical
    controller
    quantum_systems
-   targets
+   descriptions
    kernel
    ops
    viz

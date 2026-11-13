@@ -12,7 +12,12 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse.classical import emulation
-from cudaq_pulse.targets import DeviceDescription, DispersiveReadout, PhysicalQudit, ReadoutPulse
+from cudaq_pulse.quantum_systems import (
+    DeviceDescription,
+    DispersiveReadout,
+    PhysicalQudit,
+    ReadoutPulse,
+)
 
 PI_AMP = math.pi / 20  # square(40, PI_AMP) is a pi pulse at 2 GHz
 

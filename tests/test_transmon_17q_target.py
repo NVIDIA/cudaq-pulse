@@ -11,15 +11,15 @@ import statistics
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.targets import (
+from cudaq_pulse.quantum_systems import (
     Coupling,
     DeviceDescription,
     PhysicalQudit,
     transmon_17q,
     transmon_generic,
 )
-from cudaq_pulse.targets import _transmon_17q as _k
-from cudaq_pulse.targets.transmon import CZ_LAYERS, transmon_17q_idle_zz_hz
+from cudaq_pulse.quantum_systems import _transmon_17q as _k
+from cudaq_pulse.quantum_systems.transmon import CZ_LAYERS, transmon_17q_idle_zz_hz
 
 from tests._handles import Q
 from tests.runtime._lowering import on

@@ -6,8 +6,8 @@ import os
 import weakref
 
 import pytest
+from cudaq_pulse.quantum_systems._registry import ENV_VAR, register_quantum_system
 from cudaq_pulse.runtime.gpu import GpuRuntimeError, require_gpu_runtime
-from cudaq_pulse.targets._registry import ENV_VAR, register_quantum_system
 
 import tests.property_settings  # noqa: F401  (loads the hypothesis profile)
 from tests._handles import ladder_target

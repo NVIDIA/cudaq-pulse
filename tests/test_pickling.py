@@ -24,7 +24,7 @@ from cudaq_pulse.classical import Link
 from cudaq_pulse.controller import ControllerLimitError, DriveLine
 from cudaq_pulse.kernel import _kernel
 from cudaq_pulse.kernel.ir_builder import SymbolicValueError
-from cudaq_pulse.targets import (
+from cudaq_pulse.quantum_systems import (
     Coupling,
     DeviceDescription,
     DragPulse,
@@ -34,8 +34,8 @@ from cudaq_pulse.targets import (
     ResidualZZ,
     calibration,
 )
-from cudaq_pulse.targets._registry import make_quantum_system
-from cudaq_pulse.targets.calibration import Calibration
+from cudaq_pulse.quantum_systems._registry import make_quantum_system
+from cudaq_pulse.quantum_systems.calibration import Calibration
 
 from tests._handles import LADDER, Q, ladder_target
 

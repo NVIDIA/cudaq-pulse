@@ -3,16 +3,16 @@
    SPDX-License-Identifier: Apache-2.0
 
 
-Targets API
-===========
+Device descriptions API
+=======================
 
-A target describes a device's qudits, couplings and decoherence; a device
+A device description gives a device's qudits, couplings and decoherence; a device
 (:doc:`quantum_systems`) pairs one with a qudit layout.
 
-.. autoclass:: cudaq_pulse.targets.DeviceDescription
+.. autoclass:: cudaq_pulse.quantum_systems.DeviceDescription
    :members:
 
-.. autoclass:: cudaq_pulse.targets.PhysicalQudit
+.. autoclass:: cudaq_pulse.quantum_systems.PhysicalQudit
    :members:
    :undoc-members:
 
@@ -28,26 +28,26 @@ Simulation picks its model by the component's type and refuses one it has no
 model for. In a system file each is a mapping with its ``kind``
 (``"microwave"``, ``"dispersive"``) and its fields.
 
-.. autoclass:: cudaq_pulse.targets.Drive
+.. autoclass:: cudaq_pulse.quantum_systems.Drive
    :members:
 
-.. autoclass:: cudaq_pulse.targets.MicrowaveDrive
+.. autoclass:: cudaq_pulse.quantum_systems.MicrowaveDrive
    :members:
 
-.. autoclass:: cudaq_pulse.targets.Readout
+.. autoclass:: cudaq_pulse.quantum_systems.Readout
    :members:
 
-.. autoclass:: cudaq_pulse.targets.DispersiveReadout
+.. autoclass:: cudaq_pulse.quantum_systems.DispersiveReadout
    :members:
 
 Couplings
 ---------
 
-.. autoclass:: cudaq_pulse.targets.Coupling
+.. autoclass:: cudaq_pulse.quantum_systems.Coupling
    :members:
    :undoc-members:
 
-.. autoclass:: cudaq_pulse.targets.ResidualZZ
+.. autoclass:: cudaq_pulse.quantum_systems.ResidualZZ
    :members:
    :undoc-members:
 
@@ -64,7 +64,7 @@ reads them, deriving what is not published:
 .. code-block:: python
 
    import cudaq_pulse as pulse
-   from cudaq_pulse.targets import DragPulse, PhysicalQudit, ReadoutPulse
+   from cudaq_pulse.quantum_systems import DragPulse, PhysicalQudit, ReadoutPulse
 
    qubit = PhysicalQudit(
        0, 5.0e9, -2.0e8, 50.0, 30.0,
@@ -84,13 +84,13 @@ files keep it.
 .. automodule:: cudaq_pulse.gates
    :members: Gate
 
-.. autoclass:: cudaq_pulse.targets.DragPulse
+.. autoclass:: cudaq_pulse.quantum_systems.DragPulse
    :members:
 
-.. autoclass:: cudaq_pulse.targets.ReadoutPulse
+.. autoclass:: cudaq_pulse.quantum_systems.ReadoutPulse
    :members:
 
-.. autoclass:: cudaq_pulse.targets.FluxCZ
+.. autoclass:: cudaq_pulse.quantum_systems.FluxCZ
    :members:
 
 Simulation models
@@ -102,7 +102,7 @@ qudit's own, keyed by the target's qudit index:
 
 .. code-block:: python
 
-   from cudaq_pulse.targets import PhysicalQudit, DeviceDescription, TransmonModel
+   from cudaq_pulse.quantum_systems import PhysicalQudit, DeviceDescription, TransmonModel
 
    qubits = {
        i: PhysicalQudit(index=i, frequency_hz=f, anharmonicity_hz=-2.0e8, t1_us=50.0, t2_star_us=30.0)
@@ -117,24 +117,24 @@ for each ``(lower, upper)`` pair of the qudit's levels, at the frequency
 one of ``default_transition``. A model numbers its levels from 0; one whose
 levels have names says in its docstring which number each name has.
 
-.. autoclass:: cudaq_pulse.targets.SimulationModel
+.. autoclass:: cudaq_pulse.quantum_systems.SimulationModel
    :members: levels, default_transition, levels_of, energies_hz, transitions_hz
 
-.. autoclass:: cudaq_pulse.targets.TransmonModel
+.. autoclass:: cudaq_pulse.quantum_systems.TransmonModel
 
 Shipped targets
 ---------------
 
-.. autofunction:: cudaq_pulse.targets.transmon_17q
+.. autofunction:: cudaq_pulse.quantum_systems.transmon_17q
 
-.. autodata:: cudaq_pulse.targets.transmon.CZ_LAYERS
+.. autodata:: cudaq_pulse.quantum_systems.transmon.CZ_LAYERS
    :no-value:
 
-.. autofunction:: cudaq_pulse.targets.transmon_generic
+.. autofunction:: cudaq_pulse.quantum_systems.transmon_generic
 
 Registering targets
 -------------------
 
-.. autofunction:: cudaq_pulse.targets.register_quantum_system
+.. autofunction:: cudaq_pulse.quantum_systems.register_quantum_system
 
-.. autofunction:: cudaq_pulse.targets.available_quantum_systems
+.. autofunction:: cudaq_pulse.quantum_systems.available_quantum_systems

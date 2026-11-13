@@ -69,7 +69,7 @@ import cudaq_pulse as pulse
 from cudaq_pulse import controller
 from cudaq_pulse.classical import Link
 from cudaq_pulse.classical import calibration as cal
-from cudaq_pulse.targets import transmon_17q
+from cudaq_pulse.quantum_systems import transmon_17q
 
 clock_ghz = 2.0  # the program clock: the estimators count waits and T1 in its cycles
 pulse_time = 20 * pulse.ns  # square pulses

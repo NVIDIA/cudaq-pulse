@@ -332,7 +332,7 @@ def test_a_float_part_below_the_lowest_length_is_clamped_with_the_answer(tau):
 
 @pytest.mark.parametrize("tau", [30.4, 980.0, -15.0])
 def test_a_wait_from_an_answer_and_a_float_runs_their_sum_clamped(tau):
-    from cudaq_pulse.targets import DeviceDescription, PhysicalQudit
+    from cudaq_pulse.quantum_systems import DeviceDescription, PhysicalQudit
 
     qudits = {i: PhysicalQudit(i, 5e9 + 1e8 * i, -2e8, 2.0, 0.0) for i in range(2)}
     dev = pulse.quantum_system(DeviceDescription(name="decay", qudits=qudits))

@@ -30,7 +30,7 @@ _CHILD = r"""
 import inspect, json, resource, sys, time
 import cudaq_pulse as pulse
 from cudaq_pulse import Controller, ControlSystem
-from cudaq_pulse.targets import PhysicalQudit, DeviceDescription
+from cudaq_pulse.quantum_systems import PhysicalQudit, DeviceDescription
 
 name, lines, rounds, trips = sys.argv[1], *map(int, sys.argv[2:5])
 target = DeviceDescription(

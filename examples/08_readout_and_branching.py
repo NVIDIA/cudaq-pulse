@@ -113,7 +113,7 @@ if __name__ == "__main__":
     print(compiled_kernel.mlir())
 
     print("\n=== Simulating it (CPU reference) ===")
-    from cudaq_pulse.targets import DeviceDescription, PhysicalQudit
+    from cudaq_pulse.quantum_systems import DeviceDescription, PhysicalQudit
 
     target = DeviceDescription(
         name="reset-demo",

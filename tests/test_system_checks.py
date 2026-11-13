@@ -16,7 +16,7 @@ import math
 import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse import QuantumSystemDefinitionError
-from cudaq_pulse.targets import (
+from cudaq_pulse.quantum_systems import (
     Coupling,
     DeviceDescription,
     FluxCZ,
@@ -25,7 +25,7 @@ from cudaq_pulse.targets import (
     SimulationModel,
     TransmonModel,
 )
-from cudaq_pulse.targets.base import _COUPLING_OPERATORS, _coupling_operator
+from cudaq_pulse.quantum_systems.base import _COUPLING_OPERATORS, _coupling_operator
 
 
 def _qudits(n=3):
@@ -70,7 +70,7 @@ def _line_of(lines, needle, after=0):
 
 
 def test_a_system_names_no_architecture():
-    assert not hasattr(pulse.targets, "Architecture")
+    assert not hasattr(pulse.quantum_systems, "Architecture")
     assert "architecture" not in _system_data()["quantum_system"]
 
 
@@ -270,8 +270,8 @@ def test_the_fingerprint_holds_the_whole_cz_calibration():
 
 
 def test_a_calibration_matches_a_pair_named_in_either_order():
-    from cudaq_pulse.targets import transmon_17q
-    from cudaq_pulse.targets.calibration import shipped_calibration
+    from cudaq_pulse.quantum_systems import transmon_17q
+    from cudaq_pulse.quantum_systems.calibration import shipped_calibration
 
     published = transmon_17q(calibration=None)
     calibration = shipped_calibration("transmon_17q")
@@ -408,7 +408,7 @@ def test_coupling_and_residual_zz_problems_come_in_one_error():
 
 
 def test_a_calibration_keeps_the_checks():
-    from cudaq_pulse.targets import transmon_17q
+    from cudaq_pulse.quantum_systems import transmon_17q
 
     target = transmon_17q()
     assert all(pulse.gates.CZ in c.calibrations for c in target.couplings)

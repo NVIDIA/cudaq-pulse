@@ -17,8 +17,8 @@ import statistics
 
 import numpy as np
 import pytest
-from cudaq_pulse.targets import _transmon_17q as _k
-from cudaq_pulse.targets.calibration import Calibration
+from cudaq_pulse.quantum_systems import _transmon_17q as _k
+from cudaq_pulse.quantum_systems.calibration import Calibration
 
 SIGMA_NS = 0.5
 BUFFER_NS = 3.0

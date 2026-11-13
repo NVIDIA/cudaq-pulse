@@ -22,9 +22,14 @@ from cudaq_pulse import ControlSystem
 from cudaq_pulse.classical import Link, random_index
 from cudaq_pulse.classical import calibration as cal
 from cudaq_pulse.classical.loop import EstimateLog, ParameterStore
+from cudaq_pulse.quantum_systems import (
+    DispersiveReadout,
+    ReadoutPulse,
+    transmon_17q,
+    transmon_generic,
+)
 from cudaq_pulse.runtime._calls import IQModel
 from cudaq_pulse.runtime.drift import DriftingPlant, OrnsteinUhlenbeck, TelegraphT1
-from cudaq_pulse.targets import DispersiveReadout, ReadoutPulse, transmon_17q, transmon_generic
 
 PI_AMP = math.pi / 20  # square(40, PI_AMP) is a pi pulse (unit drive scale)
 CLOCK = 2.0  # GHz on both targets

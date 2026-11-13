@@ -42,7 +42,7 @@ from .ops import (
     sync,
     wait,
 )
-from .targets import DeviceDescription, PhysicalQudit
+from .quantum_systems import DeviceDescription, PhysicalQudit
 
 if TYPE_CHECKING:
     from .compiler import Lowered

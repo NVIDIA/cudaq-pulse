@@ -16,7 +16,7 @@ import shutil
 import subprocess
 
 import cudaq_pulse as pulse
-from cudaq_pulse.targets import transmon_17q
+from cudaq_pulse.quantum_systems import transmon_17q
 
 target = transmon_17q()
 qs = pulse.quantum_system("transmon_17q")

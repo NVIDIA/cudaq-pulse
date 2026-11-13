@@ -16,9 +16,9 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
+from cudaq_pulse.quantum_systems import DeviceDescription, MicrowaveDrive, PhysicalQudit
 from cudaq_pulse.runtime import _jit as jit
 from cudaq_pulse.runtime import simulate as simulate_module
-from cudaq_pulse.targets import DeviceDescription, MicrowaveDrive, PhysicalQudit
 
 from tests._handles import Q
 from tests.runtime._lowering import evolve, on

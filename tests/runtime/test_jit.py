@@ -4,7 +4,7 @@
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.targets.base import DeviceDescription, PhysicalQudit
+from cudaq_pulse.quantum_systems.base import DeviceDescription, PhysicalQudit
 
 from tests._handles import Q
 from tests.runtime._lowering import evolve, on

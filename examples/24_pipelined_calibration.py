@@ -43,7 +43,7 @@ import time
 
 import cudaq_pulse as pulse
 import numpy as np
-from cudaq_pulse.targets import DeviceDescription, transmon_17q
+from cudaq_pulse.quantum_systems import DeviceDescription, transmon_17q
 
 target = transmon_17q()
 pulse_duration = 40 * pulse.ns

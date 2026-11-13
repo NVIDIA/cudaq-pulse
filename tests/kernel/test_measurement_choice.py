@@ -21,7 +21,7 @@ import cudaq_pulse.ops
 import numpy as np
 import pytest
 from cudaq_pulse.kernel.ir_builder import CompilationError
-from cudaq_pulse.targets._registry import current_quantum_system
+from cudaq_pulse.quantum_systems._registry import current_quantum_system
 
 from tests._handles import Q
 from tests._ir import python_ir

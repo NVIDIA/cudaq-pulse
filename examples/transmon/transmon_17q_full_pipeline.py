@@ -19,7 +19,7 @@ import shutil
 import subprocess
 
 import cudaq_pulse as pulse
-from cudaq_pulse.targets.transmon import CZ_LAYERS
+from cudaq_pulse.quantum_systems.transmon import CZ_LAYERS
 
 qs = pulse.quantum_system("transmon_17q")
 clock_ghz = qs.clock_ghz  # the program clock the schedule counts cycles of

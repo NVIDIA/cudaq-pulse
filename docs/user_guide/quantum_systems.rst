@@ -28,7 +28,7 @@ read-only.
    chip.qudit_freq[0] = 5.01e9        # ValueError: assignment destination is read-only
 
 ``pulse.quantum_system`` takes the quantum system, a registered target name or a
-``cudaq_pulse.targets.DeviceDescription``, and optionally ``layout=``,
+``cudaq_pulse.quantum_systems.DeviceDescription``, and optionally ``layout=``,
 ``calibration=`` and ``cooldown=``, ``control_system=`` and ``clock_ghz=``.
 A string is always a name: ``pulse.QuantumSystem.load(path)`` reads a system file
 (as ``QuantumSystem.as_dict()`` writes one, and ``json.dumps`` saves), and
@@ -40,7 +40,7 @@ couplings, for transmons the exchange g (a^dagger b + a b^dagger):
 
 .. code-block:: python
 
-   from cudaq_pulse.targets import Coupling, FluxCZ, PhysicalQudit, DeviceDescription
+   from cudaq_pulse.quantum_systems import Coupling, FluxCZ, PhysicalQudit, DeviceDescription
 
    cz = FluxCZ(duration_ns=98.0)
    pair = DeviceDescription(
@@ -146,7 +146,7 @@ passes to its kernels; a kernel call with no qudit handles always raises
 ``NoQuantumSystemError``.
 
 Registered names are ``transmon_17q`` and ``transmon_generic:N``;
-``cudaq_pulse.targets.register_quantum_system`` adds more.
+``cudaq_pulse.quantum_systems.register_quantum_system`` adds more.
 
 ``transmon_17q`` is the distance-three surface-code device of
 Krinner et al., Nature 605, 669 (2022), built from the values the paper
@@ -154,7 +154,7 @@ publishes. Its qudits 0-16 are D1-D9, X1-X4 and Z1-Z4 (``PhysicalQudit.label``),
 its 24 couplings are the auxiliary-data pairs of the stabilizers, each with
 its CZ's duration, buffers and interaction frequency (its ``CZ``
 calibration, below).
-``cudaq_pulse.targets.transmon.CZ_LAYERS`` gives the CZ time steps of a
+``cudaq_pulse.quantum_systems.transmon.CZ_LAYERS`` gives the CZ time steps of a
 cycle, each a tuple of (auxiliary, data) qudit pairs.
 ``python -m cudaq_pulse.doctor`` lists them and reports the process quantum system.
 
@@ -165,7 +165,7 @@ arXiv:2503.04610). The simulated exchange comes from the
 device's calibration (below): one device-wide charge coupling g_c, and the
 exchange J_qq = g_c <0|n_a|1> <0|n_d|1> at the idle points is 5.67-6.08 MHz.
 The idle ZZ of the charge-coupled pairs is -4.5 to -7.3 kHz
-(``cudaq_pulse.targets.transmon.transmon_17q_idle_zz_hz``), below the
+(``cudaq_pulse.quantum_systems.transmon.transmon_17q_idle_zz_hz``), below the
 paper's "below about 8 kHz"; simulated with three levels, the couplings
 reproduce it within a few percent. Each qubit also records its Hahn-echo T2
 and thermal excited-state population from Tab. I (``DeviceDescription.t2_echo_times``,
@@ -197,7 +197,7 @@ defect bands and feedline groups. Every value records its
    cal.detuning_for_flux("X2", 0.25)
 
 ``"calibration"`` is a shipped name, the path of a calibration file or a
-``cudaq_pulse.targets.Calibration``; the ``transmon_17q`` target uses the
+``cudaq_pulse.quantum_systems.Calibration``; the ``transmon_17q`` target uses the
 ``transmon_17q`` calibration by default. Its couplings replace the target's, so devices with different
 calibrations compile separately. Detunings are in Hz; for qubits whose
 circuit, including d, is calibrated (``Calibration.flux_qudits``, all 17

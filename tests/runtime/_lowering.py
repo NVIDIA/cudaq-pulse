@@ -6,8 +6,8 @@ from types import SimpleNamespace
 
 import cudaq_pulse as pulse
 import numpy as np
+from cudaq_pulse.quantum_systems import DeviceDescription, PhysicalQudit
 from cudaq_pulse.runtime.simulate import _simulate_lowered
-from cudaq_pulse.targets import DeviceDescription, PhysicalQudit
 
 EVOLVE_PASSES = (
     "verify",

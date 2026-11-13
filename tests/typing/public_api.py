@@ -25,7 +25,7 @@ from cudaq_pulse.controller import (
     WaveformMemoryScope,
 )
 from cudaq_pulse.ops import Waveform
-from cudaq_pulse.targets import (
+from cudaq_pulse.quantum_systems import (
     Coupling,
     DeviceDescription,
     DispersiveReadout,
@@ -37,7 +37,7 @@ from cudaq_pulse.targets import (
     ReadoutPulse,
     ResidualZZ,
 )
-from cudaq_pulse.targets.transmon import CZ_LAYERS
+from cudaq_pulse.quantum_systems.transmon import CZ_LAYERS
 
 wave = pulse.ops.gaussian(40, 0.1, 10.0)
 assert_type(wave, Waveform)

@@ -62,7 +62,7 @@ Devices and targets
 
 .. autoexception:: cudaq_pulse.QuantumSystemMismatchError
 
-.. autoexception:: cudaq_pulse.targets.UnknownQuantumSystemError
+.. autoexception:: cudaq_pulse.quantum_systems.UnknownQuantumSystemError
 
 GPU simulation
 --------------

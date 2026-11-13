@@ -11,7 +11,7 @@ from operator import attrgetter
 from typing import Any
 
 from .._errors import InvalidValueError
-from ..targets.base import _unmeasured
+from ..quantum_systems.base import _unmeasured
 
 _QUDITS = attrgetter("qudits")
 
@@ -125,7 +125,7 @@ def _target_attributes(
         attrs.append(f"pulse.thermal_populations = {_f64_array(thermal)}")
     active = set(qudits)
     # pulse.coupling_* is the exchange, the operator of the couplings of the
-    # one model that simulates (targets.base._COUPLING_OPERATORS).
+    # one model that simulates (quantum_systems.base._COUPLING_OPERATORS).
     couplings = target.couplings
     if couplings:
         couplings = list(compress(couplings, map(active.issuperset, map(_QUDITS, couplings))))

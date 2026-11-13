@@ -1,5 +1,5 @@
 {
- "description": "Golden vectors for cudaq_pulse.targets.transmon_model, computed with an independent implementation of the charge-basis Cooper-pair box (GHz units, its own root finding), so the test compares two implementations. Units Hz; flux in flux quanta. Circuits: the closed SQUID fits of X2 and D4 (Krinner et al., Nature 605, 669 (2022), Tab. I and Fig. 1c); g_c: the device-wide coupling for which the X2-D4 |11>-|20> half-splitting at 4.4 GHz is 7.4 MHz (Hellings et al., arXiv:2503.04610, App. J). Pairs are (a = data D4, b = auxiliary X2), 5 levels each, charge cutoff 25. physics_gates compare the model with published values.",
+ "description": "Golden vectors for cudaq_pulse.quantum_systems.transmon_model, computed with an independent implementation of the charge-basis Cooper-pair box (GHz units, its own root finding), so the test compares two implementations. Units Hz; flux in flux quanta. Circuits: the closed SQUID fits of X2 and D4 (Krinner et al., Nature 605, 669 (2022), Tab. I and Fig. 1c); g_c: the device-wide coupling for which the X2-D4 |11>-|20> half-splitting at 4.4 GHz is 7.4 MHz (Hellings et al., arXiv:2503.04610, App. J). Pairs are (a = data D4, b = auxiliary X2), 5 levels each, charge cutoff 25. physics_gates compare the model with published values.",
  "tolerances": {
   "energy_rel": 1e-09,
   "matrix_element_abs": 1e-09,

@@ -22,14 +22,14 @@ from cudaq_pulse._errors import (
 from cudaq_pulse._system import installed_descriptions
 from cudaq_pulse.classical import Link
 from cudaq_pulse.controller import ControllerLimitError, DriveLine, ReadoutLine
-from cudaq_pulse.targets.base import (
+from cudaq_pulse.quantum_systems.base import (
     Coupling,
     DeviceDescription,
     DispersiveReadout,
     MicrowaveDrive,
     PhysicalQudit,
 )
-from cudaq_pulse.targets.models import SimulationModel
+from cudaq_pulse.quantum_systems.models import SimulationModel
 
 TRANSMON_17Q = "transmon_17q"
 

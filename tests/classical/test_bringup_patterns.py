@@ -12,7 +12,7 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse.classical import emulation, random_index
-from cudaq_pulse.targets import DeviceDescription, DispersiveReadout, PhysicalQudit
+from cudaq_pulse.quantum_systems import DeviceDescription, DispersiveReadout, PhysicalQudit
 
 PI_AMP = math.pi / 20
 

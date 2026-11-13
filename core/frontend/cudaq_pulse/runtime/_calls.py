@@ -163,7 +163,7 @@ class IQModel:
     """
 
     def __init__(self, target: Any, qudits: Sequence[int], decay: bool) -> None:
-        from cudaq_pulse.targets.base import DispersiveReadout, ReadoutPulse
+        from cudaq_pulse.quantum_systems.base import DispersiveReadout, ReadoutPulse
 
         self.decay = decay
         self._params: dict[int, dict[str, float]] = {}

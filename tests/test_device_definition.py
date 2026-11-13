@@ -9,7 +9,7 @@ from pathlib import Path
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse.targets import Calibration, DeviceDescription, PhysicalQudit
+from cudaq_pulse.quantum_systems import Calibration, DeviceDescription, PhysicalQudit
 
 TRANSMON_17Q = "transmon_17q"
 

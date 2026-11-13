@@ -739,7 +739,7 @@ same name:
 
    import cudaq_pulse as pulse
    from cudaq_pulse import backends
-   from cudaq_pulse.targets import PhysicalQudit, DeviceDescription
+   from cudaq_pulse.quantum_systems import PhysicalQudit, DeviceDescription
 
    backends.register("text", TextBackend)
    backend = backends.get("text")
