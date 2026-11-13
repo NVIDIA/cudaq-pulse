@@ -83,9 +83,9 @@ class Calibration:
         return data
 
     @cached_property
-    def description(self) -> str | None:
-        """The target the calibration was made for, if its file names one."""
-        target: str | None = self._data.get("_schema", {}).get("target")
+    def quantum_system(self) -> str | None:
+        """The quantum system the calibration was made for, if its file names one."""
+        target: str | None = self._data.get("_schema", {}).get("quantum_system")
         return target
 
     @classmethod

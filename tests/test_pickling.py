@@ -34,7 +34,7 @@ from cudaq_pulse.targets import (
     ResidualZZ,
     calibration,
 )
-from cudaq_pulse.targets._registry import make_target
+from cudaq_pulse.targets._registry import make_quantum_system
 from cudaq_pulse.targets.calibration import Calibration
 
 from tests._handles import LADDER, Q, ladder_target
@@ -214,7 +214,7 @@ def test_a_device_unpickles_equal_and_is_built_once_per_process(make, monkeypatc
 
 def _shipped_and_uncalibrated():
     shipped = pulse.device(_SHIPPED_TARGET)
-    uncalibrated = pulse.device(make_target(_SHIPPED_TARGET))
+    uncalibrated = pulse.device(make_quantum_system(_SHIPPED_TARGET))
     assert shipped.calibration is not None and uncalibrated.calibration is None
     return shipped, uncalibrated
 
@@ -243,7 +243,7 @@ def test_a_process_holding_one_unpickles_the_other_as_itself(kept_first, monkeyp
 
 
 def test_a_device_unpickles_with_its_own_name_and_source(monkeypatch):
-    target = make_target(_SHIPPED_TARGET)
+    target = make_quantum_system(_SHIPPED_TARGET)
     first = pulse.Device(target, name="first", source="a")
     second = pulse.Device(target, name="second", source="b")
     assert first == second
@@ -273,7 +273,7 @@ def test_an_unpickled_shipped_calibration_reads_its_file_when_used(monkeypatch):
     back = pickle.loads(data)
     assert back is not shipped and "_data" not in vars(back)
     assert (back.name, back.cooldown) == (shipped.name, shipped.cooldown)
-    assert back.description == shipped.description and back.cooldowns == shipped.cooldowns
+    assert back.quantum_system == shipped.quantum_system and back.cooldowns == shipped.cooldowns
     assert back == shipped and back.idle_zz_hz(back.pairs[0]) == shipped.idle_zz_hz(back.pairs[0])
     assert pickle.loads(data) is back
 
@@ -291,7 +291,7 @@ def test_a_shipped_calibration_of_another_file_is_refused(monkeypatch):
 def test_a_calibration_of_its_own_values_pickles_by_value_once_per_pickle():
     shipped = pulse.device(_SHIPPED_TARGET).calibration
     mine = Calibration(shipped._data, name="mine")
-    device = pulse.device(make_target(_SHIPPED_TARGET), calibration=mine)
+    device = pulse.device(make_quantum_system(_SHIPPED_TARGET), calibration=mine)
     back = _round_trip(mine)
     assert back is not mine and back == mine and back.name == "mine"
     one = len(pickle.dumps(rabi.lower(device.qudits[0], 0.1)))
@@ -306,7 +306,7 @@ def test_a_calibration_of_other_values_makes_another_device():
     same = Calibration(data, name="mine")
     data["cooldowns"]["2022-main"] = "edited"
     other = Calibration(data, name="mine")
-    target = make_target(_SHIPPED_TARGET)
+    target = make_quantum_system(_SHIPPED_TARGET)
     devices = [pulse.device(target, calibration=c) for c in (same, other)]
     assert devices[0] != devices[1]
     again = pulse.device(target, calibration=Calibration(shipped._data, name="m"))

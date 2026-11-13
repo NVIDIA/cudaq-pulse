@@ -221,10 +221,12 @@ def test_a_target_name_is_a_device(tmp_path: Path, monkeypatch):
 
 
 def test_no_argument_is_the_process_target(monkeypatch):
-    monkeypatch.setenv("CUDAQ_PULSE_TARGET", "transmon_generic:3")
+    monkeypatch.setenv("CUDAQ_PULSE_QUANTUM_SYSTEM", "transmon_generic:3")
     assert len(pulse.device().qudits) == 3
-    monkeypatch.delenv("CUDAQ_PULSE_TARGET")
-    with pytest.raises(pulse.NoTargetError, match=r'name a target, as device\("transmon_17q'):
+    monkeypatch.delenv("CUDAQ_PULSE_QUANTUM_SYSTEM")
+    with pytest.raises(
+        pulse.NoProcessQuantumSystemError, match=r'name a target, as device\("transmon_17q'
+    ):
         pulse.device()
 
 
@@ -255,7 +257,7 @@ def test_the_keyword_form_is_the_device_of_the_same_values(monkeypatch):
     dev = pulse.device(TRANSMON_17Q, layout=[4, 5], calibration="transmon_17q")
     data = {"quantum_system": TRANSMON_17Q, "layout": [4, 5], "calibration": "transmon_17q"}
     assert dev == pulse.Device.from_dict(data) == pulse.Device.from_dict(dev.as_dict())
-    monkeypatch.setenv("CUDAQ_PULSE_TARGET", "transmon_generic:3")
+    monkeypatch.setenv("CUDAQ_PULSE_QUANTUM_SYSTEM", "transmon_generic:3")
     assert pulse.device(layout=[2]).layout == (2,)
 
 

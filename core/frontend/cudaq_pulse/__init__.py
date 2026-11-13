@@ -72,7 +72,7 @@ from .kernel._kernel import CompiledKernel as CompiledKernel
 from .kernel._kernel import Kernel as Kernel
 from .ops import RoundDirection as RoundDirection
 from .ops import round_duration as round_duration
-from .targets._registry import NoTargetError as NoTargetError
+from .targets._registry import NoProcessQuantumSystemError as NoProcessQuantumSystemError
 
 # The built-in models are immutable, as built-in types are (targets.models).
 # Kept after the imports above, which load the native module and the models
@@ -176,7 +176,7 @@ __all__ = [
     "InternalError",
     "PulseWarning",
     "UpgradeNotice",
-    "NoTargetError",
+    "NoProcessQuantumSystemError",
     "NoDeviceError",
     "DeviceMismatchError",
     "GpuRuntimeError",

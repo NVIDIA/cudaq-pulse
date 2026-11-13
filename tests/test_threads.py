@@ -154,13 +154,13 @@ def test_registering_targets_while_others_resolve(monkeypatch):
     def work(i):
         for round in range(200):
             if i % 2:
-                _registry.register_target(f"stress_{i}_{round}", lambda arg: None)
+                _registry.register_quantum_system(f"stress_{i}_{round}", lambda arg: None)
             else:
-                assert "transmon_generic" in pulse.targets.available_targets()
-                assert _registry.make_target("transmon_generic:2").qudit_count == 2
+                assert "transmon_generic" in pulse.targets.available_quantum_systems()
+                assert _registry.make_quantum_system("transmon_generic:2").qudit_count == 2
 
     _together(8, work)
-    names = pulse.targets.available_targets()
+    names = pulse.targets.available_quantum_systems()
     assert all(f"stress_{i}_{r}" in names for i in (1, 3, 5, 7) for r in range(200))
 
 

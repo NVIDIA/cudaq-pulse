@@ -10,8 +10,8 @@ Every error cudaq-pulse raises on purpose derives from ``PulseError``, so
 ``except cudaq_pulse.PulseError`` catches them all. Each also has the
 built-in base of its kind of error, so ``except ValueError`` or ``except
 RuntimeError`` catches it as it would the built-in one: ``InvalidValueError``
-is a ``ValueError``, ``NotFoundError`` and ``UnknownTargetError`` are
-``KeyError``\ s, ``IndexOutOfRangeError`` is an ``IndexError``, and ``CompilationError`` and ``NoTargetError`` are
+is a ``ValueError``, ``NotFoundError`` and ``UnknownQuantumSystemError`` are
+``KeyError``\ s, ``IndexOutOfRangeError`` is an ``IndexError``, and ``CompilationError`` and ``NoProcessQuantumSystemError`` are
 ``RuntimeError``\ s.
 
 .. autoexception:: cudaq_pulse.PulseError
@@ -58,11 +58,11 @@ Devices and targets
 
 .. autoexception:: cudaq_pulse.NoDeviceError
 
-.. autoexception:: cudaq_pulse.NoTargetError
+.. autoexception:: cudaq_pulse.NoProcessQuantumSystemError
 
 .. autoexception:: cudaq_pulse.DeviceMismatchError
 
-.. autoexception:: cudaq_pulse.targets.UnknownTargetError
+.. autoexception:: cudaq_pulse.targets.UnknownQuantumSystemError
 
 GPU simulation
 --------------

@@ -445,7 +445,7 @@ behavior may change in any 0.x release.
   describes a machine as a target plus a qudit layout, from a registered
   target name (`pulse.device("transmon_17q")`) or a `DeviceDescription`,
   with `layout=`, `calibration=`, `cooldown=`, `control_system=` and
-  `clock_ghz=` keywords, or, with no argument, the process target; a string
+  `clock_ghz=` keywords, or, with no argument, the process quantum system; a string
   is always a name, and `Device.load` / `Device.from_dict` read system
   files. Devices compare by
   content and share compiled kernels, but handles of two devices, even
@@ -693,7 +693,7 @@ behavior may change in any 0.x release.
   `PulseError`, `Problem`, `DeviceDefinitionError`, `InvalidValueError`,
   `InvalidTypeError`, `NotFoundError`, `IndexOutOfRangeError`,
   `UnsupportedError`, `CompilationError`, `TimingError`, `ExecutionError`, `InternalError`,
-  `PulseWarning`, `UpgradeNotice`, `NoTargetError`, `NoDeviceError`,
+  `PulseWarning`, `UpgradeNotice`, `NoProcessQuantumSystemError`, `NoDeviceError`,
   `DeviceMismatchError`, `GpuRuntimeError`, `viz`, `classical`,
   `controller` and `backends`, plus `__version__`.
   `simulate(program, *args, **options)` is the one way to simulate: it
@@ -719,7 +719,7 @@ behavior may change in any 0.x release.
   is a `PulseWarning`.
   `cudaq_pulse.compiler`, `cudaq_pulse.runtime.simulate` and
   `cudaq_pulse.targets.transmon_model` list their public names in `__all__`,
-  as the other documented modules do. `cudaq_pulse.targets.UnknownTargetError`
+  as the other documented modules do. `cudaq_pulse.targets.UnknownQuantumSystemError`
   (an unregistered target name) and
   `cudaq_pulse.compiler.UnsupportedInterpreterError` (a Python whose bytecode
   the kernel tracer does not know) are public, and every public name is in

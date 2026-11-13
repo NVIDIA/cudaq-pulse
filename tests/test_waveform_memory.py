@@ -211,7 +211,7 @@ def test_the_structured_format_writes_the_controller_and_names_its_links_anew():
     assert processor["max_concurrent_calls"] == 1
     assert processor["unsupported"] == []
     assert None not in processor["cycles_per_op"].values()
-    assert program["quantum_system"] == lowered.device.name and "target" not in program
+    assert program["quantum_system"] == lowered.device.name
     (link,) = program["links"].values()
     assert link["send_ns"] == 4 and link["bandwidth_bytes_per_ns"] == 2.0
     assert link["answer_delay_ns"] == 8 and link["slots"] == 4 and link["slot_bytes"] == 1024
@@ -219,7 +219,7 @@ def test_the_structured_format_writes_the_controller_and_names_its_links_anew():
     back = unroll(program)
     assert back["limits"] == flat["limits"] and list(back["limits"]) == list(flat["limits"])
     assert back["links"] == flat["links"]
-    assert back["target"] == flat["target"] and list(back) == list(flat)
+    assert back["quantum_system"] == flat["quantum_system"] and list(back) == list(flat)
     # A controller without processors lists none.
     plain = ControlSystem(controllers=[Controller()], links=links)
     program = pulse.compile(feedback, control_system=plain).lower(Q[0]).export_controller(version=2)

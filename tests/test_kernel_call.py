@@ -107,7 +107,7 @@ def test_a_call_without_qudit_handles_has_no_device():
 
     with pytest.raises(pulse.NoDeviceError, match="without qudit handles"):
         drive_amp.lower(0, 0.1)
-    # The process target is not a fallback.
+    # The process quantum system is not a fallback.
     assert os.environ.get(ENV_VAR)
     with pytest.raises(pulse.NoDeviceError):
         drive_amp(0, 0.1)
@@ -548,7 +548,15 @@ def test_the_launcher_sets_the_process_target(tmp_path: Path):
     )
     env = {k: v for k, v in __import__("os").environ.items() if k != ENV_VAR}
     run = subprocess.run(
-        [sys.executable, "-m", "cudaq_pulse", "--target", "transmon_generic:3", str(script), "-x"],
+        [
+            sys.executable,
+            "-m",
+            "cudaq_pulse",
+            "--quantum-system",
+            "transmon_generic:3",
+            str(script),
+            "-x",
+        ],
         capture_output=True,
         text=True,
         env=env,
@@ -556,9 +564,9 @@ def test_the_launcher_sets_the_process_target(tmp_path: Path):
     )
     assert run.returncode == 0, run.stderr
     assert run.stdout.strip() == "transmon_generic:3 ['-x']"
-    assert "target transmon_generic:3" in run.stderr
+    assert "quantum system transmon_generic:3" in run.stderr
     bad = subprocess.run(
-        [sys.executable, "-m", "cudaq_pulse", "--target", "nope", str(script)],
+        [sys.executable, "-m", "cudaq_pulse", "--quantum-system", "nope", str(script)],
         capture_output=True,
         text=True,
         env=env,

@@ -25,7 +25,7 @@ none is removed or changes meaning, so a backend ignores keys it does not
 know and refuses event kinds it does not know; a change that would break a
 backend gets a new version.
 
-At the top level, ``target`` and ``clock_ghz`` name the device and its
+At the top level, ``quantum_system`` and ``clock_ghz`` name the device and its
 clock, ``schedule`` the schedule policy, ``qudits`` the device qudits the
 program uses, ``lines`` each line's index, ``role`` (``"drive"`` or
 ``"readout"``) and qudit (and, with line delays, its ``fine_delay_ns``;
@@ -338,7 +338,7 @@ length; for one on its own clock, or with line delays, export
     ``max_state_bytes_total``, ``max_calls_per_shot``,
     ``max_bytes_per_shot``, ``fixed_cost_only`` and ``dispatch_keys``.
 ``quantum_system``
-    In place of ``target``: the name of the quantum system the program is
+    In place of ``quantum_system``: the name of the quantum system the program is
     for.
 ``sample_rate_ghz``
     Beside ``clock_ghz``, always a number: the rate at which the

@@ -81,7 +81,7 @@ def test_a_loaded_calibration_keeps_the_values_it_parsed():
         cal.circuit(qudit), cal.idle_flux(qudit), cal.charge_coupling_hz(pair)
         cal.pair(pair), cal.exchange_hz(pair), cal.idle_zz_hz(pair)
         cal.flux_for_detuning(qudit, cal.detuning_for_flux(qudit, 0.1))
-        cal.apply(transmon_17q()), cal.fingerprint, cal.description
+        cal.apply(transmon_17q()), cal.fingerprint, cal.quantum_system
         assert cal._data == parsed
     assert shipped._data is not parsed
 

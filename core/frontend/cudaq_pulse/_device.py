@@ -34,7 +34,12 @@ from ._errors import (
     _count,
     _ranges,
 )
-from .targets._registry import NoTargetError, UnknownTargetError, _registry, make_target
+from .targets._registry import (
+    NoProcessQuantumSystemError,
+    UnknownQuantumSystemError,
+    _registry,
+    make_quantum_system,
+)
 from .targets.base import DeviceDescription
 from .targets.models import SimulationModel
 
@@ -62,9 +67,9 @@ __all__ = [
 ]
 
 
-class NoDeviceError(NoTargetError):
+class NoDeviceError(NoProcessQuantumSystemError):
     """A kernel was called without qudit handles and was not compiled for a
-    device, so it has no device to run on. The process target is never used
+    device, so it has no device to run on. The process quantum system is never used
     for a kernel call."""
 
 
@@ -591,9 +596,9 @@ def _from_spec(
     calibration: Any = None,
     control_system: ControlSystem | None = None,
 ) -> Device:
-    from .targets._registry import make_target
+    from .targets._registry import make_quantum_system
 
-    return _calibrated(make_target(spec), spec, source, layout, calibration, control_system)
+    return _calibrated(make_quantum_system(spec), spec, source, layout, calibration, control_system)
 
 
 def _calibrated(
@@ -633,7 +638,7 @@ def _calibrated(
 def _target(
     spec: Any, problems: list[Problem], key: str = "quantum_system"
 ) -> DeviceDescription | None:
-    from .targets._registry import available_targets, make_target
+    from .targets._registry import available_quantum_systems, make_quantum_system
 
     if isinstance(spec, DeviceDescription):
         return spec
@@ -643,7 +648,7 @@ def _target(
                 "is missing",
                 path=key,
                 fix="give a registered target name ("
-                + ", ".join(available_targets())
+                + ", ".join(available_quantum_systems())
                 + ") or a DeviceDescription",
             )
         )
@@ -659,8 +664,8 @@ def _target(
         )
         return None
     try:
-        return make_target(spec)
-    except (UnknownTargetError, ValueError) as error:
+        return make_quantum_system(spec)
+    except (UnknownQuantumSystemError, ValueError) as error:
         problems.append(Problem(Exception.__str__(error), path=key, value=spec))
         return None
 
@@ -945,12 +950,12 @@ def device(
 
     ``device("transmon_17q")`` is the device of a registered target,
     with every carrier in order (a name takes its argument after a colon, as
-    in ``"transmon_generic:4"``); ``cudaq_pulse.targets.available_targets()``
+    in ``"transmon_generic:4"``); ``cudaq_pulse.targets.available_quantum_systems()``
     lists the names. A string is always a name: ``Device.load(path)`` reads
     a system file, and ``Device.from_dict(data)`` its data. ``device()`` is
-    the process target, named by ``CUDAQ_PULSE_TARGET`` (``python -m
-    cudaq_pulse --target NAME`` sets it); without one it raises
-    ``NoTargetError``.
+    the process quantum system, named by ``CUDAQ_PULSE_QUANTUM_SYSTEM`` (``python -m
+    cudaq_pulse --quantum-system NAME`` sets it); without one it raises
+    ``NoProcessQuantumSystemError``.
 
     ``layout[i]`` is the carrier that qudit ``i`` names; by default every
     carrier of the quantum system, in order. ``calibration`` is a
@@ -987,14 +992,14 @@ def device(
             and control_system is None
             and clock_ghz is None
         ):
-            from .targets._registry import current_target
+            from .targets._registry import current_quantum_system
 
-            return current_target()
-        from .targets._registry import ENV_VAR, _no_target_message
+            return current_quantum_system()
+        from .targets._registry import ENV_VAR, _no_quantum_system_message
 
         description = os.environ.get(ENV_VAR)
         if not description:
-            raise NoTargetError(_no_target_message())
+            raise NoProcessQuantumSystemError(_no_quantum_system_message())
         if description.partition(":")[0] not in _registry():
             _unknown_target(description)
     elif isinstance(description, str):
@@ -1035,17 +1040,17 @@ def device(
 
 
 def _unknown_target(name: str) -> None:
-    """Raise ``UnknownTargetError`` for *name*, which names no registered
+    """Raise ``UnknownQuantumSystemError`` for *name*, which names no registered
     target, naming the way to read a file when it looks like the path of one."""
     if os.sep in name or name.endswith(".json") or os.path.exists(name):
         try:
-            make_target(name)
-        except UnknownTargetError as error:
-            raise UnknownTargetError(
+            make_quantum_system(name)
+        except UnknownQuantumSystemError as error:
+            raise UnknownQuantumSystemError(
                 f"{Exception.__str__(error)}; a string is a target name: to read a system "
                 f"file, use pulse.Device.load({name!r})"
             ) from None
-    make_target(name)
+    make_quantum_system(name)
 
 
 def _from_data(data: Any) -> Device:

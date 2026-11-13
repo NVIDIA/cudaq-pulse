@@ -44,7 +44,7 @@ TOP_LEVEL = {
     "InternalError",
     "PulseWarning",
     "UpgradeNotice",
-    "NoTargetError",
+    "NoProcessQuantumSystemError",
     "NoDeviceError",
     "DeviceMismatchError",
     "GpuRuntimeError",
@@ -200,7 +200,7 @@ def test_device_is_the_one_device_getter():
 def test_the_release_ships_no_neutral_atom_target():
     import cudaq_pulse.targets as targets
 
-    assert not [n for n in targets.available_targets() if n.startswith("rydberg")]
+    assert not [n for n in targets.available_quantum_systems() if n.startswith("rydberg")]
     assert not [n for n in targets.__all__ if n.lower().startswith("rydberg")]
 
 
@@ -282,11 +282,11 @@ def test_every_public_error_is_a_pulse_error_and_keeps_its_builtin_base():
         "ExecutionError": RuntimeError,
         "InternalError": RuntimeError,
         "UnsupportedInterpreterError": NotImplementedError,
-        "NoTargetError": RuntimeError,
+        "NoProcessQuantumSystemError": RuntimeError,
         "NoDeviceError": RuntimeError,
         "DeviceMismatchError": RuntimeError,
         "DeviceDefinitionError": ValueError,
-        "UnknownTargetError": KeyError,
+        "UnknownQuantumSystemError": KeyError,
         "GpuRuntimeError": RuntimeError,
         "GpuSupportNotBuiltError": RuntimeError,
         "GpuRuntimeLoadError": RuntimeError,

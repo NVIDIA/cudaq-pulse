@@ -21,7 +21,7 @@ import cudaq_pulse.ops
 import numpy as np
 import pytest
 from cudaq_pulse.kernel.ir_builder import CompilationError
-from cudaq_pulse.targets._registry import current_target
+from cudaq_pulse.targets._registry import current_quantum_system
 
 from tests._handles import Q
 from tests._ir import python_ir
@@ -682,7 +682,7 @@ def chosen_on_two(q0, q1):
 
 
 def test_without_a_target_that_takes_values_at_run_time_each_op_runs_in_the_arms():
-    for target in (current_target(), pulse.device(_target())):
+    for target in (current_quantum_system(), pulse.device(_target())):
         assert not any(pulse.compiler._can_select_at_runtime(target, kind) for kind in _KINDS)
     lowered = _fresh(chosen_amplitudes)
     assert not lowered.runtime_selects

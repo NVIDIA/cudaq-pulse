@@ -47,7 +47,7 @@ def test_compiler_only_build_passes_only_with_allow_no_gpu():
 def test_module_entry_point(tmp_path):
     env = dict(os.environ, PYTHONPATH=str(Path(cudaq_pulse.__file__).parent.parent))
     # The suite's own target is registered only inside the test process.
-    env.pop("CUDAQ_PULSE_TARGET", None)
+    env.pop("CUDAQ_PULSE_QUANTUM_SYSTEM", None)
     result = subprocess.run(
         [sys.executable, "-m", "cudaq_pulse.doctor", "--allow-no-gpu"],
         cwd=tmp_path,
@@ -206,16 +206,19 @@ def test_invalid_mlir_context_limits_fail(monkeypatch):
 
 def test_the_process_target_and_kernel_cache_are_reported(monkeypatch):
     monkeypatch.setattr(doctor, "_diagnose_gpu", lambda write: gpu.GpuSupportNotBuiltError())
-    monkeypatch.setenv("CUDAQ_PULSE_TARGET", "transmon_generic:3")
+    monkeypatch.setenv("CUDAQ_PULSE_QUANTUM_SYSTEM", "transmon_generic:3")
     monkeypatch.setenv("CUDAQ_PULSE_CACHE_SIZE", "8")
     code, out = _run("--allow-no-gpu")
     assert code == 0
-    assert "Process target: transmon_generic:3 (env CUDAQ_PULSE_TARGET=transmon_generic:3" in out
+    assert (
+        "Process quantum system: transmon_generic:3 "
+        "(env CUDAQ_PULSE_QUANTUM_SYSTEM=transmon_generic:3" in out
+    )
     assert "Kernel cache: 8 specializations per kernel (CUDAQ_PULSE_CACHE_SIZE=8)" in out
 
 
 @pytest.mark.parametrize(
-    ("name", "value"), [("CUDAQ_PULSE_TARGET", "nope"), ("CUDAQ_PULSE_CACHE_SIZE", "0")]
+    ("name", "value"), [("CUDAQ_PULSE_QUANTUM_SYSTEM", "nope"), ("CUDAQ_PULSE_CACHE_SIZE", "0")]
 )
 def test_invalid_kernel_settings_fail(monkeypatch, name, value):
     monkeypatch.setattr(doctor, "_diagnose_gpu", lambda write: gpu.GpuSupportNotBuiltError())

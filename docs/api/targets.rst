@@ -135,6 +135,6 @@ Shipped targets
 Registering targets
 -------------------
 
-.. autofunction:: cudaq_pulse.targets.register_target
+.. autofunction:: cudaq_pulse.targets.register_quantum_system
 
-.. autofunction:: cudaq_pulse.targets.available_targets
+.. autofunction:: cudaq_pulse.targets.available_quantum_systems

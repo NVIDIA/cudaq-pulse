@@ -12,7 +12,7 @@ from cudaq_pulse.backends import BackendNotFoundError
 from cudaq_pulse.kernel._bytecode_normalize import UnsupportedInterpreterError
 from cudaq_pulse.kernel.ir_builder import SymbolicValueError
 from cudaq_pulse.runtime import GpuRuntimeError
-from cudaq_pulse.targets import UnknownTargetError
+from cudaq_pulse.targets import UnknownQuantumSystemError
 
 CAUGHT_AS = [
     (pulse.InvalidValueError, ValueError),
@@ -29,8 +29,8 @@ CAUGHT_AS = [
     (pulse.ExecutionError, RuntimeError),
     (pulse.InternalError, RuntimeError),
     (pulse.DeviceDefinitionError, ValueError),
-    (UnknownTargetError, pulse.NotFoundError),
-    (UnknownTargetError, LookupError),
+    (UnknownQuantumSystemError, pulse.NotFoundError),
+    (UnknownQuantumSystemError, LookupError),
     (BackendNotFoundError, pulse.NotFoundError),
     (UnsupportedInterpreterError, pulse.UnsupportedError),
     (UnsupportedInterpreterError, RuntimeError),
@@ -54,7 +54,7 @@ def test_the_value_and_type_errors_are_separate():
 def test_a_not_found_error_prints_without_quotes():
     error = pulse.NotFoundError("no calibration value 'q0.freq'")
     assert str(error) == "no calibration value 'q0.freq'"
-    assert str(UnknownTargetError("no registered target 'x'")) == "no registered target 'x'"
+    assert str(UnknownQuantumSystemError("no registered target 'x'")) == "no registered target 'x'"
 
 
 def test_problems_are_listed_after_the_message():
@@ -109,7 +109,7 @@ ALL = [
     pulse.ExecutionError,
     pulse.InternalError,
     pulse.DeviceDefinitionError,
-    UnknownTargetError,
+    UnknownQuantumSystemError,
     BackendNotFoundError,
     UnsupportedInterpreterError,
     GpuRuntimeError,

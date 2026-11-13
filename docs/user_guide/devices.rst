@@ -128,25 +128,25 @@ transition's (``transition=(1, 2)``) calibration. A ``FluxCZ`` does not play:
 flux lines are not modeled yet, so a kernel leaves the qudits idle for its
 ``duration_ns``.
 
-The process target
-------------------
+The process quantum system
+--------------------------
 
 A script can leave the choice of device to the command line with a *process
 target*:
 
 .. code-block:: bash
 
-   CUDAQ_PULSE_TARGET=transmon_17q python script.py
-   python -m cudaq_pulse --target transmon_generic:4 script.py --script-args
+   CUDAQ_PULSE_QUANTUM_SYSTEM=transmon_17q python script.py
+   python -m cudaq_pulse --quantum-system transmon_generic:4 script.py --script-args
 
-The launcher sets ``CUDAQ_PULSE_TARGET`` for the script and passes the
+The launcher sets ``CUDAQ_PULSE_QUANTUM_SYSTEM`` for the script and passes the
 script's own arguments through unparsed. ``pulse.device()`` with no
-argument returns the process target's device, whose handles the script then
+argument returns the process quantum system's device, whose handles the script then
 passes to its kernels; a kernel call with no qudit handles always raises
 ``NoDeviceError``.
 
 Registered names are ``transmon_17q`` and ``transmon_generic:N``;
-``cudaq_pulse.targets.register_target`` adds more.
+``cudaq_pulse.targets.register_quantum_system`` adds more.
 
 ``transmon_17q`` is the distance-three surface-code device of
 Krinner et al., Nature 605, 669 (2022), built from the values the paper
@@ -156,7 +156,7 @@ its CZ's duration, buffers and interaction frequency (its ``CZ``
 calibration, below).
 ``cudaq_pulse.targets.transmon.CZ_LAYERS`` gives the CZ time steps of a
 cycle, each a tuple of (auxiliary, data) qudit pairs.
-``python -m cudaq_pulse.doctor`` lists them and reports the process target.
+``python -m cudaq_pulse.doctor`` lists them and reports the process quantum system.
 
 The paper's J / 2 pi ~ 7 MHz is the ``|11> <-> |20>`` coupling of the CZ at
 each pair's interaction point (Lacroix, PhD thesis, ETH Zurich (2025), on the

@@ -7,13 +7,13 @@ import weakref
 
 import pytest
 from cudaq_pulse.runtime.gpu import GpuRuntimeError, require_gpu_runtime
-from cudaq_pulse.targets._registry import ENV_VAR, register_target
+from cudaq_pulse.targets._registry import ENV_VAR, register_quantum_system
 
 import tests.property_settings  # noqa: F401  (loads the hypothesis profile)
 from tests._handles import ladder_target
 
-# ``device()`` without an argument returns the process target.
-register_target("ladder", lambda arg: ladder_target(int(arg) if arg else 64))
+# ``device()`` without an argument returns the process quantum system.
+register_quantum_system("ladder", lambda arg: ladder_target(int(arg) if arg else 64))
 os.environ[ENV_VAR] = "ladder:8192"
 # The verifications that only catch a bug of the compiler itself, which a
 # user's compile skips; read by the first compile, in every child too.

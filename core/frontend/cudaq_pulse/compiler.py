@@ -492,7 +492,7 @@ class CompileMetrics:
     schedule_ms: float = 0.0
     total_ms: float = 0.0
     op_count: int = 0
-    target: str = ""
+    quantum_system: str = ""
 
 
 @dataclass(frozen=True)
@@ -1128,7 +1128,7 @@ def build(
     from .kernel.bytecode_bridge import _trace_kernel_with_builder
     from .kernel.packed_ir_builder import PackedIRBuilder
 
-    metrics = CompileMetrics(target=target.name)
+    metrics = CompileMetrics(quantum_system=target.name)
     name = getattr(fn, "__name__", "kernel")
     t0 = time.perf_counter()
     machine = options.machine
@@ -1461,7 +1461,7 @@ def with_line_delays(lowered: Lowered, options: CompileOptions, qudit_count: int
     except Exception:
         return None
     old = lowered.metrics
-    metrics = CompileMetrics(target=old.target)
+    metrics = CompileMetrics(quantum_system=old.quantum_system)
     metrics.op_count = old.op_count
     metrics.schedule_ms = (time.perf_counter() - t0) * 1000
     metrics.total_ms = metrics.schedule_ms

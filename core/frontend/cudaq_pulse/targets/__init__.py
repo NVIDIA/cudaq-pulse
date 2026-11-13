@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """QPU target definitions: Hamiltonians, decoherence models, connectivity."""
 
-from ._registry import UnknownTargetError, available_targets, register_target
+from ._registry import UnknownQuantumSystemError, available_quantum_systems, register_quantum_system
 from .base import (
     Coupling,
     DeviceDescription,
@@ -37,7 +37,7 @@ __all__ = [
     "Calibration",
     "transmon_17q",
     "transmon_generic",
-    "register_target",
-    "available_targets",
-    "UnknownTargetError",
+    "register_quantum_system",
+    "available_quantum_systems",
+    "UnknownQuantumSystemError",
 ]

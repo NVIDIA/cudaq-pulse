@@ -17,7 +17,7 @@ import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse.runtime import simulate as simulate_module
 from cudaq_pulse.targets import Coupling, DeviceDescription, PhysicalQudit
-from cudaq_pulse.targets._registry import _registry, _resolved, register_target
+from cudaq_pulse.targets._registry import _registry, _resolved, register_quantum_system
 from cudaq_pulse.targets.models import SimulationModel, TransmonModel
 
 from tests._handles import Q
@@ -122,7 +122,7 @@ def test_a_target_registered_again_under_its_name_changes_the_step(steps):
     name = "step-cache-test"
     try:
         for alpha in (-200.0e6, -400.0e6, -200.0e6):
-            register_target(name, lambda arg, a=alpha: _target(a))
+            register_quantum_system(name, lambda arg, a=alpha: _target(a))
             dev = pulse.device(name)
             pulse.simulate(pulse.compile(_flip).lower(dev.qudits[0]), levels=5)
             assert steps[-1] == _STEP_5[alpha]

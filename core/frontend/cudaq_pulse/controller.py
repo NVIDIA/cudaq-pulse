@@ -148,8 +148,6 @@ _LINK_KEYS: Mapping[str, str] = MappingProxyType(
         "feedback_ns": "answer_delay_ns",
     }
 )
-# The /2 name of the /1 key naming the quantum system.
-_SYSTEM_KEYS: Mapping[str, str] = MappingProxyType({"target": "quantum_system"})
 
 
 class Event(StrEnum):
@@ -908,7 +906,7 @@ def export(
     base = emulation(lowered, False)
     program = {
         "format": FORMAT,
-        "target": lowered.device.name,
+        "quantum_system": lowered.device.name,
         "clock_ghz": clock,
         **({} if clocks is None else _clocks.clock_keys(clocks, clocks.controllers[0])),
         "schedule": lowered.options.schedule,
@@ -1062,7 +1060,7 @@ def _export_structured(
     base = emulation(lowered, False)
     program: dict[str, Any] = {
         "format": _STRUCTURED,
-        "target": lowered.device.name,
+        "quantum_system": lowered.device.name,
         "clock_ghz": clock,
     }
     if clocks is not None:
@@ -1104,7 +1102,6 @@ def _export_structured(
         program["program_id"] = role.program_id
         program["symbols"] = _symbols(lowered, _symbol_plan(role, slots, program["lines"]))
         _structured_symbols(lowered, role, events, slots)
-    program = {_SYSTEM_KEYS.get(k, k): v for k, v in program.items()}
     program["links"] = {
         k: {_LINK_KEYS.get(f, f): v for f, v in link.items()}
         for k, link in program["links"].items()
@@ -1423,7 +1420,7 @@ def unroll(program: Mapping[str, Any]) -> dict[str, Any]:
         else dict(frame)
         for frame in program.get("frame_state", ())
     ]
-    flat_keys = {"controller": "limits", **{v: k for k, v in _SYSTEM_KEYS.items()}}
+    flat_keys = {"controller": "limits"}
     from . import _clocks
 
     # Format /1 states the rate after the schedule, and only when sampled.
@@ -1622,7 +1619,7 @@ def _export_part(
     played = [line for line, owner in zip(lines, owners, strict=True) if owner == index]
     exported = {
         "format": FORMAT,
-        "target": lowered.device.name,
+        "quantum_system": lowered.device.name,
         "clock_ghz": clock,
         **keys,
         "controller": index,

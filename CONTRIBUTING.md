@@ -91,7 +91,7 @@ fails instead of skipping), `physics` (everything in `tests/physics`),
 `scaling` (benchmarks that compare two sizes in one run) and `slow` (tests
 that spend seconds in native code or child processes, which the sanitizer job
 leaves out). `tests/conftest.py`
-sets `CUDAQ_PULSE_TARGET=ladder:8192` for the whole session, and
+sets `CUDAQ_PULSE_QUANTUM_SYSTEM=ladder:8192` for the whole session, and
 `CUDAQ_PULSE_VERIFY=1` unless it is set already. Tests run with
 the default unroll threshold; a test of a rolled loop of a few iterations
 passes `unroll_threshold=` to `pulse.compile` or `@pulse.kernel`.

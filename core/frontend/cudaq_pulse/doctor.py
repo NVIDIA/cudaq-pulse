@@ -182,23 +182,29 @@ def _context_budget(write: Callable[[str], None]) -> bool:
 
 
 def _kernel_settings(write: Callable[[str], None]) -> bool:
-    """Print the process target and cache size; return False if either is invalid."""
+    """Print the process quantum system and cache size; return False if either is invalid."""
     from .kernel._kernel import CACHE_SIZE_ENV, _cache_size
-    from .targets._registry import ENV_VAR, available_targets, current_target
+    from .targets._registry import ENV_VAR, available_quantum_systems, current_quantum_system
 
     ok = True
-    write(f"Targets available: {', '.join(available_targets())}")
+    write(f"Quantum systems available: {', '.join(available_quantum_systems())}")
     if not os.environ.get(ENV_VAR):
-        write(f"Process target: none ({ENV_VAR} is not set; kernels run on their qudits' device)")
+        write(
+            f"Process quantum system: none ({ENV_VAR} is not set; "
+            "kernels run on their qudits' quantum system)"
+        )
     else:
         try:
-            device = current_target()
+            device = current_quantum_system()
         except Exception as error:
-            write("Process target: INVALID")
+            write("Process quantum system: INVALID")
             write(f"  {error}")
             ok = False
         else:
-            write(f"Process target: {device.name} ({device.source}, {len(device.layout)} qudits)")
+            write(
+                f"Process quantum system: {device.name} "
+                f"({device.source}, {len(device.layout)} qudits)"
+            )
     try:
         size = _cache_size(None)
     except ValueError as error:

@@ -34,7 +34,7 @@ def test_example_runs(path, monkeypatch, capsys):
         monkeypatch.setenv("PATH", f"{_BUILD_BIN}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setenv("MPLBACKEND", "Agg")
     # Examples choose their devices themselves.
-    monkeypatch.delenv("CUDAQ_PULSE_TARGET", raising=False)
+    monkeypatch.delenv("CUDAQ_PULSE_QUANTUM_SYSTEM", raising=False)
     monkeypatch.syspath_prepend(str(path.parent))
     runpy.run_path(str(path), run_name="__main__")
     assert capsys.readouterr().out

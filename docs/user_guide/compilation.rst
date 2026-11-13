@@ -82,7 +82,7 @@ A kernel runs on the device of the qudit handles it is called with; see
 :doc:`devices`. One kernel serves every device it is called with, each with
 its own specializations. A call without handles raises ``NoDeviceError``,
 unless the kernel is compiled for one device (``device=`` below); the
-process target is never used for it. Qudit frequencies and the pulse clock
+process quantum system is never used for it. Qudit frequencies and the pulse clock
 come from the device.
 
 Caching and Python semantics
@@ -299,4 +299,4 @@ compiling raise ``ValueError`` naming the variable. Lower values bound the
 memory a long session keeps (a loop that compiles a large program for many
 devices, for example) at the cost of creating contexts more often, about
 0.4 ms each. ``python -m cudaq_pulse.doctor`` prints the limits in effect,
-the process target and the kernel cache size.
+the process quantum system and the kernel cache size.
