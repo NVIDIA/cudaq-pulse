@@ -18,10 +18,10 @@ Usage::
 
 The kernel language (``drive``, ``gaussian``, ``get_drive_line``, ...) lives
 in ``cudaq_pulse.ops``; inside a ``@pulse.kernel`` its names are used bare.
-A bare int duration is a number of cycles of the device's clock; a time
+A bare int duration is a number of cycles of the quantum system's clock; a time
 with units, ``20 * pulse.ns`` (``pulse.us``, ``pulse.ms``, ``pulse.s``),
 converts to cycles exactly when the kernel compiles, so one kernel runs on
-devices with different clocks. ``pulse.round_duration(line, n)`` rounds a
+quantum systems with different clocks. ``pulse.round_duration(line, n)`` rounds a
 length to whole timesteps of the line, for controllers that start
 operations only every few program cycles.
 Compiler types (``CompileMetrics``, ``ScheduledEvent``,
@@ -29,7 +29,7 @@ Compiler types (``CompileMetrics``, ``ScheduledEvent``,
 calibrations in ``cudaq_pulse.quantum_systems``. ``pulse.classical`` declares the
 classical functions a kernel calls while the QPU runs; ``pulse.Bits`` and
 ``pulse.Length`` (``typing.Annotated``, for a fixed list length) type their
-parameters and results. ``pulse.gates`` names the gates a device is
+parameters and results. ``pulse.gates`` names the gates a quantum system is
 calibrated for, whose pulses ``get_calibration`` gives. ``pulse.controller``
 exports a compiled kernel to a controller and states a controller's limits,
 and ``pulse.backends`` finds the controller backends installed beside

@@ -14,7 +14,7 @@ import math
 import cudaq_pulse as pulse
 
 # 20 ns DRAG pulses with sigma = 5 ns, calibrated for the 17-qubit transmon
-# device's drive scale.
+# quantum system's drive scale.
 cal = {
     "x_duration": 20 * pulse.ns,
     "x_sigma": 5 * pulse.ns,

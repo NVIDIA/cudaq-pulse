@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""The shipped transmon_17q calibration and loading calibrations onto devices."""
+"""The shipped transmon_17q calibration and loading calibrations onto quantum systems."""
 
 import hashlib
 import json
@@ -68,7 +68,7 @@ def test_cooldowns_and_provenance(cal):
 
 def test_a_loaded_calibration_keeps_the_values_it_parsed():
     # Calibration.load keeps the dict it parsed without copying it, and the
-    # shipped one is shared by every device: no use of it may change it.
+    # shipped one is shared by every quantum system: no use of it may change it.
     shipped = pulse.quantum_system("transmon_17q").calibration
     parsed = json.loads(_SHIPPED_17Q.read_text())
     for cal in (shipped, Calibration.load("transmon_17q", cooldown="2025-flux-tuning")):
@@ -97,7 +97,7 @@ def test_every_qudit_has_a_circuit_that_reproduces_its_idle_frequency(cal):
 
 
 def test_the_device_coupling_reproduces_the_measured_x2_d4_coupling(cal):
-    """One charge coupling for the device, fitted so that X2-D4's
+    """One charge coupling for the quantum system, fitted so that X2-D4's
     |11> <-> |20> coupling is Hellings et al.'s 7.4 MHz at 4.4 GHz."""
     g_c = cal.value("coupling", "charge_coupling_g_c", "calibration_A")
     assert {cal.charge_coupling_hz(p) for p in cal.pairs} == {g_c}
@@ -208,7 +208,7 @@ def test_an_indexed_shipped_calibration_reads_its_file_for_other_values(monkeypa
 
 def test_a_device_loads_a_calibration_from_its_config(tmp_path, cal):
     # A calibration whose charge coupling is 10 % higher strengthens every
-    # pair; without the stored idle exchange, the device computes it.
+    # pair; without the stored idle exchange, the quantum system computes it.
     data = json.loads(_SHIPPED_17Q.read_text())
     couplings = data["coupling"]["charge_coupling_g_c"]
     couplings["calibration_A"]["value"] *= 1.1

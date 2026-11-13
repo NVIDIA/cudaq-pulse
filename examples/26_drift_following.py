@@ -7,11 +7,11 @@ A qudit's frequency drifts while a loop runs one program batch after batch.
 Each batch also takes a few Ramsey shots and hands them to a background
 worker process, started with the ``spawn`` method. The worker keeps a
 posterior over the frequency, writes the estimate into the calibration at
-a fixed resolution and builds the device again. When the device's
+a fixed resolution and builds the quantum system again. When the quantum system's
 fingerprint has changed, it recompiles the program and sends it back
 pickled. The loop swaps the fresh program in before its next batch.
 
-The device fingerprint is a hash of everything a compiled program depends
+The quantum system fingerprint is a hash of everything a compiled program depends
 on, so the worker only recompiles when the calibration actually changed.
 It keeps its programs by fingerprint, so returning to an earlier
 calibration costs no compile either.
@@ -25,7 +25,7 @@ What is simulated: the simulator plays the QPU. Each batch's error is
 ``pulse.simulate`` of the program in use against the drifting system's true
 parameters, and the Ramsey shots are drawn from the true system's analytic
 surrogate (ideal pulses, no decay). The drift is far faster than a real
-device's, so the run fits in seconds; the batches are real 20 ms waits, and
+quantum system's, so the run fits in seconds; the batches are real 20 ms waits, and
 the worker, the pickling and the compiles are real.
 
 Programs are swapped between batches, by the host. Swapping one in between
@@ -73,7 +73,7 @@ def fringe_top(qudit):
 
 
 def calibrated_system(offset_hz):
-    """The device whose qudit frequency is the nominal one plus *offset_hz*."""
+    """The quantum system whose qudit frequency is the nominal one plus *offset_hz*."""
     nominal = target.qudits[qudit_index]
     qudit = nominal.replace(frequency_hz=nominal.frequency_hz + offset_hz)
     return pulse.quantum_system(
@@ -85,7 +85,7 @@ def calibrated_system(offset_hz):
 
 
 def calibration_worker(records_in, updates_out):
-    """Estimate the frequency from Ramsey records; recompile when the device changes."""
+    """Estimate the frequency from Ramsey records; recompile when the quantum system changes."""
     mean_hz, sigma_hz = 0.0, prior_sigma_hz
     start = calibrated_system(0.0)
     programs = {start.fingerprint: fringe_top.lower(start.qudits[qudit_index])}
@@ -167,7 +167,7 @@ def follow(swapping, seed=5):
 
 
 if __name__ == "__main__":
-    print("=== The device fingerprint follows the calibration ===")
+    print("=== The quantum system fingerprint follows the calibration ===")
     for offset_hz in (0.0, 0.0, 25e3):
         print(
             f"  qudit frequency +{offset_hz / 1e3:4.0f} kHz: fingerprint "
@@ -206,7 +206,7 @@ if __name__ == "__main__":
 
     print("\n=== What the worker did ===")
     print(
-        f"  {counts['estimates']} estimates: the device built from {counts['unchanged']} "
+        f"  {counts['estimates']} estimates: the quantum system built from {counts['unchanged']} "
         f"of them had the fingerprint already in use, so nothing was recompiled"
     )
     print(

@@ -1,17 +1,17 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Devices and qudit handles.
+"""Quantum systems and qudit handles.
 
 A ``QuantumSystem`` is a read-only description of one machine: its target (the
 calibrated physics) and its layout, which maps the user's qudit numbering to
-the target's carriers. ``dev.qudits[i]`` is a ``Qudit``: a handle that
-names one carrier of that device. A kernel called with handles runs on their
-device, so one compiled kernel serves every device it is called with.
+the target's carriers. ``qs.qudits[i]`` is a ``Qudit``: a handle that
+names one carrier of that quantum system. A kernel called with handles runs on their
+quantum system, so one compiled kernel serves every quantum system it is called with.
 
-Devices compare by content: two devices built from the same values are equal
+Quantum systems compare by content: two quantum systems built from the same values are equal
 and share compiled kernels. The content is the target, layout and
 calibration (a shipped one by name, cooldown and file, any other by its
-values); ``name`` and ``source`` are labels, and equal devices may differ
+values); ``name`` and ``source`` are labels, and equal quantum systems may differ
 in them.
 """
 
@@ -71,12 +71,12 @@ __all__ = [
 
 class NoQuantumSystemError(NoProcessQuantumSystemError):
     """A kernel was called without qudit handles and was not compiled for a
-    device, so it has no device to run on. The process quantum system is never used
+    quantum system, so it has no quantum system to run on. The process quantum system is never used
     for a kernel call."""
 
 
 class QuantumSystemMismatchError(PulseError, RuntimeError):
-    """A kernel call mixes handles of different devices, or of an unpinned one."""
+    """A kernel call mixes handles of different quantum systems, or of an unpinned one."""
 
 
 _CARRIER = "qudit"
@@ -101,7 +101,8 @@ def _read_only(array: Any) -> Any:
 
 def _fingerprint(target: DeviceDescription, layout: tuple[int, ...], calibration: Any) -> str:
     """Content hash of everything a compiled kernel depends on, and of the
-    calibration the device holds: devices of one fingerprint are one device."""
+    calibration the quantum system holds: quantum systems of one fingerprint are one quantum
+    system."""
     qudits = [
         (
             q.index,
@@ -130,14 +131,14 @@ def _fingerprint(target: DeviceDescription, layout: tuple[int, ...], calibration
         residual_zz,
         layout,
     )
-    # Uncalibrated devices keep their fingerprints.
+    # Uncalibrated quantum systems keep their fingerprints.
     if calibration is not None:
         content += (calibration._identity,)
     return _blake2b(repr(content).encode(), digest_size=16).hexdigest()
 
 
 class Qudit:
-    """A handle naming one carrier of a device.
+    """A handle naming one carrier of a quantum system.
 
     ``index`` is the carrier's index in the target (the layout is applied
     when the handle is created); ``logical`` is the position the user
@@ -197,7 +198,7 @@ class Qudit:
         ) -> DragPulse | ReadoutPulse: ...
 
     def get_calibration(self, gate: Any, transition: tuple[int, int] = (0, 1)) -> Any:
-        """The calibrated pulse of *gate* on this qudit of its device, as
+        """The calibrated pulse of *gate* on this qudit of its quantum system, as
         ``get_drive_line(q).get_calibration(gate)`` (``X`` to ``Y90``) and
         ``get_readout_line(q).get_calibration(pulse.gates.READOUT)`` give it
         in a kernel; see ``PhysicalQudit.get_calibration``."""
@@ -205,7 +206,7 @@ class Qudit:
 
 
 class Register(Sequence[Qudit]):
-    """An ordered selection of qudit handles of one device."""
+    """An ordered selection of qudit handles of one quantum system."""
 
     __slots__ = ("_qudits",)
 
@@ -255,7 +256,7 @@ class Register(Sequence[Qudit]):
 
 
 class _Handles:
-    """``dev.qudits``: index with an int, a list of ints or a slice."""
+    """``qs.qudits``: index with an int, a list of ints or a slice."""
 
     __slots__ = ("_all",)
 
@@ -282,12 +283,16 @@ class _Handles:
 
 
 class _DeviceRegister(Register):
-    """All the qudits of a device, which its errors name."""
+    """All the qudits of a quantum system, which its errors name."""
 
     __slots__ = ()
 
     def _owner(self) -> str:
-        return f"device {self._qudits[0].quantum_system.name!r}" if self._qudits else "the device"
+        return (
+            f"quantum system {self._qudits[0].quantum_system.name!r}"
+            if self._qudits
+            else "the quantum system"
+        )
 
 
 def _out_of_range(index: Any, n: int, owner: str) -> IndexOutOfRangeError:
@@ -323,7 +328,7 @@ class QuantumSystem:
     ``compile(kernel, quantum_system=dev)`` checks every program against it.
     """
 
-    # The registered target the device was made from, as ``as_dict`` writes it.
+    # The registered target the quantum system was made from, as ``as_dict`` writes it.
     _spec: str | None = None
     # What a kernel whose qudits are runtime parameters depends on, made by
     # the first such kernel (_programs._structure).
@@ -380,7 +385,7 @@ class QuantumSystem:
         self.frequencies: Mapping[int, float] = target.frequencies
         self.fingerprint = _fingerprint(target, layout, calibration)
         # What equality compares: the fingerprint alone without a control
-        # system, so comparing such devices costs one string comparison.
+        # system, so comparing such quantum systems costs one string comparison.
         self._identity: Any = (
             self.fingerprint if control_system is None else (self.fingerprint, control_system)
         )
@@ -432,7 +437,7 @@ class QuantumSystem:
         or more, else the first it lacks (0 Hz in the tables, which then end
         at its last carrier). Kept (``_tables``) until a caller needs more
         carriers: a compile makes them for its program's qudits only, not
-        for the whole device."""
+        for the whole quantum system."""
         if self._tables[0] >= count:
             return self._tables
         from array import array
@@ -496,22 +501,24 @@ class QuantumSystem:
         if carrier is not None:
             raise NotFoundError(
                 f"qudit {label!r} is carrier {carrier} of {self._description.name}, which the "
-                f"layout of device {self.name!r} leaves out"
+                f"layout of quantum system {self.name!r} leaves out"
             )
         close = _closest(str(label), labels)
         hint = f"did you mean {close!r}? " if close else ""
         known = f"its labels are {', '.join(labels)}" if labels else "its qudits have no labels"
-        raise NotFoundError(f"device {self.name!r} has no qudit labelled {label!r}; {hint}{known}")
+        raise NotFoundError(
+            f"quantum system {self.name!r} has no qudit labelled {label!r}; {hint}{known}"
+        )
 
     def coupling(self, a: Qudit, b: Qudit) -> Coupling:
-        """The coupling of the device's qudits *a* and *b* (handles, in either
+        """The coupling of the quantum system's qudits *a* and *b* (handles, in either
         order), as calibrated: ``dev.coupling(a, b).get_calibration(
         pulse.gates.CZ)`` is its CZ. A ``NotFoundError`` names the qudits *a*
         couples to."""
         for handle in (a, b):
             if handle.__class__ is not Qudit:
                 raise InvalidTypeError(
-                    f"QuantumSystem.coupling takes two qudit handles, as dev.qudits[i]; got "
+                    f"QuantumSystem.coupling takes two qudit handles, as qs.qudits[i]; got "
                     f"{handle!r}"
                 )
             if handle.quantum_system is not self and handle.quantum_system != self:
@@ -548,7 +555,7 @@ class QuantumSystem:
 
     @staticmethod
     def load(path: str | os.PathLike[str], /) -> QuantumSystem:
-        """The device of a system file, as ``as_dict`` writes one: JSON with
+        """The quantum system of a system file, as ``as_dict`` writes one: JSON with
         its format (``cudaq-pulse.system/1``), its quantum system (a
         registered name, or every value inline), layout, calibration,
         cooldown, control system and program clock, each as data. A file
@@ -559,12 +566,12 @@ class QuantumSystem:
 
     @staticmethod
     def from_dict(data: Mapping[str, Any], /) -> QuantumSystem:
-        """The device of a system file's data, as ``as_dict`` returns it or
+        """The quantum system of a system file's data, as ``as_dict`` returns it or
         ``json.load`` reads it; see ``load``."""
         return _from_data(data)
 
     if TYPE_CHECKING:
-        # Read from the device's description by __getattr__.
+        # Read from the quantum system's description by __getattr__.
         @property
         def physical_qudits(self) -> Mapping[int, PhysicalQudit]: ...
         @property
@@ -592,7 +599,7 @@ class QuantumSystem:
 
     def __getattr__(self, name: str) -> Any:
         """The description's fields, properties and methods, read from the
-        description the device was built from when asked for:
+        description the quantum system was built from when asked for:
         ``physical_qudits`` (its ``qudits``; ``qudits`` are the handles),
         ``couplings``, ``residual_zz``, ``model``, ``attribution``,
         ``anharmonicities``, ``t1_times``, ``t2_times``, ``t2_echo_times``,
@@ -620,7 +627,7 @@ class QuantumSystem:
         )
 
     def as_dict(self) -> dict[str, Any]:
-        """The device as JSON-serializable data, which ``QuantumSystem.from_dict``
+        """The quantum system as JSON-serializable data, which ``QuantumSystem.from_dict``
         reads back: its format (``cudaq-pulse.system/1``), the version that
         wrote it, its quantum system (a registered name, or every value
         inline), layout and calibration, and its control system."""
@@ -634,7 +641,7 @@ class QuantumSystem:
     def __hash__(self) -> int:
         return hash(self.fingerprint)
 
-    # Read-only: a copy is the device itself.
+    # Read-only: a copy is the quantum system itself.
     def __copy__(self) -> QuantumSystem:
         return self
 
@@ -671,7 +678,7 @@ def _calibrated(
     control_system: ControlSystem | None = None,
     clock_ghz: float | None = None,
 ) -> QuantumSystem:
-    """The device of *target*, registered as *spec* (``None`` for a
+    """The quantum system of *target*, registered as *spec* (``None`` for a
     ``DeviceDescription``), with *calibration* applied and *clock_ghz* (if
     given) its program clock."""
     base = target
@@ -862,7 +869,7 @@ def _calibration(config: Mapping[str, Any], problems: list[Problem]) -> Any:
 
 
 def _definition(config: Mapping[str, Any], source: str, problems: list[Problem]) -> _MaybeSystem:
-    """The device of *config*, or ``None`` after adding its problems in the
+    """The quantum system of *config*, or ``None`` after adding its problems in the
     order of the config's keys."""
     found = len(problems)
     quantum_system = _checked(config, source, problems)
@@ -1006,14 +1013,14 @@ def quantum_system(
     control_system: ControlSystem | None = None,
     clock_ghz: float | None = None,
 ) -> QuantumSystem:
-    """The device of a quantum system: a registered target name or a
+    """The quantum system of a quantum system: a registered target name or a
     ``DeviceDescription``.
 
-    ``device("transmon_17q")`` is the device of a registered target,
+    ``quantum_system("transmon_17q")`` is the quantum system of a registered target,
     with every carrier in order (a name takes its argument after a colon, as
     in ``"transmon_generic:4"``); ``cudaq_pulse.quantum_systems.available_quantum_systems()``
     lists the names. A string is always a name: ``QuantumSystem.load(path)`` reads
-    a system file, and ``QuantumSystem.from_dict(data)`` its data. ``device()`` is
+    a system file, and ``QuantumSystem.from_dict(data)`` its data. ``quantum_system()`` is
     the process quantum system, named by ``CUDAQ_PULSE_QUANTUM_SYSTEM`` (``python -m
     cudaq_pulse --quantum-system NAME`` sets it); without one it raises
     ``NoProcessQuantumSystemError``.
@@ -1115,20 +1122,20 @@ def _unknown_target(name: str) -> None:
 
 
 def _from_data(data: Any) -> QuantumSystem:
-    """``QuantumSystem.from_dict``: the device of a system file's data."""
+    """``QuantumSystem.from_dict``: the quantum system of a system file's data."""
     if not isinstance(data, Mapping):
-        raise InvalidTypeError(f"device data must be a mapping, got {type(data).__name__}")
+        raise InvalidTypeError(f"quantum system data must be a mapping, got {type(data).__name__}")
     problems: list[Problem] = []
     found = _definition(data, "data", problems)
     if found is None:
         raise QuantumSystemDefinitionError(
-            f"{_count(len(problems), 'problem')} in the device data", problems=problems
+            f"{_count(len(problems), 'problem')} in the quantum system data", problems=problems
         )
     return found
 
 
 def _from_file(path: str | os.PathLike[str]) -> QuantumSystem:
-    """``QuantumSystem.load``: the device of a system file."""
+    """``QuantumSystem.load``: the quantum system of a system file."""
     import json
 
     file = os.fspath(path)
@@ -1141,7 +1148,7 @@ def _from_file(path: str | os.PathLike[str]) -> QuantumSystem:
             f"not valid JSON: {error.msg}", file=file, line=error.lineno, column=error.colno
         )
         raise QuantumSystemDefinitionError(
-            f"1 problem in device file {file}", problems=[problem]
+            f"1 problem in quantum system file {file}", problems=[problem]
         ) from error
     problems: list[Problem] = []
     if isinstance(data, Mapping):
@@ -1153,7 +1160,7 @@ def _from_file(path: str | os.PathLike[str]) -> QuantumSystem:
         )
     if found is None:
         raise QuantumSystemDefinitionError(
-            f"{_count(len(problems), 'problem')} in device file {file}",
+            f"{_count(len(problems), 'problem')} in quantum system file {file}",
             problems=_located(problems, file, text),
         )
     return found

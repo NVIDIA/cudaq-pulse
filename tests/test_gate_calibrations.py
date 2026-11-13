@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Gate calibrations: pulse.gates, get_calibration on lines, qudits and
-couplings, and the pulses they derive where a device publishes none."""
+couplings, and the pulses they derive where a quantum system publishes none."""
 
 from __future__ import annotations
 
@@ -151,7 +151,7 @@ def test_a_qudit_checks_its_calibrations():
         _qudit().calibrations[X] = _X  # type: ignore[index]
 
 
-# ── On a device ─────────────────────────────────────────────────────────────
+# ── On a quantum system ─────────────────────────────────────────────────────────────
 
 
 def test_a_qudit_handle_and_a_coupling_give_the_device_calibrations():

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Times with units: ``20 * pulse.ns`` in every duration, converted to cycles
-of the device's clock exactly when the kernel compiles."""
+of the quantum system's clock exactly when the kernel compiles."""
 
 from __future__ import annotations
 

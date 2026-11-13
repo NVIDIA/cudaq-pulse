@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Kernels with list, qudit or register parameters: the module depends on a
-list only through its length and, with runtime qudits, on the device only
+list only through its length and, with runtime qudits, on the quantum system only
 through its structure, and each call binds them. ``_kernel`` imports it for
 the first such kernel.
 """
@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 class _Placing(_Dispatcher):
     """The dispatcher of a kernel with list, qudit or register parameters:
     the module depends on lists only through their lengths and, with runtime
-    qudits, on the device only through its structure; each call binds them."""
+    qudits, on the quantum system only through its structure; each call binds them."""
 
     def _device(self, values: tuple[Any, ...]) -> QuantumSystem:
         kernel = self.kernel

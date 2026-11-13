@@ -198,14 +198,14 @@ class PulseError(Exception):
 
 
 class QuantumSystemDefinitionError(PulseError, ValueError):
-    """A device's definition is wrong: ``pulse.quantum_system()`` lists every problem
+    """A quantum system's definition is wrong: ``pulse.quantum_system()`` lists every problem
     of its config or file in ``problems``, each with its path in the config
     (and, for a file, its line and column)."""
 
     def __init__(self, message: str = "", *, problems: Iterable[Problem] = ()) -> None:
         problems = tuple(problems)
         if not message:
-            message = f"{_count(len(problems), 'problem')} in the device definition"
+            message = f"{_count(len(problems), 'problem')} in the quantum system definition"
         super().__init__(message, problems=problems)
 
 
@@ -266,7 +266,7 @@ class _CallTimeoutError(ExecutionError, TimeoutError):
 
 class IndexOutOfRangeError(PulseError, IndexError):
     """An index past the end of what it indexes, such as a qudit index past
-    the qudits of a device or register. The message says how many there are."""
+    the qudits of a quantum system or register. The message says how many there are."""
 
 
 class PulseWarning(UserWarning):

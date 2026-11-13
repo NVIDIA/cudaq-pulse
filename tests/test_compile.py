@@ -109,7 +109,7 @@ def test_a_module_records_0_hz_for_a_qudit_its_target_lacks():
 
 
 def test_a_qudit_the_target_lacks_is_refused_however_its_tables_were_made():
-    # Handles of another device reach build() as the qudits it lacks: one
+    # Handles of another quantum system reach build() as the qudits it lacks: one
     # in its gap, one past its last, before and after programs on the
     # qudits it defines made its tables.
     from cudaq_pulse.compiler import CompileOptions, build

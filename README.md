@@ -112,8 +112,8 @@ print(f"P(1) = {result.level_population(1):.3f}")  # P(1) = 0.972
 print(rabi_oscillation.lower(qubit, 0.5).mlir())  # the scheduled Pulse MLIR
 ```
 
-`pulse.simulate(kernel, *args)` compiles the call for the device of its
-qudit handles, with frequencies from the device, and evolves it; this
+`pulse.simulate(kernel, *args)` compiles the call for the quantum system of its
+qudit handles, with frequencies from the quantum system, and evolves it; this
 pulse leaves the qubit almost fully excited. `kernel.lower(*args)`
 compiles the call without running it. Calling the
 kernel, `rabi_oscillation(qubit, 0.5)`, compiles and runs it in one step, and

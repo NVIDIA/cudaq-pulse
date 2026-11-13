@@ -17,25 +17,26 @@ if TYPE_CHECKING:
 
 
 class LineCalibrations:
-    """The calibrated pulses of a line's qudit, from the device the kernel
+    """The calibrated pulses of a line's qudit, from the quantum system the kernel
     compiles for; ``get_calibration`` is ``line.get_calibration``."""
 
     __slots__ = ("_device", "_qudit", "_readout")
 
     def __init__(self, emitter: PulseIREmitter, held: _Held) -> None:
         builder = emitter.b
-        # line_tones is the device's own method.
+        # line_tones is the quantum system's own method.
         quantum_system = getattr(getattr(builder, "line_tones", None), "__self__", None)
         qudit = getattr(builder, "_qref_to_qudit", {}).get(held.key[0])
         if quantum_system is None or qudit is None:
             raise CompilationError(
-                "line.get_calibration needs the device's calibrations; this trace has no device"
+                "line.get_calibration needs the quantum system's calibrations; this trace has no "
+                "quantum system"
             )
         if qudit < 0:
             raise CompilationError(
                 "line.get_calibration needs the qudit's carrier, and this qudit is a runtime "
                 "parameter (annotated Qudit), whose carrier each call binds; read the "
-                "calibration outside the kernel, dev.qudits[i].get_calibration(gate), and pass "
+                "calibration outside the kernel, qs.qudits[i].get_calibration(gate), and pass "
                 "its values in, or leave the parameter unannotated"
             )
         self._device = quantum_system

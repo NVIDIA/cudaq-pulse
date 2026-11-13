@@ -148,7 +148,7 @@ def test_detuned_pair_follows_the_generalized_rabi_formula(levels):
 @pytest.mark.slow
 @pytest.mark.parametrize("levels", [2, 3])
 def test_transmons_detuned_by_gigahertz_stay_put(levels):
-    # A data qubit and an ancilla of a surface-code device: 2 GHz apart,
+    # A data qubit and an ancilla of a surface-code quantum system: 2 GHz apart,
     # g = 7 MHz. At most (2 g / D)^2 = 5e-5 of the excitation moves.
     times = [50.0, 333.0, 1000.0]
     swapped = _swapped(_pair(3.9e9, 5.9e9, g_hz=7.0e6), levels, times, dt_ns=0.025)

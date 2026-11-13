@@ -4,9 +4,9 @@
 
 Drives a qubit with a square pulse of varying amplitude and simulates each
 amplitude on the CPU to trace out the Rabi oscillation. The simplest
-end-to-end example: qudit handles from a device, a float parameter that stays
+end-to-end example: qudit handles from a quantum system, a float parameter that stays
 symbolic across a sweep, durations as times with units, and the same kernel
-compiled for a pinned device and for a device with another clock.
+compiled for a pinned quantum system and for a quantum system with another clock.
 """
 
 import cudaq_pulse as pulse
@@ -37,13 +37,13 @@ if __name__ == "__main__":
     qs = pulse.quantum_system("transmon_17q")
     qudit = qs.qudits[0]
 
-    print("=== Compiled for the qubit's device ===")
+    print("=== Compiled for the qubit's quantum system ===")
     compiled_kernel = rabi.lower(qudit, cal["rabi_duration"], 0.5)
     print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")
 
     print("\n=== Amplitude sweep (Rabi oscillation, CPU simulation) ===")
-    # Pinning the device compiles for it ahead of the call.
+    # Pinning the quantum system compiles for it ahead of the call.
     sweep = pulse.compile(rabi, quantum_system=qs)
     for amplitude in [0.0, 0.02, 0.04, 0.06, 0.08, 0.10, 0.12]:
         compiled_kernel = sweep.lower(qudit, cal["rabi_duration"], amplitude)
@@ -51,7 +51,7 @@ if __name__ == "__main__":
         print(f"  amplitude={amplitude:.2f}: P(1) = {p1:.3f}")
     print(f"  compiled {sweep.cache_info().compiled} time(s) for the whole sweep")
 
-    print("\n=== The same kernel on a device with a 1 GHz clock ===")
+    print("\n=== The same kernel on a quantum system with a 1 GHz clock ===")
     slow = pulse.quantum_system("transmon_17q", clock_ghz=1.0)
     for quantum_system in (qs, slow):
         lowered = rabi.lower(quantum_system.qudits[0], cal["rabi_duration"], 0.5)

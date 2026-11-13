@@ -33,7 +33,7 @@ def test_example_runs(path, monkeypatch, capsys):
     if (_BUILD_BIN / "cudaq-pulse-opt").exists():
         monkeypatch.setenv("PATH", f"{_BUILD_BIN}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setenv("MPLBACKEND", "Agg")
-    # Examples choose their devices themselves.
+    # Examples choose their quantum systems themselves.
     monkeypatch.delenv("CUDAQ_PULSE_QUANTUM_SYSTEM", raising=False)
     monkeypatch.syspath_prepend(str(path.parent))
     runpy.run_path(str(path), run_name="__main__")

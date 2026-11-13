@@ -378,7 +378,7 @@ class PackedIRBuilder:
         self.schedule_blocks = not flatten_schedules
         self.schedule_block_count = 0
         self.clock_ghz = clock_ghz
-        # For get_freq_array; compile() records the device's tables instead.
+        # For get_freq_array; compile() records the quantum system's tables instead.
         self._freq_hz = qudit_freq_hz
         # Repeating one zero is twice as fast as converting a zeroed bytes.
         self._buf = array("q", _ZERO) * 8192

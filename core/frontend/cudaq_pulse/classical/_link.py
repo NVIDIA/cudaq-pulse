@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""``Link``, the cost of a link to a classical device, which
+"""``Link``, the cost of a link to a classical quantum system, which
 ``cudaq_pulse.classical`` loads when it is first used."""
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ __all__ = ["Link"]
 
 @dataclass(frozen=True)
 class Link:
-    """What one link to a classical device costs, for scheduling.
+    """What one link to a classical quantum system costs, for scheduling.
 
     ``fixed_ns`` is the fixed cost of sending a request and ``bytes_per_ns``
     its bandwidth (0 for unlimited): a request holds the link for

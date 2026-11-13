@@ -30,11 +30,11 @@ def _level_attributes(
     target: Any, qudits: tuple[int, ...], levels: int | dict[int, int] | None
 ) -> tuple[tuple[int, ...], str]:
     """Levels of each simulated qudit, in the order of *qudits*, and the
-    module attributes that model them (indexed by device qudit).
+    module attributes that model them (indexed by quantum system qudit).
 
     A qudit has the levels its target's model declares for it
     (``model.levels_of``) unless *levels* sets them: an int for every
-    qudit, a dict by device qudit index for those it names."""
+    qudit, a dict by quantum system qudit index for those it names."""
     model = target.model
     if levels is None:
         dims = tuple(model.levels_of(q) for q in qudits)
@@ -63,7 +63,7 @@ def _level_attributes(
 
 
 def _extent(qudits: tuple[int, ...]) -> int:
-    """The length of an attribute indexed by device qudit."""
+    """The length of an attribute indexed by quantum system qudit."""
     return max(qudits) + 1
 
 

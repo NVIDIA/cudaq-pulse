@@ -15,7 +15,7 @@ import random
 import cudaq_pulse as pulse
 import numpy as np
 
-# A 20 ns DRAG X90 for the 17-qubit transmon device.
+# A 20 ns DRAG X90 for the 17-qubit transmon quantum system.
 cal = {
     "x_duration": 20 * pulse.ns,
     "x_sigma": 5 * pulse.ns,

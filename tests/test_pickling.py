@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Pickling targets, devices, handles, kernels, programs and errors, as
+"""Pickling targets, quantum systems, handles, kernels, programs and errors, as
 process pools and caches on disk do."""
 
 from __future__ import annotations
@@ -150,7 +150,7 @@ def _views(program):
     return shown
 
 
-# ── Targets and devices ──────────────────────────────────────────────────────
+# ── Targets and quantum systems ──────────────────────────────────────────────────────
 
 
 def test_targets_and_their_parts_unpickle_equal_with_equal_hashes():
@@ -202,7 +202,7 @@ def test_a_device_unpickles_equal_and_is_built_once_per_process(make, monkeypatc
     back = pickle.loads(data)
     assert back == quantum_system and hash(back) == hash(quantum_system)
     assert pickle.loads(data) is back
-    # Another process has not seen the device: it builds it again.
+    # Another process has not seen the quantum system: it builds it again.
     monkeypatch.setattr(_pickling, "_devices", {})
     built = pickle.loads(data)
     assert built == quantum_system and built is not quantum_system
@@ -225,7 +225,7 @@ def test_a_device_and_its_target_without_the_calibration_are_two_devices():
     assert shipped.qudits[0] != uncalibrated.qudits[0]
     named = pulse.quantum_system(_SHIPPED_TARGET, calibration=_SHIPPED_CALIBRATION)
     assert named == shipped and named.calibration == shipped.calibration
-    # One kernel, called on each, returns each its own device.
+    # One kernel, called on each, returns each its own quantum system.
     assert rabi.lower(shipped.qudits[0], 0.1).quantum_system is shipped
     assert rabi.lower(uncalibrated.qudits[0], 0.1).quantum_system is uncalibrated
 

@@ -50,7 +50,7 @@ Annotations decide what a compilation depends on:
   :ref:`wait-lengths`.
 - A parameter annotated ``Qudit`` or ``Register`` is a runtime value too:
   the compiled module takes the qudits as arguments, so calling on other
-  qudits of the device never recompiles.
+  qudits of the quantum system never recompiles.
 - ``*qudits: Qudit`` is a runtime register of the call's qudits: the kernel
   compiles once for each number of qudits passed. An unannotated
   ``*qudits`` is a static register, like an unannotated register parameter.
@@ -75,15 +75,15 @@ measurement's outcome (0, 1, ...) for a measurement made at the top level of
 the kernel, values known at compile time, or tuples and lists of these.
 Returning a value computed from a ``float`` parameter is an error.
 
-Devices
--------
+Quantum systems
+---------------
 
-A kernel runs on the device of the qudit handles it is called with; see
-:doc:`quantum_systems`. One kernel serves every device it is called with, each with
+A kernel runs on the quantum system of the qudit handles it is called with; see
+:doc:`quantum_systems`. One kernel serves every quantum system it is called with, each with
 its own specializations. A call without handles raises ``NoQuantumSystemError``,
-unless the kernel is compiled for one device (``quantum_system=`` below); the
+unless the kernel is compiled for one quantum system (``quantum_system=`` below); the
 process quantum system is never used for it. Qudit frequencies and the pulse clock
-come from the device.
+come from the quantum system.
 
 Caching and Python semantics
 ----------------------------
@@ -152,12 +152,12 @@ Options, all keyword-only:
    lanes of the RCP schedules set the schedule. One ``Controller`` stands
    for a system of that controller alone; what it cannot take (a line it
    does not play, a link it does not have) is an error that says to
-   describe the whole ``ControlSystem``. By default the device's control
+   describe the whole ``ControlSystem``. By default the quantum system's control
    system, if it has one.
 
 ``quantum_system`` *(QuantumSystem, optional)*
-   Pin the compiled kernel to one device. A call with handles of another
-   device, even an equal one, raises ``QuantumSystemMismatchError``; a call without
+   Pin the compiled kernel to one quantum system. A call with handles of another
+   quantum system, even an equal one, raises ``QuantumSystemMismatchError``; a call without
    handles runs on it.
    A pinned kernel whose parameters are all ``float`` is built when it is
    compiled, so ``.mlir()``, ``.schedule`` and ``.metrics`` work on the
@@ -237,8 +237,8 @@ the module of one call:
    ``Lowered`` has one: a kernel or ``CompiledKernel`` has no duration until
    it is lowered for a call, since the call's arguments decide it.
 
-The device's handles find a qudit by its label, ``qs.qudit("D1")``, and the
-device gives the coupling of two of them, ``qs.coupling(a, b)``.
+The quantum system's handles find a qudit by its label, ``qs.qudit("D1")``, and the
+quantum system gives the coupling of two of them, ``qs.coupling(a, b)``.
 
 ``.timeline(figsize=(14, 4), title=None)``
    A matplotlib figure of the schedule, one row per line.
@@ -246,7 +246,7 @@ device gives the coupling of two of them, ``qs.coupling(a, b)``.
 ``.metrics``
    A ``CompileMetrics`` with per-stage timing in milliseconds (``trace_ms``,
    ``ffi_ms``, ``passes_ms``, ``schedule_ms``, ``total_ms``), ``op_count``
-   and the device name.
+   and the quantum system name.
 
 ``.arguments`` and ``.generic``
    The call's float values, and the module without them, in which the float
@@ -297,6 +297,6 @@ compiled:
 Each must be a whole number from 1 to 2\ :sup:`40`; any other value makes
 compiling raise ``ValueError`` naming the variable. Lower values bound the
 memory a long session keeps (a loop that compiles a large program for many
-devices, for example) at the cost of creating contexts more often, about
+quantum systems, for example) at the cost of creating contexts more often, about
 0.4 ms each. ``python -m cudaq_pulse.doctor`` prints the limits in effect,
 the process quantum system and the kernel cache size.

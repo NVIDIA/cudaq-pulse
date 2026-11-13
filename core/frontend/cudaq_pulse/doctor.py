@@ -5,10 +5,10 @@
     python -m cudaq_pulse.doctor                     # exit 0 only if GPU execution works
     python -m cudaq_pulse.doctor --allow-no-gpu      # exit 0 if the compiler works
     python -m cudaq_pulse.doctor --expect-no-device  # exit 0 if GPU libraries load
-                                                     # but no device exists
+                                                     # but no quantum system exists
     python -m cudaq_pulse.doctor --setup-editor      # configure mypy and ruff for
                                                      # the kernel language
-    python -m cudaq_pulse.doctor --system lab.json   # check a device file
+    python -m cudaq_pulse.doctor --system lab.json   # check a quantum system file
     python -m cudaq_pulse.doctor --system lab.json --json
 
 The compiler check always runs; any failure there exits non-zero. So does
@@ -293,7 +293,7 @@ def _diagnose_gpu(write: Callable[[str], None]) -> gpu.GpuRuntimeError | None:
         write(f"  {error}")
         return error
     write(f"GPU execution: ready, CUDA {runtime.cuda_major} runtime {runtime.path}")
-    write(f"  devices: {runtime.device_count}")
+    write(f"  quantum systems: {runtime.device_count}")
     return None
 
 
@@ -355,7 +355,7 @@ def _problem_json(problem: Problem) -> dict[str, Any]:
 
 
 def _check_system(file: Path, as_json: bool, write: Callable[[str], None]) -> int:
-    """Check the device or system file *file*, and that the backends of its
+    """Check the quantum system or system file *file*, and that the backends of its
     controllers are installed; return the exit code."""
     from ._device import QuantumSystem
 
@@ -384,7 +384,7 @@ def _check_system(file: Path, as_json: bool, write: Callable[[str], None]) -> in
         return 1 if problems else 0
     if summary is not None:
         state = "ok" if not problems else "loads"
-        write(f"{file}: {state}, device {summary['name']} with {summary['qudits']} qudits")
+        write(f"{file}: {state}, quantum system {summary['name']} with {summary['qudits']} qudits")
         for line in _control_lines(summary.get("control_system")):
             write(f"  {line}")
     for problem in problems:

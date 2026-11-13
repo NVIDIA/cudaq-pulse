@@ -41,7 +41,7 @@ def kernel[**P](
 ) -> Kernel[P] | KernelDecorator:
     """Decorator that makes a Python function a pulse kernel.
 
-    Calling the kernel compiles it on first use and runs it on the device of
+    Calling the kernel compiles it on first use and runs it on the quantum system of
     its qudit handles, returning what the kernel returns. Parameters annotated
     ``float`` stay symbolic in the compiled module; the kernel is
     specialized on every other parameter, and up to *cache_size*

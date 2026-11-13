@@ -29,7 +29,7 @@ levels or numbers, ``list[complex]`` IQ points and ``list[float]`` numbers;
 the call: a function called with lists of two lengths compiles to two
 versions, each named by its lengths (``decode__4``). Results are typed the
 same way, and a list result's length is inferred from the body per version.
-``pulse.Length[pulse.Bits, 8]`` states a fixed length, for a device that
+``pulse.Length[pulse.Bits, 8]`` states a fixed length, for a quantum system that
 takes one size.
 
 Inside a kernel, ``.submit(...)`` sends a request and returns a future at
@@ -1293,7 +1293,7 @@ def function(implementation: Callable[..., Any] | None = None, /, **options: Any
     ``"lazy"``), ``deadline_ns``, ``reaction_deadline_ns``, ``link`` (the
     link its requests travel on: a name from ``ControlSystem.links``, such as
     ``"controller"``, or a link id; default 0; ``quantum_system`` is not used for
-    it, because a cudaq-pulse device is the QPU) and ``name``. A latency,
+    it, because a cudaq-pulse quantum system is the QPU) and ``name``. A latency,
     timeout or deadline is a time (``400 * pulse.ns``) or a number of ns.
 
     With ``reaction_deadline_ns``, compiling fails unless every call's answer
@@ -1343,7 +1343,7 @@ def external[**Q, T](
     slice of one, whose length the result takes; a ``None`` result needs no
     return. A list parameter of no stated length takes its length from the
     call, one version per length as for ``pulse.classical``; state the
-    length the device takes, ``pulse.Length[pulse.Bits, 3]``, and a call of
+    length the quantum system takes, ``pulse.Length[pulse.Bits, 3]``, and a call of
     another length is a compile error.
 
     It takes the keyword options of ``pulse.classical``. Simulating a program

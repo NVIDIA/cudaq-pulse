@@ -102,7 +102,7 @@ generated MLIR:
    print(lowered.mlir())
    print(f"Compiled in {lowered.metrics.total_ms:.1f} ms")
 
-The pulse lasts 32 ns, 64 cycles of the device's 2 GHz clock. A duration is
+The pulse lasts 32 ns, 64 cycles of the quantum system's 2 GHz clock. A duration is
 an ``int`` number of cycles or a time with units; see :ref:`durations`.
 
 The Compiler Pipeline

@@ -53,7 +53,7 @@ Compile with ALAP scheduling (the default): the pulse before each variable
 wait then ends where the wait starts, so the qubit decays for exactly the
 wait the estimator chose, not also through the call's latency.
 
-The device is qubit 0 of the 17-qubit transmon twin with its T1 set
+The quantum system is qubit 0 of the 17-qubit transmon twin with its T1 set
 to 18.3 us (the analytical decay estimate reported by Marciniak et al.),
 detuned by 60 kHz from the drive and with a 1.5% drive-amplitude error.
 
@@ -441,11 +441,11 @@ def binary_search(q, rounds: int):
             drive(d, square(pulse_time, nominal_pi_amplitude * 0.5))
 
 
-# ── Devices ─────────────────────────────────────────────────────────────────
+# ── Quantum systems ─────────────────────────────────────────────────────────────────
 
 
 def chain_system(target, t1_us=18.3, offset_hz=60e3, amplitude_scale=1.015):
-    """Qubit 0 of *target* as the chain's device: its T1, a detuning from
+    """Qubit 0 of *target* as the chain's quantum system: its T1, a detuning from
     the drive, a drive-amplitude error and small readout errors."""
     qudit = target.qudits[0]
     scale = target.drive_amplitude_scale(0) * amplitude_scale
@@ -459,7 +459,7 @@ def chain_system(target, t1_us=18.3, offset_hz=60e3, amplitude_scale=1.015):
 
 
 def search_system(target, offset_hz):
-    """A device like the binary-search paper's: T2* 12 us, T1 80 us, and
+    """A quantum system like the binary-search paper's: T2* 12 us, T1 80 us, and
     readout errors that give its fringe contrast of 0.6 between shots."""
     qudit = target.qudits[0]
     true_system = qudit.replace(

@@ -1310,7 +1310,7 @@ class _Tones(Mapping[tuple[int, int], IRValue]):
         if line_tones is None or qudit is None:
             raise CompilationError(
                 "line.tones needs the transitions of the system's model; this trace "
-                "has no device, so use line.tone"
+                "has no quantum system, so use line.tone"
             )
         self._emitter = emitter
         self._held = held

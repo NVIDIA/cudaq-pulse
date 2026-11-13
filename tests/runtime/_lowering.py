@@ -21,7 +21,7 @@ EVOLVE_PASSES = (
 
 
 def _handles(dev, args):
-    """Map handles of another device to *dev*'s handles of the same qudits."""
+    """Map handles of another quantum system to *dev*'s handles of the same qudits."""
     out = []
     for a in args:
         if isinstance(a, pulse.Qudit):
@@ -34,7 +34,7 @@ def _handles(dev, args):
 
 
 def on(target, kernel, *args, passes=EVOLVE_PASSES):
-    """The module of ``kernel(*args)`` on a device of *target*."""
+    """The module of ``kernel(*args)`` on a quantum system of *target*."""
     dev = pulse.quantum_system(target)
     return pulse.compile(kernel, passes=passes).lower(*_handles(dev, args))
 

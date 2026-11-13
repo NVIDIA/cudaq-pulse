@@ -21,7 +21,7 @@ The decision is made on the host, between shots. Feedback within a shot
 belongs in the kernel (see ``08_readout_and_branching.py``).
 
 What is simulated: the simulator plays the QPU. Each round redraws the
-drive strengths of a "true" device by a few percent. The check and the
+drive strengths of a "true" quantum system by a few percent. The check and the
 sweep are simulated against it up to the point where the readouts start,
 and the shot outcomes are binomial draws from the populations there; the
 readouts themselves are not simulated. The four qudits share no couplings,
@@ -189,7 +189,7 @@ if __name__ == "__main__":
         f"(compiling {compile_s * 1e3:.2f} ms of it), {on_demand_s / lookup_s:,.0f}x longer"
     )
 
-    print(f"\n=== {rounds} rounds against a drifting device ===")
+    print(f"\n=== {rounds} rounds against a drifting quantum system ===")
     rng = np.random.default_rng(7)
     check = table[tuple(range(len(qudit_indices)))][len(scales) // 2][0]  # every train, scale 1
     for round_ in range(1, rounds + 1):

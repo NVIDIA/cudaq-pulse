@@ -25,8 +25,8 @@ none is removed or changes meaning, so a backend ignores keys it does not
 know and refuses event kinds it does not know; a change that would break a
 backend gets a new version.
 
-At the top level, ``quantum_system`` and ``clock_ghz`` name the device and its
-clock, ``schedule`` the schedule policy, ``qudits`` the device qudits the
+At the top level, ``quantum_system`` and ``clock_ghz`` name the quantum system and its
+clock, ``schedule`` the schedule policy, ``qudits`` the quantum system qudits the
 program uses, ``lines`` each line's index, ``role`` (``"drive"`` or
 ``"readout"``) and qudit (and, with line delays, its ``fine_delay_ns``;
 see below), and ``limits`` the controller limits it was
@@ -409,7 +409,7 @@ order they first appear.
 Clocks
 ------
 
-A kernel counts time in cycles of the device's program clock,
+A kernel counts time in cycles of the quantum system's program clock,
 ``QuantumSystem.clock_ghz`` (``pulse.quantum_system(..., clock_ghz=)``, else the
 target's); a duration written as a time converts to them when the kernel
 compiles (see :ref:`durations`). A controller may run its own clock,
@@ -455,7 +455,7 @@ Without one, each controller's start is known only to within one of its own
 cycles, which budgets between controllers count.
 
 Each ``pulse.Controller`` of a control system may run its own clock.
-Without a declared ``"clock_ghz"`` the device's program clock is the
+Without a declared ``"clock_ghz"`` the quantum system's program clock is the
 fastest controller clock when it is a whole multiple of every other; clocks
 that are not are a ``QuantumSystemDefinitionError`` listing the program clocks
 that would work, never one picked for you. Every line is then scheduled on

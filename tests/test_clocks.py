@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Clocks: the device's program clock, a controller's own clock and the grid
+"""Clocks: the quantum system's program clock, a controller's own clock and the grid
 it puts its lines on, ``round_duration``, the reference clock and the exports in a
 controller's own cycles."""
 

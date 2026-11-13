@@ -1,11 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Runtime qudits: one compile for every qudit of a device.
+"""Runtime qudits: one compile for every qudit of a quantum system.
 
 A kernel parameter annotated ``pulse.Qudit`` is bound at each call, so the
-kernel compiles once and serves any qudit, and a recalibrated device, without compiling again.
+kernel compiles once and serves any qudit, and a recalibrated quantum system, without compiling again.
 Frequencies the kernel needs beyond a qudit's own drive frequency are
-ordinary float parameters: the host reads them from the device and passes
+ordinary float parameters: the host reads them from the quantum system and passes
 them in, and each call binds them.
 """
 

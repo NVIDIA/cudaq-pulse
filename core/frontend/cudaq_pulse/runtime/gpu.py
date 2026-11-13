@@ -6,7 +6,7 @@ Whether the GPU runtime exists is recorded by CMake in ``_build_config``; it
 is never discovered by searching the filesystem. ``require_gpu_runtime()``
 either returns a loaded, device-backed runtime or raises one of three
 distinct errors, so "built without GPU support", "runtime failed to load",
-and "no usable device" are never confused.
+and "no usable quantum system" are never confused.
 
 A build carries one runtime per CUDA major. The one used is chosen by which
 ``cudensitymat-cuNN`` distribution the ``[cu12]`` or ``[cu13]`` extra

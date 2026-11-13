@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Wall-clock times: ``20 * pulse.ns``, ``4 * pulse.us``.
 
-A kernel counts time in cycles of the device's program clock; a bare int in
+A kernel counts time in cycles of the quantum system's program clock; a bare int in
 a duration is a number of cycles. A time with units is converted to cycles
-when the kernel compiles, for the device it compiles for, so one kernel
-written in nanoseconds runs on devices with different clocks.
+when the kernel compiles, for the quantum system it compiles for, so one kernel
+written in nanoseconds runs on quantum systems with different clocks.
 
 A time is a float of nanoseconds that also holds its exact value, a
 fraction: ``0.1 * pulse.us`` is exactly 100 ns, and converts to whole
@@ -88,7 +88,7 @@ class Time(float):
 
     ``float(t)`` is the time in nanoseconds, whatever unit made it. A bare
     int duration in a kernel is a number of clock cycles instead, so it
-    depends on the device's clock.
+    depends on the quantum system's clock.
     Times compare with times; comparing one with a bare number, with ``==``
     or an ordering, raises ``TypeError``: write ``t == 20 * pulse.ns`` or
     ``float(t) == 20.0``. A time never hashes like a number, so a set or dict

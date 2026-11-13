@@ -10,19 +10,19 @@
   defined inside a function. A process keeps the last ``_KEPT_KERNELS``
   kernels pickled or unpickled this way by token, so a kernel sent again
   (a task's argument, say) is the same kernel, with its specializations.
-  A compiled kernel pickles as its kernel, options and device: its
+  A compiled kernel pickles as its kernel, options and quantum system: its
   specializations are compiled again where it is called.
-- A target pickles as the inputs it was built from, and a device as its
+- A target pickles as the inputs it was built from, and a quantum system as its
   target and the inputs it was built from; both are built again, equal to
-  the originals. A process keeps the last ``_KEPT_DEVICES`` devices it
+  the originals. A process keeps the last ``_KEPT_DEVICES`` quantum systems it
   unpickled by fingerprint (which covers the calibration), name, source
-  and control system, so that programs of one device unpickled one by one
-  share it without building it again. A device makes its description
+  and control system, so that programs of one quantum system unpickled one by one
+  share it without building it again. A quantum system makes its description
   once. A control system, its controllers and their processors pickle as
   their inputs and are checked again. A calibration the package ships
   pickles as its name, cooldown and the digest of its file, and unpickles
   as the one shipped here if that has the same digest; any other pickles
-  as its values. Qudit handles and registers pickle as their device and
+  as its values. Qudit handles and registers pickle as their quantum system and
   indices.
 - A program (``Lowered``, and a call's view of one) pickles as MLIR
   bytecode and its metadata, stamped with the build that compiled it, and
@@ -96,7 +96,7 @@ def rebuilt_links(cls: Any, links: dict[int, Any], names: dict[str, int]) -> Any
     return found
 
 
-# ── Devices ─────────────────────────────────────────────────────────────────
+# ── Quantum systems ─────────────────────────────────────────────────────────────────
 
 _KEPT_DEVICES = 16
 _devices: dict[tuple[Any, ...], Any] = {}
@@ -105,7 +105,7 @@ _devices_lock = threading.Lock()
 
 def _device_key(quantum_system: Any) -> tuple[Any, ...]:
     # The fingerprint, and the labels and control system it leaves out, so
-    # that an unpickled device is the one pickled in every attribute.
+    # that an unpickled quantum system is the one pickled in every attribute.
     system = quantum_system.control_system
     if system is None:
         return (quantum_system.fingerprint, quantum_system.name, quantum_system.source)
@@ -123,9 +123,9 @@ def _keep(key: tuple[Any, ...], quantum_system: Any) -> None:
 def device_reduce(quantum_system: Any) -> tuple[Any, ...]:
     """*quantum_system* as its fingerprint, labels and control system and, pickled
     apart, its class, target, the other inputs of its constructor and the
-    attributes they do not set: a process that has the device of that key
-    does not unpickle the rest. The description is made once per device: a
-    device is read-only."""
+    attributes they do not set: a process that has the quantum system of that key
+    does not unpickle the rest. The description is made once per quantum system: a
+    quantum system is read-only."""
     key = _device_key(quantum_system)
     _keep(key, quantum_system)
     description: bytes | None = quantum_system.__dict__.get("_pickled")

@@ -65,7 +65,7 @@ batch_time = settings_per_batch * shots_count * shot_time
 batches = 20
 workers = 4
 sample_rate_ghz = 2.0
-hidden_offset_hz = 1.5e6  # the true qudit's frequency minus the device's
+hidden_offset_hz = 1.5e6  # the true qudit's frequency minus the quantum system's
 
 
 @pulse.kernel

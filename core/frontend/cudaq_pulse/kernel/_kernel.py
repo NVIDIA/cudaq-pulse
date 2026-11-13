@@ -9,7 +9,7 @@ So is each element of a ``list[float]`` parameter, whose length is part of
 the specialization. A parameter annotated ``Qudit`` or ``Register`` is a
 runtime qudit: the module takes it as a slot, and a call binds the slot to
 its handle's carrier, so calls with other handles, or on a recalibrated
-device, share the module. A ``*qudits`` parameter is a register of the
+quantum system, share the module. A ``*qudits`` parameter is a register of the
 call's qudits, runtime when annotated ``Qudit``, of a length that is part of
 the specialization. Every other parameter (unannotated qudits, ints,
 anything unannotated) is static: it can shape the program, so the kernel is
@@ -178,7 +178,7 @@ def _make_binder(fn: types.FunctionType, names: tuple[str, ...]) -> Callable[...
 def _static_key(value: Any) -> Any:
     t = type(value)
     if t is Qudit:
-        # The dispatcher's key holds the device's fingerprint.
+        # The dispatcher's key holds the quantum system's fingerprint.
         return (Qudit, value.carrier, value.index)
     if t is Register:
         return (Register, tuple((q.carrier, q.index) for q in value))
@@ -304,7 +304,7 @@ class _QuditTwiceError(Exception):
 
 
 def _systems(arg: Any, qs: QuantumSystem | None, name: str, seen: set[int]) -> QuantumSystem | None:
-    """The device of the handles in *arg*, checked against *qs*.
+    """The quantum system of the handles in *arg*, checked against *qs*.
 
     *seen* collects the carriers passed so far: one qudit passed twice is
     an error, as it would be one degree of freedom bound to two names, and
@@ -329,9 +329,10 @@ def _two_systems(name: str, found: QuantumSystem, quantum_system: QuantumSystem)
     """Why *name*() cannot take qudits of both *found* and *quantum_system*."""
     if found == quantum_system:
         return (
-            f"{name}() got qudits of two separate devices of target {quantum_system.name!r} with "
+            f"{name}() got qudits of two separate quantum systems of target "
+            f"{quantum_system.name!r} with "
             "the same definition, as two pulse.quantum_system() calls make; pass handles "
-            "of one device"
+            "of one quantum system"
         )
     from .._errors import _ranges
 
@@ -341,9 +342,9 @@ def _two_systems(name: str, found: QuantumSystem, quantum_system: QuantumSystem)
         else f"of targets {found.name!r} and {quantum_system.name!r}"
     )
     return (
-        f"{name}() got qudits of two different devices, {both}: one with layout "
+        f"{name}() got qudits of two different quantum systems, {both}: one with layout "
         f"{_ranges(found.layout)}, the other with layout {_ranges(quantum_system.layout)}; "
-        "pass handles of one device"
+        "pass handles of one quantum system"
     )
 
 
@@ -513,20 +514,20 @@ class _Dispatcher:
 def _pin_mismatch(name: str, pin: QuantumSystem, got: QuantumSystem) -> QuantumSystemMismatchError:
     if got == pin:
         return QuantumSystemMismatchError(
-            f"{name}() is compiled for a device of {pin.name!r} and got qudits of "
-            "another, separate device of it with the same definition; pass "
-            "handles of the device it is compiled for"
+            f"{name}() is compiled for a quantum system of {pin.name!r} and got qudits of "
+            "another, separate quantum system of it with the same definition; pass "
+            "handles of the quantum system it is compiled for"
         )
     return QuantumSystemMismatchError(
-        f"{name}() is compiled for device {pin.name!r} and got qudits of {got.name!r}"
+        f"{name}() is compiled for quantum system {pin.name!r} and got qudits of {got.name!r}"
     )
 
 
 def _no_device(name: str) -> NoQuantumSystemError:
     return NoQuantumSystemError(
-        f"{name}() was called without qudit handles, so it has no device: pass "
-        "handles of a device (dev.qudits[i]), or compile it for one with "
-        "cudaq_pulse.compile(k, quantum_system=dev)"
+        f"{name}() was called without qudit handles, so it has no quantum system: pass "
+        "handles of a quantum system (qs.qudits[i]), or compile it for one with "
+        "cudaq_pulse.compile(k, quantum_system=qs)"
     )
 
 
@@ -885,13 +886,13 @@ def _warn_static(kernel: str, params: list[str], operation: str, where: str = ""
 class CompiledKernel[**P]:
     """A kernel compiled ahead of its call by ``cudaq_pulse.compile``.
 
-    ``ck(*args)`` runs the kernel on the device of the qudit handles passed
+    ``ck(*args)`` runs the kernel on the quantum system of the qudit handles passed
     and returns what the kernel returns. It holds one specialization per
-    device and static argument values, built on first use and never
-    evicted. A kernel pinned to a device and without static parameters is
+    quantum system and static argument values, built on first use and never
+    evicted. A kernel pinned to a quantum system and without static parameters is
     built when it is compiled.
 
-    It pickles as its kernel (by reference), options and device, without
+    It pickles as its kernel (by reference), options and quantum system, without
     its specializations, which compile again on first use where it is
     unpickled; pickle ``ck.lower(*args)`` to send a program that runs
     without compiling.
@@ -899,7 +900,9 @@ class CompiledKernel[**P]:
 
     def __init__(self, kernel: Kernel[P], opts: CompileOptions, qs: QuantumSystem | None) -> None:
         if qs is not None and not isinstance(qs, QuantumSystem):
-            raise TypeError(f"device must be a cudaq_pulse device, got {type(qs).__name__}")
+            raise TypeError(
+                f"quantum_system must be a cudaq_pulse QuantumSystem, got {type(qs).__name__}"
+            )
         self.kernel = kernel
         self.quantum_system = qs
         self._dispatch = kernel._dispatcher_type(kernel, opts, None)
@@ -927,7 +930,8 @@ class CompiledKernel[**P]:
                 why = f"is specialized on {', '.join(self.kernel.static_parameters)}"
             else:
                 why = (
-                    "has no device until it is called; pin one with compile(k, quantum_system=dev)"
+                    "has no quantum system until it is called; pin one with compile(k, "
+                    "quantum_system=qs)"
                 )
             raise TypeError(
                 f"{self.kernel.__name__}() {why}; inspect one specialization with .lower(...)"

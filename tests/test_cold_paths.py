@@ -4,7 +4,7 @@
 
 Each check runs a fresh interpreter and lists the heavy modules a path left
 in ``sys.modules``. ``test_import.py`` checks the import and compile of a
-program; these add devices with their calibration, a program's queries and
+program; these add quantum systems with their calibration, a program's queries and
 exports, classical calls and the modules behind them.
 """
 

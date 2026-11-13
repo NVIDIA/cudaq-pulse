@@ -6,7 +6,7 @@
 A kernel whose qudit parameter is annotated ``Qudit`` compiles once and binds
 the qudit at each call; without the annotation the qudit is static, so each
 new qudit compiles the kernel again. For kernels of growing size this places
-each on every qudit of a 17-qudit device and prints the median time of the
+each on every qudit of a 17-qudit quantum system and prints the median time of the
 whole placement sweep (with a controller export per call) for both, and of a
 repeated call (a cache hit). The exports, the same on both sides, bound the
 speedup. It exits 1 if the sweep with a runtime qudit is not at least

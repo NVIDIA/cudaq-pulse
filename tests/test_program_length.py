@@ -69,7 +69,7 @@ def test_waits_of_run_time_length_are_checked_when_bound():
 
 
 def test_a_program_past_the_controllers_longest_program_names_the_limit():
-    # 5000 ns on the 2 GHz clock of Q's device: 10,000 cycles.
+    # 5000 ns on the 2 GHz clock of Q's quantum system: 10,000 cycles.
     machine = ControlSystem(controllers=[Controller(max_program_duration=5_000)])
     assert pulse.compile(_waits(100, 100), control_system=machine).lower(Q[0]) is not None
     with pytest.raises(CompilationError, match=r"Controller\.max_program_duration"):

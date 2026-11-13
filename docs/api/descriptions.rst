@@ -6,8 +6,8 @@
 Device descriptions API
 =======================
 
-A device description gives a device's qudits, couplings and decoherence; a device
-(:doc:`quantum_systems`) pairs one with a qudit layout.
+A device description gives a device's qudits, couplings and decoherence; a quantum
+system (:doc:`quantum_systems`) pairs one with a qudit layout.
 
 .. autoclass:: cudaq_pulse.quantum_systems.DeviceDescription
    :members:
@@ -54,7 +54,7 @@ Couplings
 Gate calibrations
 -----------------
 
-The pulses a device is tuned for are calibrations, by gate
+The pulses a quantum system is tuned for are calibrations, by gate
 (``pulse.gates``): a qudit's ``calibrations`` hold its ``X`` (and, if
 published, ``X90``, ``Y``, ``Y90``) as a ``DragPulse`` and its ``READOUT`` as
 a ``ReadoutPulse``; a coupling's hold its ``CZ`` as a ``FluxCZ``. A key
@@ -78,7 +78,7 @@ reads them, deriving what is not published:
 In a system file a qudit's or coupling's ``calibrations`` is a list of
 entries, each its ``gate``, its ``transition`` if not ``[0, 1]``, and its
 fields. A qudit's ``metadata`` is the user's own data (JSON values): the
-library never reads it, it does not make two devices differ, and system
+library never reads it, it does not make two quantum systems differ, and system
 files keep it.
 
 .. automodule:: cudaq_pulse.gates

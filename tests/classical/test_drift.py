@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """The drifting plant: its processes, its truth trace, and its surrogates
-against full simulation of the same device."""
+against full simulation of the same quantum system."""
 
 from __future__ import annotations
 

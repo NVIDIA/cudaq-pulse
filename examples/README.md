@@ -32,17 +32,17 @@ the `cudaq-pulse-tools` wheel, which `cudaq-pulse` requires).
 | [`17_ghz_state_prep.py`](17_ghz_state_prep.py) | GHZ state preparation with cross-resonance CNOTs | CPU |
 | [`18_per_kernel_schedules.py`](18_per_kernel_schedules.py) | Per-kernel ASAP and ALAP policies in a stabilizer cycle | CPU |
 | [`19_classical_calls.py`](19_classical_calls.py) | Classical calls at QPU runtime: decoding with feed-forward, slack and latency reports | CPU, simulates |
-| [`20_adaptive_calibration.py`](20_adaptive_calibration.py) | Adaptive calibration with variable waits against a drifting device | CPU, simulates |
+| [`20_adaptive_calibration.py`](20_adaptive_calibration.py) | Adaptive calibration with variable waits against a drifting quantum system | CPU, simulates |
 | [`21_calibration_protocol.py`](21_calibration_protocol.py) | A millisecond calibration chain on the controller, after Marciniak et al., arXiv:2602.11912 (2026), with adaptive T1 estimation after Berritta et al., arXiv:2506.09576 (2025) | CPU, simulates |
 | [`22_runtime_qudits.py`](22_runtime_qudits.py) | One compile for every qudit: qudits bound per call, extra frequencies passed as float parameters | CPU |
 | [`23_define_a_qpu.py`](23_define_a_qpu.py) | Define a QPU: two controllers from a description, a feedback link between them, compile checks and a system file | CPU |
 | [`24_pipelined_calibration.py`](24_pipelined_calibration.py) | Closed-loop calibration whose programs worker processes bind and export from one pickled compile, while the QPU runs the last batch | CPU, simulates |
 | [`25_precompiled_branches.py`](25_precompiled_branches.py) | Every next program of an adaptive experiment compiled ahead in worker processes, looked up by the check's outcome | CPU, simulates |
-| [`26_drift_following.py`](26_drift_following.py) | A background process recompiles on drift, by device fingerprint; programs are swapped in between batches | CPU, simulates |
+| [`26_drift_following.py`](26_drift_following.py) | A background process recompiles on drift, by quantum system fingerprint; programs are swapped in between batches | CPU, simulates |
 | [`custom_passes/python_pass.py`](custom_passes/python_pass.py) | A schedule check written in Python | CPU |
 | [`custom_passes/cpp/`](custom_passes/cpp) | An MLIR pass plugin for `cudaq-pulse-opt --load-pass-plugin` | CPU (builds with CMake) |
 | [`controller_backend/toy_controller/__init__.py`](controller_backend/toy_controller/__init__.py) | A toy controller backend found by its entry point: limits, `emit` and `run` | CPU |
-| [`transmon/transmon_17q_rabi.py`](transmon/transmon_17q_rabi.py) | Rabi drive on the 17-qubit transmon device | CPU |
+| [`transmon/transmon_17q_rabi.py`](transmon/transmon_17q_rabi.py) | Rabi drive on the 17-qubit transmon quantum system | CPU |
 | [`transmon/transmon_17q_full_pipeline.py`](transmon/transmon_17q_full_pipeline.py) | Each stage of the lowering: Pulse, QOp and LLVM IR | CPU |
 | [`transmon/transmon_17q_surface_code_cycle.py`](transmon/transmon_17q_surface_code_cycle.py) | The timeline of one surface-code cycle | CPU |
 | [`transmon/transmon_17q_evolve_gpu.py`](transmon/transmon_17q_evolve_gpu.py) | `pulse.simulate(..., backend="gpu")` | GPU: Linux, an NVIDIA GPU and the `[cu12]` or `[cu13]` extra |

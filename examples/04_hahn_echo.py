@@ -65,7 +65,7 @@ def cpmg_echo(qudit, sigma, amp_half_pi, amp_pi, tau, refocus_count):
 
 
 def cycles(time):
-    """*time* in cycles of the device's program clock."""
+    """*time* in cycles of the quantum system's program clock."""
     return time / pulse.ns * qs.clock_ghz
 
 

@@ -101,7 +101,7 @@ def waveform_algebra(qudit):
 derivative_duration = 20 * pulse.ns
 derivative_sigma = 5 * pulse.ns
 derivative_amplitude = 0.3
-clock_ghz = 2.0  # the transmon device's program clock; one sample per cycle
+clock_ghz = 2.0  # the transmon quantum system's program clock; one sample per cycle
 
 
 def gaussian_derivative_samples(duration, amplitude, sigma):

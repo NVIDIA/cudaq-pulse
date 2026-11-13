@@ -84,7 +84,7 @@ Core Examples
        call slack and hidden latency *(simulates)*
    * - 20
      - ``20_adaptive_calibration.py``
-     - Adaptive calibration with variable waits, tracking a drifting device
+     - Adaptive calibration with variable waits, tracking a drifting quantum system
        *(simulates)*
    * - 21
      - ``21_calibration_protocol.py``
@@ -99,8 +99,8 @@ Core Examples
        qubits", arXiv:2506.09576 (2025) *(simulates)*
    * - 22
      - ``22_runtime_qudits.py``
-     - One compile for every qudit of a device: the qudit is bound at each
-       call, and a frequency the kernel needs, read from the device on the
+     - One compile for every qudit of a quantum system: the qudit is bound at each
+       call, and a frequency the kernel needs, read from the quantum system on the
        host, is an ordinary float parameter
    * - 23
      - ``23_define_a_qpu.py``
@@ -122,7 +122,7 @@ Core Examples
    * - 26
      - ``26_drift_following.py``
      - Following a drifting qudit: a background process recompiles when the
-       device fingerprint changes, and the host swaps programs in between
+       quantum system fingerprint changes, and the host swaps programs in between
        batches *(simulates)*
 
 Examples 24 to 26 send compiled programs between processes, which works

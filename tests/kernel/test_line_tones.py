@@ -210,10 +210,10 @@ def test_a_readout_line_without_a_readout_frequency_plays_at_the_qudit_s():
 
 
 def test_the_frequency_tables_hold_the_program_s_qudits_not_the_device_s():
-    # The first compile on a device tabulates qudits 0 to the program's
+    # The first compile on a quantum system tabulates qudits 0 to the program's
     # highest; a later program on a higher qudit, static or runtime, extends
     # the tables, and one on a lower qudit reads them. New kernels, on a
-    # device of its own: no compile is shared with another test.
+    # quantum system of its own: no compile is shared with another test.
     dev = pulse.quantum_system(pulse.quantum_system("transmon_17q")._description)
     static, runtime = (pulse.kernel(k.__wrapped__) for k in (read_static, read_runtime))
     resonator = {i: dev.physical_qudits[i].readout.frequency_hz for i in (0, 4, 9)}

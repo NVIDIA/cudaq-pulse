@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Published parameters of the 17-qubit distance-three surface-code device of
+"""Published parameters of the 17-qubit distance-three surface-code quantum system of
 
     S. Krinner, N. Lacroix et al., "Realizing repeated quantum error
     correction in a distance-three surface code", Nature 605, 669 (2022),
@@ -35,7 +35,7 @@ LABELS = (
 )  # fmt: skip
 
 # Tab. I (p. 10), one row per parameter, columns in LABELS order. Rows marked
-# (a) were measured in a different cooldown of the same device.
+# (a) were measured in a different cooldown of the same quantum system.
 _IDLE_FREQUENCY_GHZ = (
     3.885, 3.994, 3.952, 3.878, 3.895, 3.74, 4.056, 3.993, 4.143,
     6.097, 5.885, 6.022, 6.049, 6.328, 6.192, 5.956, 6.037,
@@ -134,9 +134,9 @@ _EDGES = (
 )
 
 # Methods A (p. 8): J / 2 pi ~ 7 MHz between auxiliary and data qubits at the
-# interaction point, for the device as a whole. That value is the
+# interaction point, for the quantum system as a whole. That value is the
 # |11> <-> |20> matrix element of the CZ, about sqrt(2) J_qq (C. Lacroix, PhD
-# thesis, ETH Zurich (2025), Sec. 3.2, on the same device). A calibration
+# thesis, ETH Zurich (2025), Sec. 3.2, on the same quantum system). A calibration
 # fits the device-wide charge coupling to the X2-D4 measurement below.
 COUPLING_11_20_HZ = 7.0e6
 

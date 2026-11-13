@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Clocks of a control system: the program clock its controllers give a
-device, and the reference clock they lock to."""
+quantum system, and the reference clock they lock to."""
 
 from __future__ import annotations
 

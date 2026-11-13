@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Clocks: the program's, each controller's, and the grids between them.
 
-A kernel counts time in cycles of the device's *program clock*,
+A kernel counts time in cycles of the quantum system's *program clock*,
 ``QuantumSystem.clock_ghz``. A controller may run its own clock: at ``f_k`` against
 the program's ``f_p`` it counts ``r = f_k / f_p`` of its cycles per program
 cycle, and may start operations only every ``cycles_per_timestep`` of them.
@@ -45,7 +45,7 @@ _TOLERANCE = 1e-9
 
 
 def _definition_error(message: str) -> Exception:
-    """The error for a device whose clocks do not fit together."""
+    """The error for a quantum system whose clocks do not fit together."""
     return ValueError(message)
 
 
@@ -55,14 +55,14 @@ def _ghz(value: float) -> str:
 
 def clock_ratio(clock_ghz: float, program_ghz: float) -> Fraction:
     """``clock_ghz / program_ghz`` as a fraction; an error if it is not one."""
-    # Imported here: a device whose clock is only declared needs no fraction.
+    # Imported here: a quantum system whose clock is only declared needs no fraction.
     from fractions import Fraction
 
     ratio = Fraction(clock_ghz / program_ghz).limit_denominator(_MAX_DENOMINATOR)
     if abs(float(ratio) * program_ghz - clock_ghz) > _TOLERANCE * clock_ghz:
         raise _definition_error(
             f"a controller's {_ghz(clock_ghz)} clock has no whole-cycle ratio to the "
-            f"{_ghz(program_ghz)} program clock; give the device a 'clock_ghz' both "
+            f"{_ghz(program_ghz)} program clock; give the quantum system a 'clock_ghz' both "
             "divide into"
         )
     return ratio
@@ -85,19 +85,23 @@ def _lcm(clocks: Sequence[float]) -> float:
 def program_clock_ghz(
     declared: float | None, controller_clocks: Mapping[str, float], default: float
 ) -> float:
-    """The program clock of a device: *declared* (its config's ``clock_ghz``)
+    """The program clock of a quantum system: *declared* (its config's ``clock_ghz``)
     if given, else the fastest of its controllers' clocks when every other
     one divides it, else *default* when it has no controllers.
 
-    Raises the device-definition error when the controllers' clocks do not
+    Raises ``QuantumSystemDefinitionError`` when the controllers' clocks do not
     divide evenly into one and none is declared, listing the clocks that
     work; it never picks one.
     """
     if declared is not None:
         if isinstance(declared, bool) or not isinstance(declared, (int, float)):
-            raise _definition_error(f"the device's clock_ghz must be a number, got {declared!r}")
+            raise _definition_error(
+                f"the quantum system's clock_ghz must be a number, got {declared!r}"
+            )
         if not declared > 0 or not math.isfinite(declared):
-            raise _definition_error(f"the device's clock_ghz must be positive, got {declared}")
+            raise _definition_error(
+                f"the quantum system's clock_ghz must be positive, got {declared}"
+            )
         for clock in controller_clocks.values():
             clock_ratio(clock, declared)
         return float(declared)
@@ -118,7 +122,7 @@ def program_clock_ghz(
     clocks = ", ".join(f"{name} at {_ghz(c)}" for name, c in sorted(controller_clocks.items()))
     raise _definition_error(
         f"the controllers' clocks ({clocks}) do not divide evenly into one, so the "
-        "device needs a program clock: set 'clock_ghz' in its config to one of "
+        "quantum system needs a program clock: set 'clock_ghz' in its config to one of "
         + "; ".join(options)
     )
 
@@ -838,7 +842,7 @@ def round_on_grid(n: Any, grid: int, direction: RoundDirection | str) -> int:
 def _program_clock(
     system: ControlSystem | None, declared: Any, default: float
 ) -> tuple[float | None, list[Problem]]:
-    """The program clock of a device of *system*: *declared* (its config's
+    """The program clock of a quantum system of *system*: *declared* (its config's
     ``clock_ghz``), else the fastest of the controllers' own clocks when the
     others divide it, else *default*; with the problems that keep it from
     one, and the controllers' clocks that are not whole multiples of the

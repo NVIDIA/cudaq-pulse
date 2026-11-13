@@ -2,13 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """The process quantum system, chosen outside user code.
 
-``device()`` with no argument returns the device of the target named by
+``quantum_system()`` with no argument returns the quantum system of the target named by
 the ``CUDAQ_PULSE_QUANTUM_SYSTEM`` environment variable, which
 ``python -m cudaq_pulse --quantum-system NAME script.py`` sets for the script it
 runs. A name is a registered target, optionally with an argument after a
-colon (``transmon_generic:4``). There is no default: ``device()`` without
+colon (``transmon_generic:4``). There is no default: ``quantum_system()`` without
 one raises ``NoProcessQuantumSystemError``. Kernel calls never read the process quantum system;
-they run on the device of their qudit handles.
+they run on the quantum system of their qudit handles.
 """
 
 from __future__ import annotations
@@ -30,12 +30,12 @@ QuantumSystemFactory = Callable[[str | None], Any]
 
 
 class NoProcessQuantumSystemError(PulseError, RuntimeError):
-    """``device()`` was called with no argument and ``CUDAQ_PULSE_QUANTUM_SYSTEM``
+    """``quantum_system()`` was called with no argument and ``CUDAQ_PULSE_QUANTUM_SYSTEM``
     names no process quantum system."""
 
 
 class UnknownQuantumSystemError(NotFoundError):
-    """A target name, given to ``device()``, in a system file or in
+    """A target name, given to ``quantum_system()``, in a system file or in
     ``CUDAQ_PULSE_QUANTUM_SYSTEM``, is not registered; the message lists the
     registered ones."""
 
@@ -81,7 +81,7 @@ def _registry() -> dict[str, QuantumSystemFactory]:
 
 
 def register_quantum_system(name: str, factory: QuantumSystemFactory) -> None:
-    """Make *factory* available as ``device("name[:arg]")`` and
+    """Make *factory* available as ``quantum_system("name[:arg]")`` and
     ``CUDAQ_PULSE_QUANTUM_SYSTEM=name[:arg]``.
 
     *factory* receives the text after the colon, or ``None``, and returns a
@@ -98,7 +98,7 @@ def register_quantum_system(name: str, factory: QuantumSystemFactory) -> None:
 
 
 def available_quantum_systems() -> list[str]:
-    """Names that ``device()`` and ``CUDAQ_PULSE_QUANTUM_SYSTEM`` accept."""
+    """Names that ``quantum_system()`` and ``CUDAQ_PULSE_QUANTUM_SYSTEM`` accept."""
     registry = _registry()
     with _lock:
         return sorted(registry)
@@ -146,8 +146,8 @@ def current_quantum_system() -> QuantumSystem:
 
 def _no_quantum_system_message() -> str:
     return (
-        "device() with no argument returns the process quantum system, and none is "
-        'configured: name a target, as device("transmon_17q"), '
+        "quantum system() with no argument returns the process quantum system, and none is "
+        'configured: name a target, as quantum system("transmon_17q"), '
         "or set one of:\n"
         f"    {ENV_VAR}=transmon_17q python script.py\n"
         "    python -m cudaq_pulse --quantum-system transmon_17q script.py\n"

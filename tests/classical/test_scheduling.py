@@ -19,7 +19,7 @@ from tests._work import python_work
 from tests.property_settings import examples
 
 POLICIES = ("asap", "alap", "rcp", "alap_rcp")
-CLOCK = 2.0  # the test device's clock, GHz
+CLOCK = 2.0  # the test quantum system's clock, GHz
 READOUT, ARM, LATENCY_NS = 300, 40, 1000
 BUDGET = math.ceil(LATENCY_NS * CLOCK)
 

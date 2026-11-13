@@ -2,8 +2,8 @@
    SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
    SPDX-License-Identifier: Apache-2.0
 
-Devices and Targets
-===================
+Quantum systems and Targets
+===========================
 
 A *target* is the calibrated physics of a machine: qudit frequencies and
 anharmonicities, couplings, residual ZZ, T1/T2, the pulses its gates are
@@ -66,7 +66,7 @@ the offending value and a fix; for a file, the line and column too:
 
 .. code-block:: text
 
-   QuantumSystemDefinitionError: 2 problems in device file lab.json:
+   QuantumSystemDefinitionError: 2 problems in quantum system file lab.json:
      lab.json:3:20: layout[2]: carrier 99 is not in target 'transmon_17q' (it has 0..16)
      lab.json:4:15: cooldown: 'x' is given without a calibration; add "calibration", a shipped name or a file path, or remove "cooldown"
 
@@ -77,14 +77,14 @@ it exits 1 when the file has a problem.
 Qudit handles
 -------------
 
-A ``Qudit`` names a carrier of one device; it is identity, not location. A
-kernel called with handles runs on their device. Passing handles of two
-devices to one call, or handles of another device to a kernel compiled for
+A ``Qudit`` names a carrier of one quantum system; it is identity, not location. A
+kernel called with handles runs on their quantum system. Passing handles of two
+quantum systems to one call, or handles of another quantum system to a kernel compiled for
 one, raises ``QuantumSystemMismatchError``, and passing the same qudit twice raises
 ``TypeError``.
 
-Devices compare by content: two devices built from the same values are
-equal and share compiled kernels, but each is its own device, so their
+Quantum systems compare by content: two quantum systems built from the same values are
+equal and share compiled kernels, but each is its own quantum system, so their
 handles do not mix in one call. A layout is part of the content, and an
 empty one is a ``QuantumSystemDefinitionError``: leave ``layout`` out for every
 carrier of the target.
@@ -96,7 +96,7 @@ argument stays symbolic, so a frequency sweep compiles once.
 Gate calibrations
 -----------------
 
-The pulses a device is tuned for are its gate calibrations, named by
+The pulses a quantum system is tuned for are its gate calibrations, named by
 ``pulse.gates`` (``X``, ``X90``, ``Y``, ``Y90``, ``READOUT``, ``CZ``). In a
 kernel a line gives its qudit's, ready to play; outside one, a qudit handle
 and a coupling give the same values:
@@ -119,10 +119,10 @@ and a coupling give the same values:
    a, d = qs.qudit("X1"), qs.qudit("D2")
    qs.coupling(a, d).get_calibration(pulse.gates.CZ).duration_ns   # 98.0
 
-What a device does not publish is derived: an ``X`` without an amplitude
+What a quantum system does not publish is derived: an ``X`` without an amplitude
 gets the one that makes its area a pi rotation at the qudit's drive scale,
 ``X90`` is ``X`` at half the amplitude, and ``Y`` and ``Y90`` are ``X`` and
-``X90`` at +90 degrees. A ``CZ`` or ``READOUT`` the device does not publish
+``X90`` at +90 degrees. A ``CZ`` or ``READOUT`` the quantum system does not publish
 is a ``NotFoundError`` naming the coupling or qudit, and so is another
 transition's (``transition=(1, 2)``) calibration. A ``FluxCZ`` does not play:
 flux lines are not modeled yet, so a kernel leaves the qudits idle for its
@@ -131,7 +131,7 @@ flux lines are not modeled yet, so a kernel leaves the qudits idle for its
 The process quantum system
 --------------------------
 
-A script can leave the choice of device to the command line with a *process
+A script can leave the choice of quantum system to the command line with a *process
 target*:
 
 .. code-block:: bash
@@ -141,14 +141,14 @@ target*:
 
 The launcher sets ``CUDAQ_PULSE_QUANTUM_SYSTEM`` for the script and passes the
 script's own arguments through unparsed. ``pulse.quantum_system()`` with no
-argument returns the process quantum system's device, whose handles the script then
+argument returns the process quantum system's quantum system, whose handles the script then
 passes to its kernels; a kernel call with no qudit handles always raises
 ``NoQuantumSystemError``.
 
 Registered names are ``transmon_17q`` and ``transmon_generic:N``;
 ``cudaq_pulse.quantum_systems.register_quantum_system`` adds more.
 
-``transmon_17q`` is the distance-three surface-code device of
+``transmon_17q`` is the distance-three surface-code quantum system of
 Krinner et al., Nature 605, 669 (2022), built from the values the paper
 publishes. Its qudits 0-16 are D1-D9, X1-X4 and Z1-Z4 (``PhysicalQudit.label``), and
 its 24 couplings are the auxiliary-data pairs of the stabilizers, each with
@@ -160,9 +160,9 @@ cycle, each a tuple of (auxiliary, data) qudit pairs.
 
 The paper's J / 2 pi ~ 7 MHz is the ``|11> <-> |20>`` coupling of the CZ at
 each pair's interaction point (Lacroix, PhD thesis, ETH Zurich (2025), on the
-same device); X2-D4's is measured, 7.4 MHz at 4.4 GHz (Hellings et al.,
+same quantum system); X2-D4's is measured, 7.4 MHz at 4.4 GHz (Hellings et al.,
 arXiv:2503.04610). The simulated exchange comes from the
-device's calibration (below): one device-wide charge coupling g_c, and the
+quantum system's calibration (below): one device-wide charge coupling g_c, and the
 exchange J_qq = g_c <0|n_a|1> <0|n_d|1> at the idle points is 5.67-6.08 MHz.
 The idle ZZ of the charge-coupled pairs is -4.5 to -7.3 kHz
 (``cudaq_pulse.quantum_systems.transmon.transmon_17q_idle_zz_hz``), below the
@@ -177,7 +177,7 @@ Calibrations
 ------------
 
 A calibration holds the values that are fitted rather than published, apart
-from the target: for the ``transmon_17q`` device, the shipped
+from the target: for the ``transmon_17q`` quantum system, the shipped
 ``transmon_17q`` calibration holds each qubit's circuit (E_C, E_J,max and the SQUID asymmetry d, fitted to Tab. I and the
 other sweet spot of Fig. 1c), each pair's charge coupling, the flux-line
 model of Hellings et al., the in-model CZ knobs of all 24 pairs, crosstalk,
@@ -198,7 +198,7 @@ defect bands and feedline groups. Every value records its
 
 ``"calibration"`` is a shipped name, the path of a calibration file or a
 ``cudaq_pulse.quantum_systems.Calibration``; the ``transmon_17q`` target uses the
-``transmon_17q`` calibration by default. Its couplings replace the target's, so devices with different
+``transmon_17q`` calibration by default. Its couplings replace the target's, so quantum systems with different
 calibrations compile separately. Detunings are in Hz; for qubits whose
 circuit, including d, is calibrated (``Calibration.flux_qudits``, all 17
 here) ``flux_for_detuning`` and ``detuning_for_flux`` convert to and from
@@ -211,11 +211,11 @@ The coupling is one device-wide charge coupling, g_c = 3.12 MHz
 ``|11> <-> |20>`` coupling is Hellings et al.'s measured 7.4 MHz at 4.4 GHz.
 At each pair's own interaction point it gives J_2 = 7.3-9.6 MHz, the idle
 exchange is 5.67-6.08 MHz and the idle ZZ -4.5 to -7.3 kHz. The CZ knobs
-are fitted with the same coupling, so the simulated device and its gates
+are fitted with the same coupling, so the simulated quantum system and its gates
 agree.
 
 The CZ knobs (``cz.knobs.per_pair``) are those of the sudden-net-zero pulse
-the device uses (Negirneac et al., PRL 126, 220502 (2021)): the plateau
+the quantum system uses (Negirneac et al., PRL 126, 220502 (2021)): the plateau
 duration t_p, the 2.5 ns transition section t_mid, its amplitude B and the
 amplitude offset, fitted in a closed two-transmon model (five levels each,
 no rotating-wave approximation, ideal flux line, no spectators) for a

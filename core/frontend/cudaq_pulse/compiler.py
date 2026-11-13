@@ -178,7 +178,7 @@ def _can_select_at_runtime(target: QuantumSystem, parameter_kind: str) -> bool:
     """Whether a program compiled for *target* can take a value of
     *parameter_kind* that a measurement selects while it runs.
 
-    *target* is the device the program is built for. *parameter_kind* is
+    *target* is the quantum system the program is built for. *parameter_kind* is
     ``"amplitude"`` (of a waveform, or the factor of ``wf_scale``),
     ``"phase"`` (of ``shift_phase`` and ``set_phase``) or ``"frequency"``
     (of ``shift_frequency`` and ``set_frequency``). Durations, waveform
@@ -623,10 +623,10 @@ class Lowered:
     call's schedule, text and simulation come from the module with the call's
     values bound and scheduled again.
 
-    ``qudits`` holds the device qudits the program drives or measures (gets
+    ``qudits`` holds the quantum system qudits the program drives or measures (gets
     a line on), in increasing order: the qudits ``simulate()`` models.
 
-    A module pickles as MLIR bytecode with its device and options, and runs
+    A module pickles as MLIR bytecode with its quantum system and options, and runs
     unpickled without compiling again, in any process of the build that
     compiled it; another build raises ``UnsupportedError``. A call's view
     pickles its values with its generic module.
@@ -634,7 +634,7 @@ class Lowered:
     Qudit parameters annotated ``Qudit`` or ``Register`` are runtime qudits:
     the module takes them as slots, numbered in parameter order, and a call
     binds each slot to its handle's carrier (``carriers``), on the call's
-    device. Calls with other handles of the same shape share the module.
+    quantum system. Calls with other handles of the same shape share the module.
 
     The module with a call's values substituted is shared by every view
     with them once they recur, so exporting or lowering the same call again
@@ -948,7 +948,7 @@ class Lowered:
     @property
     def controller_usage(self) -> UsageReport:
         """What the classical functions use of the processors of the
-        device's control system (``cudaq_pulse.controller.UsageReport``),
+        quantum system's control system (``cudaq_pulse.controller.UsageReport``),
         built when read; ``print`` it for a table."""
         from .controller import usage
 
@@ -1158,7 +1158,7 @@ def build(
         raise error
     check_root_schedule(options.schedule, builder)
     qudits = builder.qudits
-    # The device's tables, of which the module records qudits 0 to
+    # The quantum system's tables, of which the module records qudits 0 to
     # qudit_count - 1: when the target defines all of those, it defines every
     # qudit of the program, else they are checked.
     qudit_count = builder.qudit_count
@@ -1587,11 +1587,11 @@ def compile[**P](
     """Compile a ``@cudaq_pulse.kernel`` without its arguments.
 
     Returns a ``CompiledKernel``, a family of specializations. Calling it
-    with the kernel's arguments runs the kernel on the device of the qudit
+    with the kernel's arguments runs the kernel on the quantum system of the qudit
     handles passed and returns what the kernel returns. Float parameters
     stay symbolic: the module takes them as function arguments, so calls
     with new values never recompile. Parameters of any other type (qudits,
-    ints) shape the program; each distinct value, on each device, is
+    ints) shape the program; each distinct value, on each quantum system, is
     compiled on first use and kept for the life of the compiled object.
 
     Parameters
@@ -1624,8 +1624,8 @@ def compile[**P](
         non-negative ``int``; 0 never unrolls, so every such loop stays
         rolled, even one of no or one iteration. Either way the
         program, its schedule and its simulation are the same.
-    device:
-        Pin the compiled kernel to one device: a call with handles of
+    quantum system:
+        Pin the compiled kernel to one quantum system: a call with handles of
         another raises ``QuantumSystemMismatchError``, and a call without handles
         runs on it. A pinned kernel without static parameters is built now.
     """

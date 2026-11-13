@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Devices and runs in the reference conventions: amplitudes are Rabi rates."""
+"""Quantum systems and runs in the reference conventions: amplitudes are Rabi rates."""
 
 import cudaq_pulse as pulse
 from cudaq_pulse.quantum_systems import Coupling, DeviceDescription, MicrowaveDrive, PhysicalQudit

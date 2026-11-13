@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Transmon QPU target definitions.
 
-The default target is the 17-qubit distance-three surface-code device of
+The default target is the 17-qubit distance-three surface-code quantum system of
 Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708, built from the
 values the paper publishes (``_transmon_17q``, with a citation for each).
 """
@@ -44,7 +44,7 @@ CZ_LAYERS: tuple[tuple[tuple[int, int], ...], ...] = (
 
 
 def transmon_17q(calibration: Any = "transmon_17q") -> DeviceDescription:
-    """17-qubit surface-code device of Krinner et al., Nature 605, 669 (2022).
+    """17-qubit surface-code quantum system of Krinner et al., Nature 605, 669 (2022).
 
     Qudits 0-16 are D1-D9, X1-X4, Z1-Z4, the column order of the paper's
     Tab. I; ``PhysicalQudit.label`` carries the name. The 24 couplings are the

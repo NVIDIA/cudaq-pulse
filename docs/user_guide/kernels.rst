@@ -59,10 +59,10 @@ Defining a Kernel
 The kernels on this page read their pulse durations from this ``cal``; see
 :ref:`durations`.
 
-Qudit arguments are **qudit handles** of a device: ``qs.qudits[i]``
+Qudit arguments are **qudit handles** of a quantum system: ``qs.qudits[i]``
 for one qudit, and ``qs.qudits[0:4]`` or ``qs.qudits[[0, 2]]``
 for a register, which a kernel indexes and iterates like a list. The kernel
-runs on the device of its handles; see :doc:`quantum_systems`. How arguments bind,
+runs on the quantum system of its handles; see :doc:`quantum_systems`. How arguments bind,
 which of them the kernel is specialized on, and what a call returns are
 described in :doc:`compilation`.
 
@@ -103,10 +103,10 @@ qudits. Unannotated, the kernel is specialized on which qudits it gets. A
 call may pass none, as with an empty register; ``*qudits`` takes only qudit
 handles, so unpack a register into it (``*reg``). See :doc:`compilation`.
 
-Qudits always come from a device: a kernel takes them as parameters, and a
-call passes the device's handles (``qs.qudits[i]``, or a register
+Qudits always come from a quantum system: a kernel takes them as parameters, and a
+call passes the quantum system's handles (``qs.qudits[i]``, or a register
 ``qs.qudits[0:4]``). A call without handles raises
-``NoQuantumSystemError``, unless the kernel was compiled for a device with
+``NoQuantumSystemError``, unless the kernel was compiled for a quantum system with
 ``pulse.compile(k, quantum_system=qs)``.
 
 The kernel language (``get_drive_line``, ``drive``, ``gaussian``, ...) lives
@@ -117,13 +117,13 @@ in ``cudaq_pulse.ops``; inside a kernel its names are used bare, as above.
 Durations: cycles or times
 --------------------------
 
-A kernel counts time in cycles of the device's clock (``qs.clock_ghz``).
+A kernel counts time in cycles of the quantum system's clock (``qs.clock_ghz``).
 A duration (a waveform's length or flat top, a ``wait`` and its bounds, a
 ``pulse.round_duration`` length) is either an ``int`` number of cycles or a time
 with units: ``20 * pulse.ns``, ``4 * pulse.us``, also ``pulse.ms`` and
 ``pulse.s``. A time converts to cycles exactly when the kernel compiles,
-for the device it compiles for, so a kernel whose durations are times
-runs unchanged on devices with different clocks. Shape parameters
+for the quantum system it compiles for, so a kernel whose durations are times
+runs unchanged on quantum systems with different clocks. Shape parameters
 (``sigma``, DRAG ``beta``) take cycles, fractional too, or times.
 
 Keep durations out of the kernel body: pass them as arguments, or read

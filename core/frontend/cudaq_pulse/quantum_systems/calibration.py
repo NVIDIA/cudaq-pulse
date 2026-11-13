@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Device calibrations: fitted circuit values, kept apart from published targets.
+"""Quantum system calibrations: fitted circuit values, kept apart from published targets.
 
 A calibration file is JSON whose leaves are ``{value, units, kind, source,
 uncertainty, cooldown[, method]}`` objects: ``kind`` is ``published``,
@@ -174,7 +174,7 @@ class Calibration:
 
     @property
     def _identity(self) -> tuple[str, ...]:
-        """What a device's fingerprint takes of it: a shipped calibration's
+        """What a quantum system's fingerprint takes of it: a shipped calibration's
         name, cooldown and the file's digest, recorded when the package was
         built; any other's ``fingerprint``, a hash of its contents."""
         if self._shipped is not None:
@@ -322,7 +322,7 @@ _LOADED_LOCK = threading.Lock()
 def shipped_calibration(name: str, cooldown: str | None = None) -> Calibration:
     """A shipped calibration, loaded once: its default cooldown asked for by
     name or as ``None`` is one calibration. One in ``_shipped_calibrations``
-    is not read until a value beyond what a device takes is used."""
+    is not read until a value beyond what a quantum system takes is used."""
     key = (name, cooldown)
     loaded = _LOADED.get(key)
     if loaded is None:

@@ -11,7 +11,7 @@ coupled pair, auxiliary X1 and data qubit D2. ``pulse.simulate(..., backend="gpu
 runs the same stack, adding the target's calibration (drive scales,
 couplings, T1/T2) as module attributes, and executes it.
 
-The device's CZ is a flux pulse; flux lines are not modeled yet, so the
+The quantum system's CZ is a flux pulse; flux lines are not modeled yet, so the
 gate's 98 ns slot is left idle here.
 """
 

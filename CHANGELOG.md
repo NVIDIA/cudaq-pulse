@@ -16,7 +16,7 @@ behavior may change in any 0.x release.
 
 ### Added
 
-- **Gate calibrations.** `pulse.gates` names the gates a device is
+- **Gate calibrations.** `pulse.gates` names the gates a quantum system is
   calibrated for (`X`, `X90`, `Y`, `Y90`, `READOUT`, `CZ`), and
   `get_calibration(gate, transition=(0, 1))` gives each one's pulse: in a
   kernel from a line, `get_drive_line(q).get_calibration(pulse.gates.X)` (a
@@ -27,19 +27,19 @@ behavior may change in any 0.x release.
   `dev.coupling(a, b).get_calibration(pulse.gates.CZ)` (a `FluxCZ`). A
   qudit's `drive` and `readout` (`MicrowaveDrive`, `DispersiveReadout`)
   hold its physics; its tuned pulses are its `calibrations`, by gate.
-  What a device does not publish is derived: an `X` amplitude from the
+  What a quantum system does not publish is derived: an `X` amplitude from the
   pulse's area, `X90` at half of it, `Y` and `Y90` at +90 degrees; an
   unpublished `CZ`, `READOUT` or other transition is an error naming the
   coupling or qudit. A qudit's `metadata` holds the user's own JSON
-  values, which the library never reads and which do not make two devices
+  values, which the library never reads and which do not make two quantum systems
   differ; system files keep them.
 - **Pickling, for process pools and caches on disk.** Kernels pickle as
   functions do: by reference, or with cloudpickle (Ray, Dask) by value
-  when defined in `__main__`, at the prompt or inside a function. Targets, devices, qudit handles and registers
+  when defined in `__main__`, at the prompt or inside a function. Targets, quantum systems, qudit handles and registers
   pickle as what they were built from and unpickle equal, with equal
-  hashes; a process builds each device it unpickles once. A device's
+  hashes; a process builds each quantum system it unpickles once. A quantum system's
   fingerprint covers its calibration: a target with and without one are
-  two devices. A shipped calibration pickles as its name, checked against
+  two quantum systems. A shipped calibration pickles as its name, checked against
   the file shipped where it unpickles; any other, as its values. Programs
   (`ck.lower(...)`, bound or not) pickle as MLIR bytecode stamped with the
   build that compiled them (hashes of its native and Python sources, taken
@@ -49,7 +49,7 @@ behavior may change in any 0.x release.
   report, so a process pool re-raises them in the parent as they were
   raised. Targets now compare by content.
 - **Controllers with their own clocks.** Kernels count cycles of the
-  device's program clock, `pulse.quantum_system(..., clock_ghz=)` (or the
+  quantum system's program clock, `pulse.quantum_system(..., clock_ghz=)` (or the
   target's). A controller whose clock is slower starts and times operations
   only every few program cycles: the scheduler puts each line's operations
   on its controller's grid and a `sync` on the grid its lines share, an
@@ -62,7 +62,7 @@ behavior may change in any 0.x release.
   line's controller clock.
 - **Runtime qudits.** A parameter annotated `Qudit` or `Register` (or
   `list[Qudit]`, `tuple[Qudit, ...]`) is bound at each call, like a float:
-  the kernel compiles once and runs on any qudits of a device with the same
+  the kernel compiles once and runs on any qudits of a quantum system with the same
   structure, including a recalibrated one. An unannotated qudit parameter
   stays static, whatever the call passes. `list[float]` parameters are runtime vectors. Their
   controller exports carry a `program_id`, shared by every call of one
@@ -78,7 +78,7 @@ behavior may change in any 0.x release.
   none. A `*` parameter takes only qudit handles: another annotation is a
   `TypeError` when the kernel is defined, another value one when it is
   called. Kernels still cannot take `**kwargs`.
-- **Control systems.** A device can hold the controllers that play it:
+- **Control systems.** A quantum system can hold the controllers that play it:
   `pulse.Controller` (a controller's limits, the drive and readout lines it
   plays, its peer latency, clock skew and alignment tolerance, its
   `supports`, `backend`, `model` and `version`) and `pulse.ControlSystem`
@@ -103,7 +103,7 @@ behavior may change in any 0.x release.
   a bare carrier index is an undelayed line), and a control system's
   `reference_clock_ghz` is its shared clock; new delays alone schedule its
   programs again without tracing them. Without a
-  declared `clock_ghz`, a device's program clock is its fastest
+  declared `clock_ghz`, a quantum system's program clock is its fastest
   controller clock when every other one divides it; clocks that do not
   divide evenly are a `QuantumSystemDefinitionError` that lists the program clocks
   that work, and every controller clock must be a whole multiple of the
@@ -274,7 +274,7 @@ behavior may change in any 0.x release.
   linear in its length.
 
 - **Kernels.** `@pulse.kernel` traces a Python function into Pulse-dialect
-  MLIR. Calling a kernel with qudit handles compiles it for their device on
+  MLIR. Calling a kernel with qudit handles compiles it for their quantum system on
   first use, caches the specialization, and runs it; `kernel.lower(...)`
   stops before running, and `pulse.compile(kernel)` compiles ahead of the
   call. `float` parameters stay symbolic, so a parameter sweep compiles once.
@@ -293,7 +293,7 @@ behavior may change in any 0.x release.
   value before the
   `if`, raises a `CompilationError` naming it and the line of the `if`.
   Kernels take their qudits as parameters; a call without qudit
-  handles raises `NoQuantumSystemError` unless the kernel was compiled for a device
+  handles raises `NoQuantumSystemError` unless the kernel was compiled for a quantum system
   (`pulse.compile(k, quantum_system=dev)`).
 - **Lines and their tones.** `get_drive_line(q)` and `get_readout_line(q)`
   return the line alone, one value that is not unpacked or iterated;
@@ -441,19 +441,19 @@ behavior may change in any 0.x release.
   `pulse-hoist-loop-invariants`), as well as `pulse-unroll-classical-loops`
   and `pulse-schedule-rcp` with the control system's lanes as options (`max-drives`,
   `max-readouts`, `readout-latency`, `switch-penalty`, `alap`).
-- **Devices and targets.** `pulse.quantum_system` is the one device getter: it
+- **Quantum systems and targets.** `pulse.quantum_system` is the one quantum system getter: it
   describes a machine as a target plus a qudit layout, from a registered
   target name (`pulse.quantum_system("transmon_17q")`) or a `DeviceDescription`,
   with `layout=`, `calibration=`, `cooldown=`, `control_system=` and
   `clock_ghz=` keywords, or, with no argument, the process quantum system; a string
   is always a name, and `QuantumSystem.load` / `QuantumSystem.from_dict` read system
-  files. Devices compare by
-  content and share compiled kernels, but handles of two devices, even
+  files. Quantum systems compare by
+  content and share compiled kernels, but handles of two quantum systems, even
   equal ones, do not mix in one call or in a kernel compiled for one
   (`QuantumSystemMismatchError`), and an empty `layout` is a
   `QuantumSystemDefinitionError`. Target descriptions are
   `cudaq_pulse.quantum_systems.DeviceDescription`; the shipped target,
-  `"transmon_17q"`, is a 17-qubit transmon device built from
+  `"transmon_17q"`, is a 17-qubit transmon quantum system built from
   Krinner et al., Nature 605, 669 (2022).
   A target's `model` (`cudaq_pulse.quantum_systems.TransmonModel` by default, a
   `SimulationModel` class or instance, or `None`) says how the simulator
@@ -507,12 +507,12 @@ behavior may change in any 0.x release.
   integrator (`backend="cpu"`) or on NVIDIA GPUs through cuDensityMat
   (`backend="gpu"`, Linux, experimental). Programs that measure and branch
   are evolved as an exact ensemble over outcomes. The simulated space holds
-  only the qudits the program gets a line on, whatever their device indices
+  only the qudits the program gets a line on, whatever their quantum system indices
   (a pair at qudits 13 and 3 is a two-mode problem); `SimulationResult.qudits`
-  and `Lowered.qudits` give the device qudit of each mode, and the other
+  and `Lowered.qudits` give the quantum system qudit of each mode, and the other
   qudits are classical spectators. `result.level_population(level, qudit)`
   and `result.level_populations(qudit)` give a qudit's level probabilities
-  from its reduced state, for any number of levels; `qudit` (a device index
+  from its reduced state, for any number of levels; `qudit` (a quantum system index
   or handle) may be left out when the result models one qudit, and a qudit
   or level the result does not have is an `InvalidValueError` listing those
   it has. `result.branches` holds one `Branch` per measurement path: its
@@ -559,7 +559,7 @@ behavior may change in any 0.x release.
 - **Simulating and emulating calls.** `pulse.simulate` binds answers per
   measurement path, with timeouts from the latency model, assignment errors
   and relaxation during readout, IQ points from a dispersive readout model,
-  and `quantum_system=` to simulate a drifted device without compiling again.
+  and `quantum_system=` to simulate a drifted quantum system without compiling again.
   `Lowered.export_emulation()` writes the schedule, segments and call manifest
   for a controller; `classical.emulation.emulate` runs a program in virtual
   time against real services, in process or over UDP. Requests and answers
@@ -571,7 +571,7 @@ behavior may change in any 0.x release.
   golden-section and Nelder-Mead steps), `classical.random_index` (an
   on-device random source), `classical.loop` (a parameter store whose values
   programs read at run time, and an estimate log) and `runtime.drift` (a
-  drifting device with its truth trace and surrogates). Every time an
+  drifting quantum system with its truth trace and surrogates). Every time an
   estimator takes is a `pulse.Time` or a number of ns
   (`ramsey_detuning(mean_hz, theta, 2 * pulse.us)`); converting it costs a
   controller nothing. Examples
@@ -781,7 +781,7 @@ behavior may change in any 0.x release.
   operations it unrolls to and the limit. `simulate(shots_count=...)` and `emulate(shots_count=...)`
   take a positive `int` (`InvalidTypeError` or `InvalidValueError`
   otherwise; `simulate`'s default `None` still samples nothing), and a
-  qudit index past a device or register is an `IndexOutOfRangeError`, an
+  qudit index past a quantum system or register is an `IndexOutOfRangeError`, an
   `IndexError`, that says how many qudits it has. A NaN or infinite float argument is an
   `InvalidValueError` naming the parameter wherever the program is used:
   run, simulated, exported or printed. Finding the line of a value the

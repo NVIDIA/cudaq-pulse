@@ -277,7 +277,7 @@ def test_system_reports_a_good_or_unreadable_file(tmp_path):
     path.write_text('{"quantum_system": "transmon_17q", "layout": [4, 5]}')
     assert _run("--system", str(path)) == (
         0,
-        f"{path}: ok, device transmon_17q with 2 qudits\n",
+        f"{path}: ok, quantum system transmon_17q with 2 qudits\n",
     )
     code, output = _run("--system", str(tmp_path / "absent.json"))
     assert code == 1

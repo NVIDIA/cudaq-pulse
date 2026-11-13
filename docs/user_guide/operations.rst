@@ -19,7 +19,7 @@ Channel Access
    and frequency ops, as in ``shift_phase(line.tone, math.pi)``. A line is
    one value: it is not unpacked or iterated.
 
-   ``line.tone`` drives the qudit's default transition, which its device's
+   ``line.tone`` drives the qudit's default transition, which its quantum system's
    model declares (levels 0 and 1 unless the model says otherwise).
    ``line.tones`` maps each transition the model lists, as a
    ``(lower, upper)`` pair of levels, to its tone, so

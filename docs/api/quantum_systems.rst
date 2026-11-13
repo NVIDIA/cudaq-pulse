@@ -2,8 +2,8 @@
    SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
    SPDX-License-Identifier: Apache-2.0
 
-Device API
-==========
+Quantum system API
+==================
 
 .. autofunction:: cudaq_pulse.quantum_system
 
@@ -19,7 +19,7 @@ Device API
 Clocks
 ------
 
-A device's ``clock_ghz`` is its program clock. A controller with a slower
+A quantum system's ``clock_ghz`` is its program clock. A controller with a slower
 clock, or several cycles per timestep, starts operations only every few
 program cycles, its lines' :ref:`timestep <timestep>`; ``round_duration``
 rounds a length to whole timesteps in a kernel.
@@ -35,7 +35,7 @@ Times with units
 
 A bare int duration is a number of cycles of the program clock.
 ``20 * pulse.ns`` is a time: the compiler converts it to cycles exactly,
-for the device the kernel compiles for, and rejects a time that is not a
+for the quantum system the kernel compiles for, and rejects a time that is not a
 whole number of cycles. A plain float in a duration is an error, since it
 could mean either.
 
@@ -55,13 +55,13 @@ One nanosecond, microsecond, millisecond and second:
 .. autodata:: cudaq_pulse.s
    :no-value:
 
-Errors are on :doc:`errors`; the targets a device is built from are on
+Errors are on :doc:`errors`; the targets a quantum system is built from are on
 :doc:`descriptions`.
 
 Control systems
 ---------------
 
-A device's ``control_system`` is the controllers that play it, their wiring
+A quantum system's ``control_system`` is the controllers that play it, their wiring
 and the links beside them. ``pulse.controller("vendor.model", drive_lines=...,
 readout_lines=...)`` loads a ``Controller`` from an installed description (or
 a TOML file, by path) with the installation's wiring; each file is parsed

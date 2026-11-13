@@ -54,7 +54,7 @@ def static_k(q, r, amps: list[float], f12: float):
 
 
 def _f12(q):
-    """The 1-2 frequency of *q*, read from its device on the host."""
+    """The 1-2 frequency of *q*, read from its quantum system on the host."""
     return float(q.quantum_system.transition_freq[q.logical, 1, 2])
 
 

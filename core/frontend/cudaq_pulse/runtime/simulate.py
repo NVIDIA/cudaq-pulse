@@ -76,7 +76,7 @@ class BranchCoverage(StrEnum):
 
 @dataclass(frozen=True)
 class Measurement:
-    """One execution of a readout: which one, on which (device) qudit, and
+    """One execution of a readout: which one, on which (quantum system) qudit, and
     when."""
 
     readout: int
@@ -118,7 +118,7 @@ class Branch:
 class SimulationResult:
     """The ensemble final state, and per-shot records if shots were taken.
 
-    The state spans the qudits the program uses, ``qudits`` (device
+    The state spans the qudits the program uses, ``qudits`` (quantum system
     indices, increasing), with ``dims[i]`` levels on ``qudits[i]``;
     ``density_matrix`` is indexed with ``qudits[0]`` as the least
     significant digit. Qudits the program does not use are left out, with
@@ -146,7 +146,7 @@ class SimulationResult:
         """The probability of each level of *qudit*, from level 0 up: the
         diagonal of its reduced density matrix, summing to 1.
 
-        *qudit* is a device qudit index or a qudit handle, one of
+        *qudit* is a quantum system qudit index or a qudit handle, one of
         ``qudits``; it may be left out when the result models one qudit."""
         mode = self._mode(qudit)
         dims = self.dims
@@ -168,7 +168,7 @@ class SimulationResult:
         return populations[level]
 
     def _mode(self, qudit: int | Qudit | None) -> int:
-        """The position in ``qudits`` of *qudit*, a device index or handle."""
+        """The position in ``qudits`` of *qudit*, a quantum system index or handle."""
         qudits = self.qudits
         if qudit is None:
             if len(qudits) == 1:
@@ -226,7 +226,7 @@ def simulate(
     levels:
         Levels per qudit. By default each qudit has the levels its target's
         simulation model declares for it (``DeviceDescription.model``; 3 for
-        a ``TransmonModel``); an int sets every qudit's, and a dict by device
+        a ``TransmonModel``); an int sets every qudit's, and a dict by quantum system
         qudit index sets those it names. A transmon with three or more
         levels includes its anharmonicity.
     initial_state:
@@ -291,11 +291,11 @@ def simulate(
         ``shots_count``, and each shot from the call on is simulated as its own
         trajectory.
     quantum_system:
-        A device description to simulate instead of the device the program
+        A device description to simulate instead of the quantum system the program
         was compiled for: its qubits' frequencies, T1, T2, thermal
         populations, drive strength and readout parameters apply, while the
         program (its tones and pulses) stays as compiled. This is how a
-        drifting device is simulated without compiling again; see
+        drifting quantum system is simulated without compiling again; see
         ``cudaq_pulse.runtime.drift``.
     latency_branching:
         With a timeout, branch on whether the answer came in time with the
@@ -519,7 +519,7 @@ def _read_only_models() -> tuple[type, ...]:
 # runs none of the checks that made it. Every input of the step is in the
 # key or fixed with an object whose id is: targets, their qubits and
 # couplings are frozen, and the models kept (_read_only_models) are
-# read-only, with immutable classes. A device may change its target or
+# read-only, with immutable classes. A quantum system may change its target or
 # clock, both read into the key at each call. An entry holds no object; it
 # is dropped when either target is freed (_forget, before the id can be
 # reused), and the cache is emptied when it holds _MAX_STEPS. Each read and
@@ -544,7 +544,7 @@ def _simulation_model(target: Any) -> Callable[..., SimulationResult]:
 
 
 def _check_quantum_system(lowered: Lowered, quantum_system: Any) -> Any:
-    """The description of *quantum_system*, a quantum system or a device
+    """The description of *quantum_system*, a quantum system or a quantum system
     description, which defines every qudit of *lowered*."""
     from ..quantum_systems import DeviceDescription
 
@@ -576,7 +576,7 @@ def _default_step(
     frequency the simulation holds (see ``_fastest``), rounded down to a
     whole fraction of a clock cycle.
 
-    Couplings turn at the detuning of the compiled device's qudits; levels
+    Couplings turn at the detuning of the compiled quantum system's qudits; levels
     at the spread of the simulated *target*'s (the compiled one by default)."""
     compiled = lowered.quantum_system._description
     active = lowered.qudits

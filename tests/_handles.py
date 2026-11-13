@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""The device most tests run on, and its qudit handles ``Q``."""
+"""The quantum system most tests run on, and its qudit handles ``Q``."""
 
 import dataclasses
 

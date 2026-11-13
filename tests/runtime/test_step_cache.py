@@ -92,7 +92,7 @@ def test_a_recalibrated_device_changes_the_step_and_the_warning(steps):
         assert steps[-1] == _STEP_5[alpha]
     lowered = on(_target(), _flip, Q[0])
     assert _coarse(lambda: pulse.simulate(lowered, levels=3, dt_ns=0.25)) == []
-    # A device is read-only by contract, not enforced: a target set on it in
+    # A quantum system is read-only by contract, not enforced: a target set on it in
     # place is the one simulated, and the one its step is kept for.
     lowered.quantum_system._description = _target(alpha_hz=-400.0e6)
     assert _coarse(lambda: pulse.simulate(lowered, levels=3, dt_ns=0.25)) == ["400 MHz"]

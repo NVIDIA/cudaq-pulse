@@ -8,7 +8,7 @@ at that frequency plus the amplitude offset, for t_p each in two plateaus
 around a t_mid transition section in which the data qubit sits at the flux
 Phi_idle + B (Phi_A - Phi_idle) and the auxiliary at idle; Gaussian edges
 of sigma = 0.5 ns. Evolved with the charge-coupled pair of the transmon
-model and the device's charge coupling, the one the knobs were fitted
+model and the quantum system's charge coupling, the one the knobs were fitted
 with, it reproduces the calibrated conditional phase.
 """
 

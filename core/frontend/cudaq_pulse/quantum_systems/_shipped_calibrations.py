@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""What a device takes of each shipped calibration, so that building one
+"""What a quantum system takes of each shipped calibration, so that building one
 does not read the file: the file's digest (as ``_source_stamp.CALIBRATIONS``
 records it), its default cooldown and cooldowns, and each pair's idle
 exchange J_qq in Hz with the idle 0-1 frequencies (auxiliary, data) it was

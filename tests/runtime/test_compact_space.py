@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """The simulated space holds the qudits a program uses, not every index up to
-the largest: a pair at indices 13 and 3 of the 17-qudit transmon_17q device is a
-two-mode problem, with the same physics as on a device of just those two."""
+the largest: a pair at indices 13 and 3 of the 17-qudit transmon_17q quantum system is a
+two-mode problem, with the same physics as on a quantum system of just those two."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ _TRANSMON_17Q = pulse.quantum_system("transmon_17q")
 
 
 def _slice(indices):
-    """A device of the transmon_17q qudits *indices*, renumbered 0, 1, ... in
+    """A quantum system of the transmon_17q qudits *indices*, renumbered 0, 1, ... in
     increasing order, with the couplings and residual ZZ between them."""
     target = _TRANSMON_17Q._description
     new = {q: i for i, q in enumerate(sorted(indices))}

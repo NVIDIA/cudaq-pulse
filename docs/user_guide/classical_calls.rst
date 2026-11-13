@@ -20,7 +20,7 @@ reports, for every call, how much slack the answer has.
 
 ``examples/19_classical_calls.py`` uses everything on this page end to end,
 and ``examples/20_adaptive_calibration.py`` calibrates against a drifting
-device with the estimators described under "Calibrating while the QPU runs";
+quantum system with the estimators described under "Calibrating while the QPU runs";
 see :doc:`../examples`.
 
 Declaring a function
@@ -154,7 +154,7 @@ states), an input or a slice of one. A ``None`` result needs no return.
 mypy and pyright check these bodies like any other. A list parameter of no
 stated length works as for ``pulse.classical``: ``decode`` called with 6 and
 with 8 bits is two versions, ``decode__6`` and ``decode__8``, each served
-under its own id and listed in the manifest with its layout. A device that
+under its own id and listed in the manifest with its layout. A quantum system that
 takes one size is declared with it, as ``table`` is. Calling an external
 function in Python is an error that says to give it a handler.
 
@@ -190,7 +190,7 @@ use the same functions as kernels.
 Links
 -----
 
-A link is a path to a classical device with a cost: a fixed time per
+A link is a path to a classical quantum system with a cost: a fixed time per
 request, a bandwidth, a feedback time from an answer arriving to a pulse
 using it, a number of requests it holds at once and the largest request it
 takes. They belong to the control system, by name:
@@ -387,10 +387,10 @@ A whole program with unanswered calls does not lower to LLVM:
 ``Lowered.mlir("llvm")`` points to ``pulse.simulate``, which lowers each
 segment with its answers bound, on the CPU or the GPU.
 
-``quantum_system=`` simulates another device description than the device the program
+``quantum_system=`` simulates another device description than the quantum system the program
 was compiled for, keeping the program as compiled: its qubits' frequencies,
 T1, T2, drive strength and readout parameters apply. That is how a drifting
-device is simulated (see below).
+quantum system is simulated (see below).
 
 Native and QEC handlers
 -----------------------
@@ -544,10 +544,10 @@ when it is known.
        ...
        store.set("wait_ns", next_wait, iteration=i)
 
-**A drifting device.** ``cudaq_pulse.runtime.drift.DriftingPlant`` moves one
+**A drifting quantum system.** ``cudaq_pulse.runtime.drift.DriftingPlant`` moves one
 qubit's T1 (``TelegraphT1``, switching between two values), frequency and
 drive amplitude (``OrnsteinUhlenbeck``) as time advances, and records every
-state in ``drifting.truth``. ``drifting.now()`` is the device now, for
+state in ``drifting.truth``. ``drifting.now()`` is the quantum system now, for
 ``pulse.simulate(..., quantum_system=...)``; ``p_survive``, ``p_ramsey`` and
 ``p_rabi`` give the standard experiments' outcome probabilities directly, for
 loops of many iterations.

@@ -51,7 +51,7 @@ def test_every_problem_of_a_config_is_reported_in_its_key_order():
         ("laout", "laout"),
         ("zones", pulse.Problem.UNSET),
     ]
-    assert str(error).startswith("5 problems in the device data:\n  layout[1]: carrier 99")
+    assert str(error).startswith("5 problems in the quantum system data:\n  layout[1]: carrier 99")
     assert "(it has 0..16)" in str(error)
     assert error.problems[1].message == "carrier 0 is already named by layout[0]"
     assert error.problems[3].fix == "did you mean 'layout'?"
@@ -171,7 +171,7 @@ def test_a_file_problem_gives_its_file_line_and_column(tmp_path: Path):
         (str(path), 4, 15, "cooldown"),
     ]
     assert str(error).splitlines() == [
-        f"2 problems in device file {path}:",
+        f"2 problems in quantum system file {path}:",
         f"  {path}:3:20: layout[2]: carrier 99 is not in target 'transmon_17q' (it has 0..16)",
         f"  {path}:4:15: cooldown: 'x' is given without a calibration; add "
         '"calibration", a shipped name or a file path, or remove "cooldown"',
@@ -227,13 +227,13 @@ def test_no_argument_is_the_process_target(monkeypatch):
     assert len(pulse.quantum_system().qudits) == 3
     monkeypatch.delenv("CUDAQ_PULSE_QUANTUM_SYSTEM")
     with pytest.raises(
-        pulse.NoProcessQuantumSystemError, match=r'name a target, as device\("transmon_17q'
+        pulse.NoProcessQuantumSystemError, match=r'name a target, as quantum system\("transmon_17q'
     ):
         pulse.quantum_system()
 
 
 def test_data_that_is_not_a_mapping_is_a_type_error():
-    with pytest.raises(TypeError, match="device data must be a mapping, got list"):
+    with pytest.raises(TypeError, match="quantum system data must be a mapping, got list"):
         pulse.QuantumSystem.from_dict([1])  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="takes a registered target name or a DeviceDescription"):
         pulse.quantum_system([1])  # type: ignore[arg-type]
@@ -281,7 +281,7 @@ def test_a_long_list_is_cut_at_ten():
     error = _problems({"quantum_system": TRANSMON_17Q, "layout": list(range(100, 112))})
     assert len(error.problems) == 12
     lines = str(error).splitlines()
-    assert lines[0] == "12 problems in the device data:"
+    assert lines[0] == "12 problems in the quantum system data:"
     assert len(lines) == 12 and lines[-1] == "  ... and 2 more"
 
 
@@ -294,4 +294,4 @@ def test_a_problem_reads_as_where_what_and_fix():
 
 def test_an_error_built_from_problems_alone_has_a_header():
     error = pulse.QuantumSystemDefinitionError(problems=[pulse.Problem("is wrong", path="x")])
-    assert str(error) == "1 problem in the device definition:\n  x: is wrong"
+    assert str(error) == "1 problem in the quantum system definition:\n  x: is wrong"

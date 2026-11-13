@@ -119,7 +119,7 @@ class _Role:
         self.dependencies: list[dict[str, list[str]]] | None = None
         # The qudits a call uses, by its carriers (at most _PLACEMENTS).
         self.placed: dict[tuple[int, ...], tuple[int, ...]] = {}
-        # A call without float values is its carriers and device: its view,
+        # A call without float values is its carriers and quantum system: its view,
         # shared by the calls that repeat them (at most _PLACEMENTS).
         self.views: dict[tuple[tuple[int, ...], QuantumSystem], Lowered] = {}
         # The module with a placement's carriers bound and its float
@@ -155,7 +155,7 @@ class _Role:
 
 
 def _structure(quantum_system: QuantumSystem) -> str:
-    """``device._structure``: what a kernel whose qudits are runtime
+    """``quantum_system._structure``: what a kernel whose qudits are runtime
     parameters depends on, not the carriers or their calibration, which are
     bound per call."""
     import hashlib

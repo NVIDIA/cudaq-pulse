@@ -86,7 +86,7 @@ GPU Runtime Errors
 ------------------
 
 Every execution path calls ``require_gpu_runtime()`` first. It either returns
-a runtime backed by a usable device or raises one of three errors, all
+a runtime backed by a usable quantum system or raises one of three errors, all
 subclasses of ``cudaq_pulse.runtime.GpuRuntimeError``:
 
 ``GpuSupportNotBuiltError``
@@ -114,9 +114,9 @@ Pipeline Overview
 The public execution path is:
 
 1. ``kernel.lower(*args)`` verifies, optimizes and schedules the kernel for
-   the device of its qudit handles.
+   the quantum system of its qudit handles.
 2. ``pulse.simulate(lowered, backend="gpu")`` annotates the module with the
-   device's calibration (drive scales, couplings, residual ZZ, T1/T2) and the
+   quantum system's calibration (drive scales, couplings, residual ZZ, T1/T2) and the
    native pipeline lowers it Pulse -> QOp -> CuDensityMat -> LLVM IR.
 3. MLIR's ExecutionEngine compiles the LLVM IR in process and executes it
    against the cuDensityMat runtime library; no external compiler or LLVM
@@ -232,15 +232,15 @@ Physical Model
 --------------
 
 The simulated space holds only the qudits the program uses: those it gets a
-drive or readout line on, one mode each in increasing order of device index.
-A pair at qudits 13 and 3 of the 17-qudit ``transmon_17q`` device is a 3 x 3 problem
+drive or readout line on, one mode each in increasing order of quantum system index.
+A pair at qudits 13 and 3 of the 17-qudit ``transmon_17q`` quantum system is a 3 x 3 problem
 with three levels, not a 3^14 one. Couplings and residual ZZ between those
-qudits keep their device values; the other qudits are left out, with their
+qudits keep their quantum system values; the other qudits are left out, with their
 couplings, as classical spectators in their ground state. To simulate an
-idle qudit, get a line on it. ``result.qudits`` lists the device qudit of
+idle qudit, get a line on it. ``result.qudits`` lists the quantum system qudit of
 each mode: ``result.qudits[i]`` has ``result.dims[i]`` levels and is digit
 ``i`` of the state index, least significant first. An ``initial_state``
-uses the same layout, and measurements report device qudits.
+uses the same layout, and measurements report quantum system qudits.
 
 The native execution lowering is a transmon model in one rotating frame per
 qudit, with the levels the target's simulation model declares for it (three
@@ -342,5 +342,5 @@ of the outcomes from the same branch probabilities.
 reference; ``backend="gpu"`` evolves each segment with cuDensityMat, starting
 from the projected state. By default each qudit has the levels its target's
 model declares (three for a transmon); ``levels=2`` simulates qubits, an int
-sets every qudit's levels and a dict by device qudit index sets those it
+sets every qudit's levels and a dict by quantum system qudit index sets those it
 names. With three or more levels a transmon includes its anharmonicity.

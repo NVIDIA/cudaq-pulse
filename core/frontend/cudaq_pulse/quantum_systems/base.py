@@ -147,7 +147,7 @@ class DispersiveReadout(Readout):
     ``depletion_ns`` (else ln(100) / kappa) at measurement efficiency
     ``efficiency``.
 
-    The readout pulse the device is tuned for is the qudit's ``READOUT``
+    The readout pulse the quantum system is tuned for is the qudit's ``READOUT``
     calibration, a ``ReadoutPulse``.
     """
 
@@ -488,7 +488,7 @@ _COMPONENT_VALUES = attrgetter("_values")
 
 
 class _Calibrations(dict[Any, Any]):
-    """Checked calibrations by gate: read-only, and with what a device's
+    """Checked calibrations by gate: read-only, and with what a quantum system's
     fingerprint takes of them (``_content``), made once however many qudits
     share them."""
 
@@ -683,7 +683,7 @@ _QUDIT_STATE = attrgetter(*_QuditFields.__slots__[:-1])
 
 
 class PhysicalQudit(_QuditFields):
-    """Single qubit in a target device.
+    """Single qubit in a target quantum system.
 
     ``drive`` and ``readout`` are its physics: how it is driven and read
     out, each by the component of its modality (``MicrowaveDrive``,
@@ -693,7 +693,7 @@ class PhysicalQudit(_QuditFields):
     ``(gate, (lower, upper))`` for a transition other than (0, 1));
     ``get_calibration`` reads them. ``metadata`` is the user's own data
     (JSON values), which the library never reads, and which does not make
-    a device differ; values the library knows are fields, never metadata.
+    a quantum system differ; values the library knows are fields, never metadata.
     A qubit is read-only: ``replace`` makes a changed copy.
     """
 
@@ -867,7 +867,7 @@ class Coupling:
         if name not in _COUPLING_GATES:
             raise InvalidValueError(
                 f"{_gate_label(name)} is calibrated on a qudit, not on a coupling: "
-                f"dev.qudits[i].get_calibration({_gate_label(name)})"
+                f"qs.qudits[i].get_calibration({_gate_label(name)})"
             )
         at = _transition(transition)
         found: FluxCZ | None = self.calibrations.get(_calibration_key(name, at))

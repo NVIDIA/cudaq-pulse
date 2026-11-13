@@ -87,7 +87,7 @@ class Line:
 
     def get_calibration(self, gate: Gate, transition: tuple[int, int] = (0, 1)) -> Any:
         """The calibrated pulse of *gate* (a ``pulse.gates.Gate``) on the
-        line's qudit, from the device the kernel compiles for: a
+        line's qudit, from the quantum system the kernel compiles for: a
         ``DragPulse`` for ``X``, ``X90``, ``Y`` and ``Y90`` on a drive line,
         a ``ReadoutPulse`` for ``READOUT`` on a readout line, derived as
         ``pulse.gates`` describes where not published. Both play:
@@ -441,7 +441,7 @@ def custom_samples(samples: Sequence[float], sample_rate_ghz: float | None = Non
 
     Each sample is held until the next. The samples are made for one rate,
     and play only on lines at that rate: by default one per clock cycle of
-    the device (``QuantumSystem.clock_ghz``), or *sample_rate_ghz*. A line plays its
+    the quantum system (``QuantumSystem.clock_ghz``), or *sample_rate_ghz*. A line plays its
     controller's rate, its ``sample_rate_ghz``; samples made for another rate are a
     ``CompilationError``, never a change in how long they last. Resample
     them for the line, or use ``custom``, which samples at the line's rate.

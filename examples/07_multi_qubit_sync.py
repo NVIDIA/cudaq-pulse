@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Multi-qubit programs with sync barriers and registers of qudit handles.
 
-Shows qudits passed one by one and as a register (a slice of the device's
+Shows qudits passed one by one and as a register (a slice of the quantum system's
 handles), the sync primitive for cross-line coordination, and patterns for
 building multi-qubit pulse programs.
 """

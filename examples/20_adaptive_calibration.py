@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adaptive calibration against a drifting device.
+"""Adaptive calibration against a drifting quantum system.
 
 Builds on ``19_classical_calls.py``. On qubit 0 of the 17-qubit transmon
 twin (``transmon_17q``), this example:
@@ -8,7 +8,7 @@ twin (``transmon_17q``), this example:
 1. Runs a frequency binary search inside one shot: after each Ramsey shot an
    estimator on the controller link updates a Gaussian posterior over the
    detuning and picks the next wait (a variable wait) and phase.
-2. Tracks a drifting device between shots: T1 switches between two values
+2. Tracks a drifting quantum system between shots: T1 switches between two values
    and the frequency wanders. A parameter store holds what the programs run
    with, an estimate log records each estimate with the truth, and the
    kernel is compiled once for the whole loop. The loop uses the true system's
@@ -100,7 +100,7 @@ def binary_search(q, rounds: int):
     readout(r, readout_pulse)
 
 
-# ── 2. Tracking a drifting device between shots ─────────────────────────────
+# ── 2. Tracking a drifting quantum system between shots ─────────────────────────────
 
 
 @pulse.kernel
@@ -142,7 +142,7 @@ if __name__ == "__main__":
     )
     print(f"  mean estimate over branches: {expected / 1e3:+.0f} kHz")
 
-    print("\n=== 2. Tracking a drifting device between shots ===")
+    print("\n=== 2. Tracking a drifting quantum system between shots ===")
     telegraph = TelegraphT1(qudit.t1_us / 4, qudit.t1_us, rate_hz=0.5)
     drifting = DriftingPlant(
         target,

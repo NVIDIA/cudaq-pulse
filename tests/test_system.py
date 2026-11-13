@@ -909,7 +909,7 @@ def test_doctor_checks_a_system_file(tmp_path):
     path.write_text(json.dumps(qpu.as_dict(), indent=2))
     code, text = _doctor(path)
     assert code == 0, text
-    assert f"{path}: ok, device {TRANSMON_17Q} with 4 qudits" in text
+    assert f"{path}: ok, quantum system {TRANSMON_17Q} with 4 qudits" in text
     assert "controllers[1]: box.b, drive lines 2..3" in text
     assert "link 'feedback': reaches controllers [0]" in text
     data = qpu.as_dict()

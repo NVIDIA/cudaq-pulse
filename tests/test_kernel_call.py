@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Calling kernels: binding, specialization, caching, guards, devices, returns."""
+"""Calling kernels: binding, specialization, caching, guards, quantum systems, returns."""
 
 from __future__ import annotations
 
@@ -324,7 +324,7 @@ def test_a_trace_that_calls_an_impure_host_function_is_never_reused():
     assert k.cache_info().compiled == 2
 
 
-# ── Devices ──────────────────────────────────────────────────────────────
+# ── Quantum systems ──────────────────────────────────────────────────────────────
 
 
 def test_the_device_comes_from_the_qudit_handles():
@@ -351,7 +351,7 @@ def test_mixing_devices_in_one_call_is_an_error():
         sync(get_drive_line(q0), get_drive_line(q1))
 
     a, other = _device(), _device(n=5)
-    with pytest.raises(pulse.QuantumSystemMismatchError, match="two different devices"):
+    with pytest.raises(pulse.QuantumSystemMismatchError, match="two different quantum systems"):
         pair.lower(a.qudits[0], other.qudits[1])
     pair.lower(a.qudits[0], a.qudits[1])
 
@@ -364,8 +364,9 @@ def test_two_separate_devices_with_one_definition_do_not_mix_in_a_call():
     a, twin = _device(), _device()
     assert a == twin
     message = (
-        r"^pair\(\) got qudits of two separate devices of target 'call-test' with the same "
-        r"definition, as two pulse.quantum_system\(\) calls make; pass handles of one device$"
+        r"^pair\(\) got qudits of two separate quantum systems of target 'call-test' with the same "
+        r"definition, as two pulse.quantum_system\(\) calls make; pass handles of one quantum "
+        r"system$"
     )
     with pytest.raises(pulse.QuantumSystemMismatchError, match=message):
         pair.lower(a.qudits[0], twin.qudits[1])
@@ -375,14 +376,16 @@ def test_two_separate_devices_with_one_definition_do_not_mix_in_a_call():
 
 def test_a_pinned_compile_rejects_another_device():
     ck = pulse.compile(rabi, quantum_system=_device())
-    with pytest.raises(pulse.QuantumSystemMismatchError, match="compiled for device"):
+    with pytest.raises(pulse.QuantumSystemMismatchError, match="compiled for quantum system"):
         ck.lower(_device(n=5).qudits[0], 0.1)
 
 
 def test_a_pinned_compile_rejects_a_separate_device_with_its_definition():
     dev = _device()
     ck = pulse.compile(rabi, quantum_system=dev)
-    with pytest.raises(pulse.QuantumSystemMismatchError, match="another, separate device of it"):
+    with pytest.raises(
+        pulse.QuantumSystemMismatchError, match="another, separate quantum system of it"
+    ):
         ck.lower(_device().qudits[0], 0.1)
     assert ck.lower(dev.qudits[0], 0.1) is not None
 

@@ -16,7 +16,7 @@ from cudaq_pulse import CompilationError, Controller, ControlSystem
 
 from tests._handles import Q
 
-# 5000 ns on the 2 GHz clock of Q's device: 10,000 cycles.
+# 5000 ns on the 2 GHz clock of Q's quantum system: 10,000 cycles.
 MACHINE = ControlSystem(controllers=[Controller(max_program_duration=5_000)])
 LIMIT = r"Controller\.max_program_duration"
 BOUNDS = (4, 10**6)

@@ -148,7 +148,7 @@ def simulate_tree(
 ) -> tuple[list[_Leaf], dict[tuple[int, tuple[int, ...]], Any]]:
     """Walk every path; returns the leaves and the measurements seen.
 
-    *modes* gives the state's mode of each device qudit. With *sampled*,
+    *modes* gives the state's mode of each quantum system qudit. With *sampled*,
     only the paths some shot takes are walked."""
     by_name = {f.name: f for f in functions}
     with_lists = {f.name for f in functions if not all(s.is_scalar for s in f.results)}

@@ -5,7 +5,7 @@
 
 Demonstrates:
   - Loading the pre-defined transmon target
-  - Using the device's X calibration, the published single-qubit pulse
+  - Using the quantum system's X calibration, the published single-qubit pulse
     (40 ns DRAG, sigma = 10 ns), from get_calibration
   - Compiling (default passes, ALAP schedule) a single-qubit
     pulse program
@@ -31,7 +31,7 @@ print(f"  frequency = {qudit_d5.frequency_hz / 1e9:.3f} GHz")
 print(f"  anharmonicity = {qudit_d5.anharmonicity_hz / 1e6:.1f} MHz")
 print(f"  T1 = {qudit_d5.t1_us:.1f} us, T2* = {qudit_d5.t2_star_us:.1f} us")
 
-# The device's X calibration: the published pulse shape, and (with no
+# The quantum system's X calibration: the published pulse shape, and (with no
 # published amplitude, so amplitudes are rates in rad/ns) the amplitude that
 # makes it a pi rotation.
 x = qs.qudits[qudit_idx].get_calibration(pulse.gates.X)

@@ -6,7 +6,7 @@ generic transmon and on the 17-qubit transmon twin.
 Each skeleton is expressed, scheduled, simulated and, where it calls
 estimators while the QPU runs, exported for emulation. They check the
 structure (what is called with what, what the timeline does) and that the
-estimators recover what the simulated device is.
+estimators recover what the simulated quantum system is.
 """
 
 from __future__ import annotations

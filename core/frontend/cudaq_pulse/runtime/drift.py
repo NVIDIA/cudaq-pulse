@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""A drifting device to calibrate against, with its true parameters recorded.
+"""A drifting quantum system to calibrate against, with its true parameters recorded.
 
 ``DriftingPlant`` wraps one qudit of a device description and moves its
 parameters as time advances:

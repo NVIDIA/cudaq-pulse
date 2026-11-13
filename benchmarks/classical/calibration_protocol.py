@@ -31,7 +31,7 @@ Every number here comes from pulse.simulate running the example's kernels,
 with the estimators as classical functions on the controller link, one
 sampled path per shot of the protocol:
 
-- adaptive T1 on a device like that of Berritta et al. (2025):
+- adaptive T1 on a quantum system like that of Berritta et al. (2025):
   fixed-frequency, T1 160 us, assignment errors 0.11 and 0.14, prior
   (3, 450 us), 50 shots; the paper reports 159 us, 68% interval
   [131, 202] us;
@@ -41,7 +41,7 @@ sampled path per shot of the protocol:
   17-qubit transmon twin's qubit 0 at T1 = 18.3 us; the paper reports T1 =
   18.3 +- 4.7 us from the decay estimator;
 - for each step on its own: compile time, simulation time per protocol
-  shot and per step, the step's time to decision on the device's timeline,
+  shot and per step, the step's time to decision on the quantum system's timeline,
   and the peak memory of simulating it.
 
     python benchmarks/classical/calibration_protocol.py [--att 400]

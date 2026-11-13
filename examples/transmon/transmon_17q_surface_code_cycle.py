@@ -14,7 +14,7 @@ Demonstrates:
   - Compiling it with pulse.compile (default passes, ALAP)
 
 Each CZ is a flux pulse; flux lines are not modeled yet, so its 98 ns slot
-idles both qubits. Readout, which the device overlaps with the next half
+idles both qubits. Readout, which the quantum system overlaps with the next half
 cycle, is left out.
 """
 
@@ -94,5 +94,5 @@ total_ns = max(e.end for e in compiled.schedule) / clock_ghz
 print(
     f"\nCompiled and verified: {compiled.metrics.op_count} ops, "
     f"total = {total_ns:.0f} ns: 8 CZ steps of 98 ns and 6 single-qubit slots of 40 ns "
-    "(the device's cycle, with readout, takes 1.1 us)"
+    "(the quantum system's cycle, with readout, takes 1.1 us)"
 )

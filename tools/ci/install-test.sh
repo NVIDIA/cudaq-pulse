@@ -144,13 +144,13 @@ if sysconfig.get_config_var("Py_GIL_DISABLED"):
 
 
 @pulse.kernel
-def rabi(qubit, duration: int, amplitude: float):
-    drive_line = get_drive_line(qubit)
+def rabi(qudit, duration: int, amplitude: float):
+    drive_line = get_drive_line(qudit)
     drive(drive_line, square(duration, amplitude))
 
 
-device = pulse.quantum_system("transmon_17q")
-compiled = pulse.compile(rabi).lower(device.qudits[0], 100, 0.5)
+qs = pulse.quantum_system("transmon_17q")
+compiled = pulse.compile(rabi).lower(qs.qudits[0], 100, 0.5)
 assert compiled.mlir().strip(), "compile produced no MLIR"
 Path("kernel.mlir").write_text(compiled.mlir())
 print(f"compiled from {package.parent} in {compiled.metrics.total_ms:.3f} ms")
