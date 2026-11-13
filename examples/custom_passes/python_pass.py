@@ -42,7 +42,7 @@ def parallel_x(qs):
 
 
 def main() -> None:
-    args = [dev.qudit_handles[:4]]
+    args = [dev.qudits[:4]]
 
     asap = pulse.compile(parallel_x, schedule="asap", device=dev).lower(*args)
     print("ASAP violations of a 2-drive limit:", concurrent_drive_violations(asap, 2))

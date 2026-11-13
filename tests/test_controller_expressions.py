@@ -597,7 +597,7 @@ def _no_dialect(program):
 def test_no_export_of_the_corpus_names_an_operation_of_the_compiler(version):
     dev = _validation._device(ControlSystem())
     for kernel in _validation._corpus().values():
-        lowered = pulse.compile(kernel, device=dev).lower(*dev.qudit_handles[:2])
+        lowered = pulse.compile(kernel, device=dev).lower(*dev.qudits[:2])
         _no_dialect(lowered.export_controller(version=version))
     # Format /2 is for controllers on the program clock.
     clocks = [Controller(clock_ghz=2.0, cycles_per_timestep=4)] if version == 1 else []

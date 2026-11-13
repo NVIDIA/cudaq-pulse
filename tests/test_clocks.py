@@ -36,7 +36,7 @@ def test_a_config_sets_the_program_clock_and_the_fingerprint_follows():
     slow = pulse.device(ladder_target(4), clock_ghz=1.0)
     assert default.clock_ghz == same.clock_ghz == 2.0 and default == same
     assert default.fingerprint == same.fingerprint
-    assert slow.clock_ghz == 1.0 and slow.target.clock_ghz == 1.0
+    assert slow.clock_ghz == 1.0 and slow.description.clock_ghz == 1.0
     assert slow.fingerprint != default.fingerprint
 
 

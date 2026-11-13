@@ -129,26 +129,26 @@ if __name__ == "__main__":
 
     print("=== XY4 (4 cycles) ===")
     compiled_kernel = pulse.compile(xy4, device=dev).lower(
-        dev.qudit_handles[0], sigma, amplitude_pi, tau, 4
+        dev.qudits[0], sigma, amplitude_pi, tau, 4
     )
     print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")
 
     print("\n=== Uhrig DD (8 pulses, T=5000 clock cycles) ===")
     compiled_kernel = pulse.compile(uhrig_dd, device=dev).lower(
-        dev.qudit_handles[0], sigma, amplitude_pi, 5000, 8
+        dev.qudits[0], sigma, amplitude_pi, 5000, 8
     )
     print(compiled_kernel.mlir())
 
     print("\n=== CPMG (8 refocusing pulses) ===")
     compiled_kernel = pulse.compile(cpmg, device=dev).lower(
-        dev.qudit_handles[0], sigma, amplitude_half_pi, amplitude_pi, tau, 8
+        dev.qudits[0], sigma, amplitude_half_pi, amplitude_pi, tau, 8
     )
     print(compiled_kernel.mlir())
 
     print("\n=== KDD (Knill DD) ===")
     compiled_kernel = pulse.compile(knill_dd, device=dev).lower(
-        dev.qudit_handles[0], sigma, amplitude_pi, tau
+        dev.qudits[0], sigma, amplitude_pi, tau
     )
     print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")

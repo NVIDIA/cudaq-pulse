@@ -350,7 +350,7 @@ def test_limits_report_instruction_spacing_detectors_and_feedback():
 
 def test_limits_report_clock_tones_memory_and_size():
     lowered = pulse.compile(drive_and_branch, schedule="asap").lower(Q[0], Q[1])
-    clock = lowered.target.clock_ghz
+    clock = lowered.device.clock_ghz
     # Every operation starts and lasts whole cycles of a controller at half
     # the clock; at an eighth, the readout and the two drives after it do not.
     assert check(lowered, Controller(clock_ghz=clock / 2)) == []
@@ -369,7 +369,7 @@ def test_limits_report_clock_tones_memory_and_size():
 
 def test_a_sample_rate_sets_the_samples_a_waveform_takes():
     lowered = pulse.compile(drive_and_branch, schedule="asap").lower(Q[0], Q[1])
-    clock = lowered.target.clock_ghz
+    clock = lowered.device.clock_ghz
     # At one and a half samples per cycle, the readout's 100 cycles take 150
     # samples and line 2's two shapes of 20 cycles 30 each.
     found = check(lowered, Controller(sample_rate_ghz=1.5 * clock, waveform_memory_samples=60))

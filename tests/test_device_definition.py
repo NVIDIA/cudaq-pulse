@@ -9,7 +9,7 @@ from pathlib import Path
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse.targets import Calibration, Qubit, TargetDescription
+from cudaq_pulse.targets import Calibration, DeviceDescription, Qubit
 
 TRANSMON_17Q = "transmon_17q"
 
@@ -19,7 +19,7 @@ def _pair():
         i: Qubit(index=i, frequency_hz=5e9, anharmonicity_hz=-2e8, t1_us=0.0, t2_star_us=0.0)
         for i in (0, 1)
     }
-    return TargetDescription(name="pair", qubits=qubits)
+    return DeviceDescription(name="pair", qubits=qubits)
 
 
 def _problems(given):
@@ -69,7 +69,7 @@ def test_a_device_definition_error_is_a_value_error_and_a_pulse_error():
         (
             {"quantum_system": 4},
             "quantum_system",
-            "must be a registered target name or a TargetDescription",
+            "must be a registered target name or a DeviceDescription",
         ),
         ({"quantum_system": "transmon_17"}, "quantum_system", "did you mean 'transmon_17q'?"),
         ({"quantum_system": "transmon_generic"}, "quantum_system", "needs a qudit count"),
@@ -203,7 +203,7 @@ def test_a_missing_file_is_an_os_error(tmp_path: Path):
 def test_a_target_name_is_a_device(tmp_path: Path, monkeypatch):
     dev = pulse.device(TRANSMON_17Q)
     assert dev == pulse.device(TRANSMON_17Q) and dev.name == TRANSMON_17Q
-    assert len(pulse.device("transmon_generic:4").qudit_handles) == 4
+    assert len(pulse.device("transmon_generic:4").qudits) == 4
     with pytest.raises(pulse.NotFoundError, match=r"did you mean 'transmon_17q'\?"):
         pulse.device("transmon_transmon_17qq")
     with pytest.raises(FileNotFoundError):
@@ -220,7 +220,7 @@ def test_a_target_name_is_a_device(tmp_path: Path, monkeypatch):
 
 def test_no_argument_is_the_process_target(monkeypatch):
     monkeypatch.setenv("CUDAQ_PULSE_TARGET", "transmon_generic:3")
-    assert len(pulse.device().qudit_handles) == 3
+    assert len(pulse.device().qudits) == 3
     monkeypatch.delenv("CUDAQ_PULSE_TARGET")
     with pytest.raises(pulse.NoTargetError, match=r'name a target, as device\("transmon_17q'):
         pulse.device()
@@ -229,7 +229,7 @@ def test_no_argument_is_the_process_target(monkeypatch):
 def test_data_that_is_not_a_mapping_is_a_type_error():
     with pytest.raises(TypeError, match="device data must be a mapping, got list"):
         pulse.Device.from_dict([1])  # type: ignore[arg-type]
-    with pytest.raises(TypeError, match="takes a registered target name or a TargetDescription"):
+    with pytest.raises(TypeError, match="takes a registered target name or a DeviceDescription"):
         pulse.device([1])  # type: ignore[arg-type]
     with pytest.raises(TypeError, match=r"Device.from_dict\(data\) reads a system file's data"):
         pulse.device({"quantum_system": TRANSMON_17Q})  # type: ignore[arg-type]

@@ -19,31 +19,31 @@ read-only.
    chip = pulse.device("transmon_17q", layout=[4, 5, 6])
    chip = pulse.Device.load("chip.json")              # the same, from a system file
 
-   q = chip.qudit_handles[0]          # a handle naming carrier 4
-   pair = chip.qudit_handles[0:2]     # a Register: carriers 4 and 5
-   some = chip.qudit_handles[[0, 2]]  # carriers 4 and 6
+   q = chip.qudits[0]          # a handle naming carrier 4
+   pair = chip.qudits[0:2]     # a Register: carriers 4 and 5
+   some = chip.qudits[[0, 2]]  # carriers 4 and 6
 
    chip.qubit_freq[0]                 # 0-1 frequency of qudit 0, in Hz
    chip.transition_freq[0, 1, 2]      # 1-2 frequency of qudit 0
    chip.qubit_freq[0] = 5.01e9        # ValueError: assignment destination is read-only
 
 ``pulse.device`` takes the quantum system, a registered target name or a
-``cudaq_pulse.targets.TargetDescription``, and optionally ``layout=``,
+``cudaq_pulse.targets.DeviceDescription``, and optionally ``layout=``,
 ``calibration=`` and ``cooldown=``, ``control_system=`` and ``clock_ghz=``.
 A string is always a name: ``pulse.Device.load(path)`` reads a system file
 (as ``Device.as_dict()`` writes one, and ``json.dumps`` saves), and
 ``pulse.Device.from_dict(data)`` its data. ``layout[i]`` is the carrier
 that qudit ``i`` names; by default every carrier of the target, in order.
-A ``TargetDescription``'s
+A ``DeviceDescription``'s
 ``model`` (``TransmonModel`` by default) decides the operator of its
 couplings, for transmons the exchange g (a^dagger b + a b^dagger):
 
 .. code-block:: python
 
-   from cudaq_pulse.targets import Coupling, FluxCZ, Qubit, TargetDescription
+   from cudaq_pulse.targets import Coupling, FluxCZ, Qubit, DeviceDescription
 
    cz = FluxCZ(duration_ns=98.0)
-   pair = TargetDescription(
+   pair = DeviceDescription(
        name="pair",
        qubits={i: Qubit(i, f, -2.0e8, 50.0, 30.0) for i, f in enumerate([4.8e9, 6.9e9])},
        couplings=[Coupling((0, 1), strength_hz=5.7e6, calibrations={pulse.gates.CZ: cz})],
@@ -168,8 +168,8 @@ The idle ZZ of the charge-coupled pairs is -4.5 to -7.3 kHz
 (``cudaq_pulse.targets.transmon.transmon_17q_idle_zz_hz``), below the
 paper's "below about 8 kHz"; simulated with three levels, the couplings
 reproduce it within a few percent. Each qubit also records its Hahn-echo T2
-and thermal excited-state population from Tab. I (``TargetDescription.t2_echo_times``,
-``TargetDescription.thermal_populations``): a simulation starts each qubit in its
+and thermal excited-state population from Tab. I (``DeviceDescription.t2_echo_times``,
+``DeviceDescription.thermal_populations``): a simulation starts each qubit in its
 thermal mixture and relaxes it there, and dephases at the Hahn-echo T2 with
 ``simulate(..., dephasing="t2_echo")``.
 

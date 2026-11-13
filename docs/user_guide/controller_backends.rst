@@ -739,12 +739,12 @@ same name:
 
    import cudaq_pulse as pulse
    from cudaq_pulse import backends
-   from cudaq_pulse.targets import Qubit, TargetDescription
+   from cudaq_pulse.targets import Qubit, DeviceDescription
 
    backends.register("text", TextBackend)
    backend = backends.get("text")
    dev = pulse.device(
-       TargetDescription(name="one-qubit", qubits={0: Qubit(0, 5.0e9, -2.0e8, 50.0, 30.0)}),
+       DeviceDescription(name="one-qubit", qubits={0: Qubit(0, 5.0e9, -2.0e8, 50.0, 30.0)}),
        clock_ghz=1.0,
    )
    cal = {"x_duration": 40 * pulse.ns, "x_sigma": 10 * pulse.ns, "readout_duration": 200 * pulse.ns}
@@ -760,7 +760,7 @@ same name:
 
 
    compiled = pulse.compile(drive_and_measure, device=dev, control_system=backend.control_system())
-   program = compiled.lower(dev.qudit_handles[0]).export_controller()
+   program = compiled.lower(dev.qudits[0]).export_controller()
    print(backend.run(backend.emit(program), shots=1))
    # [['0 drive line 0 gaussian at 5e+09 Hz', '40 readout line 1 square at 5e+09 Hz']]
 

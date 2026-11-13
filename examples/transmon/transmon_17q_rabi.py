@@ -53,7 +53,7 @@ def rabi_d5(qubit):
         wait(drive_line, gap)
 
 
-compiled = pulse.compile(rabi_d5, device=dev).lower(dev.qudit_handles[qubit_idx])
+compiled = pulse.compile(rabi_d5, device=dev).lower(dev.qudits[qubit_idx])
 total_cycles = max(e.end for e in compiled.schedule)
 print(
     f"\nCompiled {compiled.metrics.op_count} ops, total length = {total_cycles / clock_ghz:.1f} ns"

@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.targets import MicrowaveDrive, Qubit, TargetDescription
+from cudaq_pulse.targets import DeviceDescription, MicrowaveDrive, Qubit
 
 from tests._handles import Q
 from tests.runtime._lowering import on
@@ -27,7 +27,7 @@ _PULSES = 160
 
 
 def _target():
-    return TargetDescription(
+    return DeviceDescription(
         name="concurrent-runs",
         qubits={
             0: Qubit(

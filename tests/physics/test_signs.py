@@ -78,7 +78,7 @@ def test_shift_phase_is_a_mckay_virtual_z(theta, x, passes):
         drive(d, square(cycles(20.0), rate))
 
     dev = device([5.0e9], [-200e6])
-    lowered = pulse.compile(x90_after_z, passes=passes).lower(dev.qudit_handles[0])
+    lowered = pulse.compile(x90_after_z, passes=passes).lower(dev.qudits[0])
     rho = pulse.simulate(lowered, dt_ns=0.01, levels=2).density_matrix
     assert 2 * rho[0, 1].real == pytest.approx(x, abs=1e-6)
     assert abs(rho[0, 1].imag) < 1e-6

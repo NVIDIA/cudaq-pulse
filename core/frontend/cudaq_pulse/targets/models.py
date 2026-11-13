@@ -2,14 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """Simulation models: how the simulator treats the qudits of a system.
 
-A target names its model (``TargetDescription.model``); the model, never a
+A target names its model (``DeviceDescription.model``); the model, never a
 label, decides the physics. Each model class declares the levels of its
 qudits as the class attribute ``levels``, and an instance overrides them per
 qudit:
 
     TransmonModel(levels={0: 4, 2: 2})
 
-keyed by the target's qudit index, the key of ``TargetDescription.qubits``
+keyed by the target's qudit index, the key of ``DeviceDescription.qubits``
 and of ``simulate(levels=...)``.
 """
 

@@ -332,11 +332,11 @@ def test_a_float_part_below_the_lowest_length_is_clamped_with_the_answer(tau):
 
 @pytest.mark.parametrize("tau", [30.4, 980.0, -15.0])
 def test_a_wait_from_an_answer_and_a_float_runs_their_sum_clamped(tau):
-    from cudaq_pulse.targets import Qubit, TargetDescription
+    from cudaq_pulse.targets import DeviceDescription, Qubit
 
     qubits = {i: Qubit(i, 5e9 + 1e8 * i, -2e8, 2.0, 0.0) for i in range(2)}
-    dev = pulse.device(TargetDescription(name="decay", qubits=qubits))
-    q, p = dev.qudit_handles
+    dev = pulse.device(DeviceDescription(name="decay", qubits=qubits))
+    q, p = dev.qudits
     length = min(max(round(2.0 * 10.0 + tau), 8), 1000)
     low = pulse.compile(offset_by_tau, device=dev).lower(q, p, tau)
     # The drive on d, then the wait once its answer is due, where the static

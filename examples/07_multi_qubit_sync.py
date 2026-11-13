@@ -57,7 +57,7 @@ def parametric_pi_half(qubit_0, qubit_1, amplitude_0, amplitude_1):
 def qvec_simultaneous_drive(qubit_vector, amplitude):
     """Drive two qubits of a register in parallel.
 
-    dev.qudit_handles[0:4] is a register of four qudits; individual qudits
+    dev.qudits[0:4] is a register of four qudits; individual qudits
     are accessed by indexing.
     """
     drive_line_0 = get_drive_line(qubit_vector[0])
@@ -115,31 +115,29 @@ if __name__ == "__main__":
     dev = pulse.device("transmon_17q")
     print("=== Two-qubit simultaneous drive ===")
     compiled_kernel = pulse.compile(two_qubit_simultaneous, device=dev).lower(
-        dev.qudit_handles[0], dev.qudit_handles[1]
+        dev.qudits[0], dev.qudits[1]
     )
     print(compiled_kernel.mlir())
 
     print("\n=== Parametric pi/2 ===")
     compiled_kernel = pulse.compile(parametric_pi_half, device=dev).lower(
-        dev.qudit_handles[0], dev.qudit_handles[1], 0.25, 0.28
+        dev.qudits[0], dev.qudits[1], 0.25, 0.28
     )
     print(compiled_kernel.mlir())
 
     print("\n=== Register simultaneous drive ===")
-    compiled_kernel = pulse.compile(qvec_simultaneous_drive, device=dev).lower(
-        dev.qudit_handles[0:4], 0.3
-    )
+    compiled_kernel = pulse.compile(qvec_simultaneous_drive, device=dev).lower(dev.qudits[0:4], 0.3)
     print(compiled_kernel.mlir())
 
     print("\n=== Sync after asymmetric ops ===")
     compiled_kernel = pulse.compile(sync_after_asymmetric_ops, device=dev).lower(
-        dev.qudit_handles[0], dev.qudit_handles[1]
+        dev.qudits[0], dev.qudits[1]
     )
     print(compiled_kernel.mlir())
 
     print("\n=== Staggered readout ===")
     compiled_kernel = pulse.compile(staggered_readout, device=dev).lower(
-        dev.qudit_handles[0], dev.qudit_handles[1]
+        dev.qudits[0], dev.qudits[1]
     )
     print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")

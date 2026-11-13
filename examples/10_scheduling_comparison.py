@@ -38,7 +38,7 @@ def print_timeline(compiled: pulse.Lowered, label: str) -> int:
 
 
 def main():
-    args = [dev.qudit_handles[:4]]
+    args = [dev.qudits[:4]]
     control_system = pulse.ControlSystem(max_concurrent_drives=2, line_switch_penalty_cycles=5)
     totals = {}
     for policy in ("asap", "alap", "rcp"):

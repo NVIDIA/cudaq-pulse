@@ -518,7 +518,7 @@ def _pin_mismatch(name: str, pin: Device, found: Device) -> DeviceMismatchError:
 def _no_device(name: str) -> NoDeviceError:
     return NoDeviceError(
         f"{name}() was called without qudit handles, so it has no device: pass "
-        "handles of a device (dev.qudit_handles[i]), or compile it for one with "
+        "handles of a device (dev.qudits[i]), or compile it for one with "
         "cudaq_pulse.compile(k, device=dev)"
     )
 

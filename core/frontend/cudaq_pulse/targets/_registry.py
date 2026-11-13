@@ -19,7 +19,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from .._errors import InvalidTypeError, InvalidValueError, NotFoundError, PulseError, _closest
-from .base import TargetDescription
+from .base import DeviceDescription
 
 if TYPE_CHECKING:
     from .._device import Device
@@ -85,7 +85,7 @@ def register_target(name: str, factory: TargetFactory) -> None:
     ``CUDAQ_PULSE_TARGET=name[:arg]``.
 
     *factory* receives the text after the colon, or ``None``, and returns a
-    ``TargetDescription`` (or an object with ``to_target()``). Registering only adds a
+    ``DeviceDescription`` (or an object with ``to_target()``). Registering only adds a
     name: which target a process uses is still chosen by the environment.
     """
     if not name or ":" in name or name != name.strip():
@@ -104,7 +104,7 @@ def available_targets() -> list[str]:
         return sorted(registry)
 
 
-def make_target(spec: str) -> TargetDescription:
+def make_target(spec: str) -> DeviceDescription:
     """A fresh target from a registered name with its optional argument."""
     name, colon, arg = spec.partition(":")
     factory = _registry().get(name)
@@ -116,11 +116,11 @@ def make_target(spec: str) -> TargetDescription:
             f"no registered target {spec!r}; {hint}the registered targets are {', '.join(names)}"
         )
     target = factory(arg if colon else None)
-    if not isinstance(target, TargetDescription) and hasattr(target, "to_target"):
+    if not isinstance(target, DeviceDescription) and hasattr(target, "to_target"):
         target = target.to_target()
-    if not isinstance(target, TargetDescription):
+    if not isinstance(target, DeviceDescription):
         raise InvalidTypeError(
-            f"target factory {name!r} returned {type(target).__name__}, not a TargetDescription"
+            f"target factory {name!r} returned {type(target).__name__}, not a DeviceDescription"
         )
     return target
 

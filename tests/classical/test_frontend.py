@@ -1028,7 +1028,7 @@ def test_links_reach_the_module_and_the_schedule():
     low = pulse.compile(_reset, control_system=machine).lower(Q[0])
     assert "fixed_ns = 5.000000e+01" in low.mlir()
     (call,) = low.classical_report()
-    clock = low.target.clock_ghz
+    clock = low.device.clock_ghz
     # 24 header bytes + 1 payload byte at 1 byte/ns, plus the fixed 50 ns.
     assert call.submit_duration_cycles == math.ceil((50 + 25) * clock)
     assert call.due_cycles == call.submit_cycles + call.submit_duration_cycles + math.ceil(
@@ -1048,7 +1048,7 @@ def test_links_reach_the_module_and_the_schedule():
 def test_report_and_schedule_events():
     low = pulse.compile(_reset, schedule="asap").lower(Q[0])
     (call,) = low.classical_report()
-    clock = low.target.clock_ghz
+    clock = low.device.clock_ghz
     assert call.function == "echo" and call.compiled_name == "echo__1"
     assert call.link == 0 and call.iteration == ()
     assert call.submit_cycles == 200 and call.submit_duration_cycles == 1

@@ -57,7 +57,7 @@ def k(q):
 
 system = p.ControlSystem(links={"gpu": Link(fixed_ns=100, bytes_per_ns=10, feedback_ns=50)})
 dev = p.device("transmon_17q")
-low = p.compile(k, control_system=system).lower(dev.qudit_handles[0])
+low = p.compile(k, control_system=system).lower(dev.qudits[0])
 """
 
 
@@ -142,7 +142,7 @@ def k(q):
     drive(d, drag(40, 0.2, 10.0, 0.5))
 
 dev = p.device("transmon_17q")
-low = p.compile(k).lower(dev.qudit_handles[0])
+low = p.compile(k).lower(dev.qudits[0])
 """
 
 # What exporting a program does not build: the reports and their analyzer,
@@ -170,7 +170,7 @@ def test_times_load_no_fractions(tmp_path):
         "assert repr(t) == '13.7143 ns' and t < low.duration and t // p.ns == 13\n"
         "assert (t % p.ns) * 7 == 5 * p.ns and abs(-t) == t\n"
         "dev2 = p.device('transmon_17q', clock_ghz=1.5)\n"
-        "low2 = p.compile(k).lower(dev2.qudit_handles[0])\n"
+        "low2 = p.compile(k).lower(dev2.qudits[0])\n"
         "assert low2.duration > 0 * p.ns\n"
     )
     assert _loaded(code, tmp_path, ("fractions", "decimal")) == []
@@ -208,7 +208,7 @@ def test_a_name_with_no_close_match_loads_no_difflib(tmp_path):
     code = (
         "import sys\nimport cudaq_pulse as p\n\n@p.kernel\ndef k(q):\n"
         "    d = get_drive_line(q)\n    drive(d, zzz_not_a_waveform(40))\n\n"
-        "try:\n    p.compile(k).lower(p.device('transmon_17q').qudit_handles[0])\n"
+        "try:\n    p.compile(k).lower(p.device('transmon_17q').qudits[0])\n"
         "except p.CompilationError as e:\n    assert 'did you mean' not in str(e), e\n"
     )
     assert _loaded(code, tmp_path, ("difflib",)) == []

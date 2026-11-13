@@ -9,7 +9,7 @@ Targets API
 A target describes a device's qudits, couplings and decoherence; a device
 (:doc:`devices`) pairs one with a qudit layout.
 
-.. autoclass:: cudaq_pulse.targets.TargetDescription
+.. autoclass:: cudaq_pulse.targets.DeviceDescription
    :members:
 
 .. autoclass:: cudaq_pulse.targets.Qubit
@@ -102,14 +102,14 @@ qudit's own, keyed by the target's qudit index:
 
 .. code-block:: python
 
-   from cudaq_pulse.targets import Qubit, TargetDescription, TransmonModel
+   from cudaq_pulse.targets import Qubit, DeviceDescription, TransmonModel
 
    qubits = {
        i: Qubit(index=i, frequency_hz=f, anharmonicity_hz=-2.0e8, t1_us=50.0, t2_star_us=30.0)
        for i, f in enumerate([5.0e9, 5.2e9])
    }
    # Qudit 0 has four levels; qudit 1 has the model's default.
-   chip = TargetDescription(name="chip", qubits=qubits, model=TransmonModel(levels={0: 4}))
+   chip = DeviceDescription(name="chip", qubits=qubits, model=TransmonModel(levels={0: 4}))
 
 The model also gives a drive line its transitions: ``line.tones`` has a tone
 for each ``(lower, upper)`` pair of the qudit's levels, at the frequency

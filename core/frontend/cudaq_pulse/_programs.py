@@ -56,7 +56,7 @@ def _concrete_general(self: Lowered) -> Any:
         args = _schedule_args(self.options, self.clocks)
         with self._lock:
             if self.carriers:
-                target = self.target
+                target = self.device
                 _, frequencies, readouts = target._frequency_tables(max(self.carriers) + 1)
                 module = self._module.specialize_placed(
                     list(arguments),
@@ -156,7 +156,7 @@ def _structure(device: Device) -> str:
     bound per call."""
     import hashlib
 
-    content = repr((device.target.model, device.clock_ghz)).encode()
+    content = repr((device.description.model, device.clock_ghz)).encode()
     made = device._structure = hashlib.blake2b(content, digest_size=16).hexdigest()
     return made
 
@@ -208,11 +208,11 @@ def _placement(view: Lowered) -> Any:
     shared by the views of one placement."""
     role = view._role
     assert role is not None and view.carriers
-    key = (view.carriers, view.target)
+    key = (view.carriers, view.device)
     module = role.modules.get(key)
     if module is None:
         with view._lock:
-            target = view.target
+            target = view.device
             _, frequencies, readouts = target._frequency_tables(max(view.carriers) + 1)
             module = view._module.place_carriers(view.carriers, frequencies, readouts)
         if len(role.modules) >= _PLACED_MODULES:
@@ -245,7 +245,7 @@ def _place(
     view._text = None
     view._lock = lowered._lock
     view._concrete_module = None
-    view.target = lowered.target
+    view.device = lowered.device
     view.metrics = lowered.metrics
     view.parameters = ()
     view.arguments = tuple(values)
@@ -262,7 +262,7 @@ def _place(
     view.fine_delays = lowered.fine_delays
     if carriers:
         assert target is not None
-        view.target = target
+        view.device = target
         placed = role.placed.get(carriers)
         if placed is None:
             qudits = {*role.used, *(carriers[k] for k in role.lines)}
@@ -284,7 +284,7 @@ class _CheckedPerCall(Lowered):
     def __init__(self, lowered: Lowered) -> None:
         super().__init__(
             lowered._module,
-            target=lowered.target,
+            device=lowered.device,
             metrics=lowered.metrics,
             parameters=lowered.parameters,
             qudits=lowered.qudits,
@@ -346,7 +346,7 @@ class _CheckedPlaced(_CheckedPerCall):
         if not carriers:
             return self._accept(view)
         return self._accept(
-            view, _bits(tuple(map(float, carriers))) + view.target.fingerprint.encode()
+            view, _bits(tuple(map(float, carriers))) + view.device.fingerprint.encode()
         )
 
 

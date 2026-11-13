@@ -81,13 +81,13 @@ class ToyBackend:
 if __name__ == "__main__":
     import cudaq_pulse as pulse
     from cudaq_pulse import backends
-    from cudaq_pulse.targets import Qubit, TargetDescription
+    from cudaq_pulse.targets import DeviceDescription, Qubit
 
     # Installed, the backend is found by its entry point; here it is
     # registered in the process.
     backends.register("toy", ToyBackend)
     backend = backends.get("toy")
-    target = TargetDescription(
+    target = DeviceDescription(
         name="toy-device",
         qubits={0: Qubit(index=0, frequency_hz=5e9, anharmonicity_hz=-2e8, t1_us=0, t2_star_us=0)},
     )
@@ -107,7 +107,7 @@ if __name__ == "__main__":
         readout(readout_line, square(cal["readout_duration"], 0.05))
 
     compiled = pulse.compile(drive_and_measure, device=dev, control_system=backend.control_system())
-    program = backend.emit(compiled.lower(dev.qudit_handles[0]).export_controller())
+    program = backend.emit(compiled.lower(dev.qudits[0]).export_controller())
     print(program, end="")
     print(backend.run(program, shots=2))
     backends.unregister("toy")

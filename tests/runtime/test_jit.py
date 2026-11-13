@@ -4,7 +4,7 @@
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.targets.base import Qubit, TargetDescription
+from cudaq_pulse.targets.base import DeviceDescription, Qubit
 
 from tests._handles import Q
 from tests.runtime._lowering import evolve, on
@@ -21,7 +21,7 @@ def _jit_test_kernel(q0):
 def test_jit_executes_target_aware_program():
     """The direct JIT path executes scheduled, target-aware pulse MLIR."""
     ir = (_jit_test_kernel, Q[0])
-    target = TargetDescription(
+    target = DeviceDescription(
         name="jit-test",
         qubits={
             0: Qubit(
@@ -43,7 +43,7 @@ def test_jit_import():
 
 
 def _qubit_target(t1_us=50.0, t2_us=30.0):
-    return TargetDescription(
+    return DeviceDescription(
         name="test",
         qubits={
             0: Qubit(

@@ -5,6 +5,7 @@
 from ._registry import UnknownTargetError, available_targets, register_target
 from .base import (
     Coupling,
+    DeviceDescription,
     DispersiveReadout,
     DragPulse,
     Drive,
@@ -14,14 +15,13 @@ from .base import (
     Readout,
     ReadoutPulse,
     ResidualZZ,
-    TargetDescription,
 )
 from .calibration import Calibration
 from .models import SimulationModel, TransmonModel
 from .transmon import transmon_17q, transmon_generic
 
 __all__ = [
-    "TargetDescription",
+    "DeviceDescription",
     "Qubit",
     "Readout",
     "DispersiveReadout",

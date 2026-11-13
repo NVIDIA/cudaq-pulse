@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Architecture-neutral target API for QPU Hamiltonians and decoherence models.
 
-A ``TargetDescription`` fully describes a quantum device: qubit frequencies,
+A ``DeviceDescription`` fully describes a quantum device: qubit frequencies,
 anharmonicities, coupling topology, decoherence parameters, readout, and
 the pulses its gates are calibrated for. Simulation lowers it to the
 module attributes of the Pulse -> QOp lowering.
@@ -917,7 +917,7 @@ def _coupling_operator(model: Any) -> str | None:
 
 
 @dataclass(frozen=True, eq=False)
-class TargetDescription:
+class DeviceDescription:
     """Full description of a quantum processing unit.
 
     A target is read-only once built: ``qubits`` is a read-only mapping and
@@ -1078,7 +1078,7 @@ class TargetDescription:
 
 
 def _unmeasured(
-    target: TargetDescription,
+    target: DeviceDescription,
     indices: Sequence[int],
     needs: str,
     fix: str = "give the strength in Hz",
@@ -1103,7 +1103,7 @@ def _unmeasured(
 _CHECKED: tuple[Sequence[Any], Sequence[Any], frozenset[int]] = ((), (), frozenset())
 
 
-def _entries_problems(target: TargetDescription) -> list[Problem]:
+def _entries_problems(target: DeviceDescription) -> list[Problem]:
     """Every problem with *target*'s couplings and residual ZZ entries."""
     global _CHECKED
     known = target.qubits

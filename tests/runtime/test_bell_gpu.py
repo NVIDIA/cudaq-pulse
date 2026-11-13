@@ -7,7 +7,7 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.targets import Coupling, Qubit, TargetDescription
+from cudaq_pulse.targets import Coupling, DeviceDescription, Qubit
 
 from tests._handles import Q
 from tests.runtime._lowering import evolve, on, pulse_mlir
@@ -57,7 +57,7 @@ def test_bell_gpu_execution():
         )
         for index in range(2)
     }
-    target = TargetDescription(
+    target = DeviceDescription(
         name="xx-bell-test",
         qubits=qubits,
         couplings=[Coupling((0, 1), strength_hz=5.0e6)],

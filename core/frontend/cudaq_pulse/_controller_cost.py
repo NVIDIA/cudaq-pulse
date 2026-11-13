@@ -954,7 +954,7 @@ def _processor_of(lowered: Lowered, function: Any) -> tuple[Processor, float] | 
     index = min(where)
     controller = system.controllers[index]
     processor = controller.processors[where[index]]
-    return processor, processor.clock_ghz or controller.clock_ghz or lowered.target.clock_ghz
+    return processor, processor.clock_ghz or controller.clock_ghz or lowered.device.clock_ghz
 
 
 def resources(lowered: Lowered) -> ResourceReport:
@@ -1234,7 +1234,7 @@ def usage(lowered: Lowered) -> UsageReport:
         processors = []
         for number, processor in enumerate(controller.processors):
             label = f"processors[{number}] of {_system_label(index, controller)}"
-            clock = processor.clock_ghz or controller.clock_ghz or lowered.target.clock_ghz
+            clock = processor.clock_ghz or controller.clock_ghz or lowered.device.clock_ghz
             assigned = placed.get((index, number), [])
             functions = [
                 _function_usage(fn, processor, clock, len(made), label, found)

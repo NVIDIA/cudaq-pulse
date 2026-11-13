@@ -46,7 +46,7 @@ def _two_chains(q, p, t1_guess_cycles: float):
 
 def _device(target):
     dev = pulse.device(target)
-    return dev, dev.qudit_handles[0]
+    return dev, dev.qudits[0]
 
 
 @pytest.mark.slow
@@ -151,7 +151,7 @@ def test_a_slower_controller_rejects_the_chain_at_compile_time():
 
 def test_two_qubits_calibrate_side_by_side():
     chain, dev, _ = _chain()
-    q, p = dev.qudit_handles[:2]
+    q, p = dev.qudits[:2]
     one = chain.lower(q, 20_000.0 * CLOCK)
     two = pulse.compile(_two_chains, device=dev, control_system=P["control_system"]).lower(
         q, p, 20_000.0 * CLOCK

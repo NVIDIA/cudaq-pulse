@@ -31,7 +31,7 @@ from hypothesis import strategies as st
 from tests.property_settings import examples
 
 DEV = pulse.device("transmon_17q")
-H = DEV.qudit_handles
+H = DEV.qudits
 
 
 def _body(q, r, amps, f12):
@@ -71,7 +71,7 @@ def _plain(export):
 
 
 def _recalibrated(device, carrier, shift_hz):
-    target = device.target
+    target = device.description
     qubits = dict(target.qubits)
     qubits[carrier] = qubits[carrier].replace(frequency_hz=qubits[carrier].frequency_hz + shift_hz)
     return Device(dataclasses.replace(target, qubits=qubits), name=device.name)
@@ -97,16 +97,12 @@ def test_recalibration_reuses_the_compile():
     other = _recalibrated(DEV, DEV.layout[3], 2.5e6)
     assert other.fingerprint != DEV.fingerprint
     a = runtime.lower(H[3], H[[5]], [0.2, 0.4], _f12(H[3]))
-    b = runtime.lower(
-        other.qudit_handles[3], other.qudit_handles[[5]], [0.2, 0.4], _f12(other.qudit_handles[3])
-    )
+    b = runtime.lower(other.qudits[3], other.qudits[[5]], [0.2, 0.4], _f12(other.qudits[3]))
     assert runtime.cache_info().compiled == 1
     fa = {e["frequency_hz"] for e in a.export_controller()["events"] if e["kind"] == "drive"}
     fb = {e["frequency_hz"] for e in b.export_controller()["events"] if e["kind"] == "drive"}
     assert fa != fb
-    static = static_k.lower(
-        other.qudit_handles[3], other.qudit_handles[[5]], [0.2, 0.4], _f12(other.qudit_handles[3])
-    )
+    static = static_k.lower(other.qudits[3], other.qudits[[5]], [0.2, 0.4], _f12(other.qudits[3]))
     assert _plain(static.export_controller()) == _plain(b.export_controller())
 
 
@@ -137,7 +133,7 @@ def test_a_readout_depends_on_the_slot_s_readout_frequency():
     def read_only(q: Qudit):
         readout(get_readout_line(q), square(100, 0.05))
 
-    qubit = DEV.target.qubits[DEV.layout[9]]
+    qubit = DEV.description.qubits[DEV.layout[9]]
     for version in (1, 2):
         export = probe.lower(H[9], 0.2).export_controller(version=version)
         values = {s["symbol"]: s.get("value") for s in export["symbols"]}
@@ -249,7 +245,7 @@ def test_a_runtime_qudits_line_has_only_its_own_tone():
 def test_qudits_of_two_devices_are_rejected():
     other = _recalibrated(DEV, DEV.layout[3], 1e6)
     with pytest.raises(pulse.DeviceMismatchError):
-        runtime_k.lower(H[3], other.qudit_handles[[5]], [0.2, 0.4], _f12(H[3]))
+        runtime_k.lower(H[3], other.qudits[[5]], [0.2, 0.4], _f12(H[3]))
 
 
 def test_register_length_is_part_of_the_key():

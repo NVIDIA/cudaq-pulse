@@ -14,12 +14,12 @@ import numpy as np
 import pytest
 from cudaq_pulse.classical import emulation
 from cudaq_pulse.kernel.ir_builder import CompilationError
-from cudaq_pulse.targets import Qubit, TargetDescription
+from cudaq_pulse.targets import DeviceDescription, Qubit
 
 PI_AMP = math.pi / 20  # square(40, PI_AMP) is a pi pulse
 
 _DEVICE = pulse.device(
-    TargetDescription(
+    DeviceDescription(
         name="three",
         qubits={i: Qubit(i, 5e9 + 1e8 * i, -2e8, 0.0, 0.0) for i in range(3)},
     )
@@ -49,7 +49,7 @@ def _kernel(body: str) -> pulse.Kernel:
 
 
 def _lower(body: str) -> pulse.Lowered:
-    return pulse.compile(_kernel(body), device=_DEVICE).lower(*_DEVICE.qudit_handles[:3])
+    return pulse.compile(_kernel(body), device=_DEVICE).lower(*_DEVICE.qudits[:3])
 
 
 _FLAG = "        drive(f, square(40, PI_AMP))\n"

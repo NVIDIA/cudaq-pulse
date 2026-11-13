@@ -13,8 +13,8 @@ import numpy as np
 import pytest
 from cudaq_pulse.targets import (
     Coupling,
+    DeviceDescription,
     Qubit,
-    TargetDescription,
     transmon_17q,
     transmon_generic,
 )
@@ -149,7 +149,7 @@ def test_a_coupled_pair_idles_with_its_dispersive_zz(target, pair):
         for k, q in enumerate((target.qubits[a], target.qubits[d]))
     }
     (g_hz,) = (c.strength_hz for c in target.couplings if c.qudits == (a, d))
-    pair_target = TargetDescription(
+    pair_target = DeviceDescription(
         name="transmon-17q-pair",
         qubits=qubits,
         couplings=[Coupling((0, 1), strength_hz=g_hz)],
@@ -203,7 +203,7 @@ def test_the_time_step_resolves_the_fastest_coupled_detuning():
     x1, d2 = _k.QUBITS[_k.INDEX["X1"]], _k.QUBITS[_k.INDEX["D2"]]
     detuning = x1.idle_frequency_hz - d2.idle_frequency_hz
     assert detuning > 2.0e9
-    pair = TargetDescription(
+    pair = DeviceDescription(
         name="x1-d2",
         qubits={
             i: Qubit(i, q.idle_frequency_hz, q.anharmonicity_hz, 0.0, 0.0)
@@ -221,11 +221,11 @@ def test_the_time_step_resolves_the_fastest_coupled_detuning():
         sync(da, db)
         wait(da, 400)
 
-    lowered = flip_and_idle.lower(dev.qudit_handles[0], dev.qudit_handles[1])
+    lowered = flip_and_idle.lower(dev.qudits[0], dev.qudits[1])
     step = _default_step(lowered)
     assert step <= 1e9 / (20 * detuning) and (0.5 / step) == pytest.approx(round(0.5 / step))
     # One qudit alone keeps the default step.
-    assert _default_step(x90_alone.lower(dev.qudit_handles[0])) == pytest.approx(0.05)
+    assert _default_step(x90_alone.lower(dev.qudits[0])) == pytest.approx(0.05)
     automatic = pulse.simulate(lowered).density_matrix
     fine = pulse.simulate(lowered, dt_ns=0.0125).density_matrix
     with pytest.warns(pulse.PulseWarning, match="qudits 0 and 1 turns at their detuning"):

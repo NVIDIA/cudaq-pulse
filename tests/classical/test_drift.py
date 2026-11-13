@@ -12,14 +12,14 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse.runtime.drift import DriftingPlant, OrnsteinUhlenbeck, TelegraphT1
-from cudaq_pulse.targets import Qubit, TargetDescription
+from cudaq_pulse.targets import DeviceDescription, Qubit
 
 PI_AMP = math.pi / 20
 
 
 def _target(t1_us=20.0):
     qubit = Qubit(index=0, frequency_hz=5e9, anharmonicity_hz=-2e8, t1_us=t1_us, t2_star_us=0.0)
-    return TargetDescription(name="sim", qubits={0: qubit})
+    return DeviceDescription(name="sim", qubits={0: qubit})
 
 
 def test_telegraph_t1_switches_at_its_rate_and_spends_half_its_time_high():
@@ -107,11 +107,11 @@ def _plant():
 def test_the_surrogates_match_simulating_the_plant():
     plant = _plant()
     state = plant.state
-    target = plant.target()
+    target = plant.description()
     assert target.qubits[0].t1_us == state.t1_us
     assert target.qubits[0].frequency_hz == pytest.approx(5e9 + state.frequency_offset_hz)
     dev = pulse.device(_target())
-    q = dev.qudit_handles[0]
+    q = dev.qudits[0]
     compiled_t1 = pulse.compile(t1_shot, device=dev)
     for wait_cycles in (0.0, 4000.0, 16000.0):
         result = pulse.simulate(
@@ -125,7 +125,9 @@ def test_the_surrogates_match_simulating_the_plant():
     resonant = DriftingPlant(_target(t1_us=0.0), amplitude=OrnsteinUhlenbeck(0.05, 1.0), seed=3)
     compiled_rabi = pulse.compile(rabi, device=dev)
     for scale in (0.5, 1.0):
-        result = pulse.simulate(compiled_rabi.lower(q, scale), plant=resonant.target(), levels=2)
+        result = pulse.simulate(
+            compiled_rabi.lower(q, scale), plant=resonant.description(), levels=2
+        )
         assert result.density_matrix[1, 1].real == pytest.approx(
             resonant.p_rabi(math.pi * scale), abs=1e-6
         )
@@ -136,7 +138,7 @@ def test_the_surrogates_match_simulating_the_plant():
     separation_ns = (400 + 40) / dev.clock_ghz
     for phase in (0.0, 1.0, 2.5):
         result = pulse.simulate(
-            compiled_ramsey.lower(q, phase), plant=offset_only.target(), levels=2
+            compiled_ramsey.lower(q, phase), plant=offset_only.description(), levels=2
         )
         expected = offset_only.p_ramsey(separation_ns, math.pi - phase)
         assert result.density_matrix[1, 1].real == pytest.approx(expected, abs=0.03)
@@ -144,9 +146,9 @@ def test_the_surrogates_match_simulating_the_plant():
 
 def test_the_plant_must_define_the_programs_qudits():
     dev = pulse.device(_target())
-    lowered = pulse.compile(rabi, device=dev).lower(dev.qudit_handles[0], 1.0)
-    empty = TargetDescription(name="none", qubits={})
+    lowered = pulse.compile(rabi, device=dev).lower(dev.qudits[0], 1.0)
+    empty = DeviceDescription(name="none", qubits={})
     with pytest.raises(ValueError, match="does not define qudits"):
         pulse.simulate(lowered, plant=empty, levels=2)
-    with pytest.raises(TypeError, match="TargetDescription"):
+    with pytest.raises(TypeError, match="DeviceDescription"):
         pulse.simulate(lowered, plant=dev, levels=2)

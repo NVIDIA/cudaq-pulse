@@ -12,7 +12,7 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse.classical import emulation
-from cudaq_pulse.targets import DispersiveReadout, Qubit, ReadoutPulse, TargetDescription
+from cudaq_pulse.targets import DeviceDescription, DispersiveReadout, Qubit, ReadoutPulse
 
 PI_AMP = math.pi / 20  # square(40, PI_AMP) is a pi pulse at 2 GHz
 
@@ -30,7 +30,7 @@ def _device(t1_us=0.0, n=1, readout=None, calibrations=None):
         )
         for i in range(n)
     }
-    return pulse.device(TargetDescription(name="sim", qubits=qubits))
+    return pulse.device(DeviceDescription(name="sim", qubits=qubits))
 
 
 @pulse.classical(max_latency_ns=0)
@@ -73,7 +73,7 @@ def _by_outcome(result):
 @pytest.mark.parametrize("shots", [None, 500])
 def test_a_decoder_reproduces_active_reset_exactly(shots):
     dev = _device()
-    q = dev.qudit_handles[0]
+    q = dev.qudits[0]
     a = pulse.simulate(
         pulse.compile(active_reset, device=dev).lower(q),
         initial_state=PLUS,
@@ -112,7 +112,7 @@ def test_an_answer_amplitude_is_bound_per_path():
         drive(d, square(40, a))
 
     dev = _device()
-    q = dev.qudit_handles[0]
+    q = dev.qudits[0]
     result = pulse.simulate(pulse.compile(k, device=dev).lower(q), initial_state=PLUS, levels=2)
     reset = pulse.simulate(
         pulse.compile(active_reset, device=dev).lower(q), initial_state=PLUS, levels=2
@@ -151,7 +151,7 @@ def fixed_t1(q, tau: int):
 def test_a_variable_wait_matches_the_fixed_wait_and_t1_decay(tau):
     t1_us = 5.0
     dev = _device(t1_us=t1_us)
-    q = dev.qudit_handles[0]
+    q = dev.qudits[0]
     variable = pulse.simulate(pulse.compile(variable_t1, device=dev).lower(q, float(tau)), levels=2)
     fixed = pulse.simulate(pulse.compile(fixed_t1, device=dev).lower(q, tau), levels=2)
     p_variable = _by_outcome(variable)[(1,)]
@@ -183,7 +183,7 @@ def test_variable_waits_differ_per_path():
         readout(f, square(200, 0.05))
 
     dev = _device(t1_us=5.0, n=2)
-    qs = dev.qudit_handles
+    qs = dev.qudits
     result = pulse.simulate(
         pulse.compile(k, device=dev).lower(qs[0], qs[1]),
         initial_state=np.kron([1, 0], PLUS),
@@ -220,7 +220,7 @@ def test_a_d2_repetition_round_flags_double_flips_with_probability_p_squared():
     noisy = np.diag([1 - p, p])
     rho = np.kron(np.diag([1.0, 0.0]), np.kron(noisy, noisy))  # qudit 0 least significant
     result = pulse.simulate(
-        pulse.compile(k, device=dev).lower(*dev.qudit_handles[:3]), initial_state=rho, levels=2
+        pulse.compile(k, device=dev).lower(*dev.qudits[:3]), initial_state=rho, levels=2
     )
     dims = result.dims
     flag_excited = sum(
@@ -244,7 +244,7 @@ def test_timeouts_take_the_fallback_at_the_modelled_rate():
             drive(e, square(40, PI_AMP))
 
     dev = _device(n=2)
-    qs = dev.qudit_handles[:2]
+    qs = dev.qudits[:2]
     low = pulse.compile(k, device=dev).lower(*qs)
     # Triangular latency on [0, 1000] with mode 500: P(L <= 500) = 1/2.
     exact = pulse.simulate(low, latency_branching=True, levels=2)
@@ -270,7 +270,7 @@ def test_readout_errors_are_reported_and_seen_by_calls():
         return [bits[0]]
 
     dev = _device(readout=DispersiveReadout(error_1to0=0.1, error_0to1=0.05))
-    q = dev.qudit_handles[0]
+    q = dev.qudits[0]
     low = pulse.compile(decoded_reset, device=dev).lower(q)
     result = pulse.simulate(
         low, initial_state=[0, 1], readout="model", handlers={"decoder": record}, levels=2
@@ -286,7 +286,7 @@ def test_readout_errors_are_reported_and_seen_by_calls():
 def test_decay_during_readout_adds_to_the_one_to_zero_error():
     window = {pulse.gates.READOUT: ReadoutPulse(duration_ns=500.0)}
     dev = _device(t1_us=10.0, readout=DispersiveReadout(), calibrations=window)
-    q = dev.qudit_handles[0]
+    q = dev.qudits[0]
 
     @pulse.kernel
     def measure(q):
@@ -319,7 +319,7 @@ def test_handlers_override_and_are_required_for_external_functions():
             drive(d, square(40, PI_AMP))
 
     dev = _device()
-    low = pulse.compile(k, device=dev).lower(dev.qudit_handles[0])
+    low = pulse.compile(k, device=dev).lower(dev.qudits[0])
     with pytest.raises(
         KeyError, match="classical function 'remote' is external and has no handler"
     ):
@@ -350,7 +350,7 @@ def test_an_answer_of_the_wrong_length_is_an_error_every_run():
             drive(d, square(40, PI_AMP))
 
     dev = _device()
-    low = pulse.compile(k, device=dev).lower(dev.qudit_handles[0])
+    low = pulse.compile(k, device=dev).lower(dev.qudits[0])
     result = pulse.simulate(low, handlers={"decode_surface": lambda s: [1, 0]})
     assert [(c.function, c.compiled_name) for c in result.branches[0].calls] == [
         ("decode_surface", "decode_surface"),
@@ -378,7 +378,7 @@ def test_calls_in_a_rolled_loop_are_bound_per_iteration():
         drive(d, square(40, PI_AMP * x / 4))
 
     dev = _device()
-    result = pulse.simulate(pulse.compile(k, device=dev).lower(dev.qudit_handles[0]), levels=2)
+    result = pulse.simulate(pulse.compile(k, device=dev).lower(dev.qudits[0]), levels=2)
     assert result.branches[0].answers("counter") == [1.0, 2.0, 3.0, 4.0]
     assert result.density_matrix[1, 1].real == pytest.approx(1.0, abs=1e-6)
 
@@ -403,7 +403,7 @@ def test_nan_in_classical_data_passes_through_as_it_is():
         return [["nan" if math.isnan(v) else v for v in (*s, x)] for s, x in values]
 
     dev = _device()
-    lowered = pulse.compile(k, device=dev).lower(dev.qudit_handles[0])
+    lowered = pulse.compile(k, device=dev).lower(dev.qudits[0])
     inputs = [["nan", 1.0, "nan"], [1.0, "nan", "nan"]]
     answers = [[1.0, "nan", "nan"], ["nan", "nan", "nan"]]
     (branch,) = pulse.simulate(lowered, levels=2).branches
@@ -424,7 +424,7 @@ def answered_wait(q, tau: float):
 
 def test_whole_program_lowering_rejects_unanswered_calls():
     dev = _device()
-    lowered = pulse.compile(answered_wait, device=dev).lower(dev.qudit_handles[0], 400.0)
+    lowered = pulse.compile(answered_wait, device=dev).lower(dev.qudits[0], 400.0)
     message = (
         "a program with classical calls evolves in segments between their answers; "
         r"lower it with each answer bound, as pulse\.simulate\(\) does"
@@ -450,7 +450,7 @@ def counted_waits(q):
 
 def test_a_bound_answer_waits_as_its_integer_arithmetic_gives():
     dev = _device()
-    lowered = pulse.compile(counted_waits, device=dev).lower(dev.qudit_handles[0])
+    lowered = pulse.compile(counted_waits, device=dev).lower(dev.qudits[0])
     args = lowered.options.schedule_args()
     module = lowered._concrete().simulation_module(*args)
     readout_index, iteration = module.next_measurement([])[:2]
@@ -465,7 +465,7 @@ def test_a_segment_with_bound_answers_lowers_to_llvm_without_classical_ops():
     from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline
 
     dev = _device()
-    lowered = pulse.compile(decoded_reset, device=dev).lower(dev.qudit_handles[0])
+    lowered = pulse.compile(decoded_reset, device=dev).lower(dev.qudits[0])
     module = lowered._concrete().simulation_module(*lowered.options.schedule_args())
     segment = module.placeholders()
     segment.set_attributes(
@@ -481,7 +481,7 @@ def test_a_segment_with_bound_answers_lowers_to_llvm_without_classical_ops():
 @pytest.mark.parametrize("case", ["decoded_reset", "variable_wait"])
 def test_gpu_simulation_of_calls_matches_the_cpu(case):
     dev = _device(t1_us=5.0)
-    q = dev.qudit_handles[0]
+    q = dev.qudits[0]
     if case == "decoded_reset":
         lowered = pulse.compile(decoded_reset, device=dev).lower(q)
         kwargs = {"initial_state": PLUS, "levels": 2}
@@ -496,7 +496,7 @@ def test_gpu_simulation_of_calls_matches_the_cpu(case):
 
 def test_calls_on_a_high_index_qudit_use_its_mode():
     dev = _device(n=3, readout=DispersiveReadout(error_1to0=0.1))
-    q = dev.qudit_handles[2]
+    q = dev.qudits[2]
     a = pulse.simulate(
         pulse.compile(active_reset, device=dev).lower(q), initial_state=PLUS, levels=2
     )
@@ -543,7 +543,7 @@ def test_an_answer_crossing_a_block_is_bound_in_simulation(schedule, where):
                 drive(d, square(40, PI_AMP))
 
     dev = _device()
-    q = dev.qudit_handles[0]
+    q = dev.qudits[0]
     result = pulse.simulate(pulse.compile(k, device=dev).lower(q), initial_state=PLUS, levels=2)
     reset = pulse.simulate(
         pulse.compile(active_reset, device=dev).lower(q), initial_state=PLUS, levels=2
@@ -566,7 +566,7 @@ def test_simulation_keeps_a_blocks_own_schedule():
         early(d, e)
 
     dev = _device(t1_us=1.0, n=2)
-    low = pulse.compile(k, device=dev).lower(*dev.qudit_handles)
+    low = pulse.compile(k, device=dev).lower(*dev.qudits)
     pi = next(e for e in low.schedule if e.kind == "drive" and e.qubit == 0)
     # The ASAP block ends with the program: its pi pulse ends 60 cycles
     # before the end, where a flattened ALAP schedule would end it at the end.
@@ -579,16 +579,14 @@ def test_simulation_keeps_a_blocks_own_schedule():
         d = get_drive_line(q)
         drive(d, square(40, PI_AMP))
 
-    alone = pulse.simulate(
-        pulse.compile(pi_alone, device=dev).lower(dev.qudit_handles[0]), levels=2
-    )
+    alone = pulse.simulate(pulse.compile(pi_alone, device=dev).lower(dev.qudits[0]), levels=2)
     at_end = 1.0 - alone.density_matrix[0, 0].real
     assert excited == pytest.approx(at_end * math.exp(-60 / 2.0 / 1000.0), abs=1e-4)
 
 
 def test_a_branch_gives_the_answers_of_one_function_and_names_those_it_called():
     dev = _device()
-    q = dev.qudit_handles[0]
+    q = dev.qudits[0]
     result = pulse.simulate(
         pulse.compile(decoded_reset, device=dev).lower(q), initial_state=PLUS, levels=2
     )

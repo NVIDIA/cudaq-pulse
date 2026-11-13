@@ -81,8 +81,8 @@ def t2_echo(qubit, tau):
 
 if __name__ == "__main__":
     dev = pulse.device("transmon_17q")
-    qubit = dev.qudit_handles[0]
-    spec = dev.target.qubits[0]
+    qubit = dev.qudits[0]
+    spec = dev.description.qubits[0]
     t1_ns = spec.t1_us * 1e3
     print(f"=== T1 experiment on {spec.label} (T1 = {spec.t1_us:.1f} us), CPU simulation ===")
     t1 = pulse.compile(t1_experiment, device=dev)

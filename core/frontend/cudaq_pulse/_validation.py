@@ -42,7 +42,7 @@ from .ops import (
     sync,
     wait,
 )
-from .targets import Qubit, TargetDescription
+from .targets import DeviceDescription, Qubit
 
 if TYPE_CHECKING:
     from .compiler import Lowered
@@ -279,7 +279,7 @@ def _one(system: ControlSystem) -> Controller | None:
 def _device(system: ControlSystem) -> Any:
     limits = _one(system)
     clock = limits.clock_ghz if limits is not None and limits.clock_ghz else 1.0
-    target = TargetDescription(
+    target = DeviceDescription(
         name="validation",
         clock_ghz=clock,
         qubits={i: Qubit(i, 5.0e9 + 1.5e8 * i, -2.5e8, 50.0, 30.0) for i in range(_QUDITS)},
@@ -454,7 +454,7 @@ def validate(
     for kind, kernel in _corpus().items():
         try:
             compiled = pulse.compile(kernel, device=dev, control_system=system)
-            lowered = compiled.lower(*dev.qudit_handles[:_QUDITS])
+            lowered = compiled.lower(*dev.qudits[:_QUDITS])
         except ControllerLimitError as e:
             report._add("SKIP", str(kind), f"exceeds the controller's limits: {e.violations[0]}")
             continue

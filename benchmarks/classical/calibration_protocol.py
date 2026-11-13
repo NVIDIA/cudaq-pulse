@@ -144,7 +144,7 @@ def adaptive_t1(n, seed):
     target = _att_target()
     dev = pulse.device(target)
     lowered = pulse.compile(att_paper, device=dev, control_system=P["control_system"]).lower(
-        dev.qudit_handles[0]
+        dev.qudits[0]
     )
     start = time.perf_counter()
     result = pulse.simulate(
@@ -178,7 +178,7 @@ def binary_search(n, seed):
     dev = pulse.device(target)
     lowered = pulse.compile(
         P["binary_search"], device=dev, control_system=P["control_system"]
-    ).lower(dev.qudit_handles[0], 15)
+    ).lower(dev.qudits[0], 15)
     rng = np.random.default_rng(seed)
     errors, sigmas = [], []
     start = time.perf_counter()
@@ -213,7 +213,7 @@ def chain(n, seed):
     dev = pulse.device(target)
     lowered = pulse.compile(
         P["calibration_chain"], device=dev, control_system=P["control_system"]
-    ).lower(dev.qudit_handles[0], 20_000.0 * CLOCK)
+    ).lower(dev.qudits[0], 20_000.0 * CLOCK)
     plant = P["chain_plant"](target)
     rows = []
     start = time.perf_counter()
@@ -259,7 +259,7 @@ def chain(n, seed):
 def steps(seed):
     target = transmon_17q()
     dev = pulse.device(target)
-    q = dev.qudit_handles[0]
+    q = dev.qudits[0]
     plant = P["chain_plant"](target)
     shots_per_step = {
         "readout errors": (step_assignment, 2 * P["shots_per_setting"] + 1),

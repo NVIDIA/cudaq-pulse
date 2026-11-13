@@ -13,14 +13,14 @@ import pytest
 from cudaq_pulse.classical import calibration as cal
 from cudaq_pulse.classical.loop import EstimateLog, ParameterStore
 from cudaq_pulse.runtime.drift import DriftingPlant, TelegraphT1
-from cudaq_pulse.targets import Qubit, TargetDescription
+from cudaq_pulse.targets import DeviceDescription, Qubit
 
 PI_AMP = math.pi / 20
 
 
 def _target():
     qubit = Qubit(index=0, frequency_hz=5e9, anharmonicity_hz=-2e8, t1_us=20.0, t2_star_us=0.0)
-    return TargetDescription(name="sim", qubits={0: qubit})
+    return DeviceDescription(name="sim", qubits={0: qubit})
 
 
 def test_the_store_versions_every_change_and_the_log_round_trips():
@@ -60,7 +60,7 @@ def t1_shot(q, amplitude: float):
 
 def test_ten_thousand_iterations_run_without_compiling_again():
     dev = pulse.device(_target())
-    q = dev.qudit_handles[0]
+    q = dev.qudits[0]
     compiled = pulse.compile(t1_shot, device=dev)
     start = time.perf_counter()
     for i in range(10_000):

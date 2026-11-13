@@ -30,10 +30,10 @@ _CHILD = r"""
 import inspect, json, resource, sys, time
 import cudaq_pulse as pulse
 from cudaq_pulse import Controller, ControlSystem
-from cudaq_pulse.targets import Qubit, TargetDescription
+from cudaq_pulse.targets import Qubit, DeviceDescription
 
 name, lines, rounds, trips = sys.argv[1], *map(int, sys.argv[2:5])
-target = TargetDescription(
+target = DeviceDescription(
     name="export-bench",
     clock_ghz=1.0,
     qubits={i: Qubit(i, 5.0e9 + 1.0e6 * i, -2.0e8, 50.0, 30.0) for i in range(lines)},
@@ -90,7 +90,7 @@ def nest(qs):
 
 kernel = nest if name == "nest" else repeated
 threshold = 10**9 if name == "unrolled" else 0
-handles = dev.qudit_handles[0:lines]
+handles = dev.qudits[0:lines]
 t0 = time.perf_counter()
 lowered = pulse.compile(kernel, control_system=system, unroll_threshold=threshold).lower(handles)
 compile_s = time.perf_counter() - t0

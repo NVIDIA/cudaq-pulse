@@ -197,7 +197,7 @@ def test_a_sync_over_a_thousand_lines_compiles_schedules_and_exports():
         for d in lines:
             drive(d, square(8, 0.1))
 
-    lowered = pulse.compile(wide, device=dev, schedule="asap").lower(dev.qudit_handles[0:n])
+    lowered = pulse.compile(wide, device=dev, schedule="asap").lower(dev.qudits[0:n])
     drives = lowered.schedule
     assert len(drives) == n + 1
     assert {e.start_cycles for e in drives[1:]} == {40}

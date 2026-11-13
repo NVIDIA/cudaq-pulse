@@ -100,14 +100,12 @@ if __name__ == "__main__":
     dev = pulse.device("transmon_17q")
     print("=== 3-qubit GHZ (explicit) ===")
     compiled_kernel = pulse.compile(ghz_3, device=dev).lower(
-        dev.qudit_handles[0], dev.qudit_handles[1], dev.qudit_handles[2]
+        dev.qudits[0], dev.qudits[1], dev.qudits[2]
     )
     print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")
 
     print("\n=== N-qubit GHZ (loop-based, N=5) ===")
-    compiled_kernel = pulse.compile(ghz_n, device=dev).lower(
-        dev.qudit_handles[0], dev.qudit_handles[1], 5
-    )
+    compiled_kernel = pulse.compile(ghz_n, device=dev).lower(dev.qudits[0], dev.qudits[1], 5)
     print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")

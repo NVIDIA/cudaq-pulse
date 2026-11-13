@@ -225,7 +225,7 @@ def simulate(
         values, in the order of ``program.parameters``.
     levels:
         Levels per qudit. By default each qudit has the levels its target's
-        simulation model declares for it (``TargetDescription.model``; 3 for
+        simulation model declares for it (``DeviceDescription.model``; 3 for
         a ``TransmonModel``); an int sets every qudit's, and a dict by device
         qudit index sets those it names. A transmon with three or more
         levels includes its anharmonicity.
@@ -401,11 +401,11 @@ def _simulate_lowered(
             f"({', '.join(lowered.parameters)}); pass their values, as in "
             "simulate(program, 0.5), or lower the kernel with them"
         )
-    device = lowered.target
-    target = device.target if plant is None else _check_plant(lowered, plant)
+    device = lowered.device
+    target = device.description if plant is None else _check_plant(lowered, plant)
     try:
         step = _STEPS.get(
-            (id(device.target), id(target), device.clock_ghz, lowered.qudits, levels, dt_ns)
+            (id(device.description), id(target), device.clock_ghz, lowered.qudits, levels, dt_ns)
         )
     except TypeError:  # levels by qudit, a dict: unhashable, and never kept
         step = None
@@ -457,11 +457,11 @@ def _step(
         # warns, as the default step keeps, at every call.
         fastest, source = _fastest(target, lowered.qudits, levels)
         if fastest and fastest * step > _MAX_HZ_NS:
-            _warn_coarse_step(target, source, fastest, step, lowered.target.clock_ghz)
+            _warn_coarse_step(target, source, fastest, step, lowered.device.clock_ghz)
             return step
     if levels.__class__ is not dict and target.model.__class__ in _read_only_models():
-        compiled = lowered.target.target
-        key = (id(compiled), id(target), lowered.target.clock_ghz, lowered.qudits, levels, dt_ns)
+        compiled = lowered.device.description
+        key = (id(compiled), id(target), lowered.device.clock_ghz, lowered.qudits, levels, dt_ns)
         _remember(key, step, compiled, target)
     return step
 
@@ -527,10 +527,10 @@ def _simulation_model(target: Any) -> Callable[..., SimulationResult]:
 
 def _check_plant(lowered: Lowered, plant: Any) -> Any:
     """*plant*, a target description that defines every qudit of *lowered*."""
-    from ..targets import TargetDescription
+    from ..targets import DeviceDescription
 
-    if not isinstance(plant, TargetDescription):
-        raise InvalidTypeError(f"plant must be a TargetDescription, got {type(plant).__name__}")
+    if not isinstance(plant, DeviceDescription):
+        raise InvalidTypeError(f"plant must be a DeviceDescription, got {type(plant).__name__}")
     missing = [q for q in lowered.qudits if q not in plant.qubits]
     if missing:
         raise InvalidValueError(f"the plant does not define qudits {missing} that the program uses")
@@ -550,7 +550,7 @@ def _default_step(
 
     Couplings turn at the detuning of the compiled device's qudits; levels
     at the spread of the simulated *target*'s (the compiled one by default)."""
-    compiled = lowered.target.target
+    compiled = lowered.device.description
     active = lowered.qudits
     fastest = _level_spread(compiled if target is None else target, active, levels)[0]
     if len(active) > 1:
@@ -565,7 +565,7 @@ def _default_step(
     if fastest > 0:
         step = min(step, 1e9 / (_STEPS_PER_PERIOD * fastest))
     # A whole number of steps per clock cycle keeps pulse edges on the grid.
-    cycle = 1.0 / lowered.target.clock_ghz
+    cycle = 1.0 / lowered.device.clock_ghz
     return cycle / math.ceil(cycle / step - 1e-9)
 
 
@@ -718,7 +718,7 @@ def _diverged_error(
             f" {cause[0].upper()}{cause[1:]}, and a step of {step_ns:.3g} ns takes "
             f"{1e9 / (fastest * step_ns):.3g} steps per period of it: a fixed-step "
             f"integrator needs {_STEPS_PER_PERIOD} to be accurate and diverges with "
-            f"fewer than about 2. Pass {_suggestion(fastest, lowered.target.clock_ghz)}."
+            f"fewer than about 2. Pass {_suggestion(fastest, lowered.device.clock_ghz)}."
         )
     else:
         text += (

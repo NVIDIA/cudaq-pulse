@@ -43,7 +43,7 @@ import time
 
 import cudaq_pulse as pulse
 import numpy as np
-from cudaq_pulse.targets import TargetDescription, transmon_17q
+from cudaq_pulse.targets import DeviceDescription, transmon_17q
 
 target = transmon_17q()
 pulse_duration = 40 * pulse.ns
@@ -144,7 +144,7 @@ def prepare(setting):
 
 # ── The stand-in QPU ─────────────────────────────────────────────────────────
 
-qpu_state: dict[str, TargetDescription] = {}
+qpu_state: dict[str, DeviceDescription] = {}
 
 
 def power_on(plant):
@@ -234,7 +234,7 @@ if __name__ == "__main__":
     print("=== The program, compiled once ===")
     started = time.perf_counter()
     compiled = pulse.compile(pi_train, device=device)
-    program = compiled.lower(device.qudit_handles[0], repetitions, pi_amplitude, 0.0).generic
+    program = compiled.lower(device.qudits[0], repetitions, pi_amplitude, 0.0).generic
     print(
         f"  compiled in {1e3 * (time.perf_counter() - started):.2f} ms "
         f"(the first compile in a process); float parameters {program.parameters}"

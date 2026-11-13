@@ -24,10 +24,10 @@ from cudaq_pulse.classical import Link
 from cudaq_pulse.controller import ControllerLimitError, DriveLine, ReadoutLine
 from cudaq_pulse.targets.base import (
     Coupling,
+    DeviceDescription,
     DispersiveReadout,
     MicrowaveDrive,
     Qubit,
-    TargetDescription,
 )
 from cudaq_pulse.targets.models import SimulationModel
 
@@ -137,8 +137,6 @@ def test_the_device_holds_its_control_system():
     box = pulse.Controller(drive_lines=range(4), readout_lines=range(4))
     qpu = _qpu(box)
     assert qpu.control_system.controllers == (box,)
-    assert qpu.quantum_system is qpu.target
-    assert qpu.qudits[1] == qpu.qudit_handles[1]
     other = _qpu(pulse.Controller(drive_lines=range(4), readout_lines=range(3)))
     assert qpu.fingerprint == other.fingerprint and qpu != other
     legacy = pulse.device(TRANSMON_17Q, layout=[0, 1, 2, 3])
@@ -719,20 +717,20 @@ def test_a_qudit_s_drive_and_readout_round_trip_through_the_system_file():
         ),
         1: Qubit(1, 5.1e9, -2e8, 50.0, 30.0),
     }
-    dev = pulse.device(TargetDescription(name="ro", qubits=qubits))
+    dev = pulse.device(DeviceDescription(name="ro", qubits=qubits))
     qudits = _round_trip(dev)["quantum_system"]["qudits"]
     assert qudits[0]["readout"]["kind"] == "dispersive"
     assert qudits[0]["readout"]["frequency_hz"] == 7.1e9
     assert qudits[0]["drive"] == {"kind": "microwave", "amplitude_scale_rad_per_ns": 0.3}
     assert qudits[1]["readout"] is None and qudits[1]["drive"] is None
     other = Qubit(0, 5.0e9, -2e8, 50.0, 30.0, readout=readout.replace(linewidth_hz=2e6))
-    moved = pulse.device(TargetDescription(name="ro", qubits={**qubits, 0: other}))
+    moved = pulse.device(DeviceDescription(name="ro", qubits={**qubits, 0: other}))
     assert moved.fingerprint != dev.fingerprint
 
 
 def test_a_system_file_refuses_an_unknown_component_kind_or_field():
     data = pulse.device(
-        TargetDescription(name="ro", qubits={0: Qubit(0, 5.0e9, -2e8, 50.0, 30.0)})
+        DeviceDescription(name="ro", qubits={0: Qubit(0, 5.0e9, -2e8, 50.0, 30.0)})
     ).as_dict()
     qudit = data["quantum_system"]["qudits"][0]
     qudit["readout"] = {"kind": "fluorescence"}
@@ -774,7 +772,7 @@ def test_a_program_clock_round_trips_through_the_system_file():
 
 
 def test_a_custom_quantum_system_is_written_inline_with_the_new_key_names():
-    target = TargetDescription(
+    target = DeviceDescription(
         name="pair",
         qubits={i: Qubit(i, 5e9 + i * 1e8, -2.5e8, 50.0, 40.0) for i in range(2)},
         couplings=[Coupling((0, 1), 3e6)],
@@ -920,7 +918,7 @@ def test_doctor_checks_a_system_file(tmp_path):
 
 
 def test_a_system_file_keeps_the_simulation_model():
-    target = TargetDescription(
+    target = DeviceDescription(
         name="other-pair",
         qubits={i: Qubit(i, 5e9 + i * 1e8, 0.0, 50.0, 40.0) for i in range(2)},
         model=SimulationModel(levels={1: 3}),
@@ -929,7 +927,7 @@ def test_a_system_file_keeps_the_simulation_model():
     data = qpu.as_dict()
     assert data["quantum_system"]["model"] == {"kind": "generic", "levels": {"1": 3}}
     again = pulse.Device.from_dict(json.loads(json.dumps(data)))
-    assert again.target.model == target.model and again == qpu
+    assert again.description.model == target.model and again == qpu
 
     @pulse.kernel
     def nothing(q):
@@ -940,7 +938,7 @@ def test_a_system_file_keeps_the_simulation_model():
         pulse.simulate(pulse.compile(nothing).lower(again.qudits[0]))
 
     data["quantum_system"]["model"] = None
-    assert pulse.Device.from_dict(data).target.model is None
+    assert pulse.Device.from_dict(data).description.model is None
     data["quantum_system"]["model"] = {"kind": "fluxonium"}
     with pytest.raises(DeviceDefinitionError, match="model.kind: must be one of transmon, generic"):
         pulse.Device.from_dict(data)
@@ -950,7 +948,7 @@ def test_a_system_file_names_a_model_it_cannot_hold():
     class Custom(SimulationModel):
         pass
 
-    target = TargetDescription(
+    target = DeviceDescription(
         name="custom-pair",
         qubits={i: Qubit(i, 5e9 + i * 1e8, 0.0, 50.0, 40.0) for i in range(2)},
         model=Custom,

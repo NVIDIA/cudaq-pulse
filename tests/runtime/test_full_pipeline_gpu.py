@@ -7,7 +7,7 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.targets import MicrowaveDrive, Qubit, TargetDescription
+from cudaq_pulse.targets import DeviceDescription, MicrowaveDrive, Qubit
 
 from tests._handles import Q
 from tests.runtime._lowering import pulse_mlir
@@ -40,7 +40,7 @@ def test_full_pipeline_mlir():
 @gpu
 def test_full_pipeline_gpu():
     """Public device -> lower -> simulate on the GPU: MLIR lowering, JIT, cuDensityMat."""
-    target = TargetDescription(
+    target = DeviceDescription(
         name="pipeline-1q",
         qubits={
             0: Qubit(
@@ -53,7 +53,7 @@ def test_full_pipeline_gpu():
             )
         },
     )
-    q0 = pulse.device(target).qudit_handles[0]
+    q0 = pulse.device(target).qudits[0]
 
     @pulse.kernel
     def my_kernel(q0):

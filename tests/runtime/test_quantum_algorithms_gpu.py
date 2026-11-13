@@ -11,7 +11,7 @@ import math
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse.targets import MicrowaveDrive, Qubit, TargetDescription
+from cudaq_pulse.targets import DeviceDescription, MicrowaveDrive, Qubit
 
 from tests._handles import Q
 from tests.runtime._lowering import evolve, on, pulse_mlir
@@ -31,7 +31,7 @@ def _unitary_qubit(index, frequency_hz):
 
 
 def _single_qubit_target():
-    return TargetDescription(name="algo-1q", qubits={0: _unitary_qubit(0, 5.0e9)})
+    return DeviceDescription(name="algo-1q", qubits={0: _unitary_qubit(0, 5.0e9)})
 
 
 def _evolve_1q(kernel):

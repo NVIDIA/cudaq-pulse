@@ -14,13 +14,13 @@ import pytest
 from cudaq_pulse.runtime._call_tree import ReadoutModel
 from cudaq_pulse.runtime._calls import IQModel
 from cudaq_pulse.targets import (
+    DeviceDescription,
     DispersiveReadout,
     DragPulse,
     Drive,
     MicrowaveDrive,
     Qubit,
     Readout,
-    TargetDescription,
     transmon_17q,
 )
 
@@ -45,7 +45,7 @@ class _Optical(Drive):
 
 
 def _target(**members):
-    return TargetDescription(name="c", qubits={0: Qubit(0, 5e9, -2e8, 10.0, 5.0, **members)})
+    return DeviceDescription(name="c", qubits={0: Qubit(0, 5e9, -2e8, 10.0, 5.0, **members)})
 
 
 def test_a_component_is_a_read_only_value():

@@ -16,7 +16,7 @@ import weakref
 import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse.runtime import simulate as simulate_module
-from cudaq_pulse.targets import Coupling, Qubit, TargetDescription
+from cudaq_pulse.targets import Coupling, DeviceDescription, Qubit
 from cudaq_pulse.targets._registry import _registry, _resolved, register_target
 from cudaq_pulse.targets.models import SimulationModel, TransmonModel
 
@@ -25,7 +25,7 @@ from tests.runtime._lowering import on
 
 
 def _target(alpha_hz=-200.0e6, couplings=()):
-    return TargetDescription(
+    return DeviceDescription(
         name="step-cache",
         qubits={q: Qubit(q, 5.0e9 + 2.0e9 * q, alpha_hz, 0.0, 0.0) for q in range(2)},
         couplings=list(couplings),
@@ -94,7 +94,7 @@ def test_a_recalibrated_device_changes_the_step_and_the_warning(steps):
     assert _coarse(lambda: pulse.simulate(lowered, levels=3, dt_ns=0.25)) == []
     # A device is read-only by contract, not enforced: a target set on it in
     # place is the one simulated, and the one its step is kept for.
-    lowered.target.target = _target(alpha_hz=-400.0e6)
+    lowered.device.description = _target(alpha_hz=-400.0e6)
     assert _coarse(lambda: pulse.simulate(lowered, levels=3, dt_ns=0.25)) == ["400 MHz"]
     pulse.simulate(lowered, levels=5)
     assert steps[-1] == _STEP_5[-400.0e6]
@@ -104,7 +104,7 @@ def test_a_device_s_clock_set_in_place_changes_the_step(steps):
     lowered = on(_target(), _flip, Q[0])
     pulse.simulate(lowered, levels=5)
     assert steps[-1] == 0.5 / 12
-    lowered.target.clock_ghz = 2.5  # a 0.4 ns cycle: 10 steps
+    lowered.device.clock_ghz = 2.5  # a 0.4 ns cycle: 10 steps
     pulse.simulate(lowered, levels=5)
     assert steps[-1] == 0.4 / 10
 
@@ -124,7 +124,7 @@ def test_a_target_registered_again_under_its_name_changes_the_step(steps):
         for alpha in (-200.0e6, -400.0e6, -200.0e6):
             register_target(name, lambda arg, a=alpha: _target(a))
             dev = pulse.device(name)
-            pulse.simulate(pulse.compile(_flip).lower(dev.qudit_handles[0]), levels=5)
+            pulse.simulate(pulse.compile(_flip).lower(dev.qudits[0]), levels=5)
             assert steps[-1] == _STEP_5[alpha]
     finally:
         _registry().pop(name, None)
@@ -227,7 +227,7 @@ def test_kept_steps_hold_no_target_and_go_with_it(steps):
     ids = {id(target), id(plant)}
     assert len([k for k in simulate_module._STEPS if ids & set(k[:2])]) == 2
     assert ids <= simulate_module._WATCHED.keys()
-    refs = [weakref.ref(target), weakref.ref(plant), weakref.ref(lowered.target)]
+    refs = [weakref.ref(target), weakref.ref(plant), weakref.ref(lowered.device)]
     del target, plant, lowered
     gc.collect()
     assert [r() for r in refs] == [None, None, None]

@@ -37,7 +37,7 @@ from pathlib import Path
 import cudaq_pulse as pulse
 from cudaq_pulse import ControlSystem
 from cudaq_pulse.classical import Link, emulation
-from cudaq_pulse.targets import Qubit, TargetDescription
+from cudaq_pulse.targets import DeviceDescription, Qubit
 
 # A 20 ns pi pulse: with H = amplitude * X / 2, this amplitude (rad/ns)
 # rotates by pi.
@@ -150,7 +150,7 @@ def track_t1(qubit, rounds: int, alpha: float, beta: float, first_wait):
 def print_report(lowered):
     """Each call's issue time, the time its answer is due, and its slack
     (how much later the answer could come without delaying a pulse)."""
-    clock = lowered.target.clock_ghz
+    clock = lowered.device.clock_ghz
     print(f"  {'function':<10} {'link':>10} {'issue ns':>9} {'ready ns':>9} {'slack ns':>9}")
     for call in lowered.classical_report():
         slack = "-" if call.slack_cycles is None else f"{call.slack_cycles / clock:.1f}"
@@ -179,14 +179,14 @@ def export(lowered, name, directory):
 
 if __name__ == "__main__":
     # A single transmon with T1 = 10 us, for simulation.
-    target = TargetDescription(
+    target = DeviceDescription(
         name="classical-demo",
         qubits={
             0: Qubit(index=0, frequency_hz=5e9, anharmonicity_hz=-2e8, t1_us=10.0, t2_star_us=0.0)
         },
     )
     dev = pulse.device(target)
-    q = dev.qudit_handles[0]
+    q = dev.qudits[0]
     # A 0.25 ns step resolves the third level's 200 MHz anharmonicity, with
     # 20 steps per period.
     dt_ns = 0.25

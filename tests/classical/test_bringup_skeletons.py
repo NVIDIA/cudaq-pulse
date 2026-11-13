@@ -96,9 +96,7 @@ def adaptive_t1(q, rounds: int):
 
 def test_k11_adaptive_t1_tracks_its_posterior_per_path(target):
     dev = _device(target)
-    lowered = pulse.compile(adaptive_t1, device=dev, control_system=MACHINE).lower(
-        dev.qudit_handles[0], 2
-    )
+    lowered = pulse.compile(adaptive_t1, device=dev, control_system=MACHINE).lower(dev.qudits[0], 2)
     assert [e.opened_by for e in lowered.segments()] == ["start", "wait", "wait"]
     result = pulse.simulate(lowered, dt_ns=4.0, levels=2)
     assert sum(branch.probability for branch in result.branches) == pytest.approx(1.0)
@@ -173,7 +171,7 @@ def test_k12_frequency_binary_search_follows_a_detuned_plant(target):
         },
     )
     lowered = pulse.compile(binary_search, device=dev, control_system=MACHINE).lower(
-        dev.qudit_handles[0], 1
+        dev.qudits[0], 1
     )
     result = pulse.simulate(lowered, plant=detuned, dt_ns=1.0, levels=2)
     # The first shot's outcome follows the surrogate's fringe (decay lowers
@@ -212,7 +210,7 @@ def ramsey_shot(q, wait_cycles: int, phase: float):
 
 def test_k13_three_point_decay_and_phase_recover_the_device(target):
     dev = _device(target)
-    q = dev.qudit_handles[0]
+    q = dev.qudits[0]
     compiled = pulse.compile(t1_shot, device=dev)
     spacing_cycles = 8000
     p = [
@@ -260,7 +258,7 @@ def spectroscopy(q, detuning_hz: float):
 
 def test_k14_golden_section_finds_the_qubit_frequency(target):
     dev = _device(target)
-    q = dev.qudit_handles[0]
+    q = dev.qudits[0]
     offset = 1.3e6
     detuned = dataclasses.replace(
         target,
@@ -345,7 +343,7 @@ def golden_in_shot(q, iterations: int):
 def test_k14_golden_section_in_a_shot_uses_the_converged_pattern(target):
     dev = _device(target)
     lowered = pulse.compile(golden_in_shot, device=dev, control_system=MACHINE).lower(
-        dev.qudit_handles[0], 4
+        dev.qudits[0], 4
     )
     assert len(lowered.classical_report()) == 4
     result = pulse.simulate(lowered, dt_ns=1.0, levels=2)
@@ -377,7 +375,7 @@ def cadence_shot(q, amplitude: float):
 
 def test_k15_the_closed_loop_runs_ten_thousand_iterations_on_one_compile(target):
     dev = _device(target)
-    q = dev.qudit_handles[0]
+    q = dev.qudits[0]
     compiled = pulse.compile(cadence_shot, device=dev, control_system=MACHINE)
     log = EstimateLog()
     for i in range(10_000):
@@ -458,7 +456,7 @@ def test_k17_latency_within_depletion_is_hidden(target):
             if decide.submit([m]).result()[0]:  # noqa: B023
                 drive(d, square(40, PI_AMP))
 
-        (call,) = pulse.compile(feedback, device=dev).lower(dev.qudit_handles[0]).classical_report()
+        (call,) = pulse.compile(feedback, device=dev).lower(dev.qudits[0]).classical_report()
         assert call.exposed_cycles / CLOCK == pytest.approx(exposed_ns, abs=1.0)
 
 
@@ -486,7 +484,7 @@ def test_k18_readout_models_on_the_target(target):
         sync(d, r)
         readout(r, square(800, 0.05))
 
-    lowered = pulse.compile(excite_and_measure, device=dev).lower(dev.qudit_handles[0])
+    lowered = pulse.compile(excite_and_measure, device=dev).lower(dev.qudits[0])
     ideal = {b.levels: b.probability for b in pulse.simulate(lowered, dt_ns=1.0, levels=2).branches}
     model = pulse.simulate(lowered, dt_ns=1.0, readout="model", levels=2)
     decay = pulse.simulate(lowered, dt_ns=1.0, readout="model_with_decay", levels=2)
@@ -544,9 +542,7 @@ def pauli_rb(q):
 
 def test_k19_pauli_benchmarking_returns_to_zero_unless_miscalibrated(target):
     dev = _device(target)
-    lowered = pulse.compile(pauli_rb, device=dev, control_system=MACHINE).lower(
-        dev.qudit_handles[0]
-    )
+    lowered = pulse.compile(pauli_rb, device=dev, control_system=MACHINE).lower(dev.qudits[0])
     ideal = pulse.simulate(lowered, initial_state=[1, 0], dt_ns=1.0, levels=2)
     assert len(ideal.branches) == 64  # every sequence of three Paulis
     # Each sequence and its recovery multiply to the identity.
@@ -554,7 +550,7 @@ def test_k19_pauli_benchmarking_returns_to_zero_unless_miscalibrated(target):
     plant = DriftingPlant(target, amplitude=OrnsteinUhlenbeck(1e-9, 1.0), seed=1)
     plant.state = dataclasses.replace(plant.state, amplitude_scale=1.1)
     drifted = pulse.simulate(
-        lowered, initial_state=[1, 0], dt_ns=1.0, plant=plant.target(), levels=2
+        lowered, initial_state=[1, 0], dt_ns=1.0, plant=plant.description(), levels=2
     )
     assert drifted.density_matrix[0, 0].real < ideal.density_matrix[0, 0].real - 0.01
     shots = pulse.simulate(lowered, initial_state=[1, 0], dt_ns=1.0, shots=200, seed=3, levels=2)

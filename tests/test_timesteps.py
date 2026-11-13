@@ -101,7 +101,7 @@ def test_the_export_counts_whole_steps_of_the_controllers_own_cycles():
 def test_on_the_program_clock_the_export_keeps_its_clock():
     lowered = pulse.compile(stepped, schedule="asap", control_system=_steps(4)).lower(Q[0], Q[1])
     program = lowered.export_controller()
-    assert program["clock_ghz"] == lowered.target.clock_ghz
+    assert program["clock_ghz"] == lowered.device.clock_ghz
     assert "program_clock_ghz" not in program
     starts = [e["start_cycles"] for e in program["events"] if e["kind"] in TIMED]
     assert starts and all(s % 4 == 0 for s in starts)
@@ -142,7 +142,7 @@ def test_format_2_on_the_program_clock_in_timesteps_unrolls_to_format_1(kernel, 
     lowered = pulse.compile(kernel, control_system=ControlSystem(controllers=[limits])).lower(Q[0])
     flat = lowered.export_controller(version=1)
     structured = lowered.export_controller(version=2)
-    assert structured["clock_ghz"] == flat["clock_ghz"] == lowered.target.clock_ghz
+    assert structured["clock_ghz"] == flat["clock_ghz"] == lowered.device.clock_ghz
     assert controller.unroll(structured)["events"] == flat["events"]
     if kernel is rolled:
         assert [e["kind"] for e in structured["events"]] == ["loop"]

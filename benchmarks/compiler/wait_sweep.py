@@ -25,9 +25,9 @@ import tracemalloc
 import warnings
 
 import cudaq_pulse as pulse
-from cudaq_pulse.targets import MicrowaveDrive, Qubit, TargetDescription
+from cudaq_pulse.targets import DeviceDescription, MicrowaveDrive, Qubit
 
-_TARGET = TargetDescription(
+_TARGET = DeviceDescription(
     name="wait-sweep",
     qubits={
         0: Qubit(
@@ -40,7 +40,7 @@ _TARGET = TargetDescription(
         )
     },
 )
-_QUBIT = pulse.device(_TARGET).qudit_handles[0]
+_QUBIT = pulse.device(_TARGET).qudits[0]
 
 
 @pulse.kernel

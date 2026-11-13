@@ -14,7 +14,7 @@ import warnings
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.targets import Coupling, MicrowaveDrive, Qubit, TargetDescription
+from cudaq_pulse.targets import Coupling, DeviceDescription, MicrowaveDrive, Qubit
 
 from tests._handles import Q
 from tests.runtime._lowering import on
@@ -26,7 +26,7 @@ _HALF_PI = math.pi / 40.0
 
 
 def _target(n=1, t1_us=0.0):
-    return TargetDescription(
+    return DeviceDescription(
         name="simulate-test",
         qubits={
             q: Qubit(
@@ -103,7 +103,7 @@ def test_simulate_takes_the_kernel_and_its_arguments():
         drive(d0, square(40, amplitude))
 
     dev = pulse.device(_target())
-    q = dev.qudit_handles[0]
+    q = dev.qudits[0]
     expected = pulse.simulate(rabi.lower(q, _PI), levels=2).density_matrix
     np.testing.assert_array_equal(pulse.simulate(rabi, q, _PI, levels=2).density_matrix, expected)
     compiled = pulse.compile(rabi)
@@ -127,7 +127,7 @@ def _rabi_with_amplitude(q0, amplitude: float):
 @pytest.mark.parametrize("kind", ["kernel", "compiled", "with_parameters", "bound", "call"])
 def test_simulate_takes_a_kernel_or_a_program_compiled_already(kind):
     dev = pulse.device(_target())
-    q = dev.qudit_handles[0]
+    q = dev.qudits[0]
     compiled = pulse.compile(_rabi_with_amplitude)
     generic = compiled.lower(q, _PI).generic
     assert generic is not None and generic.parameters == ("amplitude",)
@@ -150,7 +150,7 @@ def test_simulate_binds_a_program_s_parameters_as_bind_does():
         drive(d0, square(40, _PI))
 
     dev = pulse.device(_target())
-    q = dev.qudit_handles[0]
+    q = dev.qudits[0]
     generic = pulse.compile(wait_for).lower(q, 10.0).generic
     assert generic is not None
     with pytest.raises(pulse.InvalidValueError, match=r"float parameters \(gap\); pass their"):
@@ -272,7 +272,7 @@ def test_each_qudit_has_its_model_s_levels_unless_simulate_sets_them():
 
     lowered = on(_target(1), measure, Q[0])
     assert pulse.simulate(lowered).dims == (TransmonModel.levels,) == (3,)
-    target = TargetDescription(
+    target = DeviceDescription(
         name="simulate-test", qubits=_target(2).qubits, model=TransmonModel(levels={1: 4})
     )
     lowered = on(target, conditional_flip, Q[0], Q[1])
@@ -358,7 +358,7 @@ def test_a_step_that_resolves_the_simulation_does_not_warn(options, recwarn):
 
 def test_the_check_follows_the_model_s_levels_not_a_transmon_s():
     # Evenly spaced levels (no anharmonicity) all turn with the frame.
-    harmonic = TargetDescription(
+    harmonic = DeviceDescription(
         name="harmonic",
         qubits={0: Qubit(0, 5.0e9, 0.0, 0.0, 0.0)},
     )
@@ -480,7 +480,7 @@ def test_a_gpu_result_that_is_not_finite_raises(monkeypatch):
 
 
 def test_a_step_too_coarse_for_coupled_qudits_names_their_detuning():
-    pair = TargetDescription(
+    pair = DeviceDescription(
         name="pair",
         qubits={q: Qubit(q, 5.0e9 + 2.0e9 * q, -200.0e6, 0.0, 0.0) for q in range(2)},
         couplings=[Coupling((0, 1), 5.0e6)],

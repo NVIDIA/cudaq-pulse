@@ -8,7 +8,7 @@ import pytest
 from cudaq_pulse import _build_config
 from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline
 from cudaq_pulse.runtime import gpu
-from cudaq_pulse.targets.base import Qubit, TargetDescription
+from cudaq_pulse.targets.base import DeviceDescription, Qubit
 
 from tests._handles import Q
 from tests.runtime._lowering import evolve, on
@@ -45,7 +45,7 @@ def test_evolve_on_compiler_only_build_raises_not_built():
         d0 = get_drive_line(q0)
         drive(d0, gaussian(40, 0.3, 10.0))
 
-    target = TargetDescription(
+    target = DeviceDescription(
         name="guard",
         qubits={
             0: Qubit(

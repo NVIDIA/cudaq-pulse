@@ -5,19 +5,19 @@
 import dataclasses
 
 import cudaq_pulse as pulse
-from cudaq_pulse.targets import Qubit, TargetDescription
+from cudaq_pulse.targets import DeviceDescription, Qubit
 
 
-def ladder_target(n: int = 64) -> TargetDescription:
+def ladder_target(n: int = 64) -> DeviceDescription:
     """Qudit i at 5 GHz + i * 100 MHz: the frequencies most tests assume."""
-    return TargetDescription(
+    return DeviceDescription(
         name=f"ladder:{n}",
         qubits={i: Qubit(i, 5.0e9 + 1.0e8 * i, -300e6, 50.0, 30.0) for i in range(n)},
     )
 
 
 LADDER = pulse.device(ladder_target(256))
-Q = LADDER.qudit_handles
+Q = LADDER.qudits
 
 
 def with_line_delays(controllers, delays):

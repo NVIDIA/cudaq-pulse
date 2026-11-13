@@ -86,7 +86,7 @@ def calibration_worker(records_in, updates_out):
     """Estimate the frequency from Ramsey records; recompile when the device changes."""
     mean_hz, sigma_hz = 0.0, prior_sigma_hz
     start = calibrated_device(0.0)
-    programs = {start.fingerprint: fringe_top.lower(start.qudit_handles[qudit_index])}
+    programs = {start.fingerprint: fringe_top.lower(start.qudits[qudit_index])}
     current = start.fingerprint
     counts = {"estimates": 0, "unchanged": 0, "compiled": 0, "reused": 0}
     updates_out.put("ready")
@@ -105,7 +105,7 @@ def calibration_worker(records_in, updates_out):
             if device.fingerprint in programs:
                 counts["reused"] += 1
             else:
-                programs[device.fingerprint] = fringe_top.lower(device.qudit_handles[qudit_index])
+                programs[device.fingerprint] = fringe_top.lower(device.qudits[qudit_index])
                 counts["compiled"] += 1
             current = device.fingerprint
             fresh = (written_hz, programs[current])
@@ -117,14 +117,14 @@ def calibration_worker(records_in, updates_out):
 
 
 def error_against(program, plant):
-    result = pulse.simulate(program, levels=3, dt_ns=0.25, plant=plant.target())
+    result = pulse.simulate(program, levels=3, dt_ns=0.25, plant=plant.description())
     return 1 - result.level_population(1)
 
 
 def follow(swapping, seed=5):
     plant = DriftingPlant(target, qudit_index, frequency=drift, seed=seed)
     in_use_hz = 0.0
-    program = fringe_top.lower(calibrated_device(0.0).qudit_handles[qudit_index])
+    program = fringe_top.lower(calibrated_device(0.0).qudits[qudit_index])
     mean_hz, sigma_hz = 0.0, prior_sigma_hz
     spawn = multiprocessing.get_context("spawn")
     records_in, updates_out = spawn.Queue(), spawn.Queue()
@@ -191,7 +191,7 @@ if __name__ == "__main__":
         f"on {settled_on.max():.4f}"
     )
     floor = error_against(
-        fringe_top.lower(calibrated_device(0.0).qudit_handles[qudit_index]),
+        fringe_top.lower(calibrated_device(0.0).qudits[qudit_index]),
         DriftingPlant(target, qudit_index),
     )
     print(f"  (on resonance the error is {floor:.4f}: decay and thermal population)")

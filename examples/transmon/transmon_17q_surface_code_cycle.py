@@ -22,7 +22,7 @@ import cudaq_pulse as pulse
 from cudaq_pulse.targets.transmon import CZ_LAYERS
 
 dev = pulse.device("transmon_17q")
-target = dev.target
+target = dev.description
 clock_ghz = dev.clock_ghz  # the program clock the schedule counts cycles of
 labels = {q.index: q.label for q in target.qubits.values()}
 qudit_count = target.qudit_count
@@ -90,7 +90,7 @@ def surface_code_cycle(qubits):
             sync(lines[qudit_count - 2 - i], lines[qudit_count - 1 - i])
 
 
-compiled = pulse.compile(surface_code_cycle, device=dev).lower(dev.qudit_handles[:qudit_count])
+compiled = pulse.compile(surface_code_cycle, device=dev).lower(dev.qudits[:qudit_count])
 total_ns = max(e.end for e in compiled.schedule) / clock_ghz
 print(
     f"\nCompiled and verified: {compiled.metrics.op_count} ops, "

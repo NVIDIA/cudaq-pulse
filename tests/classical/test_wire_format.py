@@ -231,7 +231,7 @@ def test_a_native_handler_drives_a_simulation(handler_library):
             drive(f, square(40, PI_AMP))
 
     dev = _device(n=5)
-    low = pulse.compile(k, device=dev).lower(*dev.qudit_handles[:5])
+    low = pulse.compile(k, device=dev).lower(*dev.qudits[:5])
     import numpy as np
 
     rho0 = np.zeros(32)

@@ -21,7 +21,7 @@ only run it.
        drive(drive_line, gaussian(cal["x_duration"], amplitude, cal["x_sigma"]))
 
    dev = pulse.device("transmon_17q")
-   q = dev.qudit_handles[0]
+   q = dev.qudits[0]
 
    rabi(q, 0.3)                    # compiles, then runs; returns None
    rabi(q, 0.4)                    # same compilation, new amplitude

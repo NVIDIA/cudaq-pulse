@@ -35,7 +35,7 @@ def rabi_with_readout(qubit, duration, amplitude):
 
 if __name__ == "__main__":
     dev = pulse.device("transmon_17q")
-    qubit = dev.qudit_handles[0]
+    qubit = dev.qudits[0]
 
     print("=== Compiled for the qubit's device ===")
     compiled_kernel = rabi.lower(qubit, cal["rabi_duration"], 0.5)
@@ -54,7 +54,7 @@ if __name__ == "__main__":
     print("\n=== The same kernel on a device with a 1 GHz clock ===")
     slow = pulse.device("transmon_17q", clock_ghz=1.0)
     for device in (dev, slow):
-        lowered = rabi.lower(device.qudit_handles[0], cal["rabi_duration"], 0.5)
+        lowered = rabi.lower(device.qudits[0], cal["rabi_duration"], 0.5)
         cycles = lowered.schedule[0].duration_cycles
         print(f"  {device.clock_ghz:g} GHz: {cal['rabi_duration']} is {cycles} cycles")
 

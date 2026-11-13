@@ -12,8 +12,8 @@ Usage::
         drive(drive_line, gaussian(64, amplitude, 16.0))
 
     dev = pulse.device("transmon_17q")
-    rabi(dev.qudit_handles[0], 0.5)            # compile on first call, then run
-    lowered = rabi.lower(dev.qudit_handles[0], 0.5)
+    rabi(dev.qudits[0], 0.5)            # compile on first call, then run
+    lowered = rabi.lower(dev.qudits[0], 0.5)
     print(lowered.mlir())
 
 The kernel language (``drive``, ``gaussian``, ``get_drive_line``, ...) lives

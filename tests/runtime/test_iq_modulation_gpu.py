@@ -13,7 +13,7 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.targets import MicrowaveDrive, Qubit, TargetDescription
+from cudaq_pulse.targets import DeviceDescription, MicrowaveDrive, Qubit
 
 from tests._handles import Q
 from tests.runtime._lowering import evolve, on, pulse_mlir
@@ -22,7 +22,7 @@ gpu = pytest.mark.gpu
 
 
 def _target():
-    return TargetDescription(
+    return DeviceDescription(
         name="iq-modulation",
         qubits={
             0: Qubit(

@@ -17,13 +17,13 @@ from .._errors import InvalidValueError
 from . import _transmon_17q as _k
 from .base import (
     Coupling,
+    DeviceDescription,
     DispersiveReadout,
     DragPulse,
     FluxCZ,
     MicrowaveDrive,
     Qubit,
     ReadoutPulse,
-    TargetDescription,
     _Calibrations,
 )
 
@@ -43,7 +43,7 @@ CZ_LAYERS: tuple[tuple[tuple[int, int], ...], ...] = (
 )
 
 
-def transmon_17q(calibration: Any = "transmon_17q") -> TargetDescription:
+def transmon_17q(calibration: Any = "transmon_17q") -> DeviceDescription:
     """17-qubit surface-code device of Krinner et al., Nature 605, 669 (2022).
 
     Qudits 0-16 are D1-D9, X1-X4, Z1-Z4, the column order of the paper's
@@ -87,12 +87,12 @@ def transmon_17q(calibration: Any = "transmon_17q") -> TargetDescription:
     return target if calibration is None else calibration.apply(target)
 
 
-_BUILT: dict[str | None, TargetDescription] = {}
+_BUILT: dict[str | None, DeviceDescription] = {}
 # Reentrant: building a calibrated target builds the published one.
 _BUILT_LOCK = threading.RLock()
 
 
-def _calibrated_17q(name: str) -> TargetDescription:
+def _calibrated_17q(name: str) -> DeviceDescription:
     from .calibration import shipped_calibration
 
     built = _BUILT.get(name)
@@ -104,7 +104,7 @@ def _calibrated_17q(name: str) -> TargetDescription:
     return built
 
 
-def _published_17q() -> TargetDescription:
+def _published_17q() -> DeviceDescription:
     built = _BUILT.get(None)
     if built is None:
         with _BUILT_LOCK:
@@ -114,7 +114,7 @@ def _published_17q() -> TargetDescription:
     return built
 
 
-def _build_published_17q() -> TargetDescription:
+def _build_published_17q() -> DeviceDescription:
     qubits = {}
     drive = MicrowaveDrive()
     x = DragPulse(duration_ns=_k.DRIVE_DURATION_NS, sigma_ns=_k.DRIVE_SIGMA_NS)
@@ -167,7 +167,7 @@ def _build_published_17q() -> TargetDescription:
         )
         for e in _k.EDGES
     ]
-    return TargetDescription(
+    return DeviceDescription(
         name="transmon_17q",
         qubits=qubits,
         couplings=couplings,
@@ -206,7 +206,7 @@ def transmon_generic(
     t1_us: float = 25.0,
     t2_star_us: float = 15.0,
     topology: str = "linear",
-) -> TargetDescription:
+) -> DeviceDescription:
     """Build a generic transmon target with configurable parameters.
 
     Parameters
@@ -261,7 +261,7 @@ def transmon_generic(
 
     couplings = [Coupling((a, b), coupling_strength_hz) for a, b in edges]
 
-    return TargetDescription(
+    return DeviceDescription(
         name=f"transmon_generic_{qudit_count}q_{topology}",
         qubits=qubits,
         couplings=couplings,

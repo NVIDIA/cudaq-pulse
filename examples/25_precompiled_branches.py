@@ -135,7 +135,7 @@ def median_s(operation, repeat):
 
 if __name__ == "__main__":
     device = pulse.device(target)
-    qudits = device.qudit_handles[list(qudit_indices)]
+    qudits = device.qudits[list(qudit_indices)]
     outcomes = every_outcome()
     compile_branch(pi_trains, qudits, outcomes[-1])  # compile once here before timing anything
 

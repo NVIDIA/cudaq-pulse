@@ -41,7 +41,7 @@ def test_qudit_handles_in_a_list_say_how_to_pass_them():
         pulse.compile(k).lower([Q[0], Q[1]])
     assert str(info.value) == (
         "get_drive_line(): argument 1 is a qudit handle that reached the kernel inside a "
-        "list; pass qudits as separate arguments, a Register (dev.qudit_handles[0:4]) or a "
+        "list; pass qudits as separate arguments, a Register (dev.qudits[0:4]) or a "
         "tuple, not a list"
     )
 
@@ -115,7 +115,7 @@ def test_qudits_of_two_devices_of_one_target_name_their_layouts():
         drive(d, square(8, 0.1))
 
     with pytest.raises(pulse.DeviceMismatchError) as info:
-        k.lower(a.qudit_handles[0], b.qudit_handles[1])
+        k.lower(a.qudits[0], b.qudits[1])
     assert str(info.value) == (
         "k() got qudits of two different devices, both of target 'transmon_generic:4': one "
         "with layout 0..3, the other with layout 2..3; pass handles of one device"
@@ -200,7 +200,7 @@ def test_no_shots_is_the_documented_simulate_default(idle):
     ],
 )
 def test_a_qudit_index_past_the_device_says_how_many_qudits_it_has(index, message):
-    handles = pulse.device("transmon_17q").qudit_handles
+    handles = pulse.device("transmon_17q").qudits
     with pytest.raises(pulse.IndexOutOfRangeError, match=message) as info:
         handles[index]
     assert isinstance(info.value, IndexError)
@@ -208,7 +208,7 @@ def test_a_qudit_index_past_the_device_says_how_many_qudits_it_has(index, messag
 
 
 def test_a_qudit_index_past_a_register_says_how_many_qudits_it_has():
-    register = pulse.device("transmon_17q").qudit_handles[0:3]
+    register = pulse.device("transmon_17q").qudits[0:3]
     with pytest.raises(pulse.IndexOutOfRangeError) as info:
         register[5]
     assert str(info.value) == (

@@ -121,7 +121,7 @@ def report(label: str, compiled: pulse.Lowered) -> None:
 
 def main():
     dev = pulse.device("transmon_17q")
-    qubits = [dev.qudit_handles[: 1 + data_qubits]]
+    qubits = [dev.qudits[: 1 + data_qubits]]
     report(
         "per-kernel schedules",
         stabilizer_cycle.lower(*qubits),

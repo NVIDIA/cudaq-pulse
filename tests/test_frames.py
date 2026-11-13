@@ -20,20 +20,20 @@ import pytest
 from cudaq_pulse import Controller, ControlSystem, _validation
 from cudaq_pulse.compiler import DEFAULT_PASSES, Pass
 from cudaq_pulse.controller import unroll
-from cudaq_pulse.targets import Qubit, TargetDescription
+from cudaq_pulse.targets import DeviceDescription, Qubit
 
 from tests import _child
 from tests._work import python_work
 
 _FREQUENCY_HZ = 5.0e9
 _CLOCK_GHZ = 2.0
-_TARGET = TargetDescription(
+_TARGET = DeviceDescription(
     name="frames",
     clock_ghz=_CLOCK_GHZ,
     qubits={i: Qubit(i, _FREQUENCY_HZ + 1.0e7 * i, -2.0e8, 50.0, 30.0) for i in range(2)},
 )
 _DEV = pulse.device(_TARGET)
-Q = _DEV.qudit_handles
+Q = _DEV.qudits
 _PERSISTENT = ControlSystem(controllers=[Controller(persistent_frames=True)])
 
 
@@ -536,7 +536,7 @@ _UNFUSED = [p for p in DEFAULT_PASSES if p != Pass.FUSE_PULSES]
     ("name", "kernel", "device"), _TIMING_CORPUS, ids=[n for n, _, _ in _TIMING_CORPUS]
 )
 def test_keeping_frame_changes_moves_and_lengthens_nothing(name, kernel, device, threshold):
-    qudits = device.qudit_handles[: kernel.__wrapped__.__code__.co_argcount]
+    qudits = device.qudits[: kernel.__wrapped__.__code__.co_argcount]
     options = {} if threshold is None else {"unroll_threshold": threshold}
     bare_kernel = _without_frame_changes(kernel)
 

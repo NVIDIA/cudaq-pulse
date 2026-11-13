@@ -20,7 +20,7 @@ from cudaq_pulse import ControlSystem
 from cudaq_pulse.classical import Link
 from cudaq_pulse.runtime import _propagate
 from cudaq_pulse.runtime import simulate as simulate_module
-from cudaq_pulse.targets import MicrowaveDrive, Qubit, TargetDescription
+from cudaq_pulse.targets import DeviceDescription, MicrowaveDrive, Qubit
 
 from tests._handles import Q
 from tests.runtime._lowering import on
@@ -29,7 +29,7 @@ _PI = math.pi / 20.0
 
 
 def _target(t1_us=30.0, t2_us=20.0, thermal=0.02, offset_hz=0.0):
-    return TargetDescription(
+    return DeviceDescription(
         name="propagation-test",
         qubits={
             0: Qubit(
@@ -214,7 +214,7 @@ def test_a_long_adaptive_loop_follows_one_path_per_shot():
     target = _target(t1_us=5.0)
     dev = pulse.device(target)
     lowered = pulse.compile(_adaptive_loop, device=dev, control_system=_MACHINE).lower(
-        dev.qudit_handles[0], 60
+        dev.qudits[0], 60
     )
     result = pulse.simulate(lowered, shots=3, seed=1, branches="sampled", levels=2)
     assert 1 <= len(result.branches) <= 3

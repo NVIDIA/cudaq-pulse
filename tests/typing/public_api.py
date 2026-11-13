@@ -27,6 +27,7 @@ from cudaq_pulse.controller import (
 from cudaq_pulse.ops import Waveform
 from cudaq_pulse.targets import (
     Coupling,
+    DeviceDescription,
     DispersiveReadout,
     DragPulse,
     FluxCZ,
@@ -35,7 +36,6 @@ from cudaq_pulse.targets import (
     Readout,
     ReadoutPulse,
     ResidualZZ,
-    TargetDescription,
 )
 from cudaq_pulse.targets.transmon import CZ_LAYERS
 
@@ -54,10 +54,10 @@ assert_type(pulse.Device.from_dict(dev.as_dict()), pulse.Device)
 assert_type(pulse.Device.load("qpu.json"), pulse.Device)
 pulse.device({"quantum_system": "transmon_17q"})  # type: ignore[arg-type]
 pulse.device("transmon_17q", [4, 5])  # type: ignore[call-arg]
-assert_type(dev.qudit_handles[0], pulse.Qudit)
-assert_type(dev.qudit_handles[0:2], pulse.Register)
-assert_type(dev.qudit_handles[[0, 1]], pulse.Register)
-assert_type(dev.qudit_handles[0:2][0], pulse.Qudit)
+assert_type(dev.qudits[0], pulse.Qudit)
+assert_type(dev.qudits[0:2], pulse.Register)
+assert_type(dev.qudits[[0, 1]], pulse.Register)
+assert_type(dev.qudits[0:2][0], pulse.Qudit)
 
 
 @pulse.kernel
@@ -73,10 +73,10 @@ def idle(q: pulse.Qudit) -> None:
 # A kernel keeps the signature of its function: calls are checked against it.
 kernels: list[pulse.Kernel[...]] = [rabi, idle]
 assert_type(rabi.cache_info().size, int)
-rabi(dev.qudit_handles[0])  # type: ignore[call-arg]
-rabi(dev.qudit_handles[0], 0.5, 1)  # type: ignore[call-arg]
-rabi(dev.qudit_handles[0], amp="high")  # type: ignore[arg-type]
-rabi.lower(dev.qudit_handles[0], ampl=0.5)  # type: ignore[call-arg]
+rabi(dev.qudits[0])  # type: ignore[call-arg]
+rabi(dev.qudits[0], 0.5, 1)  # type: ignore[call-arg]
+rabi(dev.qudits[0], amp="high")  # type: ignore[arg-type]
+rabi.lower(dev.qudits[0], ampl=0.5)  # type: ignore[call-arg]
 
 
 @pulse.kernel
@@ -85,11 +85,11 @@ def spread(tau: float, *qudits: pulse.Qudit, amp: float = 0.1) -> None:
 
 
 spread(1.0)
-spread(1.0, *dev.qudit_handles[0:3], amp=0.2)
-assert_type(spread.lower(1.0, dev.qudit_handles[0], dev.qudit_handles[1]), pulse.Lowered)
-spread(1.0, dev.qudit_handles[0:2])  # type: ignore[arg-type]
+spread(1.0, *dev.qudits[0:3], amp=0.2)
+assert_type(spread.lower(1.0, dev.qudits[0], dev.qudits[1]), pulse.Lowered)
+spread(1.0, dev.qudits[0:2])  # type: ignore[arg-type]
 
-lowered = rabi.lower(dev.qudit_handles[0], 0.5)
+lowered = rabi.lower(dev.qudits[0], 0.5)
 assert_type(lowered, pulse.Lowered)
 assert_type(lowered.mlir(), str)
 assert_type(lowered.mlir("llvm"), str)
@@ -99,8 +99,8 @@ assert_type(lowered.arguments, tuple[float, ...])
 
 compiled = pulse.compile(rabi, schedule="asap", device=dev)
 compiled_kernels: list[pulse.CompiledKernel[...]] = [compiled]
-assert_type(compiled.lower(dev.qudit_handles[0], 0.5), pulse.Lowered)
-compiled(dev.qudit_handles[0])  # type: ignore[call-arg]
+assert_type(compiled.lower(dev.qudits[0], 0.5), pulse.Lowered)
+compiled(dev.qudits[0])  # type: ignore[call-arg]
 assert_type(compiled.parameters, tuple[str, ...])
 pulse.compile(rabi, schedule=1)  # type: ignore[arg-type]
 
@@ -112,8 +112,8 @@ assert_type(pulse.simulate(lowered.generic, 0.7), pulse.SimulationResult)
 assert_type(lowered.generic.bind([0.7]), pulse.Lowered)
 # Times take units or numbers of ns.
 assert_type(pulse.simulate(lowered, t_end=40 * pulse.ns, dt_ns=0.5), pulse.SimulationResult)
-assert_type(pulse.simulate(rabi, dev.qudit_handles[0], 0.5), pulse.SimulationResult)
-assert_type(pulse.simulate(compiled, dev.qudit_handles[0], 0.5), pulse.SimulationResult)
+assert_type(pulse.simulate(rabi, dev.qudits[0], 0.5), pulse.SimulationResult)
+assert_type(pulse.simulate(compiled, dev.qudits[0], 0.5), pulse.SimulationResult)
 
 
 # pulse.classical is a module at run time; checkers see a callable decorator,
@@ -279,14 +279,14 @@ Coupling((0, 1), 5.7e6, gate=cz)  # type: ignore[call-arg]
 zz = ResidualZZ((0, 1), 1.5e4)
 assert_type(zz.rate_hz, float)
 ResidualZZ((0, 1), 1.5e4, zz_coupling=0.5)  # type: ignore[call-arg]
-pair = TargetDescription(
+pair = DeviceDescription(
     name="pair",
     qubits={0: Qubit(0, 5.0e9, -2.5e8, 50.0, 30.0)},
     couplings=[edge],
     residual_zz=[zz],
 )
-TargetDescription(name="pair", crosstalk=[zz])  # type: ignore[call-arg]
+DeviceDescription(name="pair", crosstalk=[zz])  # type: ignore[call-arg]
 assert_type(CZ_LAYERS, tuple[tuple[tuple[int, int], ...], ...])
 assert_type(pair.coupling_map, list[tuple[int, ...]])
 assert_type(pair.coupling(0, 1), Coupling)
-TargetDescription(name="pair", architecture="transmon")  # type: ignore[call-arg]
+DeviceDescription(name="pair", architecture="transmon")  # type: ignore[call-arg]

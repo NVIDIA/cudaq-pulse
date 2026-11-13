@@ -527,7 +527,7 @@ def test_each_controller_exports_the_run_time_tones_of_its_own_lines():
     assert first["runtime_tones"] == {
         str(drive["tone"]): {
             "line": drive["line"],
-            "reset_frequency_hz": qpu.target.frequencies[0],
+            "reset_frequency_hz": qpu.description.frequencies[0],
             "reset_phase": 0.0,
         }
     }

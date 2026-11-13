@@ -493,7 +493,7 @@ if __name__ == "__main__":
     )
     target = transmon_17q()
     dev = pulse.device(target)
-    q = dev.qudit_handles[0]
+    q = dev.qudits[0]
     plant = chain_plant(target)
 
     print("=== 1. The calibration chain, on the controller ===")

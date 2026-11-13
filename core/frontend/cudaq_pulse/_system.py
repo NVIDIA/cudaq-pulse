@@ -63,7 +63,7 @@ if TYPE_CHECKING:
     from ._op_tables import OpCycles
     from .compiler import Lowered, _MachineModel
     from .controller import WaveformMemoryScope
-    from .targets.base import TargetDescription
+    from .targets.base import DeviceDescription
 else:
     from ._errors import _dataclass_when_used
 
@@ -1544,7 +1544,7 @@ class ControlSystem:
         else:
             needs = self._needs(lowered, events, owners, unresolved)
             needs.extend(self._forwarding(events, owners, clocks))
-            needs.extend(self._alignment(lines, events, owners, clocks, lowered.target.clock_ghz))
+            needs.extend(self._alignment(lines, events, owners, clocks, lowered.device.clock_ghz))
             if self._blocking:
                 needs.extend(self._held(lowered, events, owners))
             if clocks is not None and clocks.owners is not None:
@@ -2068,7 +2068,7 @@ def _placement(system: ControlSystem) -> dict[int, dict[int, int]]:
     return found
 
 
-def _wiring_problems(system: ControlSystem, target: TargetDescription) -> list[Problem]:
+def _wiring_problems(system: ControlSystem, target: DeviceDescription) -> list[Problem]:
     """The lines and detectors of *system* that name carriers *target* lacks."""
     carriers = set(target.qubits)
     problems: list[Problem] = []
@@ -2410,7 +2410,7 @@ def _model_data(model: Any) -> dict[str, Any] | None:
     return data
 
 
-def _quantum_data(target: TargetDescription) -> dict[str, Any]:
+def _quantum_data(target: DeviceDescription) -> dict[str, Any]:
     return {
         "name": target.name,
         "model": _model_data(target.model),
@@ -2461,7 +2461,7 @@ def _device_data(device: Device) -> dict[str, Any]:
 
 def _config_systems(
     config: Mapping[str, Any], key: str, source: str, problems: list[Problem]
-) -> tuple[TargetDescription | None, ControlSystem | None]:
+) -> tuple[DeviceDescription | None, ControlSystem | None]:
     """The quantum and control systems of a device config that is a system
     file or gives a control system, each ``None`` with *problems* noted."""
     from ._device import _target
@@ -2545,8 +2545,8 @@ class _Reader:
             self.problem(path, str(error))
             return None
 
-    def quantum_system(self, data: Any, path: str) -> TargetDescription | None:
-        from .targets.base import Coupling, Qubit, ResidualZZ, TargetDescription
+    def quantum_system(self, data: Any, path: str) -> DeviceDescription | None:
+        from .targets.base import Coupling, DeviceDescription, Qubit, ResidualZZ
 
         system = self.mapping(data, path, _SYSTEM_KEYS)
         if system is None:
@@ -2598,7 +2598,7 @@ class _Reader:
         if "model" in system:
             rest["model"] = self.model(system["model"], f"{path}.model")
         try:
-            return TargetDescription(
+            return DeviceDescription(
                 name=system["name"],
                 qubits=qudits,
                 couplings=[c for _, c in entries["couplings"]],

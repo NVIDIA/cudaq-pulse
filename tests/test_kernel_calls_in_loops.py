@@ -23,7 +23,7 @@ import numpy as np
 import pytest
 from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline
 from cudaq_pulse.kernel.ir_builder import CompilationError
-from cudaq_pulse.targets import MicrowaveDrive, Qubit, TargetDescription
+from cudaq_pulse.targets import DeviceDescription, MicrowaveDrive, Qubit
 
 from tests._handles import Q
 from tests._ir import python_ir
@@ -42,7 +42,7 @@ ROLLED = 0
 
 
 def _qubits(n, qvec, dev=None):
-    handles = Q if dev is None else dev.qudit_handles
+    handles = Q if dev is None else dev.qudits
     return [handles[0:n]] if qvec else [handles[i] for i in range(n)]
 
 
@@ -69,7 +69,7 @@ def _compile_symbolic(kernel):
 
 def _evaluate(compiled, *values):
     """The compiled kernel, lowered at concrete values of its other arguments."""
-    return compiled.lower(compiled.device.qudit_handles[0], *values)
+    return compiled.lower(compiled.device.qudits[0], *values)
 
 
 def _simulate(kernel, n=1, qvec=False, args=(), levels=2, **kwargs):
@@ -83,7 +83,7 @@ def _simulate(kernel, n=1, qvec=False, args=(), levels=2, **kwargs):
 
 
 def _target(n):
-    return TargetDescription(
+    return DeviceDescription(
         name="loop-calls",
         qubits={
             q: Qubit(

@@ -86,7 +86,7 @@ def test_a_conforming_backend_passes_in_every_format_it_reads(ideal):
 def test_the_corpus_tells_where_a_run_time_frequency_change_is_made():
     dev = _validation._device(ControlSystem())
     compiled = pulse.compile(_validation._corpus()["runtime_frequency"], device=dev)
-    lowered = compiled.lower(*dev.qudit_handles[:2])
+    lowered = compiled.lower(*dev.qudits[:2])
     events = lowered.export_controller()["events"]
     first, second = (e for e in events if e["kind"] == "drive")
     [change] = second["frame_updates"]
@@ -161,7 +161,7 @@ def test_an_emulator_that_disagrees_with_the_simulator_fails(monkeypatch):
 def test_the_emulator_is_compared_with_the_simulator():
     lowered = pulse.compile(
         _validation._corpus()[pulse.Event.READOUT], device=_validation._device(ControlSystem())
-    ).lower(*_validation._device(ControlSystem()).qudit_handles[:2])
+    ).lower(*_validation._device(ControlSystem()).qudits[:2])
     (p,) = _validation._simulated(lowered)
     assert 0.0 < p < 1.0
 

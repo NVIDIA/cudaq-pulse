@@ -10,16 +10,16 @@ import math
 import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse.targets import (
+    DeviceDescription,
     Qubit,
     SimulationModel,
-    TargetDescription,
     TransmonModel,
     transmon_generic,
 )
 
 
 def _target(model=TransmonModel, n=3):
-    return TargetDescription(
+    return DeviceDescription(
         name="models",
         qubits={
             q: Qubit(q, 5.0e9 + 0.1e9 * q, -300.0e6, t1_us=0.0, t2_star_us=0.0) for q in range(n)
@@ -32,12 +32,12 @@ def test_each_model_class_declares_its_levels():
     assert SimulationModel.levels == 2
     assert TransmonModel.levels == 3
     assert TransmonModel().levels_of(5) == 3
-    assert "architecture" not in [f.name for f in dataclasses.fields(TargetDescription)]
+    assert "architecture" not in [f.name for f in dataclasses.fields(DeviceDescription)]
 
 
 def test_a_target_takes_a_model_class_or_instance_and_defaults_to_transmons():
     assert _target(TransmonModel).model == TransmonModel() == _target(TransmonModel()).model
-    assert TargetDescription(name="plain").model == TransmonModel()
+    assert DeviceDescription(name="plain").model == TransmonModel()
     assert transmon_generic(2).model == TransmonModel()
     assert _target(None).model is None
     with pytest.raises(pulse.InvalidTypeError, match="model must be a SimulationModel class"):
@@ -99,7 +99,7 @@ def _drive_last(q):
 )
 def test_qudits_a_program_leaves_out_keep_the_levels_they_would_have(model, levels, expected):
     device = pulse.device(_target(model))
-    lowered = pulse.compile(_drive_last, device=device).lower(device.qudit_handles[2])
+    lowered = pulse.compile(_drive_last, device=device).lower(device.qudits[2])
     result = pulse.simulate(lowered, levels=levels)
     assert result.qudits == (2,)
     assert f"pulse.levels = array<i64: {expected}>" in lowered.mlir()

@@ -70,7 +70,7 @@ behavior may change in any 0.x release.
   symbols its qudit, frequency, phase and waveform depend on.
 - **Variadic qudits.** A kernel may take `*qudits`:
   `def k(tau: float, *qudits: Qudit)` is called as `k(tau, q0, q1, ...)` or
-  `k(tau, *dev.qudit_handles[0:4])`, and from another kernel as
+  `k(tau, *dev.qudits[0:4])`, and from another kernel as
   `k(tau, *qudits)`. In the kernel `qudits` is a register of the call's
   qudits, which indexes, slices, iterates and has a `len()`. Annotated
   `Qudit` it is a runtime register, compiled once per number of qudits;
@@ -418,7 +418,7 @@ behavior may change in any 0.x release.
   program runs as a `pulse.Time`, `Lowered.metrics` the compile
   times (`cudaq_pulse.compiler.CompileMetrics`), and `Lowered.timeline()` a
   plot (with the `[viz]` extra). `Device.qudit(label)` finds a qudit by
-  its label and `TargetDescription.coupling(a, b)` the coupling of two.
+  its label and `DeviceDescription.coupling(a, b)` the coupling of two.
 - **Optimization passes.** `passes=` takes members of `pulse.Pass`, a
   string enum, or their names, in any order and combination: `VERIFY`,
   `FOLD_CONSTANTS` (constant arithmetic computed at compile time),
@@ -443,7 +443,7 @@ behavior may change in any 0.x release.
   `max-readouts`, `readout-latency`, `switch-penalty`, `alap`).
 - **Devices and targets.** `pulse.device` is the one device getter: it
   describes a machine as a target plus a qudit layout, from a registered
-  target name (`pulse.device("transmon_17q")`) or a `TargetDescription`,
+  target name (`pulse.device("transmon_17q")`) or a `DeviceDescription`,
   with `layout=`, `calibration=`, `cooldown=`, `control_system=` and
   `clock_ghz=` keywords, or, with no argument, the process target; a string
   is always a name, and `Device.load` / `Device.from_dict` read system
@@ -452,7 +452,7 @@ behavior may change in any 0.x release.
   equal ones, do not mix in one call or in a kernel compiled for one
   (`DeviceMismatchError`), and an empty `layout` is a
   `DeviceDefinitionError`. Target descriptions are
-  `cudaq_pulse.targets.TargetDescription`; the shipped target,
+  `cudaq_pulse.targets.DeviceDescription`; the shipped target,
   `"transmon_17q"`, is a 17-qubit transmon device built from
   Krinner et al., Nature 605, 669 (2022).
   A target's `model` (`cudaq_pulse.targets.TransmonModel` by default, a

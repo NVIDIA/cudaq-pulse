@@ -26,12 +26,12 @@ from cudaq_pulse.kernel import _kernel
 from cudaq_pulse.kernel.ir_builder import SymbolicValueError
 from cudaq_pulse.targets import (
     Coupling,
+    DeviceDescription,
     DragPulse,
     FluxCZ,
     MicrowaveDrive,
     Qubit,
     ResidualZZ,
-    TargetDescription,
     calibration,
 )
 from cudaq_pulse.targets._registry import make_target
@@ -126,7 +126,7 @@ def _programs():
         "classical_call": pulse.compile(reset, schedule="asap").lower(Q[0]),
         "other_clock": pulse.compile(rabi, control_system=_SLOW_CONTROLLER).lower(Q[0], 0.3),
         "line_delays": pulse.compile(rabi, control_system=_DELAYED).lower(Q[0], 0.3),
-        "shipped": rabi.lower(_SHIPPED_DEVICE.qudit_handles[2], 0.1),
+        "shipped": rabi.lower(_SHIPPED_DEVICE.qudits[2], 0.1),
     }
 
 
@@ -141,7 +141,7 @@ def _views(program):
         "arguments": program.arguments,
         "qudits": program.qudits,
         "options": program.options,
-        "target": program.target,
+        "target": program.device,
         "classical": program.classical_report(),
     }
     if not program.parameters:
@@ -168,8 +168,8 @@ def test_targets_and_their_parts_unpickle_equal_with_equal_hashes():
     cz = FluxCZ(duration_ns=40.0, interaction_frequency_hz=4.4e9)
     coupling = Coupling((3, 4), 5e6, calibrations={pulse.gates.CZ: cz})
     residual = ResidualZZ((3, 4), -1.5e4)
-    shipped = _SHIPPED_DEVICE.target
-    for value in (qubit, coupling, residual, LADDER.target, shipped):
+    shipped = _SHIPPED_DEVICE.description
+    for value in (qubit, coupling, residual, LADDER.description, shipped):
         back = _round_trip(value)
         assert back == value and hash(back) == hash(value)
     back = _round_trip(shipped)
@@ -180,9 +180,9 @@ def test_targets_and_their_parts_unpickle_equal_with_equal_hashes():
 
 
 def test_targets_compare_by_content():
-    a = TargetDescription(name="t", qubits={0: Qubit(0, 5e9, -3e8, 50.0, 30.0)})
-    b = TargetDescription(name="t", qubits={0: Qubit(0, 5e9, -3e8, 50.0, 30.0)})
-    c = TargetDescription(name="t", qubits={0: Qubit(0, 5.1e9, -3e8, 50.0, 30.0)})
+    a = DeviceDescription(name="t", qubits={0: Qubit(0, 5e9, -3e8, 50.0, 30.0)})
+    b = DeviceDescription(name="t", qubits={0: Qubit(0, 5e9, -3e8, 50.0, 30.0)})
+    c = DeviceDescription(name="t", qubits={0: Qubit(0, 5.1e9, -3e8, 50.0, 30.0)})
     assert a == b and hash(a) == hash(b)
     assert a != c and a != "t"
 
@@ -207,7 +207,7 @@ def test_a_device_unpickles_equal_and_is_built_once_per_process(make, monkeypatc
     built = pickle.loads(data)
     assert built == device and built is not device
     assert built.layout == device.layout and built.clock_ghz == device.clock_ghz
-    assert built.target == device.target
+    assert built.description == device.description
     assert (built.calibration is None) == (device.calibration is None)
     assert pickle.loads(data) is built
 
@@ -222,12 +222,12 @@ def _shipped_and_uncalibrated():
 def test_a_device_and_its_target_without_the_calibration_are_two_devices():
     shipped, uncalibrated = _shipped_and_uncalibrated()
     assert shipped.fingerprint != uncalibrated.fingerprint and shipped != uncalibrated
-    assert shipped.qudit_handles[0] != uncalibrated.qudit_handles[0]
+    assert shipped.qudits[0] != uncalibrated.qudits[0]
     named = pulse.device(_SHIPPED_TARGET, calibration=_SHIPPED_CALIBRATION)
     assert named == shipped and named.calibration == shipped.calibration
     # One kernel, called on each, returns each its own device.
-    assert rabi.lower(shipped.qudit_handles[0], 0.1).target is shipped
-    assert rabi.lower(uncalibrated.qudit_handles[0], 0.1).target is uncalibrated
+    assert rabi.lower(shipped.qudits[0], 0.1).device is shipped
+    assert rabi.lower(uncalibrated.qudits[0], 0.1).device is uncalibrated
 
 
 @pytest.mark.parametrize("kept_first", [1, 0], ids=["uncalibrated kept", "shipped kept"])
@@ -256,13 +256,13 @@ def test_a_device_unpickles_with_its_own_name_and_source(monkeypatch):
 
 def test_a_shipped_calibration_pickles_as_its_name(monkeypatch):
     shipped = pulse.device(_SHIPPED_TARGET)
-    program = rabi.lower(shipped.qudit_handles[0], 0.3)
+    program = rabi.lower(shipped.qudits[0], 0.3)
     data = pickle.dumps(program)
     assert len(data) < 20_000 and len(pickle.dumps(shipped.calibration)) < 200
     monkeypatch.setattr(_pickling, "_devices", {})
     back = pickle.loads(data)
-    assert back.target is not shipped and back.target == shipped
-    assert back.target.calibration is shipped.calibration
+    assert back.device is not shipped and back.device == shipped
+    assert back.device.calibration is shipped.calibration
     assert _views(back) == _views(program)
 
 
@@ -273,7 +273,7 @@ def test_an_unpickled_shipped_calibration_reads_its_file_when_used(monkeypatch):
     back = pickle.loads(data)
     assert back is not shipped and "_data" not in vars(back)
     assert (back.name, back.cooldown) == (shipped.name, shipped.cooldown)
-    assert back.target == shipped.target and back.cooldowns == shipped.cooldowns
+    assert back.description == shipped.description and back.cooldowns == shipped.cooldowns
     assert back == shipped and back.idle_zz_hz(back.pairs[0]) == shipped.idle_zz_hz(back.pairs[0])
     assert pickle.loads(data) is back
 
@@ -294,8 +294,8 @@ def test_a_calibration_of_its_own_values_pickles_by_value_once_per_pickle():
     device = pulse.device(make_target(_SHIPPED_TARGET), calibration=mine)
     back = _round_trip(mine)
     assert back is not mine and back == mine and back.name == "mine"
-    one = len(pickle.dumps(rabi.lower(device.qudit_handles[0], 0.1)))
-    ten = len(pickle.dumps([rabi.lower(device.qudit_handles[i], 0.1) for i in range(10)]))
+    one = len(pickle.dumps(rabi.lower(device.qudits[0], 0.1)))
+    ten = len(pickle.dumps([rabi.lower(device.qudits[i], 0.1) for i in range(10)]))
     assert one > 100_000 and ten < one + 20_000
     assert copy.copy(mine) is mine and copy.deepcopy(mine) is mine
 
@@ -316,7 +316,7 @@ def test_a_calibration_of_other_values_makes_another_device():
 def test_handles_and_registers_unpickle_as_their_device_and_indices(monkeypatch):
     monkeypatch.setattr(_pickling, "_devices", {})
     dev = pulse.device(_SHIPPED_TARGET, layout=[4, 5, 6])
-    handles = dev.qudit_handles
+    handles = dev.qudits
     q, pair, picked, everything = _round_trip((handles[1], handles[0:2], handles[[2, 0]], handles))
     assert q == handles[1] and (q.index, q.logical) == (5, 1)
     assert pair == handles[0:2] and picked == handles[[2, 0]]
@@ -487,7 +487,7 @@ def test_a_compiled_kernel_unpickles_without_its_specializations():
     assert back.cache_info().size == 0
     assert back.lower(Q[0], 0.1).mlir() == compiled.lower(Q[0], 0.1).mlir()
     with pytest.raises(pulse.DeviceMismatchError):
-        back.lower(pulse.device(_SHIPPED_TARGET).qudit_handles[0], 0.1)
+        back.lower(pulse.device(_SHIPPED_TARGET).qudits[0], 0.1)
 
 
 def test_a_pinned_compiled_kernel_unpickles_with_its_program(monkeypatch):
@@ -586,7 +586,7 @@ def test_frames_that_persist_unpickle_declared_and_exported():
     assert program.options.machine.controller.persistent_frames is True
     flat, structured = program.export_controller(), program.export_controller(version=2)
     [frame] = flat["frame_state"]
-    assert frame["frequency_hz"] == LADDER.target.qubits[0].frequency_hz + 1.0e6
+    assert frame["frequency_hz"] == LADDER.description.qubits[0].frequency_hz + 1.0e6
     assert structured["frame_state"] == flat["frame_state"]
     assert structured["controller"]["persistent_frames"] is True
     assert structured["controller"]["waveform_memory"] == "shared"
@@ -766,7 +766,7 @@ def _per_controller(program):
             json.dumps(program.export_controller(controller=k)),
             json.dumps(program.export_emulation(controller=k)),
         )
-        for k in range(len(program.target.control_system.controllers))
+        for k in range(len(program.device.control_system.controllers))
     ]
 
 

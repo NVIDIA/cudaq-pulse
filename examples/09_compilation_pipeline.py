@@ -53,7 +53,7 @@ def pipeline_demo(qubit_0, qubit_1):
 def main():
     compiled_kernel = pulse.compile(
         pipeline_demo, schedule="alap", device=dev, passes=(*DEFAULT_PASSES, pulse.Pass.MERGE_WAITS)
-    ).lower(dev.qudit_handles[0], dev.qudit_handles[1])
+    ).lower(dev.qudits[0], dev.qudits[1])
 
     print("=== Compiled MLIR (first 30 lines) ===")
     for line in compiled_kernel.mlir().splitlines()[:30]:

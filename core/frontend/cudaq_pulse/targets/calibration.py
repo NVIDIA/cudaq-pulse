@@ -83,7 +83,7 @@ class Calibration:
         return data
 
     @cached_property
-    def target(self) -> str | None:
+    def description(self) -> str | None:
         """The target the calibration was made for, if its file names one."""
         target: str | None = self._data.get("_schema", {}).get("target")
         return target

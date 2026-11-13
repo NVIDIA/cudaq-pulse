@@ -46,7 +46,7 @@ if str(_ROOT) not in sys.path:
 import cudaq_pulse as pulse  # noqa: E402
 from cudaq_pulse import Controller, ControlSystem  # noqa: E402
 from cudaq_pulse.kernel import packed_ir_builder  # noqa: E402
-from cudaq_pulse.targets import Qubit, TargetDescription  # noqa: E402
+from cudaq_pulse.targets import DeviceDescription, Qubit  # noqa: E402
 
 Op = Callable[[int], object]
 
@@ -67,12 +67,12 @@ _WORKLOADS = {name: (kernel, n) for name, kernel, n, _ in _workloads.WORKLOADS}
 
 # Qudit i at 5 GHz + i * 100 MHz, as in tests/_handles.py.
 _DEVICE = pulse.device(
-    TargetDescription(
+    DeviceDescription(
         name="perf-gate",
         qubits={i: Qubit(i, 5.0e9 + 1.0e8 * i, -300e6, 50.0, 30.0) for i in range(64)},
     )
 )
-Q = _DEVICE.qudit_handles
+Q = _DEVICE.qudits
 
 
 @dataclass(frozen=True)
@@ -288,7 +288,7 @@ def _export_controller() -> Op:
 
 def _export_controller_sampled() -> Op:
     lowered = _feedback_program(16)
-    rate = 2 * lowered.target.clock_ghz
+    rate = 2 * lowered.device.clock_ghz
     return lambda i: lowered.export_controller(rate)
 
 

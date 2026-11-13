@@ -68,7 +68,7 @@ def test_decoders_share_the_cudaqx_keys_in_one_program():
             qec.get_corrections(decoder).result()
 
     dev = _device()
-    low = pulse.compile(k, device=dev).lower(dev.qudit_handles[0])
+    low = pulse.compile(k, device=dev).lower(dev.qudits[0])
     keys = {c.dispatch_key for c in low.classical_report()}
     assert keys == {CUDAQX["function_ids"][n] for n in ("enqueue_syndromes", "get_corrections")}
 
@@ -120,7 +120,7 @@ def test_each_path_keeps_its_own_decoder_state():
             drive(f, square(40, PI_AMP))
 
     dev = _device(n=3)
-    low = pulse.compile(k, device=dev).lower(*dev.qudit_handles[:3])
+    low = pulse.compile(k, device=dev).lower(*dev.qudits[:3])
     plus = np.array([1, 1]) / np.sqrt(2)
     state = np.kron(np.array([1, 0]), np.kron(plus, plus))  # a, b in |+>, flag in |0>
     result = pulse.simulate(low, initial_state=state, levels=2)
@@ -164,7 +164,7 @@ def test_emulation_decodes_what_each_shot_enqueued():
         qec.get_corrections(decoder).result()
 
     dev = _device(n=2)
-    low = pulse.compile(k, device=dev).lower(*dev.qudit_handles[:2])
+    low = pulse.compile(k, device=dev).lower(*dev.qudits[:2])
     run = emulation.emulate(low, shots=40, seed=3, service_time="none")
     parities = set()
     for outcomes, calls in zip(run.outcomes, run.calls, strict=True):
@@ -226,7 +226,7 @@ def _nothing_enqueued(timeout):
                 drive(d, square(40, PI_AMP))
 
     dev = _device()
-    return pulse.compile(k, device=dev).lower(dev.qudit_handles[0])
+    return pulse.compile(k, device=dev).lower(dev.qudits[0])
 
 
 def test_a_get_with_nothing_enqueued_is_late():
@@ -261,7 +261,7 @@ def test_a_get_decodes_what_was_enqueued_since_the_last_decode():
         qec.get_corrections(decoder).result()
 
     dev = _device()
-    low = pulse.compile(k, device=dev).lower(dev.qudit_handles[0])
+    low = pulse.compile(k, device=dev).lower(dev.qudits[0])
     for branch in pulse.simulate(low, levels=2).branches:
         assert [c.answer for c in branch.calls if c.function.startswith("get")] == [[1], [1]]
     for shot in emulation.emulate(low, shots=4, seed=1, service_time="none").calls:
@@ -283,7 +283,7 @@ def test_late_fraction_counts_the_answers_the_program_waits_on():
             drive(d, square(40, PI_AMP))
 
     dev = _device()
-    low = pulse.compile(k, device=dev).lower(dev.qudit_handles[0])
+    low = pulse.compile(k, device=dev).lower(dev.qudits[0])
     kw = {"shots": 5, "seed": 1, "service_time": "none"}
     run = emulation.emulate(low, transport=emulation.Transport(fixed_ns=500), **kw)
     for reset, enqueue, get in run.calls:
@@ -329,8 +329,7 @@ def with_function(q):
 def test_a_decoder_s_latencies_work_as_a_classical_function_s():
     dev = _device()
     lows = [
-        pulse.compile(k, device=dev).lower(dev.qudit_handles[0])
-        for k in (with_decoder, with_function)
+        pulse.compile(k, device=dev).lower(dev.qudits[0]) for k in (with_decoder, with_function)
     ]
     handlers = {"plain_decode": lambda s: s}
     (*_, by_decoder), (by_function,) = (low.classical_report() for low in lows)
@@ -385,7 +384,7 @@ def test_a_mapped_enqueue_sends_its_mapping_row():
         seen.append((decoder_id, round, mapping, count))
 
     dev = _device()
-    lowered = pulse.compile(rounds, device=dev).lower(dev.qudit_handles[0])
+    lowered = pulse.compile(rounds, device=dev).lower(dev.qudits[0])
     pulse.simulate(
         lowered, handlers={decoder.enqueue_function.name: enqueue}, shots=1, seed=0, levels=2
     )

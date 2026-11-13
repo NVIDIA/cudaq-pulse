@@ -28,10 +28,10 @@ import cudaq_pulse as pulse
 
 def _device(frequencies: dict[int, float]) -> pulse.Device:
     """A device with these drive frequencies, indexed by qudit."""
-    from cudaq_pulse.targets import Qubit, TargetDescription
+    from cudaq_pulse.targets import DeviceDescription, Qubit
 
     qubits = {q: Qubit(q, f, -300e6, 50.0, 30.0) for q, f in frequencies.items()}
-    return pulse.device(TargetDescription(name="bench", qubits=qubits))
+    return pulse.device(DeviceDescription(name="bench", qubits=qubits))
 
 
 @dataclass
@@ -241,7 +241,7 @@ WORKLOADS = [
 
 def _bench(kernel_fn, qudit_count: int, freq_dict: dict, iterations: int) -> tuple[float, int]:
     device = _device(freq_dict)
-    qubits = device.qudit_handles[:qudit_count]
+    qubits = device.qudits[:qudit_count]
     op_count = pulse.compile(kernel_fn).lower(*qubits).metrics.op_count
     total = 0.0
     for _ in range(iterations):

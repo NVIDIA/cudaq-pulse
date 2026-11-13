@@ -647,7 +647,7 @@ class Lowered:
         "_text",
         "_lock",
         "_concrete_module",
-        "target",
+        "device",
         "metrics",
         "parameters",
         "arguments",
@@ -678,7 +678,7 @@ class Lowered:
         self,
         module: Any,
         *,
-        target: Device,
+        device: Device,
         metrics: CompileMetrics,
         parameters: tuple[str, ...],
         qudits: tuple[int, ...],
@@ -690,7 +690,7 @@ class Lowered:
         self._text: str | None = None
         self._lock = threading.Lock()
         self._concrete_module: Any = None
-        self.target = target
+        self.device = device
         self.metrics = metrics
         self.parameters = parameters
         self.arguments: tuple[float, ...] = ()
@@ -741,7 +741,7 @@ class Lowered:
         view._text = None
         view._lock = self._lock
         view._concrete_module = None
-        view.target = self.target
+        view.device = self.device
         view.metrics = self.metrics
         view.parameters = ()
         view.arguments = arguments
@@ -766,7 +766,7 @@ class Lowered:
         view._text = None
         view._lock = self._lock
         view._concrete_module = None
-        view.target = self.target
+        view.device = self.device
         view.metrics = self.metrics
         view.parameters = ()
         view.arguments = tuple(values)
@@ -869,7 +869,7 @@ class Lowered:
         decide it. A wait a float parameter sets counts once the module has
         values."""
         # The clock exactly as its float holds it, as Fraction(clock_ghz) is.
-        numerator, denominator = self.target.clock_ghz.as_integer_ratio()
+        numerator, denominator = self.device.clock_ghz.as_integer_ratio()
         schedule = self.schedule
         if type(schedule) is list:
             end: int | None = 0
@@ -889,7 +889,7 @@ class Lowered:
                 f"parameters ({', '.join(self.parameters)}); lower it with them first"
             )
         if end.__class__ is not int:
-            return Time(end / self.target.clock_ghz)
+            return Time(end / self.device.clock_ghz)
         return _time(end * denominator, numerator)
 
     @property
@@ -1012,7 +1012,7 @@ class Lowered:
 
     def __repr__(self) -> str:
         params = f", parameters={list(self.parameters)}" if self.parameters else ""
-        return f"<Lowered {self.metrics.op_count} ops on {self.target.name}{params}>"
+        return f"<Lowered {self.metrics.op_count} ops on {self.device.name}{params}>"
 
 
 class _View(Lowered):
@@ -1283,7 +1283,7 @@ def build(
     if plain and role is None:
         lowered = Lowered(
             module,
-            target=target,
+            device=target,
             metrics=metrics,
             parameters=parameters,
             qudits=builder.used_qubits or qudits,
@@ -1301,7 +1301,7 @@ def build(
             clocks,
             fine_delays,
             role,
-            target=target,
+            device=target,
             metrics=metrics,
             parameters=parameters,
             qudits=used or qudits,
@@ -1442,7 +1442,7 @@ def with_line_delays(lowered: Lowered, options: CompileOptions, qudit_count: int
     parameters, whose calls share what its own schedule gives them."""
     if lowered._role is not None:
         return None
-    target = lowered.target
+    target = lowered.device
     clocks = lowered.clocks
     fine_delays = None
     shifts = None
@@ -1469,7 +1469,7 @@ def with_line_delays(lowered: Lowered, options: CompileOptions, qudit_count: int
         module,
         clocks,
         fine_delays,
-        target=target,
+        device=target,
         metrics=metrics,
         parameters=lowered.parameters,
         qudits=lowered.qudits,

@@ -18,11 +18,11 @@ import pytest
 from cudaq_pulse import DeviceDefinitionError
 from cudaq_pulse.targets import (
     Coupling,
+    DeviceDescription,
     FluxCZ,
     Qubit,
     ResidualZZ,
     SimulationModel,
-    TargetDescription,
     TransmonModel,
 )
 from cudaq_pulse.targets.base import _COUPLING_OPERATORS, _coupling_operator
@@ -33,7 +33,7 @@ def _qudits(n=3):
 
 
 def _system(**fields):
-    return TargetDescription(name="checked", qubits=_qudits(), **fields)
+    return DeviceDescription(name="checked", qubits=_qudits(), **fields)
 
 
 def _cz(duration_ns, buffer_ns=None, interaction_frequency_hz=None):
@@ -75,8 +75,8 @@ def test_a_system_names_no_architecture():
 
 
 def test_a_system_gives_no_hamiltonian_term_dicts():
-    assert not hasattr(TargetDescription, "hamiltonian_terms")
-    assert not hasattr(TargetDescription, "dissipator_terms")
+    assert not hasattr(DeviceDescription, "hamiltonian_terms")
+    assert not hasattr(DeviceDescription, "dissipator_terms")
 
 
 def test_the_model_decides_the_coupling_operator():
@@ -113,7 +113,7 @@ def _unmeasured_system():
 
 def test_a_coupling_not_measured_yet_compiles_schedules_and_exports():
     dev = pulse.device(_unmeasured_system())
-    lowered = pulse.compile(_pair_program).lower(*dev.qudit_handles[:2])
+    lowered = pulse.compile(_pair_program).lower(*dev.qudits[:2])
     assert [e.start_cycles for e in lowered.schedule] == [0, 8]
     assert lowered.export_controller() and lowered.export_emulation()
     assert "pulse.coupling" not in lowered.mlir()
@@ -124,7 +124,7 @@ def test_a_coupling_not_measured_yet_compiles_schedules_and_exports():
 
 def test_simulate_refuses_a_coupling_not_measured_yet_by_name():
     dev = pulse.device(_unmeasured_system())
-    lowered = pulse.compile(_pair_program).lower(*dev.qudit_handles[[2, 0]])
+    lowered = pulse.compile(_pair_program).lower(*dev.qudits[[2, 0]])
     with pytest.raises(pulse.InvalidValueError) as raised:
         pulse.simulate(lowered, levels=2)
     assert str(raised.value) == (
@@ -132,11 +132,11 @@ def test_simulate_refuses_a_coupling_not_measured_yet_by_name():
         "couplings[2] (qudits 2 and 0) of 'checked' has strength_hz None, not measured yet: "
         "give the strength in Hz, or leave those qudits out of the program"
     )
-    everything = pulse.compile(_three_qudits).lower(*dev.qudit_handles)
+    everything = pulse.compile(_three_qudits).lower(*dev.qudits)
     with pytest.raises(pulse.InvalidValueError, match=r"couplings\[0\] \(qudits 0 and 1\) and "):
         pulse.simulate(everything, levels=2)
     # A program on measured couplings only simulates.
-    pulse.simulate(pulse.compile(_pair_program).lower(*dev.qudit_handles[1:]), levels=2)
+    pulse.simulate(pulse.compile(_pair_program).lower(*dev.qudits[1:]), levels=2)
 
 
 @pulse.kernel
@@ -231,8 +231,8 @@ def test_a_system_file_holds_couplings_gates_and_residual_zz():
     assert system["residual_zz"] == [{"qudits": [0, 2], "rate_hz": 1.5e4}]
     assert "crosstalk" not in system
     back = pulse.Device.from_dict(json.loads(json.dumps(dev.as_dict())))
-    assert back == dev and back.target == target
-    assert back.target.couplings[0].qudits == (1, 0)
+    assert back == dev and back.description == target
+    assert back.description.couplings[0].qudits == (1, 0)
 
 
 def test_a_key_that_is_no_field_is_an_unknown_key(tmp_path):

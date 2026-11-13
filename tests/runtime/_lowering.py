@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import cudaq_pulse as pulse
 import numpy as np
 from cudaq_pulse.runtime.simulate import _simulate_lowered
-from cudaq_pulse.targets import Qubit, TargetDescription
+from cudaq_pulse.targets import DeviceDescription, Qubit
 
 EVOLVE_PASSES = (
     "verify",
@@ -25,9 +25,9 @@ def _handles(dev, args):
     out = []
     for a in args:
         if isinstance(a, pulse.Qudit):
-            out.append(dev.qudit_handles[a.index])
+            out.append(dev.qudits[a.index])
         elif isinstance(a, pulse.Register):
-            out.append(dev.qudit_handles[[q.index for q in a]])
+            out.append(dev.qudits[[q.index for q in a]])
         else:
             out.append(a)
     return out
@@ -62,7 +62,7 @@ def evolve(lowered, *, t_start, t_end, step_count, integrator="rk4", levels=2, i
 
 
 def frequency_target(qubit_freq_hz, clock_ghz=2.0):
-    return TargetDescription(
+    return DeviceDescription(
         name="frequencies",
         qubits={q: Qubit(q, f, -300e6, 50.0, 30.0) for q, f in qubit_freq_hz.items()},
         clock_ghz=clock_ghz,

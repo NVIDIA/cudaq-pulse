@@ -11,10 +11,10 @@ from typing import ClassVar
 import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse.targets import (
+    DeviceDescription,
     MicrowaveDrive,
     Qubit,
     SimulationModel,
-    TargetDescription,
     TransmonModel,
 )
 
@@ -140,7 +140,7 @@ def test_tones_lists_the_transitions_of_the_qudit_s_levels():
 
 
 def _target(model):
-    return TargetDescription(
+    return DeviceDescription(
         name="tones-test",
         qubits={0: Qubit(0, 5.0e9, -200e6, 50.0, 30.0)},
         model=model,
@@ -157,7 +157,7 @@ def test_a_missing_transition_is_a_key_error_listing_the_qudit_s():
         pulse.compile(missing).lower(Q[0])
     dev = pulse.device(_target(TransmonModel(levels={0: 2})))
     with pytest.raises(pulse.NotFoundError, match=r"no transition \(0, 3\).*levels \(0, 1\), the"):
-        pulse.compile(missing).lower(dev.qudit_handles[0])
+        pulse.compile(missing).lower(dev.qudits[0])
 
     @pulse.kernel
     def readout_transition(q):
@@ -193,8 +193,8 @@ def read_runtime(q: pulse.Qudit, df: float):
 def test_a_readout_line_plays_at_the_readout_frequency():
     # transmon_17q's resonators are about 3 GHz above its qubits.
     dev = pulse.device("transmon_17q")
-    for handle in dev.qudit_handles[[0, 9]]:
-        qubit = dev.target.qubits[handle.index]
+    for handle in dev.qudits[[0, 9]]:
+        qubit = dev.description.qubits[handle.index]
         resonator = qubit.readout.frequency_hz
         assert abs(resonator - qubit.frequency_hz) > 1e9
         for kernel in (read_static, read_runtime):
@@ -204,7 +204,7 @@ def test_a_readout_line_plays_at_the_readout_frequency():
 
 def test_a_readout_line_without_a_readout_frequency_plays_at_the_qudit_s():
     dev = pulse.device(_target(TransmonModel))
-    q = dev.qudit_handles[0]
+    q = dev.qudits[0]
     for kernel in (read_static, read_runtime):
         assert _readout_frequencies(kernel.lower(q, 1e6)) == [5.0e9, 5.0e9 + 1e6]
 
@@ -214,16 +214,16 @@ def test_the_frequency_tables_hold_the_program_s_qudits_not_the_device_s():
     # highest; a later program on a higher qudit, static or runtime, extends
     # the tables, and one on a lower qudit reads them. New kernels, on a
     # device of its own: no compile is shared with another test.
-    dev = pulse.device(pulse.device("transmon_17q").target)
+    dev = pulse.device(pulse.device("transmon_17q").description)
     static, runtime = (pulse.kernel(k.__wrapped__) for k in (read_static, read_runtime))
-    resonator = {i: dev.target.qubits[i].readout.frequency_hz for i in (0, 4, 9)}
+    resonator = {i: dev.description.qubits[i].readout.frequency_hz for i in (0, 4, 9)}
     for kernel, index, count in (
         (static, 0, 1),
         (runtime, 4, 5),
         (static, 9, 10),
         (runtime, 0, 10),
     ):
-        lowered = kernel.lower(dev.qudit_handles[index], 1e6)
+        lowered = kernel.lower(dev.qudits[index], 1e6)
         assert _readout_frequencies(lowered) == [resonator[index], resonator[index] + 1e6]
         assert dev._tables[0] == count
 
@@ -261,7 +261,7 @@ def test_the_default_transition_comes_from_the_model():
         drive(d, square(40, 0.1), tone=d.tones[(0, 1)])
 
     dev = pulse.device(_target(_UpperQubit))
-    lowered = pulse.compile(both).lower(dev.qudit_handles[0])
+    lowered = pulse.compile(both).lower(dev.qudits[0])
     # (1, 2) is the line's own tone; (0, 1) is made, at the model's evenly
     # spaced 0-1 frequency.
     (tone,) = _tones_of(lowered)
@@ -284,7 +284,7 @@ def test_a_rolled_loop_that_reads_a_transition_s_tone_still_drives_it_each_time(
 def test_driving_the_second_transition_moves_the_qudit_to_level_two():
     # 400 cycles at 2 GHz is 200 ns; H = amp X / 2 rotates 0-1 by amp * 200
     # and 1-2, whose matrix element is sqrt(2), by sqrt(2) times that.
-    target = TargetDescription(
+    target = DeviceDescription(
         name="tones-test",
         qubits={
             0: Qubit(
@@ -306,7 +306,7 @@ def test_driving_the_second_transition_moves_the_qudit_to_level_two():
         drive(d, square(400, one / math.sqrt(2.0)), tone=d.tones[(1, 2)])
 
     dev = pulse.device(target)
-    rho = pulse.simulate(ladder, dev.qudit_handles[0], levels=3).density_matrix
+    rho = pulse.simulate(ladder, dev.qudits[0], levels=3).density_matrix
     assert rho[2, 2].real > 0.97
 
 

@@ -471,9 +471,9 @@ def emulate(
     schedule_args = lowered.options.schedule_args()
     base = lowered._concrete().simulation_module(*schedule_args)
     due_ns = base.call_due_ns()
-    clock = lowered.target.clock_ghz
+    clock = lowered.device.clock_ghz
     iq_model = (
-        IQModel(lowered.target.target, lowered.qudits, decay=False)
+        IQModel(lowered.device.description, lowered.qudits, decay=False)
         if any(takes_iq(fn) for fn in functions)
         else None
     )

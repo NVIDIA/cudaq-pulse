@@ -77,7 +77,7 @@ def main():
 
     print("=== Hahn Echo ===")
     compiled_kernel = pulse.compile(hahn_echo, device=dev).lower(
-        dev.qudit_handles[0], sigma, amp_half_pi, amp_pi, tau
+        dev.qudits[0], sigma, amp_half_pi, amp_pi, tau
     )
     total_hahn = 2 * (4 * sigma) + 4 * sigma + 2 * tau
     print(f"  Expected duration: {cycles(total_hahn):.0f} clock cycles")
@@ -87,7 +87,7 @@ def main():
     print("\n=== CPMG-4 Echo ===")
     refocus_count = 4
     compiled_kernel = pulse.compile(cpmg_echo, device=dev).lower(
-        dev.qudit_handles[0], sigma, amp_half_pi, amp_pi, tau, refocus_count
+        dev.qudits[0], sigma, amp_half_pi, amp_pi, tau, refocus_count
     )
     total_cpmg = 2 * (4 * sigma) + refocus_count * (4 * sigma + 2 * tau)
     print(f"  Expected duration: {cycles(total_cpmg):.0f} clock cycles")

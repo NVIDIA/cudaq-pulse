@@ -11,7 +11,7 @@ import dataclasses
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.targets import TargetDescription
+from cudaq_pulse.targets import DeviceDescription
 
 _TRANSMON_17Q = pulse.device("transmon_17q")
 
@@ -19,7 +19,7 @@ _TRANSMON_17Q = pulse.device("transmon_17q")
 def _slice(indices):
     """A device of the transmon_17q qudits *indices*, renumbered 0, 1, ... in
     increasing order, with the couplings and residual ZZ between them."""
-    target = _TRANSMON_17Q.target
+    target = _TRANSMON_17Q.description
     new = {q: i for i, q in enumerate(sorted(indices))}
 
     def renumbered(entries):
@@ -29,14 +29,14 @@ def _slice(indices):
             if all(q in new for q in e.qudits)
         ]
 
-    sliced = TargetDescription(
+    sliced = DeviceDescription(
         name="transmon-17q-slice",
         qubits={i: target.qubits[q].replace(index=i) for q, i in new.items()},
         couplings=renumbered(target.couplings),
         residual_zz=renumbered(target.residual_zz),
         clock_ghz=target.clock_ghz,
     )
-    return pulse.device(sliced).qudit_handles, new
+    return pulse.device(sliced).qudits, new
 
 
 @pulse.kernel
@@ -76,7 +76,7 @@ def _same(a, b):
 
 
 def test_a_high_index_pair_is_a_two_mode_problem():
-    q = _TRANSMON_17Q.qudit_handles
+    q = _TRANSMON_17Q.qudits
     lowered = pair.lower(q[13], q[3])
     assert lowered.qudits == (3, 13)
     result = pulse.simulate(lowered, levels=3, t_end=2.0)
@@ -86,7 +86,7 @@ def test_a_high_index_pair_is_a_two_mode_problem():
 
 
 def test_bound_but_unused_qudits_are_not_simulated():
-    q = _TRANSMON_17Q.qudit_handles
+    q = _TRANSMON_17Q.qudits
 
     @pulse.kernel
     def one_of_two(a, b):
@@ -99,7 +99,7 @@ def test_bound_but_unused_qudits_are_not_simulated():
 
 @pytest.mark.parametrize("levels", [2, 3])
 def test_a_slice_simulates_like_the_device_of_its_qudits(levels):
-    q = _TRANSMON_17Q.qudit_handles
+    q = _TRANSMON_17Q.qudits
     h, new = _slice((13, 3))
     on_chip = pulse.simulate(pair.lower(q[13], q[3]), levels=levels)
     alone = pulse.simulate(pair.lower(h[new[13]], h[new[3]]), levels=levels)
@@ -108,7 +108,7 @@ def test_a_slice_simulates_like_the_device_of_its_qudits(levels):
 
 
 def test_modes_are_ordered_by_device_index_whatever_the_argument_order():
-    q = _TRANSMON_17Q.qudit_handles
+    q = _TRANSMON_17Q.qudits
     h, new = _slice((13, 0, 3))
     for order in ((13, 0, 3), (3, 13, 0), (0, 3, 13)):
         on_chip = pulse.simulate(triple.lower(*(q[i] for i in order)), levels=2)
@@ -123,7 +123,7 @@ def test_modes_are_ordered_by_device_index_whatever_the_argument_order():
 
 @pytest.mark.parametrize("measured", [13, 3])
 def test_measurements_report_device_qudits(measured):
-    q = _TRANSMON_17Q.qudit_handles
+    q = _TRANSMON_17Q.qudits
     h, new = _slice((13, 3))
     other = 3 if measured == 13 else 13
     on_chip = pulse.simulate(
@@ -142,7 +142,7 @@ def test_measurements_report_device_qudits(measured):
 
 
 def test_an_initial_state_spans_the_used_qudits():
-    q = _TRANSMON_17Q.qudit_handles
+    q = _TRANSMON_17Q.qudits
     h, new = _slice((13, 3))
     psi = np.zeros(4)
     psi[0b10] = 1.0  # qudits[1] = 13 excited
@@ -157,7 +157,7 @@ def test_an_initial_state_spans_the_used_qudits():
 
 @pytest.mark.gpu
 def test_gpu_simulates_a_high_index_pair_like_the_cpu():
-    q = _TRANSMON_17Q.qudit_handles
+    q = _TRANSMON_17Q.qudits
     lowered = drive_and_measure.lower(q[13], q[3])
     cpu = pulse.simulate(lowered, levels=3)
     gpu = pulse.simulate(lowered, levels=3, backend="gpu")

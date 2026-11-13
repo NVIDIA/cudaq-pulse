@@ -4,7 +4,7 @@
 
 A ``Device`` is a read-only description of one machine: its target (the
 calibrated physics) and its layout, which maps the user's qudit numbering to
-the target's carriers. ``dev.qudit_handles[i]`` is a ``Qudit``: a handle that
+the target's carriers. ``dev.qudits[i]`` is a ``Qudit``: a handle that
 names one carrier of that device. A kernel called with handles runs on their
 device, so one compiled kernel serves every device it is called with.
 
@@ -35,7 +35,7 @@ from ._errors import (
     _ranges,
 )
 from .targets._registry import NoTargetError, UnknownTargetError, _registry, make_target
-from .targets.base import TargetDescription
+from .targets.base import DeviceDescription
 from .targets.models import SimulationModel
 
 try:
@@ -92,7 +92,7 @@ def _read_only(array: Any) -> Any:
     return array
 
 
-def _fingerprint(target: TargetDescription, layout: tuple[int, ...], calibration: Any) -> str:
+def _fingerprint(target: DeviceDescription, layout: tuple[int, ...], calibration: Any) -> str:
     """Content hash of everything a compiled kernel depends on, and of the
     calibration the device holds: devices of one fingerprint are one device."""
     qubits = [
@@ -192,7 +192,7 @@ class Qudit:
         ``get_drive_line(q).get_calibration(gate)`` (``X`` to ``Y90``) and
         ``get_readout_line(q).get_calibration(pulse.gates.READOUT)`` give it
         in a kernel; see ``Qubit.get_calibration``."""
-        return self.device.target.qubits[self.index].get_calibration(gate, transition)
+        return self.device.description.qubits[self.index].get_calibration(gate, transition)
 
 
 class Register(Sequence[Qudit]):
@@ -246,7 +246,7 @@ class Register(Sequence[Qudit]):
 
 
 class _Handles:
-    """``dev.qudit_handles``: index with an int, a list of ints or a slice."""
+    """``dev.qudits``: index with an int, a list of ints or a slice."""
 
     __slots__ = ("_all",)
 
@@ -322,7 +322,7 @@ class Device:
 
     def __init__(
         self,
-        target: TargetDescription,
+        target: DeviceDescription,
         *,
         name: str,
         layout: Sequence[int] | None = None,
@@ -361,7 +361,7 @@ class Device:
         self.control_system = control_system
         # The target before its calibration was applied, as ``as_dict`` writes it.
         self._base_target = target
-        self.target = target
+        self.description = target
         self.name = name
         self.source = source
         # The Calibration the target's fitted values came from, if any.
@@ -375,7 +375,7 @@ class Device:
         self._identity: Any = (
             self.fingerprint if control_system is None else (self.fingerprint, control_system)
         )
-        self.qudit_handles = _Handles(tuple(Qudit(self, p, i) for i, p in enumerate(layout)))
+        self.qudits = _Handles(tuple(Qudit(self, p, i) for i, p in enumerate(layout)))
         self._arrays: tuple[Any, Any] | None = None
         # The frequency tables a compiled module records, as
         # _frequency_tables returns them: (count, 0-1 frequencies, readout
@@ -386,7 +386,7 @@ class Device:
         if self._arrays is None:
             import numpy as np
 
-            target = self.target
+            target = self.description
             model = target.model if isinstance(target.model, SimulationModel) else SimulationModel()
             qubits = [target.qubits[p] for p in self.layout]
             levels = [model.levels_of(p) for p in self.layout]
@@ -404,7 +404,7 @@ class Device:
         """The default transition of carrier *index*, and the frequency of
         each transition its line has a tone for: every transition of a
         drive line, only the default of a readout line."""
-        target = self.target
+        target = self.description
         model = target.model if isinstance(target.model, SimulationModel) else SimulationModel()
         default = model.default_transition
         if index < 0:
@@ -428,7 +428,7 @@ class Device:
             return self._tables
         from array import array
 
-        frequencies, qubits = self.frequencies, self.target.qubits
+        frequencies, qubits = self.frequencies, self.description.qubits
         carriers: Sequence[int] = range(count)
         try:
             table = array("d", map(frequencies.__getitem__, carriers))
@@ -478,15 +478,15 @@ class Device:
     def qudit(self, label: str) -> Qudit:
         """The handle of the qudit labelled *label* (``Qubit.label``), as in
         ``dev.qudit("D1")``; a ``NotFoundError`` names the labels there are."""
-        qubits = self.target.qubits
-        for handle in self.qudit_handles:
+        qubits = self.description.qubits
+        for handle in self.qudits:
             if qubits[handle.index].label == label:
                 return handle
         labels = [qubits[p].label for p in self.layout if qubits[p].label]
         carrier = next((q.index for q in qubits.values() if q.label == label), None)
         if carrier is not None:
             raise NotFoundError(
-                f"qudit {label!r} is carrier {carrier} of {self.target.name}, which the "
+                f"qudit {label!r} is carrier {carrier} of {self.description.name}, which the "
                 f"layout of device {self.name!r} leaves out"
             )
         close = _closest(str(label), labels)
@@ -508,7 +508,7 @@ class Device:
                 raise DeviceMismatchError(
                     f"{handle!r} is a qudit of {handle.device.name!r}, not of {self.name!r}"
                 )
-        return self.target.coupling(a.index, b.index)
+        return self.description.coupling(a.index, b.index)
 
     def _line_calibration(
         self, index: int, readout: bool, gate: Any, transition: Any
@@ -532,19 +532,9 @@ class Device:
                 f"a {line} line has the calibrations of {gates}, not {_gate_label(name)}; {fix}"
             )
         pulse: DragPulse | ReadoutPulse = _qudit_calibration(
-            self.target.qubits[index], name, transition
+            self.description.qubits[index], name, transition
         )
         return pulse
-
-    @property
-    def quantum_system(self) -> TargetDescription:
-        """The calibrated physics of the device (``target``)."""
-        return self.target
-
-    @property
-    def qudits(self) -> _Handles:
-        """The qudit handles, by the user's numbering (``qudit_handles``)."""
-        return self.qudit_handles
 
     @staticmethod
     def load(path: str | os.PathLike[str], /) -> Device:
@@ -607,7 +597,7 @@ def _from_spec(
 
 
 def _calibrated(
-    target: TargetDescription,
+    target: DeviceDescription,
     spec: str | None,
     source: str,
     layout: Sequence[int] | None,
@@ -616,7 +606,7 @@ def _calibrated(
     clock_ghz: float | None = None,
 ) -> Device:
     """The device of *target*, registered as *spec* (``None`` for a
-    ``TargetDescription``), with *calibration* applied and *clock_ghz* (if
+    ``DeviceDescription``), with *calibration* applied and *clock_ghz* (if
     given) its program clock."""
     base = target
     if calibration is not None:
@@ -642,10 +632,10 @@ def _calibrated(
 
 def _target(
     spec: Any, problems: list[Problem], key: str = "quantum_system"
-) -> TargetDescription | None:
+) -> DeviceDescription | None:
     from .targets._registry import available_targets, make_target
 
-    if isinstance(spec, TargetDescription):
+    if isinstance(spec, DeviceDescription):
         return spec
     if spec is None:
         problems.append(
@@ -654,14 +644,14 @@ def _target(
                 path=key,
                 fix="give a registered target name ("
                 + ", ".join(available_targets())
-                + ") or a TargetDescription",
+                + ") or a DeviceDescription",
             )
         )
         return None
     if not isinstance(spec, str):
         problems.append(
             Problem(
-                f"must be a registered target name or a TargetDescription, "
+                f"must be a registered target name or a DeviceDescription, "
                 f"got {type(spec).__name__}",
                 path=key,
                 value=spec,
@@ -676,7 +666,7 @@ def _target(
 
 
 def _layout(
-    layout: Any, target: TargetDescription | None, name: str, problems: list[Problem]
+    layout: Any, target: DeviceDescription | None, name: str, problems: list[Problem]
 ) -> tuple[int, ...] | None:
     """*layout* as carrier indices, checked against *target* when it is known."""
     if isinstance(layout, (str, bytes)) or not isinstance(layout, Sequence):
@@ -842,7 +832,7 @@ def _checked(config: Mapping[str, Any], source: str, problems: list[Problem]) ->
     key = "quantum_system"
     spec = config.get(key)
     control = config.get("control_system")
-    # A target by name or as a TargetDescription, without a format or a
+    # A target by name or as a DeviceDescription, without a format or a
     # control system, needs none of the system file machinery.
     if "format" in config or isinstance(spec, Mapping) or control is not None:
         from ._system import _config_systems
@@ -941,7 +931,7 @@ def _located(problems: list[Problem], file: str, text: str) -> list[Problem]:
 
 
 def device(
-    description: TargetDescription | str | None = None,
+    description: DeviceDescription | str | None = None,
     /,
     *,
     layout: Sequence[int] | None = None,
@@ -951,7 +941,7 @@ def device(
     clock_ghz: float | None = None,
 ) -> Device:
     """The device of a quantum system: a registered target name or a
-    ``TargetDescription``.
+    ``DeviceDescription``.
 
     ``device("transmon_17q")`` is the device of a registered target,
     with every carrier in order (a name takes its argument after a colon, as
@@ -1010,14 +1000,14 @@ def device(
     elif isinstance(description, str):
         if description.partition(":")[0] not in _registry():
             _unknown_target(description)
-    elif not isinstance(description, TargetDescription):
+    elif not isinstance(description, DeviceDescription):
         fix = (
             "; Device.from_dict(data) reads a system file's data"
             if isinstance(description, Mapping)
             else ""
         )
         raise InvalidTypeError(
-            "pulse.device takes a registered target name or a TargetDescription, got "
+            "pulse.device takes a registered target name or a DeviceDescription, got "
             f"{type(description).__name__}{fix}"
         )
     if isinstance(control_system, Mapping) or isinstance(calibration, Mapping):

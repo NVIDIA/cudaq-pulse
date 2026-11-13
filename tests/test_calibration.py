@@ -81,7 +81,7 @@ def test_a_loaded_calibration_keeps_the_values_it_parsed():
         cal.circuit(qubit), cal.idle_flux(qubit), cal.charge_coupling_hz(pair)
         cal.pair(pair), cal.exchange_hz(pair), cal.idle_zz_hz(pair)
         cal.flux_for_detuning(qubit, cal.detuning_for_flux(qubit, 0.1))
-        cal.apply(transmon_17q()), cal.fingerprint, cal.target
+        cal.apply(transmon_17q()), cal.fingerprint, cal.description
         assert cal._data == parsed
     assert shipped._data is not parsed
 
@@ -147,7 +147,7 @@ def test_flux_quanta_and_detuning_convert_both_ways(cal):
 def test_the_17_qubit_device_carries_the_shipped_calibration(cal):
     dev = pulse.device("transmon_17q")
     assert dev.calibration == cal
-    assert dev.target is transmon_17q()
+    assert dev.description is transmon_17q()
 
 
 def _index_entry(name):
@@ -221,9 +221,11 @@ def test_a_device_loads_a_calibration_from_its_config(tmp_path, cal):
     assert custom.calibration.name == "custom" and custom != base
 
     def x2_d4(dev):
-        labels = {q.index: q.label for q in dev.target.qubits.values()}
+        labels = {q.index: q.label for q in dev.description.qubits.values()}
         (c,) = (
-            c for c in dev.target.couplings if tuple(labels[q] for q in c.qudits) == ("X2", "D4")
+            c
+            for c in dev.description.couplings
+            if tuple(labels[q] for q in c.qudits) == ("X2", "D4")
         )
         return c.strength_hz
 
