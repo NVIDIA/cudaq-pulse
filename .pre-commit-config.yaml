@@ -42,7 +42,8 @@ repos:
         name: license headers
         entry: python3 tools/check-license-headers.py
         language: system
-        files: \.(py|pyi|c|cpp|h|td|mlir|cmake|sh|in|yml|yaml|rst|map)$|(^|/)CMakeLists\.txt$
+        files: \.(py|pyi|c|cpp|h|td|mlir|cmake|sh|in|txt|yml|yaml|rst|map)$|(^|/)(\.gitignore|\.clang-format|CODEOWNERS)$
+        exclude: (^|/)LICENSES/  # third-party license texts stay verbatim
       - id: release-hygiene
         name: no local paths, internal hosts or credentials
         entry: python3 tools/check-release-hygiene.py
