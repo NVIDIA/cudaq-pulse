@@ -469,7 +469,7 @@ def alone(case: Case) -> Any:
     return pulse.kernel(w)
 
 
-def compile_case(case: Case, device: Any = None, kernel: Any = None, **options: Any) -> Any:
+def compile_case(case: Case, quantum_system: Any = None, kernel: Any = None, **options: Any) -> Any:
     """``pulse.compile`` of *case*'s program (or of *kernel*), as the case says."""
     settings: dict[str, Any] = {
         "control_system": MACHINE,
@@ -478,8 +478,8 @@ def compile_case(case: Case, device: Any = None, kernel: Any = None, **options: 
     }
     if case.root in ("rcp", "alap_rcp"):
         settings["schedule"] = case.root
-    if device is not None:
-        settings["device"] = device
+    if quantum_system is not None:
+        settings["quantum_system"] = quantum_system
     settings.update(options)
     return pulse.compile(kernel or program(case), **settings)
 

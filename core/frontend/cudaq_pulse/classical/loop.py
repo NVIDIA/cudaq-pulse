@@ -20,7 +20,7 @@ register), and a variable wait takes its length from the answer::
         wait(d, read_wait.submit().result(), bounds=(0, 80000))
 
     log = EstimateLog()
-    compiled = pulse.compile(probe, device=dev)
+    compiled = pulse.compile(probe, quantum_system=dev)
     for i in range(10_000):
         lowered = compiled.lower(q, store["amplitude"])
         outcome = ...  # run or simulate it

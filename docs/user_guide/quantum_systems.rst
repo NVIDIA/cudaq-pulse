@@ -7,7 +7,7 @@ Devices and Targets
 
 A *target* is the calibrated physics of a machine: qudit frequencies and
 anharmonicities, couplings, residual ZZ, T1/T2, the pulses its gates are
-calibrated for, and the pulse clock. A *device* is a target together with a *layout*, which maps
+calibrated for, and the pulse clock. A *quantum_system* is a target together with a *layout*, which maps
 the qudit numbering a program uses to the target's carriers. Both are
 read-only.
 
@@ -15,9 +15,9 @@ read-only.
 
    import cudaq_pulse as pulse
 
-   dev = pulse.device("transmon_17q")                  # shipped target
-   chip = pulse.device("transmon_17q", layout=[4, 5, 6])
-   chip = pulse.Device.load("chip.json")              # the same, from a system file
+   qs = pulse.quantum_system("transmon_17q")                  # shipped target
+   chip = pulse.quantum_system("transmon_17q", layout=[4, 5, 6])
+   chip = pulse.QuantumSystem.load("chip.json")              # the same, from a system file
 
    q = chip.qudits[0]          # a handle naming carrier 4
    pair = chip.qudits[0:2]     # a Register: carriers 4 and 5
@@ -27,12 +27,12 @@ read-only.
    chip.transition_freq[0, 1, 2]      # 1-2 frequency of qudit 0
    chip.qudit_freq[0] = 5.01e9        # ValueError: assignment destination is read-only
 
-``pulse.device`` takes the quantum system, a registered target name or a
+``pulse.quantum_system`` takes the quantum system, a registered target name or a
 ``cudaq_pulse.targets.DeviceDescription``, and optionally ``layout=``,
 ``calibration=`` and ``cooldown=``, ``control_system=`` and ``clock_ghz=``.
-A string is always a name: ``pulse.Device.load(path)`` reads a system file
-(as ``Device.as_dict()`` writes one, and ``json.dumps`` saves), and
-``pulse.Device.from_dict(data)`` its data. ``layout[i]`` is the carrier
+A string is always a name: ``pulse.QuantumSystem.load(path)`` reads a system file
+(as ``QuantumSystem.as_dict()`` writes one, and ``json.dumps`` saves), and
+``pulse.QuantumSystem.from_dict(data)`` its data. ``layout[i]`` is the carrier
 that qudit ``i`` names; by default every carrier of the target, in order.
 A ``DeviceDescription``'s
 ``model`` (``TransmonModel`` by default) decides the operator of its
@@ -48,7 +48,7 @@ couplings, for transmons the exchange g (a^dagger b + a b^dagger):
        qudits={i: PhysicalQudit(i, f, -2.0e8, 50.0, 30.0) for i, f in enumerate([4.8e9, 6.9e9])},
        couplings=[Coupling((0, 1), strength_hz=5.7e6, calibrations={pulse.gates.CZ: cz})],
    )
-   qpu = pulse.device(pair)
+   qpu = pulse.quantum_system(pair)
 
 A coupling's ``strength_hz`` is g / 2 pi; ``None`` says it is not measured
 yet, and such a system compiles, schedules and exports while
@@ -56,17 +56,17 @@ yet, and such a system compiles, schedules and exports while
 any ZZ between two qudits beyond what the couplings produce, as
 ``ResidualZZ((0, 1), rate_hz=-2.0e4)``, rate zeta / 2 pi with
 zeta = E11 - E10 - E01 + E00. The values are checked when the system is
-built, and one ``DeviceDefinitionError`` lists every problem at its path
+built, and one ``QuantumSystemDefinitionError`` lists every problem at its path
 (``couplings[1].qudits[0]``).
 
-Arguments or a system file with problems raise ``DeviceDefinitionError``, a
+Arguments or a system file with problems raise ``QuantumSystemDefinitionError``, a
 ``ValueError``, which lists every problem rather than the first. Each is a
 ``pulse.Problem`` with its path (the argument, or its place in the file),
 the offending value and a fix; for a file, the line and column too:
 
 .. code-block:: text
 
-   DeviceDefinitionError: 2 problems in device file lab.json:
+   QuantumSystemDefinitionError: 2 problems in device file lab.json:
      lab.json:3:20: layout[2]: carrier 99 is not in target 'transmon_17q' (it has 0..16)
      lab.json:4:15: cooldown: 'x' is given without a calibration; add "calibration", a shipped name or a file path, or remove "cooldown"
 
@@ -80,13 +80,13 @@ Qudit handles
 A ``Qudit`` names a carrier of one device; it is identity, not location. A
 kernel called with handles runs on their device. Passing handles of two
 devices to one call, or handles of another device to a kernel compiled for
-one, raises ``DeviceMismatchError``, and passing the same qudit twice raises
+one, raises ``QuantumSystemMismatchError``, and passing the same qudit twice raises
 ``TypeError``.
 
 Devices compare by content: two devices built from the same values are
 equal and share compiled kernels, but each is its own device, so their
 handles do not mix in one call. A layout is part of the content, and an
-empty one is a ``DeviceDefinitionError``: leave ``layout`` out for every
+empty one is a ``QuantumSystemDefinitionError``: leave ``layout`` out for every
 carrier of the target.
 
 To change a frequency, edit the quantum system, or pass the frequency to the kernel
@@ -103,7 +103,7 @@ and a coupling give the same values:
 
 .. code-block:: python
 
-   dev = pulse.device("transmon_17q")
+   qs = pulse.quantum_system("transmon_17q")
 
    @pulse.kernel
    def x_then_measure(q):
@@ -115,9 +115,9 @@ and a coupling give the same values:
        sync(d, r)
        readout(r, r.get_calibration(pulse.gates.READOUT))
 
-   dev.qudits[4].get_calibration(pulse.gates.X).amplitude         # 0.1313: a pi rotation
-   a, d = dev.qudit("X1"), dev.qudit("D2")
-   dev.coupling(a, d).get_calibration(pulse.gates.CZ).duration_ns   # 98.0
+   qs.qudits[4].get_calibration(pulse.gates.X).amplitude         # 0.1313: a pi rotation
+   a, d = qs.qudit("X1"), qs.qudit("D2")
+   qs.coupling(a, d).get_calibration(pulse.gates.CZ).duration_ns   # 98.0
 
 What a device does not publish is derived: an ``X`` without an amplitude
 gets the one that makes its area a pi rotation at the qudit's drive scale,
@@ -140,10 +140,10 @@ target*:
    python -m cudaq_pulse --quantum-system transmon_generic:4 script.py --script-args
 
 The launcher sets ``CUDAQ_PULSE_QUANTUM_SYSTEM`` for the script and passes the
-script's own arguments through unparsed. ``pulse.device()`` with no
+script's own arguments through unparsed. ``pulse.quantum_system()`` with no
 argument returns the process quantum system's device, whose handles the script then
 passes to its kernels; a kernel call with no qudit handles always raises
-``NoDeviceError``.
+``NoQuantumSystemError``.
 
 Registered names are ``transmon_17q`` and ``transmon_generic:N``;
 ``cudaq_pulse.targets.register_quantum_system`` adds more.
@@ -187,8 +187,8 @@ defect bands and feedline groups. Every value records its
 
 .. code-block:: python
 
-   dev = pulse.device("transmon_17q", calibration="transmon_17q", cooldown="2022-main")
-   cal = dev.calibration
+   qs = pulse.quantum_system("transmon_17q", calibration="transmon_17q", cooldown="2022-main")
+   cal = qs.calibration
    cal.entry("qudits", "D4", "ec")        # value with its provenance
    cal.exchange_hz("X2-D4")               # J_qq at the idle points
    cal.exchange_hz("X2-D4", data_hz=4.4e9)  # ... with D4 tuned to 4.4 GHz

@@ -46,14 +46,14 @@ pulse.ops.wf_scale(0.5, wave)  # type: ignore[arg-type]
 pulse.ops.wf_scale(waveform=wave, scalar=0.5)  # type: ignore[call-arg]
 assert_type(pulse.ops.wf_add(wave, wave), Waveform)
 
-dev = pulse.device("transmon_17q")
-assert_type(dev, pulse.Device)
-assert_type(pulse.device("transmon_17q"), pulse.Device)
-assert_type(pulse.device("transmon_17q", layout=[4, 5], clock_ghz=1.0), pulse.Device)
-assert_type(pulse.Device.from_dict(dev.as_dict()), pulse.Device)
-assert_type(pulse.Device.load("qpu.json"), pulse.Device)
-pulse.device({"quantum_system": "transmon_17q"})  # type: ignore[arg-type]
-pulse.device("transmon_17q", [4, 5])  # type: ignore[call-arg]
+dev = pulse.quantum_system("transmon_17q")
+assert_type(dev, pulse.QuantumSystem)
+assert_type(pulse.quantum_system("transmon_17q"), pulse.QuantumSystem)
+assert_type(pulse.quantum_system("transmon_17q", layout=[4, 5], clock_ghz=1.0), pulse.QuantumSystem)
+assert_type(pulse.QuantumSystem.from_dict(dev.as_dict()), pulse.QuantumSystem)
+assert_type(pulse.QuantumSystem.load("qpu.json"), pulse.QuantumSystem)
+pulse.quantum_system({"quantum_system": "transmon_17q"})  # type: ignore[arg-type]
+pulse.quantum_system("transmon_17q", [4, 5])  # type: ignore[call-arg]
 assert_type(dev.qudits[0], pulse.Qudit)
 assert_type(dev.qudits[0:2], pulse.Register)
 assert_type(dev.qudits[[0, 1]], pulse.Register)
@@ -97,7 +97,7 @@ assert_type(lowered.metrics, CompileMetrics)
 assert_type(lowered.schedule, Sequence[ScheduledEvent])
 assert_type(lowered.arguments, tuple[float, ...])
 
-compiled = pulse.compile(rabi, schedule="asap", device=dev)
+compiled = pulse.compile(rabi, schedule="asap", quantum_system=dev)
 compiled_kernels: list[pulse.CompiledKernel[...]] = [compiled]
 assert_type(compiled.lower(dev.qudits[0], 0.5), pulse.Lowered)
 compiled(dev.qudits[0])  # type: ignore[call-arg]
@@ -218,11 +218,11 @@ assert_type(pulse.controller.OpCounts(add=2).total, int)
 assert_type(cores.max_ops_total, int | None)
 assert_type(cores.dispatch_keys, Mapping[str, int])
 assert_type(pulse.Controller(processors=[cores]).processors, Sequence[pulse.Processor])
-qpu = pulse.device("transmon_17q", control_system=control)
+qpu = pulse.quantum_system("transmon_17q", control_system=control)
 assert_type(qpu.control_system, pulse.ControlSystem | None)
 assert_type(qpu.as_dict(), dict[str, Any])
-pulse.compile(rabi, device=qpu, control_system=control)
-pulse.compile(rabi, device=qpu, control_system=box)
+pulse.compile(rabi, quantum_system=qpu, control_system=control)
+pulse.compile(rabi, quantum_system=qpu, control_system=box)
 pulse.controller(3)  # type: ignore[arg-type]
 
 readout = DispersiveReadout(frequency_hz=7.0e9, linewidth_hz=1.0e6)

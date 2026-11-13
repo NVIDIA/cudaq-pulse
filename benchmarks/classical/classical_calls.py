@@ -32,11 +32,11 @@ from cudaq_pulse.targets import DeviceDescription, PhysicalQudit
 PI_AMP = math.pi / 20
 
 
-def _device(t1_us: float = 0.0) -> pulse.Device:
+def _device(t1_us: float = 0.0) -> pulse.QuantumSystem:
     qudit = PhysicalQudit(
         index=0, frequency_hz=5e9, anharmonicity_hz=-2e8, t1_us=t1_us, t2_star_us=0.0
     )
-    return pulse.device(DeviceDescription(name="bench", qudits={0: qudit}))
+    return pulse.quantum_system(DeviceDescription(name="bench", qudits={0: qudit}))
 
 
 def many_calls(n: int, links: int):
@@ -162,7 +162,7 @@ def bench_memory() -> None:
 def bench_cache(repeats: int) -> None:
     dev = _device()
     q = dev.qudits[0]
-    compiled = pulse.compile(decoded_reset, device=dev)
+    compiled = pulse.compile(decoded_reset, quantum_system=dev)
     compiled.lower(q)
     t = _median(lambda: [compiled.lower(q) for _ in range(1000)], repeats) / 1000
     print(f"cache: lower() of a cached kernel that calls: {t * 1e6:.1f} us")
@@ -171,8 +171,8 @@ def bench_cache(repeats: int) -> None:
 def bench_simulate(repeats: int) -> None:
     dev = _device(t1_us=20.0)
     q = dev.qudits[0]
-    plain = pulse.compile(waiting_reset, device=dev).lower(q)
-    called = pulse.compile(decoded_reset, device=dev).lower(q)
+    plain = pulse.compile(waiting_reset, quantum_system=dev).lower(q)
+    called = pulse.compile(decoded_reset, quantum_system=dev).lower(q)
     plus = [2**-0.5, 2**-0.5]
     a = _median(lambda: pulse.simulate(plain, initial_state=plus, levels=2), repeats)
     b = _median(lambda: pulse.simulate(called, initial_state=plus, levels=2), repeats)

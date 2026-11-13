@@ -211,7 +211,7 @@ def test_the_time_step_resolves_the_fastest_coupled_detuning():
         },
         couplings=[Coupling((0, 1), _k.COUPLING_11_20_HZ / math.sqrt(2.0))],
     )
-    dev = pulse.device(pair)
+    dev = pulse.quantum_system(pair)
 
     @pulse.kernel
     def flip_and_idle(qa, qb):

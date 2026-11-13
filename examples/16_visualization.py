@@ -60,9 +60,9 @@ def print_ascii_timeline(events: Sequence[pulse.compiler.ScheduledEvent], width:
 
 
 def main():
-    args = list(dev.qudits[:3])
+    args = list(qs.qudits[:3])
     for policy in ("asap", "alap"):
-        compiled = pulse.compile(vis_demo, schedule=policy, device=dev).lower(*args)
+        compiled = pulse.compile(vis_demo, schedule=policy, quantum_system=qs).lower(*args)
         print(f"\n=== {policy.upper()} schedule ===")
         print_ascii_timeline(compiled.schedule)
 
@@ -75,5 +75,5 @@ def main():
 
 
 if __name__ == "__main__":
-    dev = pulse.device("transmon_17q")
+    qs = pulse.quantum_system("transmon_17q")
     main()

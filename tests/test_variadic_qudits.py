@@ -8,7 +8,7 @@ import pickle
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse import InvalidTypeError, NoDeviceError, Qudit, Register
+from cudaq_pulse import InvalidTypeError, NoQuantumSystemError, Qudit, Register
 
 from tests._handles import LADDER, Q
 
@@ -154,9 +154,9 @@ def test_empty_qudits_are_a_register_of_none():
 
     assert k(Q[0]) == 0
     assert _mlir(k, Q[0]) == _mlir(k, Q[0], *Q[1:1])
-    with pytest.raises(NoDeviceError, match="without qudit handles"):
+    with pytest.raises(NoQuantumSystemError, match="without qudit handles"):
         spread.lower(4.0)
-    assert pulse.compile(spread, device=LADDER).lower(4.0).metrics.op_count == 0
+    assert pulse.compile(spread, quantum_system=LADDER).lower(4.0).metrics.op_count == 0
 
 
 def test_qudits_must_be_qudit_handles():

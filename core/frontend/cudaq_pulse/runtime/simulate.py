@@ -401,11 +401,18 @@ def _simulate_lowered(
             f"({', '.join(lowered.parameters)}); pass their values, as in "
             "simulate(program, 0.5), or lower the kernel with them"
         )
-    device = lowered.device
-    target = device._description if plant is None else _check_plant(lowered, plant)
+    compiled_for = lowered.quantum_system
+    target = compiled_for._description if plant is None else _check_plant(lowered, plant)
     try:
         step = _STEPS.get(
-            (id(device._description), id(target), device.clock_ghz, lowered.qudits, levels, dt_ns)
+            (
+                id(compiled_for._description),
+                id(target),
+                compiled_for.clock_ghz,
+                lowered.qudits,
+                levels,
+                dt_ns,
+            )
         )
     except TypeError:  # levels by qudit, a dict: unhashable, and never kept
         step = None
@@ -426,7 +433,7 @@ def _simulate_lowered(
             t_end=t_end,
             dt_ns=step,
             integrator=integrator,
-            clock_ghz=device.clock_ghz,
+            clock_ghz=compiled_for.clock_ghz,
             dephasing=dephasing,
             handlers=handlers,
             readout=readout,
@@ -457,11 +464,18 @@ def _step(
         # warns, as the default step keeps, at every call.
         fastest, source = _fastest(target, lowered.qudits, levels)
         if fastest and fastest * step > _MAX_HZ_NS:
-            _warn_coarse_step(target, source, fastest, step, lowered.device.clock_ghz)
+            _warn_coarse_step(target, source, fastest, step, lowered.quantum_system.clock_ghz)
             return step
     if levels.__class__ is not dict and target.model.__class__ in _read_only_models():
-        compiled = lowered.device._description
-        key = (id(compiled), id(target), lowered.device.clock_ghz, lowered.qudits, levels, dt_ns)
+        compiled = lowered.quantum_system._description
+        key = (
+            id(compiled),
+            id(target),
+            lowered.quantum_system.clock_ghz,
+            lowered.qudits,
+            levels,
+            dt_ns,
+        )
         _remember(key, step, compiled, target)
     return step
 
@@ -550,7 +564,7 @@ def _default_step(
 
     Couplings turn at the detuning of the compiled device's qudits; levels
     at the spread of the simulated *target*'s (the compiled one by default)."""
-    compiled = lowered.device._description
+    compiled = lowered.quantum_system._description
     active = lowered.qudits
     fastest = _level_spread(compiled if target is None else target, active, levels)[0]
     if len(active) > 1:
@@ -565,7 +579,7 @@ def _default_step(
     if fastest > 0:
         step = min(step, 1e9 / (_STEPS_PER_PERIOD * fastest))
     # A whole number of steps per clock cycle keeps pulse edges on the grid.
-    cycle = 1.0 / lowered.device.clock_ghz
+    cycle = 1.0 / lowered.quantum_system.clock_ghz
     return cycle / math.ceil(cycle / step - 1e-9)
 
 
@@ -718,7 +732,7 @@ def _diverged_error(
             f" {cause[0].upper()}{cause[1:]}, and a step of {step_ns:.3g} ns takes "
             f"{1e9 / (fastest * step_ns):.3g} steps per period of it: a fixed-step "
             f"integrator needs {_STEPS_PER_PERIOD} to be accurate and diverges with "
-            f"fewer than about 2. Pass {_suggestion(fastest, lowered.device.clock_ghz)}."
+            f"fewer than about 2. Pass {_suggestion(fastest, lowered.quantum_system.clock_ghz)}."
         )
     else:
         text += (

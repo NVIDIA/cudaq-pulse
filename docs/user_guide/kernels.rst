@@ -31,10 +31,10 @@ Infrastructure stays behind the ``pulse.`` prefix:
        drive_line = get_drive_line(qubit)
        drive(drive_line, gaussian(duration, 0.5, sigma))
 
-   dev = pulse.device("transmon_17q")
+   qs = pulse.quantum_system("transmon_17q")
    duration = 32 * pulse.ns
    sigma = 8 * pulse.ns
-   rabi_oscillation(dev.qudits[0], duration, sigma)
+   rabi_oscillation(qs.qudits[0], duration, sigma)
 
 Defining a Kernel
 -----------------
@@ -59,10 +59,10 @@ Defining a Kernel
 The kernels on this page read their pulse durations from this ``cal``; see
 :ref:`durations`.
 
-Qudit arguments are **qudit handles** of a device: ``dev.qudits[i]``
-for one qudit, and ``dev.qudits[0:4]`` or ``dev.qudits[[0, 2]]``
+Qudit arguments are **qudit handles** of a device: ``qs.qudits[i]``
+for one qudit, and ``qs.qudits[0:4]`` or ``qs.qudits[[0, 2]]``
 for a register, which a kernel indexes and iterates like a list. The kernel
-runs on the device of its handles; see :doc:`devices`. How arguments bind,
+runs on the device of its handles; see :doc:`quantum_systems`. How arguments bind,
 which of them the kernel is specialized on, and what a call returns are
 described in :doc:`compilation`.
 
@@ -72,7 +72,7 @@ described in :doc:`compilation`.
    def two(q0, q1, amplitude: float):
        ...
 
-   reg = dev.qudits[0:2]
+   reg = qs.qudits[0:2]
    two(reg[0], reg[1], 0.3)
 
 A ``*qudits`` parameter takes any number of qudits, one argument each. In
@@ -94,8 +94,8 @@ parameters after it are keyword-only:
        sync(first, *[get_drive_line(q) for q in qudits])
        readout(first, square(cal["readout_duration"], 0.05))
 
-   x_all(0.3, dev.qudits[0], dev.qudits[2])
-   x_then_measure_first(*dev.qudits[0:4])
+   x_all(0.3, qs.qudits[0], qs.qudits[2])
+   x_then_measure_first(*qs.qudits[0:4])
 
 Annotated ``Qudit``, the qudits are runtime, as for a ``Register``
 parameter: one compilation serves every call with the same number of
@@ -104,10 +104,10 @@ call may pass none, as with an empty register; ``*qudits`` takes only qudit
 handles, so unpack a register into it (``*reg``). See :doc:`compilation`.
 
 Qudits always come from a device: a kernel takes them as parameters, and a
-call passes the device's handles (``dev.qudits[i]``, or a register
-``dev.qudits[0:4]``). A call without handles raises
-``NoDeviceError``, unless the kernel was compiled for a device with
-``pulse.compile(k, device=dev)``.
+call passes the device's handles (``qs.qudits[i]``, or a register
+``qs.qudits[0:4]``). A call without handles raises
+``NoQuantumSystemError``, unless the kernel was compiled for a device with
+``pulse.compile(k, quantum_system=qs)``.
 
 The kernel language (``get_drive_line``, ``drive``, ``gaussian``, ...) lives
 in ``cudaq_pulse.ops``; inside a kernel its names are used bare, as above.
@@ -117,7 +117,7 @@ in ``cudaq_pulse.ops``; inside a kernel its names are used bare, as above.
 Durations: cycles or times
 --------------------------
 
-A kernel counts time in cycles of the device's clock (``dev.clock_ghz``).
+A kernel counts time in cycles of the device's clock (``qs.clock_ghz``).
 A duration (a waveform's length or flat top, a ``wait`` and its bounds, a
 ``pulse.round_duration`` length) is either an ``int`` number of cycles or a time
 with units: ``20 * pulse.ns``, ``4 * pulse.us``, also ``pulse.ms`` and
@@ -141,8 +141,8 @@ them from a calibration the kernel closes over.
        wait(d, gap)
        drive(d, x)
 
-   fast = pulse.device("transmon_17q", clock_ghz=2.0)
-   slow = pulse.device("transmon_17q", clock_ghz=1.0)
+   fast = pulse.quantum_system("transmon_17q", clock_ghz=2.0)
+   slow = pulse.quantum_system("transmon_17q", clock_ghz=1.0)
    gap = 100 * pulse.ns
    x_then_wait.lower(fast.qudits[0], gap)  # 40, 200, 40 cycles
    x_then_wait.lower(slow.qudits[0], gap)  # 20, 100, 20 cycles
@@ -416,13 +416,13 @@ runtime parameters, so a sweep over a delay compiles once:
        sync(d, r)
        readout(r, square(cal["readout_duration"], 0.05))
 
-   q = dev.qudits[0]
+   q = qs.qudits[0]
    compiled_echo = pulse.compile(echo)
    for tau in np.linspace(0, 10_000, 1000):  # nanoseconds
        compiled_echo.lower(q, tau)  # one compilation for the whole sweep
 
 - Each call computes the length from its values, in clock cycles (here
-  nanoseconds times ``dev.clock_ghz``), and rounds it to the nearest cycle,
+  nanoseconds times ``qs.clock_ghz``), and rounds it to the nearest cycle,
   ties up (``floor(x + 0.5)``): 99.5 cycles is 100, 99.49 is 99.
 - The call's schedule is exactly that of the kernel compiled with that
   length: ``sync``, ALAP and ASAP placement, loops, branches and called
@@ -435,7 +435,7 @@ runtime parameters, so a sweep over a delay compiles once:
   only has to be non-negative. A call whose length is not finite, is
   negative or falls outside the bounds raises ``ValueError`` naming the
   kernel, the expression and the value, before anything runs.
-- Without values (``pulse.compile(k, device=dev).schedule`` of a kernel that
+- Without values (``pulse.compile(k, quantum_system=qs).schedule`` of a kernel that
   only has float parameters, or ``lowered.generic``) the module is scheduled
   with every such wait at its lowest length, 0 unless ``bounds`` says
   otherwise.

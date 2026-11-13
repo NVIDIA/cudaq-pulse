@@ -80,12 +80,12 @@ def t2_echo(qudit, tau):
 
 
 if __name__ == "__main__":
-    dev = pulse.device("transmon_17q")
-    qudit = dev.qudits[0]
-    spec = dev.physical_qudits[0]
+    qs = pulse.quantum_system("transmon_17q")
+    qudit = qs.qudits[0]
+    spec = qs.physical_qudits[0]
     t1_ns = spec.t1_us * 1e3
     print(f"=== T1 experiment on {spec.label} (T1 = {spec.t1_us:.1f} us), CPU simulation ===")
-    t1 = pulse.compile(t1_experiment, device=dev)
+    t1 = pulse.compile(t1_experiment, quantum_system=qs)
     first = None
     for wait_time in [0 * pulse.ns, 2 * pulse.us, 5 * pulse.us, 10 * pulse.us]:
         # A 0.25 ns step (two per clock cycle) resolves these pulses and the
@@ -98,16 +98,16 @@ if __name__ == "__main__":
         p0 = spec.thermal_population
         expected = p0 + (first[1] - p0) * math.exp(-(readout_ns - first[0]) / t1_ns)
         print(
-            f"  wait={wait_time / pulse.ns * dev.clock_ghz:6.0f} clock cycles: P(1) = {p1:.3f}"
+            f"  wait={wait_time / pulse.ns * qs.clock_ghz:6.0f} clock cycles: P(1) = {p1:.3f}"
             f"  (T1 decay predicts {expected:.3f})"
         )
 
     print("\n=== T2* Ramsey (tau=500) ===")
     ramsey_tau = 250 * pulse.ns
-    compiled_kernel = pulse.compile(t2_ramsey, device=dev).lower(qudit, ramsey_tau)
+    compiled_kernel = pulse.compile(t2_ramsey, quantum_system=qs).lower(qudit, ramsey_tau)
     print(compiled_kernel.mlir())
 
     print("\n=== T2 Echo (tau=1000) ===")
     echo_tau = 500 * pulse.ns
-    compiled_kernel = pulse.compile(t2_echo, device=dev).lower(qudit, echo_tau)
+    compiled_kernel = pulse.compile(t2_echo, quantum_system=qs).lower(qudit, echo_tau)
     print(compiled_kernel.mlir())

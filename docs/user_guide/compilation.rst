@@ -20,8 +20,8 @@ only run it.
        drive_line = get_drive_line(qubit)
        drive(drive_line, gaussian(cal["x_duration"], amplitude, cal["x_sigma"]))
 
-   dev = pulse.device("transmon_17q")
-   q = dev.qudits[0]
+   qs = pulse.quantum_system("transmon_17q")
+   q = qs.qudits[0]
 
    rabi(q, 0.3)                    # compiles, then runs; returns None
    rabi(q, 0.4)                    # same compilation, new amplitude
@@ -79,9 +79,9 @@ Devices
 -------
 
 A kernel runs on the device of the qudit handles it is called with; see
-:doc:`devices`. One kernel serves every device it is called with, each with
-its own specializations. A call without handles raises ``NoDeviceError``,
-unless the kernel is compiled for one device (``device=`` below); the
+:doc:`quantum_systems`. One kernel serves every device it is called with, each with
+its own specializations. A call without handles raises ``NoQuantumSystemError``,
+unless the kernel is compiled for one device (``quantum_system=`` below); the
 process quantum system is never used for it. Qudit frequencies and the pulse clock
 come from the device.
 
@@ -115,7 +115,7 @@ never evicted.
    for amplitude in (0.1, 0.2, 0.3):
        sweep(q, amplitude)          # one compilation for the whole sweep
 
-   pinned = pulse.compile(rabi, device=dev, schedule="asap")
+   pinned = pulse.compile(rabi, quantum_system=qs, schedule="asap")
 
 Options, all keyword-only:
 
@@ -155,9 +155,9 @@ Options, all keyword-only:
    describe the whole ``ControlSystem``. By default the device's control
    system, if it has one.
 
-``device`` *(Device, optional)*
+``quantum_system`` *(QuantumSystem, optional)*
    Pin the compiled kernel to one device. A call with handles of another
-   device, even an equal one, raises ``DeviceMismatchError``; a call without
+   device, even an equal one, raises ``QuantumSystemMismatchError``; a call without
    handles runs on it.
    A pinned kernel whose parameters are all ``float`` is built when it is
    compiled, so ``.mlir()``, ``.schedule`` and ``.metrics`` work on the
@@ -237,8 +237,8 @@ the module of one call:
    ``Lowered`` has one: a kernel or ``CompiledKernel`` has no duration until
    it is lowered for a call, since the call's arguments decide it.
 
-The device's handles find a qudit by its label, ``dev.qudit("D1")``, and the
-device gives the coupling of two of them, ``dev.coupling(a, b)``.
+The device's handles find a qudit by its label, ``qs.qudit("D1")``, and the
+device gives the coupling of two of them, ``qs.coupling(a, b)``.
 
 ``.timeline(figsize=(14, 4), title=None)``
    A matplotlib figure of the schedule, one row per line.

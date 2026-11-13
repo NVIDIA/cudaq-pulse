@@ -11,7 +11,7 @@ import pickle
 import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse._controller_cost import analyze_callable
-from cudaq_pulse._errors import DeviceDefinitionError
+from cudaq_pulse._errors import QuantumSystemDefinitionError
 from cudaq_pulse.controller import ControllerLimitError, OpClass, OpCounts, OpCycles
 
 TRANSMON_17Q = "transmon_17q"
@@ -73,12 +73,12 @@ def _qpu(*processors, model="box.a", links=("cores", "gpu")):
         drive_lines=[0, 1], readout_lines=[0, 1], processors=list(processors), model=model
     )
     system = pulse.ControlSystem(controllers=[box], links={name: pulse.Link() for name in links})
-    return pulse.device(TRANSMON_17Q, layout=[0, 1], control_system=system)
+    return pulse.quantum_system(TRANSMON_17Q, layout=[0, 1], control_system=system)
 
 
 def _lower(kernel, *processors):
     qpu = _qpu(*processors)
-    return pulse.compile(kernel, device=qpu).lower(qpu.qudits[0])
+    return pulse.compile(kernel, quantum_system=qpu).lower(qpu.qudits[0])
 
 
 def _fails(kernel, *processors):
@@ -198,13 +198,13 @@ def test_a_processor_states_its_dispatch_keys(tmp_path):
 def test_a_link_belongs_to_one_processor_of_the_system():
     a = pulse.Controller(drive_lines=[0], processors=[pulse.Processor(links=["cores"])])
     b = pulse.Controller(drive_lines=[1], processors=[pulse.Processor(links=[0])])
-    with pytest.raises(DeviceDefinitionError) as raised:
+    with pytest.raises(QuantumSystemDefinitionError) as raised:
         pulse.ControlSystem(controllers=[a, b], links={"cores": pulse.Link()})
     assert "controllers[1].processors[0].links[0]: is also a link of controllers[0]" in str(
         raised.value
     )
     c = pulse.Controller(processors=[pulse.Processor(links=["coers"])])
-    with pytest.raises(DeviceDefinitionError, match="did you mean 'cores'"):
+    with pytest.raises(QuantumSystemDefinitionError, match="did you mean 'cores'"):
         pulse.ControlSystem(controllers=[c], links={"cores": pulse.Link()})
 
 
@@ -348,18 +348,18 @@ def test_a_call_over_a_processor_limit_carries_the_report_of_its_values():
 
     qpu = _qpu(pulse.Processor(links=["cores"], max_ops_per_function=2))
     with pytest.raises(ControllerLimitError) as raised:
-        pulse.compile(waits, device=qpu).lower(qpu.qudits[0], 8.0)
+        pulse.compile(waits, quantum_system=qpu).lower(qpu.qudits[0], 8.0)
     (exceeded,) = raised.value.usage.exceeded
     assert (exceeded.where, exceeded.limit, exceeded.over) == ("_parity", "max_ops_per_function", 2)
     # Limits of a system without processors have no usage report.
     box = pulse.Controller(drive_lines=[0, 1], readout_lines=[0, 1], max_pulses=1)
-    plain = pulse.device(
+    plain = pulse.quantum_system(
         TRANSMON_17Q,
         layout=[0, 1],
         control_system=pulse.ControlSystem(controllers=[box], links={"cores": pulse.Link()}),
     )
     with pytest.raises(ControllerLimitError) as raised:
-        pulse.compile(corrected, device=plain).lower(plain.qudits[0])
+        pulse.compile(corrected, quantum_system=plain).lower(plain.qudits[0])
     assert raised.value.usage is None
 
 
@@ -429,13 +429,13 @@ def test_a_float_parameter_defers_the_processor_check_to_the_call():
             drive(d, square(20, 0.1))
 
     qpu = _qpu(pulse.Processor(links=["cores"], max_ops_per_function=2))
-    compiled = pulse.compile(waits, device=qpu)
+    compiled = pulse.compile(waits, quantum_system=qpu)
     with pytest.raises(ControllerLimitError, match="_parity holds 4 operations"):
         compiled.lower(qpu.qudits[0], 8.0)
 
 
 def test_a_system_without_processors_reports_every_function_off_board():
-    qpu = pulse.device(
+    qpu = pulse.quantum_system(
         TRANSMON_17Q,
         layout=[0, 1],
         control_system=pulse.ControlSystem(
@@ -443,7 +443,7 @@ def test_a_system_without_processors_reports_every_function_off_board():
             links={"cores": pulse.Link()},
         ),
     )
-    usage = pulse.compile(corrected, device=qpu).lower(qpu.qudits[0]).controller_usage
+    usage = pulse.compile(corrected, quantum_system=qpu).lower(qpu.qudits[0]).controller_usage
     assert usage.controllers == () and usage.off_board == ("_parity",) and usage.within_limits
 
 
@@ -468,15 +468,15 @@ def test_a_description_states_its_processors_and_their_dispatch_keys(tmp_path):
     system = pulse.ControlSystem(
         controllers=[box], links={"cores": pulse.Link(), "gpu": pulse.Link()}
     )
-    qpu = pulse.device(TRANSMON_17Q, layout=[0, 1], control_system=system)
+    qpu = pulse.quantum_system(TRANSMON_17Q, layout=[0, 1], control_system=system)
     data = json.loads(json.dumps(qpu.as_dict()))
     assert data["control_system"]["controllers"][0]["processors"][0]["dispatch_keys"] == {
         "_parity": 7,
         "_scaled": 8,
     }
-    again = pulse.Device.from_dict(data)
+    again = pulse.QuantumSystem.from_dict(data)
     assert again.control_system.controllers[0].processors == box.processors
-    lowered = pulse.compile(both, device=again).lower(again.qudits[0])
+    lowered = pulse.compile(both, quantum_system=again).lower(again.qudits[0])
     assert lowered.controller_usage.controllers[0].processors[0].clock_ghz == 0.5
     keys = {c.compiled_name: c.dispatch_key for c in lowered.classical_report()}
     assert (keys["_parity"], keys["_scaled"]) == (7, 8)
@@ -487,8 +487,8 @@ def test_a_bad_processor_in_a_system_file_is_a_problem_with_its_path():
         controllers=[pulse.Controller(processors=[pulse.Processor(links=["cores"])])],
         links={"cores": pulse.Link()},
     )
-    qpu = pulse.device(TRANSMON_17Q, layout=[0, 1], control_system=system)
+    qpu = pulse.quantum_system(TRANSMON_17Q, layout=[0, 1], control_system=system)
     data = qpu.as_dict()
     data["control_system"]["controllers"][0]["processors"][0]["unsupported"] = ["dvi"]
-    with pytest.raises(DeviceDefinitionError, match="did you mean 'div'"):
-        pulse.Device.from_dict(data)
+    with pytest.raises(QuantumSystemDefinitionError, match="did you mean 'div'"):
+        pulse.QuantumSystem.from_dict(data)

@@ -27,7 +27,7 @@ TARGET = DeviceDescription(
     },
     couplings=[Coupling((0, 1), 2e6)],
 )
-DEV = pulse.device(TARGET)
+DEV = pulse.quantum_system(TARGET)
 Q = DEV.qudits
 
 

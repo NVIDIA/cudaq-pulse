@@ -40,7 +40,7 @@ def _device(n=4, **kwargs):
             for i in range(n)
         },
     )
-    return pulse.device(target, **kwargs)
+    return pulse.quantum_system(target, **kwargs)
 
 
 @pulse.kernel
@@ -105,11 +105,11 @@ def test_a_call_without_qudit_handles_has_no_device():
         d = get_drive_line(q)
         drive(d, square(40, amp))
 
-    with pytest.raises(pulse.NoDeviceError, match="without qudit handles"):
+    with pytest.raises(pulse.NoQuantumSystemError, match="without qudit handles"):
         drive_amp.lower(0, 0.1)
     # The process quantum system is not a fallback.
     assert os.environ.get(ENV_VAR)
-    with pytest.raises(pulse.NoDeviceError):
+    with pytest.raises(pulse.NoQuantumSystemError):
         drive_amp(0, 0.1)
 
 
@@ -346,7 +346,7 @@ def test_mixing_devices_in_one_call_is_an_error():
         sync(get_drive_line(q0), get_drive_line(q1))
 
     a, other = _device(), _device(n=5)
-    with pytest.raises(pulse.DeviceMismatchError, match="two different devices"):
+    with pytest.raises(pulse.QuantumSystemMismatchError, match="two different devices"):
         pair.lower(a.qudits[0], other.qudits[1])
     pair.lower(a.qudits[0], a.qudits[1])
 
@@ -360,31 +360,31 @@ def test_two_separate_devices_with_one_definition_do_not_mix_in_a_call():
     assert a == twin
     message = (
         r"^pair\(\) got qudits of two separate devices of target 'call-test' with the same "
-        r"definition, as two pulse.device\(\) calls make; pass handles of one device$"
+        r"definition, as two pulse.quantum_system\(\) calls make; pass handles of one device$"
     )
-    with pytest.raises(pulse.DeviceMismatchError, match=message):
+    with pytest.raises(pulse.QuantumSystemMismatchError, match=message):
         pair.lower(a.qudits[0], twin.qudits[1])
-    with pytest.raises(pulse.DeviceMismatchError, match=message):
+    with pytest.raises(pulse.QuantumSystemMismatchError, match=message):
         pair.lower(a.qudits[0:1], (twin.qudits[1],))
 
 
 def test_a_pinned_compile_rejects_another_device():
-    ck = pulse.compile(rabi, device=_device())
-    with pytest.raises(pulse.DeviceMismatchError, match="compiled for device"):
+    ck = pulse.compile(rabi, quantum_system=_device())
+    with pytest.raises(pulse.QuantumSystemMismatchError, match="compiled for device"):
         ck.lower(_device(n=5).qudits[0], 0.1)
 
 
 def test_a_pinned_compile_rejects_a_separate_device_with_its_definition():
     dev = _device()
-    ck = pulse.compile(rabi, device=dev)
-    with pytest.raises(pulse.DeviceMismatchError, match="another, separate device of it"):
+    ck = pulse.compile(rabi, quantum_system=dev)
+    with pytest.raises(pulse.QuantumSystemMismatchError, match="another, separate device of it"):
         ck.lower(_device().qudits[0], 0.1)
     assert ck.lower(dev.qudits[0], 0.1) is not None
 
 
 def test_a_call_without_a_device_raises(monkeypatch):
     monkeypatch.delenv(ENV_VAR)
-    with pytest.raises(pulse.NoDeviceError, match="without qudit handles"):
+    with pytest.raises(pulse.NoQuantumSystemError, match="without qudit handles"):
         rabi.lower(0, 0.1)
 
 
@@ -419,14 +419,16 @@ def test_device_values_are_read_only():
 def test_a_device_from_a_system_file(tmp_path: Path):
     path = tmp_path / "dev.json"
     path.write_text(json.dumps({"quantum_system": "transmon_17q", "layout": [4, 5]}))
-    dev = pulse.Device.load(path)
+    dev = pulse.QuantumSystem.load(path)
     assert [q.index for q in dev.qudits] == [4, 5]
-    assert dev == pulse.device("transmon_17q", layout=[4, 5])
-    assert dev != pulse.device("transmon_17q")
-    with pytest.raises(pulse.DeviceDefinitionError, match="lattice: is not a key of a system"):
-        pulse.Device.from_dict({"quantum_system": "transmon_17q", "lattice": []})
-    with pytest.raises(pulse.DeviceDefinitionError, match="zones: is reserved"):
-        pulse.Device.from_dict({"quantum_system": "transmon_17q", "zones": []})
+    assert dev == pulse.quantum_system("transmon_17q", layout=[4, 5])
+    assert dev != pulse.quantum_system("transmon_17q")
+    with pytest.raises(
+        pulse.QuantumSystemDefinitionError, match="lattice: is not a key of a system"
+    ):
+        pulse.QuantumSystem.from_dict({"quantum_system": "transmon_17q", "lattice": []})
+    with pytest.raises(pulse.QuantumSystemDefinitionError, match="zones: is reserved"):
+        pulse.QuantumSystem.from_dict({"quantum_system": "transmon_17q", "zones": []})
 
 
 def test_a_waveform_as_a_frequency_is_reserved():
@@ -441,8 +443,8 @@ def test_a_waveform_as_a_frequency_is_reserved():
 
 def test_a_qudit_the_target_lacks_is_an_error():
     dev = _device(n=2)
-    with pytest.raises(pulse.DeviceMismatchError, match="'call-test' and got qudits of"):
-        pulse.compile(rabi, device=dev).lower(Q[5], 0.1)
+    with pytest.raises(pulse.QuantumSystemMismatchError, match="'call-test' and got qudits of"):
+        pulse.compile(rabi, quantum_system=dev).lower(Q[5], 0.1)
 
 
 # ── Frequencies as float arguments ───────────────────────────────────────
@@ -478,7 +480,7 @@ def test_a_returned_measurement_is_its_outcome():
     # A call samples its outcome unseeded. On three levels this pi pulse
     # leaves 0.5% outside level 1; on two, outcome 1 is certain.
     target = dataclasses.replace(_device()._description, model=TransmonModel(levels={0: 2}))
-    q = pulse.device(target).qudits[0]
+    q = pulse.quantum_system(target).qudits[0]
     assert [b.levels for b in pulse.simulate(flip_and_measure.lower(q)).branches] == [(1,)]
     assert flip_and_measure(q) == 1
     assert pulse.compile(flip_and_measure)(q) == 1
@@ -542,7 +544,7 @@ def test_the_launcher_sets_the_process_target(tmp_path: Path):
             """
             import sys
             import cudaq_pulse as pulse
-            print(pulse.device().name, sys.argv[1:])
+            print(pulse.quantum_system().name, sys.argv[1:])
             """
         )
     )

@@ -14,5 +14,5 @@ cudaq_pulse\.classical\.(Answer|ClassicalFunction|Pending)\.__type_params__
 # Type checkers see pulse.Bits as list[int]; at runtime it is a list subclass
 # that marks the items as bits.
 cudaq_pulse\.classical\.Bits
-# Device reads these from its description (Device.__getattr__).
-cudaq_pulse(\._device)?\.Device\.(physical_qudits|couplings|residual_zz|model|attribution|anharmonicities|t1_times|t2_times|t2_echo_times|thermal_populations|coupling_map|connectivity_graph|drive_amplitude_scale)
+# QuantumSystem reads these from its description (QuantumSystem.__getattr__).
+cudaq_pulse(\._device)?\.QuantumSystem\.(physical_qudits|couplings|residual_zz|model|attribution|anharmonicities|t1_times|t2_times|t2_echo_times|thermal_populations|coupling_map|connectivity_graph|drive_amplitude_scale)

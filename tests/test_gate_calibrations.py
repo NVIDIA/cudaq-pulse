@@ -39,7 +39,7 @@ def _device(**fields):
     cz = FluxCZ(duration_ns=60.0, buffer_ns=10.0, interaction_frequency_hz=4.4e9)
     couplings = [Coupling((0, 1), 5.0e6, calibrations={CZ: cz})]
     target = DeviceDescription(name="gates", qudits=qudits, couplings=couplings)
-    return pulse.device(target)
+    return pulse.quantum_system(target)
 
 
 def _mlir(lowered, name):
@@ -67,7 +67,7 @@ def test_neither_import_nor_a_device_loads_the_gates():
         [
             sys.executable,
             "-c",
-            "import sys, cudaq_pulse as p; p.device('transmon_17q'); "
+            "import sys, cudaq_pulse as p; p.quantum_system('transmon_17q'); "
             "print('cudaq_pulse.gates' in sys.modules); p.gates; "
             "print('cudaq_pulse.gates' in sys.modules)",
         ],
@@ -155,7 +155,7 @@ def test_a_qudit_checks_its_calibrations():
 
 
 def test_a_qudit_handle_and_a_coupling_give_the_device_calibrations():
-    dev = pulse.device("transmon_17q")
+    dev = pulse.quantum_system("transmon_17q")
     q = dev.qudits[4]
     assert q.get_calibration(X) == dev.physical_qudits[4].get_calibration(X)
     assert q.get_calibration(X).amplitude == pytest.approx(math.pi / _AREA_NS)
@@ -171,13 +171,13 @@ def test_a_qudit_handle_and_a_coupling_give_the_device_calibrations():
 
 
 def test_a_coupling_of_a_device_takes_its_handles():
-    dev = pulse.device("transmon_17q")
+    dev = pulse.quantum_system("transmon_17q")
     with pytest.raises(pulse.NotFoundError, match="are not coupled"):
         dev.coupling(dev.qudits[0], dev.qudits[1])
     with pytest.raises(pulse.InvalidTypeError, match="takes two qudit handles"):
         dev.coupling(0, 1)  # type: ignore[arg-type]
     other = _device()
-    with pytest.raises(pulse.DeviceMismatchError, match="not of 'transmon_17q'"):
+    with pytest.raises(pulse.QuantumSystemMismatchError, match="not of 'transmon_17q'"):
         dev.coupling(other.qudits[0], dev.qudits[0])
 
 
@@ -329,7 +329,7 @@ def test_calibrations_and_metadata_round_trip_through_a_system_file():
     ]  # fmt: skip
     assert qudit["metadata"] == {"fridge": "B"}
     assert "calibrations" in data["quantum_system"]["couplings"][0]
-    back = pulse.Device.from_dict(json.loads(json.dumps(data)))
+    back = pulse.QuantumSystem.from_dict(json.loads(json.dumps(data)))
     assert back == dev and back.physical_qudits[0].metadata == {"fridge": "B"}
     assert back.physical_qudits[0].get_calibration(X, (1, 2)) == x12
 
@@ -343,8 +343,8 @@ def test_a_system_file_names_a_calibration_of_the_wrong_kind(tmp_path):
     ]
     path = tmp_path / "qpu.json"
     path.write_text(json.dumps(data, indent=2))
-    with pytest.raises(pulse.DeviceDefinitionError) as raised:
-        pulse.Device.load(path)
+    with pytest.raises(pulse.QuantumSystemDefinitionError) as raised:
+        pulse.QuantumSystem.load(path)
     found = [(p.path, p.message) for p in raised.value.problems]
     where = "quantum_system.qudits[0].calibrations"
     assert found[:3] == [

@@ -38,7 +38,13 @@ from collections.abc import Callable, Sequence
 from dataclasses import replace
 from typing import Any, NamedTuple
 
-from .._device import Device, DeviceMismatchError, NoDeviceError, Qudit, Register
+from .._device import (
+    NoQuantumSystemError,
+    QuantumSystem,
+    QuantumSystemMismatchError,
+    Qudit,
+    Register,
+)
 from .._errors import InvalidTypeError
 from ..compiler import CompileOptions, Lowered, build, with_line_delays
 from ._guard import Guard, build_guard
@@ -291,51 +297,52 @@ def _execute(lowered: Lowered, returns: Any) -> Any:
 
 
 class _QuditTwiceError(Exception):
-    """A qudit ``_devices`` met twice; the caller names the parameters."""
+    """A qudit ``_systems`` met twice; the caller names the parameters."""
 
     def __init__(self, qudit: Qudit) -> None:
         self.qudit = qudit
 
 
-def _devices(value: Any, found: Device | None, name: str, seen: set[int]) -> Device | None:
-    """The device of the handles in *value*, checked against *found*.
+def _systems(arg: Any, qs: QuantumSystem | None, name: str, seen: set[int]) -> QuantumSystem | None:
+    """The device of the handles in *arg*, checked against *qs*.
 
     *seen* collects the carriers passed so far: one qudit passed twice is
     an error, as it would be one degree of freedom bound to two names, and
     raises ``_QuditTwiceError``.
     """
-    t = type(value)
+    t = type(arg)
     if t is Qudit:
-        if value.index in seen:
-            raise _QuditTwiceError(value)
-        seen.add(value.index)
-        device: Device = value.device
-        if found is None or found is device:
-            return device
-        raise DeviceMismatchError(_two_devices(name, found, device))
+        if arg.index in seen:
+            raise _QuditTwiceError(arg)
+        seen.add(arg.index)
+        quantum_system: QuantumSystem = arg.quantum_system
+        if qs is None or qs is quantum_system:
+            return quantum_system
+        raise QuantumSystemMismatchError(_two_systems(name, qs, quantum_system))
     if t is Register or t is tuple or t is list:
-        for item in value:
-            found = _devices(item, found, name, seen)
-    return found
+        for item in arg:
+            qs = _systems(item, qs, name, seen)
+    return qs
 
 
-def _two_devices(name: str, found: Device, device: Device) -> str:
-    """Why *name*() cannot take qudits of both *found* and *device*."""
-    if found == device:
+def _two_systems(name: str, found: QuantumSystem, quantum_system: QuantumSystem) -> str:
+    """Why *name*() cannot take qudits of both *found* and *quantum_system*."""
+    if found == quantum_system:
         return (
-            f"{name}() got qudits of two separate devices of target {device.name!r} with "
-            "the same definition, as two pulse.device() calls make; pass handles of one device"
+            f"{name}() got qudits of two separate devices of target {quantum_system.name!r} with "
+            "the same definition, as two pulse.quantum_system() calls make; pass handles "
+            "of one device"
         )
     from .._errors import _ranges
 
     both = (
-        f"both of target {device.name!r}"
-        if found.name == device.name
-        else f"of targets {found.name!r} and {device.name!r}"
+        f"both of target {quantum_system.name!r}"
+        if found.name == quantum_system.name
+        else f"of targets {found.name!r} and {quantum_system.name!r}"
     )
     return (
         f"{name}() got qudits of two different devices, {both}: one with layout "
-        f"{_ranges(found.layout)}, the other with layout {_ranges(device.layout)}; "
+        f"{_ranges(found.layout)}, the other with layout {_ranges(quantum_system.layout)}; "
         "pass handles of one device"
     )
 
@@ -352,7 +359,7 @@ def _count(value: Any, index: int) -> int:
 
 def _passed_twice(name: str, qudit: Qudit, arguments: list[tuple[str, Any]]) -> InvalidTypeError:
     """The error for *qudit* passed twice among *arguments*, the (parameter,
-    value) pairs in the order ``_devices`` met them."""
+    value) pairs in the order ``_systems`` met them."""
     holders = [
         parameter for parameter, value in arguments for _ in range(_count(value, qudit.index))
     ]
@@ -426,18 +433,18 @@ class _Dispatcher:
         self._lock = threading.Lock()
         self.misses = 0
         self.evictions = 0
-        self.pin: Device | None = None
+        self.pin: QuantumSystem | None = None
         # The specialization a pinned all-float kernel is built with.
         self.general: Lowered | None = None
         _dispatchers.add(self)
 
-    def _device(self, values: tuple[Any, ...]) -> Device:
+    def _device(self, values: tuple[Any, ...]) -> QuantumSystem:
         name = self.kernel.__name__
         found = None
         seen: set[int] = set()
         try:
             for i in self.kernel._split[0]:
-                found = _devices(values[i], found, name, seen)
+                found = _systems(values[i], found, name, seen)
         except _QuditTwiceError as twice:
             names = self.kernel._names
             arguments = [(names[i], values[i]) for i in self.kernel._split[0]]
@@ -503,23 +510,23 @@ class _Dispatcher:
             self._entries.clear()
 
 
-def _pin_mismatch(name: str, pin: Device, found: Device) -> DeviceMismatchError:
-    if found == pin:
-        return DeviceMismatchError(
+def _pin_mismatch(name: str, pin: QuantumSystem, got: QuantumSystem) -> QuantumSystemMismatchError:
+    if got == pin:
+        return QuantumSystemMismatchError(
             f"{name}() is compiled for a device of {pin.name!r} and got qudits of "
             "another, separate device of it with the same definition; pass "
             "handles of the device it is compiled for"
         )
-    return DeviceMismatchError(
-        f"{name}() is compiled for device {pin.name!r} and got qudits of {found.name!r}"
+    return QuantumSystemMismatchError(
+        f"{name}() is compiled for device {pin.name!r} and got qudits of {got.name!r}"
     )
 
 
-def _no_device(name: str) -> NoDeviceError:
-    return NoDeviceError(
+def _no_device(name: str) -> NoQuantumSystemError:
+    return NoQuantumSystemError(
         f"{name}() was called without qudit handles, so it has no device: pass "
         "handles of a device (dev.qudits[i]), or compile it for one with "
-        "cudaq_pulse.compile(k, device=dev)"
+        "cudaq_pulse.compile(k, quantum_system=dev)"
     )
 
 
@@ -890,14 +897,14 @@ class CompiledKernel[**P]:
     without compiling.
     """
 
-    def __init__(self, kernel: Kernel[P], options: CompileOptions, device: Device | None) -> None:
-        if device is not None and not isinstance(device, Device):
-            raise TypeError(f"device must be a cudaq_pulse device, got {type(device).__name__}")
+    def __init__(self, kernel: Kernel[P], opts: CompileOptions, qs: QuantumSystem | None) -> None:
+        if qs is not None and not isinstance(qs, QuantumSystem):
+            raise TypeError(f"device must be a cudaq_pulse device, got {type(qs).__name__}")
         self.kernel = kernel
-        self.device = device
-        self._dispatch = kernel._dispatcher_type(kernel, options, None)
-        self._dispatch.pin = device
-        if device is not None and not kernel._split[0] and not kernel._relocatable:
+        self.quantum_system = qs
+        self._dispatch = kernel._dispatcher_type(kernel, opts, None)
+        self._dispatch.pin = qs
+        if qs is not None and not kernel._split[0] and not kernel._relocatable:
             # Every parameter is a float: the values are not needed to build
             # it, unless one of them shapes the program.
             try:
@@ -919,7 +926,9 @@ class CompiledKernel[**P]:
             if self.kernel._split[0]:
                 why = f"is specialized on {', '.join(self.kernel.static_parameters)}"
             else:
-                why = "has no device until it is called; pin one with compile(k, device=dev)"
+                why = (
+                    "has no device until it is called; pin one with compile(k, quantum_system=dev)"
+                )
             raise TypeError(
                 f"{self.kernel.__name__}() {why}; inspect one specialization with .lower(...)"
             )
@@ -956,7 +965,7 @@ class CompiledKernel[**P]:
         from .._pickling import rebuilt_compiled
 
         d = self._dispatch
-        return (rebuilt_compiled, (self.kernel, d.options, self.device, d.general))
+        return (rebuilt_compiled, (self.kernel, d.options, self.quantum_system, d.general))
 
     def __repr__(self) -> str:
         return f"<compiled pulse kernel {self.kernel.__qualname__}{self.kernel.__signature__}>"

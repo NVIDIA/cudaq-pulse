@@ -103,13 +103,13 @@ def ramsey_with_readout(qudit, tau):
 
 
 if __name__ == "__main__":
-    dev = pulse.device("transmon_17q")
+    qs = pulse.quantum_system("transmon_17q")
     print("=== Measure single qubit ===")
-    compiled_kernel = pulse.compile(measure_single_qudit, device=dev).lower(dev.qudits[0])
+    compiled_kernel = pulse.compile(measure_single_qudit, quantum_system=qs).lower(qs.qudits[0])
     print(compiled_kernel.mlir())
 
     print("\n=== Active reset (measurement-conditioned branch) ===")
-    compiled_kernel = pulse.compile(active_reset, device=dev).lower(dev.qudits[0])
+    compiled_kernel = pulse.compile(active_reset, quantum_system=qs).lower(qs.qudits[0])
     print(compiled_kernel.mlir())
 
     print("\n=== Simulating it (CPU reference) ===")
@@ -125,8 +125,8 @@ if __name__ == "__main__":
     )
     # Start in (|0> + |1>) / sqrt(2): each outcome is equally likely, and
     # either way the qubit ends in |0>.
-    reset_demo = pulse.device(target)
-    lowered = pulse.compile(active_reset, device=reset_demo).lower(reset_demo.qudits[0])
+    reset_demo = pulse.quantum_system(target)
+    lowered = pulse.compile(active_reset, quantum_system=reset_demo).lower(reset_demo.qudits[0])
     result = pulse.simulate(
         lowered, initial_state=[2**-0.5, 2**-0.5, 0.0], shots_count=1000, seed=7
     )
@@ -135,11 +135,11 @@ if __name__ == "__main__":
     print(f"  final |0> population: {result.level_population(0):.4f}")
 
     print("\n=== Repeated measurement (5 shots) ===")
-    compiled_kernel = pulse.compile(repeated_measurement, device=dev).lower(dev.qudits[0], 5)
+    compiled_kernel = pulse.compile(repeated_measurement, quantum_system=qs).lower(qs.qudits[0], 5)
     print(compiled_kernel.mlir())
 
     print("\n=== Ramsey with readout (tau=200) ===")
     tau = 100 * pulse.ns
-    compiled_kernel = pulse.compile(ramsey_with_readout, device=dev).lower(dev.qudits[0], tau)
+    compiled_kernel = pulse.compile(ramsey_with_readout, quantum_system=qs).lower(qs.qudits[0], tau)
     print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")

@@ -57,7 +57,7 @@ def two_readouts(q, r):
 
 
 def _device():
-    return pulse.device(ladder_target(4), clock_ghz=1.0)
+    return pulse.quantum_system(ladder_target(4), clock_ghz=1.0)
 
 
 def test_an_installed_backend_is_listed_without_being_imported(installed):
@@ -70,7 +70,9 @@ def test_an_installed_backend_compiles_emits_and_runs(installed):
     assert isinstance(backend, backends.Backend) and backend.name == "dummy"
     assert backends.get("dummy") is backend
     dev = _device()
-    compiled = pulse.compile(drive_and_measure, device=dev, control_system=backend.control_system())
+    compiled = pulse.compile(
+        drive_and_measure, quantum_system=dev, control_system=backend.control_system()
+    )
     artifact = backend.emit(compiled.lower(dev.qudits[0]).export_controller())
     assert artifact == [(0, 0, "drive", "gaussian"), (40, 1, "readout", "square")]
     assert backend.run(artifact, shots_count=3)["outcomes"] == [[0], [0], [0]]
@@ -80,12 +82,12 @@ def test_the_backends_limits_reject_what_its_controller_cannot_play(installed):
     dev = _device()
     machine = backends.get("dummy").control_system()
     with pytest.raises(ControllerLimitError, match="detector 0"):
-        pulse.compile(two_readouts, device=dev, schedule="asap", control_system=machine).lower(
-            dev.qudits[0], dev.qudits[1]
-        )
+        pulse.compile(
+            two_readouts, quantum_system=dev, schedule="asap", control_system=machine
+        ).lower(dev.qudits[0], dev.qudits[1])
     # Serialized by the scheduler, with the detector's hold time between them.
     machine = dataclasses.replace(machine, line_switch_penalty_cycles=10)
-    pulse.compile(two_readouts, device=dev, schedule="rcp", control_system=machine).lower(
+    pulse.compile(two_readouts, quantum_system=dev, schedule="rcp", control_system=machine).lower(
         dev.qudits[0], dev.qudits[1]
     )
 

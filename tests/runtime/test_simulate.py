@@ -102,7 +102,7 @@ def test_simulate_takes_the_kernel_and_its_arguments():
         d0 = get_drive_line(q0)
         drive(d0, square(40, amplitude))
 
-    dev = pulse.device(_target())
+    dev = pulse.quantum_system(_target())
     q = dev.qudits[0]
     expected = pulse.simulate(rabi.lower(q, _PI), levels=2).density_matrix
     np.testing.assert_array_equal(pulse.simulate(rabi, q, _PI, levels=2).density_matrix, expected)
@@ -126,7 +126,7 @@ def _rabi_with_amplitude(q0, amplitude: float):
 
 @pytest.mark.parametrize("kind", ["kernel", "compiled", "with_parameters", "bound", "call"])
 def test_simulate_takes_a_kernel_or_a_program_compiled_already(kind):
-    dev = pulse.device(_target())
+    dev = pulse.quantum_system(_target())
     q = dev.qudits[0]
     compiled = pulse.compile(_rabi_with_amplitude)
     generic = compiled.lower(q, _PI).generic
@@ -149,7 +149,7 @@ def test_simulate_binds_a_program_s_parameters_as_bind_does():
         wait(d0, gap, bounds=(0, 100))
         drive(d0, square(40, _PI))
 
-    dev = pulse.device(_target())
+    dev = pulse.quantum_system(_target())
     q = dev.qudits[0]
     generic = pulse.compile(wait_for).lower(q, 10.0).generic
     assert generic is not None

@@ -19,11 +19,11 @@ import cudaq_pulse as pulse
 from cudaq_pulse.targets import transmon_17q
 
 target = transmon_17q()
-dev = pulse.device("transmon_17q")
+qs = pulse.quantum_system("transmon_17q")
 qudit_idx = 4  # D5 -- central data qubit
 
 qudit_d5 = target.qudits[qudit_idx]
-clock_ghz = dev.clock_ghz  # the program clock the schedule counts cycles of
+clock_ghz = qs.clock_ghz  # the program clock the schedule counts cycles of
 
 print(f"Target: {target.name} ({target.qudit_count} qubits)")
 print(f"Qubit {qudit_d5.label} (idx {qudit_idx}):")
@@ -34,7 +34,7 @@ print(f"  T1 = {qudit_d5.t1_us:.1f} us, T2* = {qudit_d5.t2_star_us:.1f} us")
 # The device's X calibration: the published pulse shape, and (with no
 # published amplitude, so amplitudes are rates in rad/ns) the amplitude that
 # makes it a pi rotation.
-x = dev.qudits[qudit_idx].get_calibration(pulse.gates.X)
+x = qs.qudits[qudit_idx].get_calibration(pulse.gates.X)
 print(
     f"  DRAG pi pulse: {x.duration_ns:.0f} ns, sigma = {x.sigma_ns:.0f} ns, amp = {x.amplitude:.4f}"
 )
@@ -53,7 +53,7 @@ def rabi_d5(qudit):
         wait(drive_line, gap)
 
 
-compiled = pulse.compile(rabi_d5, device=dev).lower(dev.qudits[qudit_idx])
+compiled = pulse.compile(rabi_d5, quantum_system=qs).lower(qs.qudits[qudit_idx])
 total_cycles = max(e.end for e in compiled.schedule)
 print(
     f"\nCompiled {compiled.metrics.op_count} ops, total length = {total_cycles / clock_ghz:.1f} ns"

@@ -8,7 +8,7 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 
-from tests.physics._sim import basis, cycles, device, run
+from tests.physics._sim import basis, cycles, quantum_system, run
 from tests.physics.conftest import ref
 
 
@@ -24,7 +24,7 @@ def _idle(duration):
 def _decay(entry_id, levels, initial, dt_ns, t_ns=None):
     p = ref(entry_id)["params"]
     t_ns = p["T_ns"] if t_ns is None else t_ns
-    dev = device([p["f_q_hz"]], [p["alpha_hz"]], t1_us=p["T1_us"], t2_us=p["T2_us"])
+    dev = quantum_system([p["f_q_hz"]], [p["alpha_hz"]], t1_us=p["T1_us"], t2_us=p["T2_us"])
     return run(
         dev, _idle(cycles(t_ns)), levels=levels, initial_state=initial, dt_ns=dt_ns
     ).density_matrix

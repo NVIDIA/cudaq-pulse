@@ -11,7 +11,7 @@ import sys
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse import Controller, Device, Qudit, Register
+from cudaq_pulse import Controller, QuantumSystem, Qudit, Register
 from cudaq_pulse.controller import ControllerLimitError, check
 from cudaq_pulse.kernel.ir_builder import CompilationError
 from cudaq_pulse.ops import (
@@ -30,7 +30,7 @@ from hypothesis import strategies as st
 
 from tests.property_settings import examples
 
-DEV = pulse.device("transmon_17q")
+DEV = pulse.quantum_system("transmon_17q")
 H = DEV.qudits
 
 
@@ -55,7 +55,7 @@ def static_k(q, r, amps: list[float], f12: float):
 
 def _f12(q):
     """The 1-2 frequency of *q*, read from its device on the host."""
-    return float(q.device.transition_freq[q.logical, 1, 2])
+    return float(q.quantum_system.transition_freq[q.logical, 1, 2])
 
 
 @pulse.kernel
@@ -70,11 +70,11 @@ def _plain(export):
     return json.dumps(export, sort_keys=True)
 
 
-def _recalibrated(device, carrier, shift_hz):
-    target = device._description
+def _recalibrated(quantum_system, carrier, shift_hz):
+    target = quantum_system._description
     qudits = dict(target.qudits)
     qudits[carrier] = qudits[carrier].replace(frequency_hz=qudits[carrier].frequency_hz + shift_hz)
-    return Device(dataclasses.replace(target, qudits=qudits), name=device.name)
+    return QuantumSystem(dataclasses.replace(target, qudits=qudits), name=quantum_system.name)
 
 
 @pytest.mark.parametrize("schedule", ["alap", "asap"])
@@ -244,7 +244,7 @@ def test_a_runtime_qudits_line_has_only_its_own_tone():
 
 def test_qudits_of_two_devices_are_rejected():
     other = _recalibrated(DEV, DEV.layout[3], 1e6)
-    with pytest.raises(pulse.DeviceMismatchError):
+    with pytest.raises(pulse.QuantumSystemMismatchError):
         runtime_k.lower(H[3], other.qudits[[5]], [0.2, 0.4], _f12(H[3]))
 
 

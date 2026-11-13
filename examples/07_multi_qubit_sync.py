@@ -57,7 +57,7 @@ def parametric_pi_half(qudit_0, qudit_1, amplitude_0, amplitude_1):
 def qvec_simultaneous_drive(qudit_vector, amplitude):
     """Drive two qubits of a register in parallel.
 
-    dev.qudits[0:4] is a register of four qudits; individual qudits
+    qs.qudits[0:4] is a register of four qudits; individual qudits
     are accessed by indexing.
     """
     drive_line_0 = get_drive_line(qudit_vector[0])
@@ -112,32 +112,34 @@ def staggered_readout(qudit_0, qudit_1):
 
 
 if __name__ == "__main__":
-    dev = pulse.device("transmon_17q")
+    qs = pulse.quantum_system("transmon_17q")
     print("=== Two-qubit simultaneous drive ===")
-    compiled_kernel = pulse.compile(two_qudit_simultaneous, device=dev).lower(
-        dev.qudits[0], dev.qudits[1]
+    compiled_kernel = pulse.compile(two_qudit_simultaneous, quantum_system=qs).lower(
+        qs.qudits[0], qs.qudits[1]
     )
     print(compiled_kernel.mlir())
 
     print("\n=== Parametric pi/2 ===")
-    compiled_kernel = pulse.compile(parametric_pi_half, device=dev).lower(
-        dev.qudits[0], dev.qudits[1], 0.25, 0.28
+    compiled_kernel = pulse.compile(parametric_pi_half, quantum_system=qs).lower(
+        qs.qudits[0], qs.qudits[1], 0.25, 0.28
     )
     print(compiled_kernel.mlir())
 
     print("\n=== Register simultaneous drive ===")
-    compiled_kernel = pulse.compile(qvec_simultaneous_drive, device=dev).lower(dev.qudits[0:4], 0.3)
+    compiled_kernel = pulse.compile(qvec_simultaneous_drive, quantum_system=qs).lower(
+        qs.qudits[0:4], 0.3
+    )
     print(compiled_kernel.mlir())
 
     print("\n=== Sync after asymmetric ops ===")
-    compiled_kernel = pulse.compile(sync_after_asymmetric_ops, device=dev).lower(
-        dev.qudits[0], dev.qudits[1]
+    compiled_kernel = pulse.compile(sync_after_asymmetric_ops, quantum_system=qs).lower(
+        qs.qudits[0], qs.qudits[1]
     )
     print(compiled_kernel.mlir())
 
     print("\n=== Staggered readout ===")
-    compiled_kernel = pulse.compile(staggered_readout, device=dev).lower(
-        dev.qudits[0], dev.qudits[1]
+    compiled_kernel = pulse.compile(staggered_readout, quantum_system=qs).lower(
+        qs.qudits[0], qs.qudits[1]
     )
     print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")

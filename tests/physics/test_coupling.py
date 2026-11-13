@@ -8,7 +8,7 @@ import math
 import cudaq_pulse as pulse
 import pytest
 
-from tests.physics._sim import basis, cycles, device, population, run
+from tests.physics._sim import basis, cycles, population, quantum_system, run
 from tests.physics.conftest import ref
 
 
@@ -36,7 +36,7 @@ def test_exchange_from_10(entry_id):
     entry = ref(entry_id)
     p = entry["params"]
     levels = p["levels"]
-    dev = device(p["f_hz"], p["alpha_hz"], [(0, 1, p["g_hz"])])
+    dev = quantum_system(p["f_hz"], p["alpha_hz"], [(0, 1, p["g_hz"])])
     result = run(
         dev,
         _idle(cycles(p["T_ns"])),
@@ -53,7 +53,7 @@ def test_chevron_11_20_is_resonant_at_wa_plus_alpha_a(side, key):
     entry = ref("chevron_11_20")
     p = entry["params"]
     fb = p["f_a_hz"] + side * p["alpha_a_hz"]
-    dev = device([p["f_a_hz"], fb], [p["alpha_a_hz"], p["alpha_b_hz"]], [(0, 1, p["g_hz"])])
+    dev = quantum_system([p["f_a_hz"], fb], [p["alpha_a_hz"], p["alpha_b_hz"]], [(0, 1, p["g_hz"])])
     result = run(
         dev,
         _idle(cycles(p["T_ns"])),
@@ -68,7 +68,9 @@ def test_chevron_11_20_is_resonant_at_wa_plus_alpha_a(side, key):
 def test_static_zz_of_detuned_qutrits():
     entry = ref("static_zz_detuned_qutrits")
     p, tolerance = entry["params"], entry["tolerance"]
-    dev = device([p["fa_hz"], p["fb_hz"]], [p["alpha_a_hz"], p["alpha_b_hz"]], [(0, 1, p["g_hz"])])
+    dev = quantum_system(
+        [p["fa_hz"], p["fb_hz"]], [p["alpha_a_hz"], p["alpha_b_hz"]], [(0, 1, p["g_hz"])]
+    )
     phases = []
     for k in (0, 1):
         psi = (basis(3, 0, k) + basis(3, 1, k)) / math.sqrt(2.0)

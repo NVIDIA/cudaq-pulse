@@ -18,7 +18,7 @@ from cudaq_pulse.targets import DeviceDescription, PhysicalQudit
 
 PI_AMP = math.pi / 20  # square(40, PI_AMP) is a pi pulse
 
-_DEVICE = pulse.device(
+_DEVICE = pulse.quantum_system(
     DeviceDescription(
         name="three",
         qudits={i: PhysicalQudit(i, 5e9 + 1e8 * i, -2e8, 0.0, 0.0) for i in range(3)},
@@ -49,7 +49,7 @@ def _kernel(body: str) -> pulse.Kernel:
 
 
 def _lower(body: str) -> pulse.Lowered:
-    return pulse.compile(_kernel(body), device=_DEVICE).lower(*_DEVICE.qudits[:3])
+    return pulse.compile(_kernel(body), quantum_system=_DEVICE).lower(*_DEVICE.qudits[:3])
 
 
 _FLAG = "        drive(f, square(40, PI_AMP))\n"

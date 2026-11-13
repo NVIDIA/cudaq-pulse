@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 from cudaq_pulse.targets import DeviceDescription
 
-_TRANSMON_17Q = pulse.device("transmon_17q")
+_TRANSMON_17Q = pulse.quantum_system("transmon_17q")
 
 
 def _slice(indices):
@@ -36,7 +36,7 @@ def _slice(indices):
         residual_zz=renumbered(target.residual_zz),
         clock_ghz=target.clock_ghz,
     )
-    return pulse.device(sliced).qudits, new
+    return pulse.quantum_system(sliced).qudits, new
 
 
 @pulse.kernel

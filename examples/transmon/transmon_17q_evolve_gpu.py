@@ -24,13 +24,13 @@ from cudaq_pulse.runtime import require_gpu_runtime
 
 require_gpu_runtime()
 
-dev = pulse.device("transmon_17q")
-qudit_aux, qudit_data = dev.qudit("X1"), dev.qudit("D2")
+qs = pulse.quantum_system("transmon_17q")
+qudit_aux, qudit_data = qs.qudit("X1"), qs.qudit("D2")
 auxiliary, data = qudit_aux.index, qudit_data.index
 # The CZ's slot, from the coupling's calibration; the pulses are the
 # qudits' X90 and X calibrations (the published 40 ns, sigma = 10 ns DRAG,
 # amplitudes rates in rad/ns).
-cz_slot = dev.coupling(qudit_aux, qudit_data).get_calibration(pulse.gates.CZ).duration_ns * pulse.ns
+cz_slot = qs.coupling(qudit_aux, qudit_data).get_calibration(pulse.gates.CZ).duration_ns * pulse.ns
 
 
 @pulse.kernel

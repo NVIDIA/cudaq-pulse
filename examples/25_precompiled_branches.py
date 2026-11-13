@@ -87,7 +87,11 @@ def every_outcome():
 
 def compile_branch(kernel: pulse.Kernel[...], qudits: pulse.Register, trained: tuple[int, ...]):
     """The sweep for one outcome: each point bound and exported for the controller."""
-    program = pulse.compile(kernel, device=qudits[0].device).lower(qudits, trained, 1.0).generic
+    program = (
+        pulse.compile(kernel, quantum_system=qudits[0].quantum_system)
+        .lower(qudits, trained, 1.0)
+        .generic
+    )
     sweep = []
     for scale in scales:
         bound = program.bind([scale])
@@ -134,8 +138,8 @@ def median_s(operation, repeat):
 
 
 if __name__ == "__main__":
-    device = pulse.device(target)
-    qudits = device.qudits[list(qudit_indices)]
+    quantum_system = pulse.quantum_system(target)
+    qudits = quantum_system.qudits[list(qudit_indices)]
     outcomes = every_outcome()
     compile_branch(pi_trains, qudits, outcomes[-1])  # compile once here before timing anything
 
@@ -175,7 +179,7 @@ if __name__ == "__main__":
     lookup_s = median_s(lambda: table.get(some), 10_000)
     on_demand_s = median_s(lambda: compile_branch(pi_trains, qudits, some), 20)
     compile_s = median_s(
-        lambda: pulse.compile(pi_trains, device=device).lower(qudits, some, 1.0), 20
+        lambda: pulse.compile(pi_trains, quantum_system=quantum_system).lower(qudits, some, 1.0), 20
     )
     print(f"  looking up the ready sweep: {lookup_s * 1e6:.2f} us")
     print(

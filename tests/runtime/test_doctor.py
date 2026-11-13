@@ -249,7 +249,7 @@ def test_system_json_report(tmp_path):
     code, output = _run("--system", str(path), "--json")
     assert code == 1
     report = json.loads(output)
-    assert report["ok"] is False and report["device"] is None
+    assert report["ok"] is False and report["quantum_system"] is None
     assert report["problems"] == [
         {
             "message": "carrier 99 is not in target 'transmon_17q' (it has 0..16)",
@@ -267,7 +267,7 @@ def test_system_json_report(tmp_path):
     assert json.loads(output) == {
         "file": str(path),
         "ok": True,
-        "device": {"name": "transmon_17q", "qudits": 2, "layout": [4, 5]},
+        "quantum_system": {"name": "transmon_17q", "qudits": 2, "layout": [4, 5]},
         "problems": [],
     }
 

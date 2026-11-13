@@ -5,7 +5,7 @@
 import cudaq_pulse as pulse
 import pytest
 
-from tests.physics._sim import cycles, device, run
+from tests.physics._sim import cycles, quantum_system, run
 from tests.physics.conftest import ref
 
 
@@ -20,7 +20,7 @@ def test_rabi_resonant(case):
         d = get_drive_line(q)
         drive(d, square(duration, amplitude))
 
-    result = run(device([p["f_q_hz"]], [0.0]), rabi, dt_ns=entry["tolerance"]["dt_ns"])
+    result = run(quantum_system([p["f_q_hz"]], [0.0]), rabi, dt_ns=entry["tolerance"]["dt_ns"])
     assert result.density_matrix[1, 1].real == pytest.approx(
         entry["expected"][case], abs=entry["tolerance"]["abs"]
     )
@@ -39,7 +39,9 @@ def test_rabi_detuned(case):
         set_frequency(d.tone, f)
         drive(d, square(duration, p["A_rad_per_ns"]))
 
-    result = run(device([p["f_q_hz"]], [0.0]), rabi, frequency, dt_ns=entry["tolerance"]["dt_ns"])
+    result = run(
+        quantum_system([p["f_q_hz"]], [0.0]), rabi, frequency, dt_ns=entry["tolerance"]["dt_ns"]
+    )
     assert result.density_matrix[1, 1].real == pytest.approx(
         entry["expected"][case], abs=entry["tolerance"]["abs"]
     )
@@ -84,7 +86,10 @@ def test_ramsey_and_echo_keep_the_tone_phase_across_waits(entry_id, sequence):
 
     kernel = ramsey if sequence == "ramsey" else echo
     result = run(
-        device([p["f_q_hz"]], [-200e6]), kernel, frequency, dt_ns=entry["tolerance"]["dt_ns"]
+        quantum_system([p["f_q_hz"]], [-200e6]),
+        kernel,
+        frequency,
+        dt_ns=entry["tolerance"]["dt_ns"],
     )
     assert result.density_matrix[1, 1].real == pytest.approx(
         entry["expected"][f"{sequence}_P1"], abs=entry["tolerance"]["abs"]

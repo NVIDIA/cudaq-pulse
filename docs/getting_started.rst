@@ -94,8 +94,8 @@ generated MLIR:
        drive_line = get_drive_line(qubit)
        drive(drive_line, gaussian(cal["duration"], amplitude, cal["sigma"]))
 
-   dev = pulse.device("transmon_17q")
-   qubit = dev.qudits[0]
+   qs = pulse.quantum_system("transmon_17q")
+   qubit = qs.qudits[0]
    result = pulse.simulate(rabi_oscillation, qubit, 0.5)    # NumPy reference, no GPU needed
    print(f"P(1) = {result.level_population(1):.3f}")   # P(1) = 0.972
    lowered = rabi_oscillation.lower(qubit, 0.5)

@@ -23,7 +23,7 @@ from collections.abc import Callable
 
 import cudaq_pulse as pulse
 
-_QUDIT = pulse.device("transmon_17q").qudits[0]
+_QUDIT = pulse.quantum_system("transmon_17q").qudits[0]
 _DRIVE_COUNTS = (1, 2, 5, 10, 20)
 
 

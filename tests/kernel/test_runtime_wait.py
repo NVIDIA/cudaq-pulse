@@ -253,7 +253,7 @@ def test_without_values_a_wait_stands_at_its_lowest_length():
         wait(d, tau, bounds=(100, None))
         drive(d, square(40, 0.5))
 
-    compiled = pulse.compile(k, device=Q[0].device)
+    compiled = pulse.compile(k, quantum_system=Q[0].quantum_system)
     generic = compiled.lower(Q[0], 250.0).generic
     assert _events(generic) == [("wait", 0, 0, 100), ("drive", 0, 100, 40)]
     assert _events(compiled.lower(Q[0], 250.0)) == [("wait", 0, 0, 250), ("drive", 0, 250, 40)]

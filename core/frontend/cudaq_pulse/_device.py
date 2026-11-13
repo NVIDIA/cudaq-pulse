@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Devices and qudit handles.
 
-A ``Device`` is a read-only description of one machine: its target (the
+A ``QuantumSystem`` is a read-only description of one machine: its target (the
 calibrated physics) and its layout, which maps the user's qudit numbering to
 the target's carriers. ``dev.qudits[i]`` is a ``Qudit``: a handle that
 names one carrier of that device. A kernel called with handles runs on their
@@ -23,13 +23,13 @@ from collections.abc import Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 from ._errors import (
-    DeviceDefinitionError,
     IndexOutOfRangeError,
     InvalidTypeError,
     InvalidValueError,
     NotFoundError,
     Problem,
     PulseError,
+    QuantumSystemDefinitionError,
     _closest,
     _count,
     _ranges,
@@ -57,23 +57,25 @@ if TYPE_CHECKING:
     from .targets.base import Coupling, DragPulse, PhysicalQudit, ReadoutPulse, ResidualZZ
     from .targets.calibration import Calibration
 
+    type _MaybeSystem = QuantumSystem | None
+
 __all__ = [
-    "Device",
-    "DeviceMismatchError",
-    "NoDeviceError",
+    "QuantumSystem",
+    "QuantumSystemMismatchError",
+    "NoQuantumSystemError",
     "Qudit",
     "Register",
-    "device",
+    "quantum_system",
 ]
 
 
-class NoDeviceError(NoProcessQuantumSystemError):
+class NoQuantumSystemError(NoProcessQuantumSystemError):
     """A kernel was called without qudit handles and was not compiled for a
     device, so it has no device to run on. The process quantum system is never used
     for a kernel call."""
 
 
-class DeviceMismatchError(PulseError, RuntimeError):
+class QuantumSystemMismatchError(PulseError, RuntimeError):
     """A kernel call mixes handles of different devices, or of an unpinned one."""
 
 
@@ -142,19 +144,19 @@ class Qudit:
     indexed. A handle is identity, not location.
     """
 
-    __slots__ = ("device", "carrier", "index", "logical", "_key")
+    __slots__ = ("quantum_system", "carrier", "index", "logical", "_key")
 
-    device: Device
+    quantum_system: QuantumSystem
     carrier: str
     index: int
     logical: int
 
-    def __init__(self, device: Device, index: int, logical: int) -> None:
-        self.device = device
+    def __init__(self, quantum_system: QuantumSystem, index: int, logical: int) -> None:
+        self.quantum_system = quantum_system
         self.carrier = _CARRIER
         self.index = index
         self.logical = logical
-        self._key = (device.fingerprint, _CARRIER, index)
+        self._key = (quantum_system.fingerprint, _CARRIER, index)
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, Qudit) and other._key == self._key
@@ -170,10 +172,12 @@ class Qudit:
         return self
 
     def __reduce__(self) -> tuple[Any, ...]:
-        return (Qudit, (self.device, self.index, self.logical))
+        return (Qudit, (self.quantum_system, self.index, self.logical))
 
     def __repr__(self) -> str:
-        return f"<Qudit {self.logical} -> {self.carrier} {self.index} of {self.device.name}>"
+        return (
+            f"<Qudit {self.logical} -> {self.carrier} {self.index} of {self.quantum_system.name}>"
+        )
 
     if TYPE_CHECKING:
 
@@ -197,7 +201,7 @@ class Qudit:
         ``get_drive_line(q).get_calibration(gate)`` (``X`` to ``Y90``) and
         ``get_readout_line(q).get_calibration(pulse.gates.READOUT)`` give it
         in a kernel; see ``PhysicalQudit.get_calibration``."""
-        return self.device._description.qudits[self.index].get_calibration(gate, transition)
+        return self.quantum_system._description.qudits[self.index].get_calibration(gate, transition)
 
 
 class Register(Sequence[Qudit]):
@@ -283,7 +287,7 @@ class _DeviceRegister(Register):
     __slots__ = ()
 
     def _owner(self) -> str:
-        return f"device {self._qudits[0].device.name!r}" if self._qudits else "the device"
+        return f"device {self._qudits[0].quantum_system.name!r}" if self._qudits else "the device"
 
 
 def _out_of_range(index: Any, n: int, owner: str) -> IndexOutOfRangeError:
@@ -299,11 +303,11 @@ def _out_of_range(index: Any, n: int, owner: str) -> IndexOutOfRangeError:
     )
 
 
-class Device:
+class QuantumSystem:
     """A read-only machine description; see the module docstring.
 
     ``clock_ghz`` is the program clock: kernels count time in its cycles.
-    ``pulse.device(..., clock_ghz=)`` (a system file's ``"clock_ghz"``) sets
+    ``pulse.quantum_system(..., clock_ghz=)`` (a system file's ``"clock_ghz"``) sets
     it; else the fastest clock of the control
     system's controllers, when every other one divides it (controllers whose
     clocks do not divide evenly need it declared); else the target's. Each
@@ -316,7 +320,7 @@ class Device:
     level); both are indexed by the user's qudit numbering and are read-only
     arrays.
     ``control_system`` is the ``ControlSystem`` that plays it, if given;
-    ``compile(kernel, device=dev)`` checks every program against it.
+    ``compile(kernel, quantum_system=dev)`` checks every program against it.
     """
 
     # The registered target the device was made from, as ``as_dict`` writes it.
@@ -341,7 +345,7 @@ class Device:
 
             if not isinstance(control_system, ControlSystem):
                 raise InvalidTypeError(
-                    f"Device control_system must be a ControlSystem, got {control_system!r}"
+                    f"QuantumSystem control_system must be a ControlSystem, got {control_system!r}"
                 )
         problems: list[Problem] = []
         if clock_ghz is not None or (control_system is not None and control_system._needs_clock):
@@ -349,7 +353,7 @@ class Device:
 
             clock, problems = _program_clock(control_system, clock_ghz, target.clock_ghz)
             if clock is None:
-                raise DeviceDefinitionError(problems=problems)
+                raise QuantumSystemDefinitionError(problems=problems)
             if clock != target.clock_ghz:
                 target = dataclasses.replace(target, clock_ghz=clock)
         layout = (
@@ -362,7 +366,7 @@ class Device:
 
             problems.extend(_wiring_problems(control_system, target))
         if layout is None or problems:
-            raise DeviceDefinitionError(problems=problems)
+            raise QuantumSystemDefinitionError(problems=problems)
         self.control_system = control_system
         # The target before its calibration was applied, as ``as_dict`` writes it.
         self._base_target = target
@@ -507,11 +511,12 @@ class Device:
         for handle in (a, b):
             if handle.__class__ is not Qudit:
                 raise InvalidTypeError(
-                    f"Device.coupling takes two qudit handles, as dev.qudits[i]; got {handle!r}"
+                    f"QuantumSystem.coupling takes two qudit handles, as dev.qudits[i]; got "
+                    f"{handle!r}"
                 )
-            if handle.device is not self and handle.device != self:
-                raise DeviceMismatchError(
-                    f"{handle!r} is a qudit of {handle.device.name!r}, not of {self.name!r}"
+            if handle.quantum_system is not self and handle.quantum_system != self:
+                raise QuantumSystemMismatchError(
+                    f"{handle!r} is a qudit of {handle.quantum_system.name!r}, not of {self.name!r}"
                 )
         return self._description.coupling(a.index, b.index)
 
@@ -542,18 +547,18 @@ class Device:
         return pulse
 
     @staticmethod
-    def load(path: str | os.PathLike[str], /) -> Device:
+    def load(path: str | os.PathLike[str], /) -> QuantumSystem:
         """The device of a system file, as ``as_dict`` writes one: JSON with
         its format (``cudaq-pulse.system/1``), its quantum system (a
         registered name, or every value inline), layout, calibration,
         cooldown, control system and program clock, each as data. A file
-        with problems raises ``DeviceDefinitionError`` listing all of them,
+        with problems raises ``QuantumSystemDefinitionError`` listing all of them,
         each with its path in the file, its line and its column; ``python -m
         cudaq_pulse.doctor --system FILE`` runs the same checks."""
         return _from_file(path)
 
     @staticmethod
-    def from_dict(data: Mapping[str, Any], /) -> Device:
+    def from_dict(data: Mapping[str, Any], /) -> QuantumSystem:
         """The device of a system file's data, as ``as_dict`` returns it or
         ``json.load`` reads it; see ``load``."""
         return _from_data(data)
@@ -610,10 +615,12 @@ class Device:
             "drive_amplitude_scale",
         }:
             return getattr(self.__dict__["_description"], name)
-        raise AttributeError(f"'Device' object has no attribute {name!r}", name=name, obj=self)
+        raise AttributeError(
+            f"'QuantumSystem' object has no attribute {name!r}", name=name, obj=self
+        )
 
     def as_dict(self) -> dict[str, Any]:
-        """The device as JSON-serializable data, which ``Device.from_dict``
+        """The device as JSON-serializable data, which ``QuantumSystem.from_dict``
         reads back: its format (``cudaq-pulse.system/1``), the version that
         wrote it, its quantum system (a registered name, or every value
         inline), layout and calibration, and its control system."""
@@ -622,16 +629,16 @@ class Device:
         return _device_data(self)
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, Device) and other._identity == self._identity
+        return isinstance(other, QuantumSystem) and other._identity == self._identity
 
     def __hash__(self) -> int:
         return hash(self.fingerprint)
 
     # Read-only: a copy is the device itself.
-    def __copy__(self) -> Device:
+    def __copy__(self) -> QuantumSystem:
         return self
 
-    def __deepcopy__(self, memo: dict[int, Any]) -> Device:
+    def __deepcopy__(self, memo: dict[int, Any]) -> QuantumSystem:
         return self
 
     def __reduce__(self) -> tuple[Any, ...]:
@@ -640,7 +647,7 @@ class Device:
         return device_reduce(self)
 
     def __repr__(self) -> str:
-        return f"<Device {self.name} ({len(self.layout)} qudits)>"
+        return f"<QuantumSystem {self.name} ({len(self.layout)} qudits)>"
 
 
 def _from_spec(
@@ -649,7 +656,7 @@ def _from_spec(
     layout: Sequence[int] | None = None,
     calibration: Any = None,
     control_system: ControlSystem | None = None,
-) -> Device:
+) -> QuantumSystem:
     from .targets._registry import make_quantum_system
 
     return _calibrated(make_quantum_system(spec), spec, source, layout, calibration, control_system)
@@ -663,7 +670,7 @@ def _calibrated(
     calibration: Any,
     control_system: ControlSystem | None = None,
     clock_ghz: float | None = None,
-) -> Device:
+) -> QuantumSystem:
     """The device of *target*, registered as *spec* (``None`` for a
     ``DeviceDescription``), with *calibration* applied and *clock_ghz* (if
     given) its program clock."""
@@ -675,7 +682,7 @@ def _calibrated(
 
         calibration = shipped_calibration("transmon_17q")
     name = target.name if spec is None else spec
-    made = Device(
+    made = QuantumSystem(
         target,
         name=name,
         layout=layout,
@@ -854,19 +861,19 @@ def _calibration(config: Mapping[str, Any], problems: list[Problem]) -> Any:
     return None
 
 
-def _definition(config: Mapping[str, Any], source: str, problems: list[Problem]) -> Device | None:
+def _definition(config: Mapping[str, Any], source: str, problems: list[Problem]) -> _MaybeSystem:
     """The device of *config*, or ``None`` after adding its problems in the
     order of the config's keys."""
     found = len(problems)
-    device = _checked(config, source, problems)
+    quantum_system = _checked(config, source, problems)
     order = {str(key): i for i, key in enumerate(config)}
     problems[found:] = sorted(
         problems[found:], key=lambda p: order.get(p.path.split("[")[0].split(".")[0], -1)
     )
-    return device
+    return quantum_system
 
 
-def _checked(config: Mapping[str, Any], source: str, problems: list[Problem]) -> Device | None:
+def _checked(config: Mapping[str, Any], source: str, problems: list[Problem]) -> _MaybeSystem:
     for key in sorted(set(config) & _RESERVED_CONFIG):
         problems.append(
             Problem(
@@ -989,7 +996,7 @@ def _located(problems: list[Problem], file: str, text: str) -> list[Problem]:
     return located
 
 
-def device(
+def quantum_system(
     description: DeviceDescription | str | None = None,
     /,
     *,
@@ -998,15 +1005,15 @@ def device(
     cooldown: str | None = None,
     control_system: ControlSystem | None = None,
     clock_ghz: float | None = None,
-) -> Device:
+) -> QuantumSystem:
     """The device of a quantum system: a registered target name or a
     ``DeviceDescription``.
 
     ``device("transmon_17q")`` is the device of a registered target,
     with every carrier in order (a name takes its argument after a colon, as
     in ``"transmon_generic:4"``); ``cudaq_pulse.targets.available_quantum_systems()``
-    lists the names. A string is always a name: ``Device.load(path)`` reads
-    a system file, and ``Device.from_dict(data)`` its data. ``device()`` is
+    lists the names. A string is always a name: ``QuantumSystem.load(path)`` reads
+    a system file, and ``QuantumSystem.from_dict(data)`` its data. ``device()`` is
     the process quantum system, named by ``CUDAQ_PULSE_QUANTUM_SYSTEM`` (``python -m
     cudaq_pulse --quantum-system NAME`` sets it); without one it raises
     ``NoProcessQuantumSystemError``.
@@ -1015,16 +1022,16 @@ def device(
     carrier of the quantum system, in order. ``calibration`` is a
     ``Calibration``, the name of a shipped one or the path of a calibration
     file, and ``cooldown`` one of its cooldowns; the calibration's couplings
-    replace the system's, and ``Device.calibration`` holds it. The
+    replace the system's, and ``QuantumSystem.calibration`` holds it. The
     ``transmon_17q`` target uses the shipped ``transmon_17q`` calibration by
     default. ``control_system`` is a ``ControlSystem``, whose lines must be
     carriers of the quantum system. ``clock_ghz`` is the program clock
-    kernels count cycles of (``Device.clock_ghz``); by default the fastest
+    kernels count cycles of (``QuantumSystem.clock_ghz``); by default the fastest
     controller clock when the others divide it, else the quantum system's.
     Controller clocks that do not divide evenly into one need it, and the
     problem lists the clocks that work.
 
-    Arguments with problems raise ``DeviceDefinitionError`` listing all of
+    Arguments with problems raise ``QuantumSystemDefinitionError`` listing all of
     them, each at the argument it is in.
     """
     if description.__class__ is str:
@@ -1061,20 +1068,20 @@ def device(
             _unknown_target(description)
     elif not isinstance(description, DeviceDescription):
         fix = (
-            "; Device.from_dict(data) reads a system file's data"
+            "; QuantumSystem.from_dict(data) reads a system file's data"
             if isinstance(description, Mapping)
             else ""
         )
         raise InvalidTypeError(
-            "pulse.device takes a registered target name or a DeviceDescription, got "
+            "pulse.quantum_system takes a registered target name or a DeviceDescription, got "
             f"{type(description).__name__}{fix}"
         )
     if isinstance(control_system, Mapping) or isinstance(calibration, Mapping):
         name = "control_system" if isinstance(control_system, Mapping) else "calibration"
         raise InvalidTypeError(
-            f"pulse.device's {name} is a "
+            f"pulse.quantum_system's {name} is a "
             + ("ControlSystem" if name == "control_system" else "Calibration, a name or a path")
-            + ", not data; Device.from_dict(data) reads a system file's data"
+            + ", not data; QuantumSystem.from_dict(data) reads a system file's data"
         )
     given = {
         "quantum_system": description,
@@ -1087,8 +1094,8 @@ def device(
     problems: list[Problem] = []
     found = _definition({k: v for k, v in given.items() if v is not None}, "arguments", problems)
     if found is None:
-        raise DeviceDefinitionError(
-            f"{_count(len(problems), 'problem')} in pulse.device()", problems=problems
+        raise QuantumSystemDefinitionError(
+            f"{_count(len(problems), 'problem')} in pulse.quantum_system()", problems=problems
         )
     return found
 
@@ -1102,26 +1109,26 @@ def _unknown_target(name: str) -> None:
         except UnknownQuantumSystemError as error:
             raise UnknownQuantumSystemError(
                 f"{Exception.__str__(error)}; a string is a target name: to read a system "
-                f"file, use pulse.Device.load({name!r})"
+                f"file, use pulse.QuantumSystem.load({name!r})"
             ) from None
     make_quantum_system(name)
 
 
-def _from_data(data: Any) -> Device:
-    """``Device.from_dict``: the device of a system file's data."""
+def _from_data(data: Any) -> QuantumSystem:
+    """``QuantumSystem.from_dict``: the device of a system file's data."""
     if not isinstance(data, Mapping):
         raise InvalidTypeError(f"device data must be a mapping, got {type(data).__name__}")
     problems: list[Problem] = []
     found = _definition(data, "data", problems)
     if found is None:
-        raise DeviceDefinitionError(
+        raise QuantumSystemDefinitionError(
             f"{_count(len(problems), 'problem')} in the device data", problems=problems
         )
     return found
 
 
-def _from_file(path: str | os.PathLike[str]) -> Device:
-    """``Device.load``: the device of a system file."""
+def _from_file(path: str | os.PathLike[str]) -> QuantumSystem:
+    """``QuantumSystem.load``: the device of a system file."""
     import json
 
     file = os.fspath(path)
@@ -1133,7 +1140,7 @@ def _from_file(path: str | os.PathLike[str]) -> Device:
         problem = Problem(
             f"not valid JSON: {error.msg}", file=file, line=error.lineno, column=error.colno
         )
-        raise DeviceDefinitionError(
+        raise QuantumSystemDefinitionError(
             f"1 problem in device file {file}", problems=[problem]
         ) from error
     problems: list[Problem] = []
@@ -1145,7 +1152,7 @@ def _from_file(path: str | os.PathLike[str]) -> Device:
             Problem(f"the file must hold a JSON object, got {type(data).__name__}", value=data)
         )
     if found is None:
-        raise DeviceDefinitionError(
+        raise QuantumSystemDefinitionError(
             f"{_count(len(problems), 'problem')} in device file {file}",
             problems=_located(problems, file, text),
         )

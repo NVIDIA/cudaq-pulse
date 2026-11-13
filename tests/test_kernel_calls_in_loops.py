@@ -47,7 +47,7 @@ def _qudits(n, qvec, dev=None):
 
 
 def _device(n):
-    return pulse.device(_target(n))
+    return pulse.quantum_system(_target(n))
 
 
 def _trace(kernel, n=1, qvec=False, args=()):
@@ -58,18 +58,18 @@ def _trace(kernel, n=1, qvec=False, args=()):
 def _compile(kernel, n=1, qvec=False, passes=None, args=()):
     """The compiled, scheduled kernel; *args* follow the qudits."""
     dev = _device(n)
-    compiled = pulse.compile(kernel, passes=passes, device=dev, unroll_threshold=ROLLED)
+    compiled = pulse.compile(kernel, passes=passes, quantum_system=dev, unroll_threshold=ROLLED)
     return compiled.lower(*_qudits(n, qvec, dev), *args)
 
 
 def _compile_symbolic(kernel):
     """Compile a one-qudit kernel ahead of its other arguments."""
-    return pulse.compile(kernel, device=_device(1), unroll_threshold=ROLLED)
+    return pulse.compile(kernel, quantum_system=_device(1), unroll_threshold=ROLLED)
 
 
 def _evaluate(compiled, *values):
     """The compiled kernel, lowered at concrete values of its other arguments."""
-    return compiled.lower(compiled.device.qudits[0], *values)
+    return compiled.lower(compiled.quantum_system.qudits[0], *values)
 
 
 def _simulate(kernel, n=1, qvec=False, args=(), levels=2, **kwargs):
@@ -551,7 +551,7 @@ def test_tones_in_a_list_retuned_to_runtime_floats():
     args = (_retuned(0), _retuned(1))
     check(looped, unrolled, loops=1, n=2, qvec=True, args=args)
     _rolled(_compile(looped, 2, True, args=args))
-    generic = pulse.compile(looped, device=_device(2))
+    generic = pulse.compile(looped, quantum_system=_device(2))
     assert generic.parameters == ("f0", "f1")
 
 

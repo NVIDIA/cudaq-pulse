@@ -98,8 +98,8 @@ class _Exposure:
         import bisect
 
         self._bisect = bisect.bisect_right
-        clock = lowered.device.clock_ghz
-        qudits = lowered.device._description.qudits
+        clock = lowered.quantum_system.clock_ghz
+        qudits = lowered.quantum_system._description.qudits
         ends: dict[int, list[int]] = {}
         starting: dict[int, list[int]] = {}
         readouts: list[tuple[int, int]] = []
@@ -150,8 +150,8 @@ class _LoopExposure:
     that straddle them are looked at one by one."""
 
     def __init__(self, lowered: "Lowered", nodes: Sequence[Any]) -> None:
-        clock = lowered.device.clock_ghz
-        qudits = lowered.device._description.qudits
+        clock = lowered.quantum_system.clock_ghz
+        qudits = lowered.quantum_system._description.qudits
         holds: dict[int, int] = {}
 
         def hold(qudit: int) -> int:

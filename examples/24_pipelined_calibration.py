@@ -228,15 +228,15 @@ def true_p1(program, plant, index):
 
 
 if __name__ == "__main__":
-    device = pulse.device(target)
+    quantum_system = pulse.quantum_system(target)
     nominal = target.qudits[0]
     true_qudit = nominal.replace(frequency_hz=nominal.frequency_hz + hidden_offset_hz)
     plant = dataclasses.replace(target, qudits={**target.qudits, 0: true_qudit})
 
     print("=== The program, compiled once ===")
     started = time.perf_counter()
-    compiled = pulse.compile(pi_train, device=device)
-    program = compiled.lower(device.qudits[0], repetitions, pi_amplitude, 0.0).generic
+    compiled = pulse.compile(pi_train, quantum_system=quantum_system)
+    program = compiled.lower(quantum_system.qudits[0], repetitions, pi_amplitude, 0.0).generic
     print(
         f"  compiled in {1e3 * (time.perf_counter() - started):.2f} ms "
         f"(the first compile in a process); float parameters {program.parameters}"

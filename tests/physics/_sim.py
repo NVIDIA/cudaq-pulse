@@ -24,7 +24,7 @@ def cycles(ns: float) -> int:
     return int(round(value))
 
 
-def device(freqs_hz, alphas_hz, couplings=(), t1_us=0.0, t2_us=0.0, **qudit):
+def quantum_system(freqs_hz, alphas_hz, couplings=(), t1_us=0.0, t2_us=0.0, **qudit):
     target = DeviceDescription(
         name="reference",
         qudits={
@@ -41,7 +41,7 @@ def device(freqs_hz, alphas_hz, couplings=(), t1_us=0.0, t2_us=0.0, **qudit):
         },
         couplings=[Coupling((i, j), g) for i, j, g in couplings],
     )
-    return pulse.device(target)
+    return pulse.quantum_system(target)
 
 
 def run(dev, kernel, *args, n=None, backend="cpu", levels=2, **simulate):

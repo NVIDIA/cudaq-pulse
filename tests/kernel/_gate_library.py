@@ -42,7 +42,7 @@ class Doubled(Gates):
         return self.wf(2 * _LENGTH)
 
 
-class Device:
+class QuantumSystem:
     """Holds its gates: the kernel reaches them through two attributes."""
 
     def __init__(self, amp):

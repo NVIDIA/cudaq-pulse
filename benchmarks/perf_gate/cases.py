@@ -66,7 +66,7 @@ _calls = _load("benchmarks/classical/classical_calls.py")
 _WORKLOADS = {name: (kernel, n) for name, kernel, n, _ in _workloads.WORKLOADS}
 
 # Qudit i at 5 GHz + i * 100 MHz, as in tests/_handles.py.
-_DEVICE = pulse.device(
+_DEVICE = pulse.quantum_system(
     DeviceDescription(
         name="perf-gate",
         qudits={i: PhysicalQudit(i, 5.0e9 + 1.0e8 * i, -300e6, 50.0, 30.0) for i in range(64)},
@@ -95,7 +95,7 @@ class Case:
 
 def _compile(kernel: Any, args: tuple[Any, ...], **options: Any) -> Callable[[], Op]:
     # A fresh compiled kernel holds no specializations, so this compiles.
-    return lambda: lambda i: pulse.compile(kernel, device=_DEVICE, **options).lower(*args)
+    return lambda: lambda i: pulse.compile(kernel, quantum_system=_DEVICE, **options).lower(*args)
 
 
 def _op_count(lowered: object) -> dict[str, int]:
@@ -225,7 +225,11 @@ def _feedback_program(n: int) -> Any:
                 drive(line, square(8, 0.1))
 
     compiled = pulse.compile(
-        program, device=_DEVICE, schedule="rcp", control_system=machine, unroll_threshold=100_000
+        program,
+        quantum_system=_DEVICE,
+        schedule="rcp",
+        control_system=machine,
+        unroll_threshold=100_000,
     )
     return compiled.lower(Q[0])
 
@@ -249,30 +253,30 @@ def _bell_args() -> tuple[Any, ...]:
 
 def _first_compile() -> Op:
     kernel, _ = _WORKLOADS["bell"]
-    return lambda i: pulse.compile(kernel, device=_DEVICE).lower(*_bell_args())
+    return lambda i: pulse.compile(kernel, quantum_system=_DEVICE).lower(*_bell_args())
 
 
 def _bind_new_value() -> Op:
-    compiled = pulse.compile(_wait_sweep, device=_DEVICE)
+    compiled = pulse.compile(_wait_sweep, quantum_system=_DEVICE)
     compiled.lower(Q[0], 1.0)
     return lambda i: compiled.lower(Q[0], float(4 * i + 5))
 
 
 def _bind_cached() -> Op:
-    compiled = pulse.compile(_wait_sweep, device=_DEVICE)
+    compiled = pulse.compile(_wait_sweep, quantum_system=_DEVICE)
     compiled.lower(Q[0], 1.0)
     return lambda i: compiled.lower(Q[0], 1.0)
 
 
 def _specialize_wait() -> Op:
-    compiled = pulse.compile(_wait_sweep, device=_DEVICE)
+    compiled = pulse.compile(_wait_sweep, quantum_system=_DEVICE)
     compiled.lower(Q[0], 1.0)
     # A new length retimes the module: its schedule specializes it.
     return lambda i: compiled.lower(Q[0], float(4 * i + 5)).schedule
 
 
 def _specialize_amplitude() -> Op:
-    compiled = pulse.compile(_amplitude, device=_DEVICE)
+    compiled = pulse.compile(_amplitude, quantum_system=_DEVICE)
     compiled.lower(Q[0], 0.1)
     return lambda i: compiled.lower(Q[0], 0.01 * (i + 1)).mlir()
 
@@ -288,12 +292,14 @@ def _export_controller() -> Op:
 
 def _export_controller_sampled() -> Op:
     lowered = _feedback_program(16)
-    rate = 2 * lowered.device.clock_ghz
+    rate = 2 * lowered.quantum_system.clock_ghz
     return lambda i: lowered.export_controller(rate)
 
 
 def _export_emulation() -> Op:
-    lowered = pulse.compile(_calls.many_calls(64, 4), device=_DEVICE, schedule="asap").lower(Q[0])
+    lowered = pulse.compile(
+        _calls.many_calls(64, 4), quantum_system=_DEVICE, schedule="asap"
+    ).lower(Q[0])
     return lambda i: lowered.export_emulation()
 
 
@@ -303,7 +309,7 @@ def _simulate_setup() -> Op:
         d = get_drive_line(q)
         drive(d, square(8, 0.1))
 
-    lowered = pulse.compile(pi_pulse, device=_DEVICE).lower(Q[0])
+    lowered = pulse.compile(pi_pulse, quantum_system=_DEVICE).lower(Q[0])
     # Eight cycles at one step per cycle: the run is mostly its setup. The
     # seed keeps its generator from being seeded with the system's entropy,
     # different in every run.

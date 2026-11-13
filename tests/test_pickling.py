@@ -109,7 +109,7 @@ def idle(tau: float):
     pass
 
 
-_SHIPPED_DEVICE = pulse.device(_SHIPPED_TARGET)
+_SHIPPED_DEVICE = pulse.quantum_system(_SHIPPED_TARGET)
 _SLOW_CONTROLLER = ControlSystem(controllers=[Controller(clock_ghz=1.0)])
 _DELAYED = ControlSystem(
     controllers=[Controller(drive_lines=[DriveLine(0, delay_ns=1.5)], readout_lines=[0])]
@@ -119,7 +119,7 @@ _DELAYED = ControlSystem(
 def _programs():
     return {
         "bound": rabi.lower(Q[0], 0.3),
-        "compiled": pulse.compile(rabi, device=LADDER).lower(Q[1], 0.2),
+        "compiled": pulse.compile(rabi, quantum_system=LADDER).lower(Q[1], 0.2),
         "generic": rabi.lower(Q[0], 0.3).generic,
         "variable_wait": ramsey.lower(Q[0], 40.0),
         "branch": pulse.compile(branch, schedule="asap").lower(Q[0], Q[1]),
@@ -141,7 +141,7 @@ def _views(program):
         "arguments": program.arguments,
         "qudits": program.qudits,
         "options": program.options,
-        "target": program.device,
+        "target": program.quantum_system,
         "classical": program.classical_report(),
     }
     if not program.parameters:
@@ -191,30 +191,30 @@ def test_targets_compare_by_content():
     "make",
     [
         lambda: LADDER,
-        lambda: pulse.device(_SHIPPED_TARGET),
-        lambda: pulse.device(_SHIPPED_TARGET, layout=[4, 5, 6], clock_ghz=1.0),
+        lambda: pulse.quantum_system(_SHIPPED_TARGET),
+        lambda: pulse.quantum_system(_SHIPPED_TARGET, layout=[4, 5, 6], clock_ghz=1.0),
     ],
     ids=["ladder", "shipped", "config"],
 )
 def test_a_device_unpickles_equal_and_is_built_once_per_process(make, monkeypatch):
-    device = make()
-    data = pickle.dumps(device)
+    quantum_system = make()
+    data = pickle.dumps(quantum_system)
     back = pickle.loads(data)
-    assert back == device and hash(back) == hash(device)
+    assert back == quantum_system and hash(back) == hash(quantum_system)
     assert pickle.loads(data) is back
     # Another process has not seen the device: it builds it again.
     monkeypatch.setattr(_pickling, "_devices", {})
     built = pickle.loads(data)
-    assert built == device and built is not device
-    assert built.layout == device.layout and built.clock_ghz == device.clock_ghz
-    assert built._description == device._description
-    assert (built.calibration is None) == (device.calibration is None)
+    assert built == quantum_system and built is not quantum_system
+    assert built.layout == quantum_system.layout and built.clock_ghz == quantum_system.clock_ghz
+    assert built._description == quantum_system._description
+    assert (built.calibration is None) == (quantum_system.calibration is None)
     assert pickle.loads(data) is built
 
 
 def _shipped_and_uncalibrated():
-    shipped = pulse.device(_SHIPPED_TARGET)
-    uncalibrated = pulse.device(make_quantum_system(_SHIPPED_TARGET))
+    shipped = pulse.quantum_system(_SHIPPED_TARGET)
+    uncalibrated = pulse.quantum_system(make_quantum_system(_SHIPPED_TARGET))
     assert shipped.calibration is not None and uncalibrated.calibration is None
     return shipped, uncalibrated
 
@@ -223,17 +223,17 @@ def test_a_device_and_its_target_without_the_calibration_are_two_devices():
     shipped, uncalibrated = _shipped_and_uncalibrated()
     assert shipped.fingerprint != uncalibrated.fingerprint and shipped != uncalibrated
     assert shipped.qudits[0] != uncalibrated.qudits[0]
-    named = pulse.device(_SHIPPED_TARGET, calibration=_SHIPPED_CALIBRATION)
+    named = pulse.quantum_system(_SHIPPED_TARGET, calibration=_SHIPPED_CALIBRATION)
     assert named == shipped and named.calibration == shipped.calibration
     # One kernel, called on each, returns each its own device.
-    assert rabi.lower(shipped.qudits[0], 0.1).device is shipped
-    assert rabi.lower(uncalibrated.qudits[0], 0.1).device is uncalibrated
+    assert rabi.lower(shipped.qudits[0], 0.1).quantum_system is shipped
+    assert rabi.lower(uncalibrated.qudits[0], 0.1).quantum_system is uncalibrated
 
 
 @pytest.mark.parametrize("kept_first", [1, 0], ids=["uncalibrated kept", "shipped kept"])
 def test_a_process_holding_one_unpickles_the_other_as_itself(kept_first, monkeypatch):
-    devices = _shipped_and_uncalibrated()
-    kept, sent = devices[kept_first], devices[1 - kept_first]
+    quantum_systems = _shipped_and_uncalibrated()
+    kept, sent = quantum_systems[kept_first], quantum_systems[1 - kept_first]
     data = pickle.dumps(sent)
     monkeypatch.setattr(_pickling, "_devices", {})
     assert _round_trip(kept) is kept
@@ -244,8 +244,8 @@ def test_a_process_holding_one_unpickles_the_other_as_itself(kept_first, monkeyp
 
 def test_a_device_unpickles_with_its_own_name_and_source(monkeypatch):
     target = make_quantum_system(_SHIPPED_TARGET)
-    first = pulse.Device(target, name="first", source="a")
-    second = pulse.Device(target, name="second", source="b")
+    first = pulse.QuantumSystem(target, name="first", source="a")
+    second = pulse.QuantumSystem(target, name="second", source="b")
     assert first == second
     data = pickle.dumps(second)
     monkeypatch.setattr(_pickling, "_devices", {})
@@ -255,19 +255,19 @@ def test_a_device_unpickles_with_its_own_name_and_source(monkeypatch):
 
 
 def test_a_shipped_calibration_pickles_as_its_name(monkeypatch):
-    shipped = pulse.device(_SHIPPED_TARGET)
+    shipped = pulse.quantum_system(_SHIPPED_TARGET)
     program = rabi.lower(shipped.qudits[0], 0.3)
     data = pickle.dumps(program)
     assert len(data) < 20_000 and len(pickle.dumps(shipped.calibration)) < 200
     monkeypatch.setattr(_pickling, "_devices", {})
     back = pickle.loads(data)
-    assert back.device is not shipped and back.device == shipped
-    assert back.device.calibration is shipped.calibration
+    assert back.quantum_system is not shipped and back.quantum_system == shipped
+    assert back.quantum_system.calibration is shipped.calibration
     assert _views(back) == _views(program)
 
 
 def test_an_unpickled_shipped_calibration_reads_its_file_when_used(monkeypatch):
-    shipped = pulse.device(_SHIPPED_TARGET).calibration
+    shipped = pulse.quantum_system(_SHIPPED_TARGET).calibration
     data = pickle.dumps(shipped)
     monkeypatch.setattr(calibration, "_LOADED", {})
     back = pickle.loads(data)
@@ -279,7 +279,7 @@ def test_an_unpickled_shipped_calibration_reads_its_file_when_used(monkeypatch):
 
 
 def test_a_shipped_calibration_of_another_file_is_refused(monkeypatch):
-    data = pickle.dumps(pulse.device(_SHIPPED_TARGET).calibration)
+    data = pickle.dumps(pulse.quantum_system(_SHIPPED_TARGET).calibration)
     monkeypatch.setattr(_source_stamp, "CALIBRATIONS", {_SHIPPED_CALIBRATION: "0123456789abcdef"})
     with pytest.raises(pulse.UnsupportedError, match="ships another .file 0123456789abcdef"):
         pickle.loads(data)
@@ -289,40 +289,40 @@ def test_a_shipped_calibration_of_another_file_is_refused(monkeypatch):
 
 
 def test_a_calibration_of_its_own_values_pickles_by_value_once_per_pickle():
-    shipped = pulse.device(_SHIPPED_TARGET).calibration
+    shipped = pulse.quantum_system(_SHIPPED_TARGET).calibration
     mine = Calibration(shipped._data, name="mine")
-    device = pulse.device(make_quantum_system(_SHIPPED_TARGET), calibration=mine)
+    quantum_system = pulse.quantum_system(make_quantum_system(_SHIPPED_TARGET), calibration=mine)
     back = _round_trip(mine)
     assert back is not mine and back == mine and back.name == "mine"
-    one = len(pickle.dumps(rabi.lower(device.qudits[0], 0.1)))
-    ten = len(pickle.dumps([rabi.lower(device.qudits[i], 0.1) for i in range(10)]))
+    one = len(pickle.dumps(rabi.lower(quantum_system.qudits[0], 0.1)))
+    ten = len(pickle.dumps([rabi.lower(quantum_system.qudits[i], 0.1) for i in range(10)]))
     assert one > 100_000 and ten < one + 20_000
     assert copy.copy(mine) is mine and copy.deepcopy(mine) is mine
 
 
 def test_a_calibration_of_other_values_makes_another_device():
-    shipped = pulse.device(_SHIPPED_TARGET).calibration
+    shipped = pulse.quantum_system(_SHIPPED_TARGET).calibration
     data = copy.deepcopy(shipped._data)
     same = Calibration(data, name="mine")
     data["cooldowns"]["2022-main"] = "edited"
     other = Calibration(data, name="mine")
     target = make_quantum_system(_SHIPPED_TARGET)
-    devices = [pulse.device(target, calibration=c) for c in (same, other)]
-    assert devices[0] != devices[1]
-    again = pulse.device(target, calibration=Calibration(shipped._data, name="m"))
-    assert again == devices[0]
+    quantum_systems = [pulse.quantum_system(target, calibration=c) for c in (same, other)]
+    assert quantum_systems[0] != quantum_systems[1]
+    again = pulse.quantum_system(target, calibration=Calibration(shipped._data, name="m"))
+    assert again == quantum_systems[0]
 
 
 def test_handles_and_registers_unpickle_as_their_device_and_indices(monkeypatch):
     monkeypatch.setattr(_pickling, "_devices", {})
-    dev = pulse.device(_SHIPPED_TARGET, layout=[4, 5, 6])
+    dev = pulse.quantum_system(_SHIPPED_TARGET, layout=[4, 5, 6])
     handles = dev.qudits
     q, pair, picked, everything = _round_trip((handles[1], handles[0:2], handles[[2, 0]], handles))
     assert q == handles[1] and (q.index, q.logical) == (5, 1)
     assert pair == handles[0:2] and picked == handles[[2, 0]]
     assert list(everything) == list(handles) and everything[2] == handles[2]
-    assert q.device is pair[0].device is everything[0].device
-    assert q.device == dev
+    assert q.quantum_system is pair[0].quantum_system is everything[0].quantum_system
+    assert q.quantum_system == dev
 
 
 def test_devices_handles_programs_and_classical_functions_copy_as_themselves():
@@ -474,25 +474,25 @@ def test_kernels_and_compiled_kernels_unpickle_with_their_unroll_threshold(
     assert back.unroll_threshold == threshold
     assert back.lower(Q[0]).mlir() == kernel.lower(Q[0]).mlir()
     given = {} if threshold is None else {"unroll_threshold": threshold}
-    compiled = pulse.compile(rabi, device=LADDER, **given)
+    compiled = pulse.compile(rabi, quantum_system=LADDER, **given)
     resolved = 8 if threshold is None else threshold
     assert _round_trip(compiled)._dispatch.options.unroll_threshold == resolved
 
 
 def test_a_compiled_kernel_unpickles_without_its_specializations():
-    compiled = pulse.compile(rabi, device=LADDER, schedule="asap")
+    compiled = pulse.compile(rabi, quantum_system=LADDER, schedule="asap")
     compiled.lower(Q[0], 0.1)
     back = _round_trip(compiled)
-    assert back.kernel is rabi and back.device == LADDER
+    assert back.kernel is rabi and back.quantum_system == LADDER
     assert back.cache_info().size == 0
     assert back.lower(Q[0], 0.1).mlir() == compiled.lower(Q[0], 0.1).mlir()
-    with pytest.raises(pulse.DeviceMismatchError):
-        back.lower(pulse.device(_SHIPPED_TARGET).qudits[0], 0.1)
+    with pytest.raises(pulse.QuantumSystemMismatchError):
+        back.lower(pulse.quantum_system(_SHIPPED_TARGET).qudits[0], 0.1)
 
 
 def test_a_pinned_compiled_kernel_unpickles_with_its_program(monkeypatch):
-    # Only float parameters: compile(..., device=) builds the program at once.
-    compiled = pulse.compile(idle, device=LADDER)
+    # Only float parameters: compile(..., quantum_system=) builds the program at once.
+    compiled = pulse.compile(idle, quantum_system=LADDER)
     expected = compiled.mlir(), compiled.parameters
     data = pickle.dumps(compiled)
     monkeypatch.setattr(_kernel, "build", _refuse_compile)
@@ -733,7 +733,7 @@ def _qpu(slots=1, **processor):
     system = pulse.ControlSystem(
         controllers=[*controllers, pulse.Controller()], links={"decoder": link}
     )
-    return pulse.device(ladder_target(4), control_system=system)
+    return pulse.quantum_system(ladder_target(4), control_system=system)
 
 
 _QPU = _qpu()
@@ -745,13 +745,13 @@ def _declared_clock():
         for k, clock in enumerate((2.4, 1.0))
     ]
     system = pulse.ControlSystem(controllers=controllers)
-    return pulse.device(ladder_target(2), control_system=system, clock_ghz=12.0)
+    return pulse.quantum_system(ladder_target(2), control_system=system, clock_ghz=12.0)
 
 
 def _multi_controller_programs():
     q = _QPU.qudits
-    compiled = pulse.compile(corrected_pair, device=_QPU, schedule="asap")
-    placed = pulse.compile(anywhere, device=_QPU, schedule="asap", passes=[])
+    compiled = pulse.compile(corrected_pair, quantum_system=_QPU, schedule="asap")
+    placed = pulse.compile(anywhere, quantum_system=_QPU, schedule="asap", passes=[])
     return {
         "call": compiled.lower(q[0], q[2], 0.3),
         "placed_on_0": placed.lower(q[0], 0.1),
@@ -766,7 +766,7 @@ def _per_controller(program):
             json.dumps(program.export_controller(controller=k)),
             json.dumps(program.export_emulation(controller=k)),
         )
-        for k in range(len(program.device.control_system.controllers))
+        for k in range(len(program.quantum_system.control_system.controllers))
     ]
 
 
@@ -783,13 +783,16 @@ def test_a_control_system_and_its_parts_unpickle_equal_with_equal_hashes():
 
 @pytest.mark.parametrize("make", [lambda: _QPU, _declared_clock], ids=["derived", "declared"])
 def test_a_device_unpickles_with_its_control_system_and_program_clock(make, monkeypatch):
-    device = make()
-    data = pickle.dumps(device)
+    quantum_system = make()
+    data = pickle.dumps(quantum_system)
     monkeypatch.setattr(_pickling, "_devices", {})
     back = pickle.loads(data)
-    assert back is not device and back == device
-    assert back.control_system == device.control_system and back.clock_ghz == device.clock_ghz
-    assert back.as_dict() == device.as_dict()
+    assert back is not quantum_system and back == quantum_system
+    assert (
+        back.control_system == quantum_system.control_system
+        and back.clock_ghz == quantum_system.clock_ghz
+    )
+    assert back.as_dict() == quantum_system.as_dict()
 
 
 def test_devices_differing_only_in_their_control_systems_unpickle_as_each(monkeypatch):
@@ -813,7 +816,9 @@ def test_usage_reports_unpickle_equal():
 
 def _usage_error():
     qpu = _qpu(max_ops_per_function=1)
-    return _raised(lambda: pulse.compile(corrected_pair, device=qpu).lower(*qpu.qudits[:2], 0.3))
+    return _raised(
+        lambda: pulse.compile(corrected_pair, quantum_system=qpu).lower(*qpu.qudits[:2], 0.3)
+    )
 
 
 def test_a_limit_error_unpickles_with_its_usage_report():
@@ -870,7 +875,7 @@ def test_another_process_exports_each_controllers_program_compiled_here():
 
 
 def test_a_compiled_kernel_of_runtime_qudits_unpickles_compiling_once_for_any():
-    compiled = pulse.compile(anywhere, device=_QPU, schedule="asap", passes=[])
+    compiled = pulse.compile(anywhere, quantum_system=_QPU, schedule="asap", passes=[])
     back = _round_trip(compiled)
     assert type(back._dispatch) is type(compiled._dispatch)
     for q in (0, 2):
@@ -900,8 +905,8 @@ def _limit_error():
     [
         lambda: ControllerLimitError([f"violation {k}" for k in range(13)]),
         _limit_error,
-        lambda: _raised(lambda: pulse.device(_SHIPPED_TARGET, layout=[99])),
-        lambda: _raised(lambda: pulse.device(42)),
+        lambda: _raised(lambda: pulse.quantum_system(_SHIPPED_TARGET, layout=[99])),
+        lambda: _raised(lambda: pulse.quantum_system(42)),
         lambda: SymbolicValueError("tau must be known", ("tau",), "a duration"),
         lambda: _raised(lambda: rabi.lower(0, 0.1)),
         lambda: _raised(lambda: Q[999]),
@@ -997,7 +1002,7 @@ def _over_the_limit():
 
 
 def test_a_process_pool_sweep_runs_programs_compiled_in_the_parent():
-    compiled = pulse.compile(rabi, device=LADDER)
+    compiled = pulse.compile(rabi, quantum_system=LADDER)
     programs = [compiled.lower(Q[0], amp) for amp in (0.1, 0.2, 0.3, 0.4)]
     expected = [(p.schedule, p.export_controller()) for p in programs]
     context = multiprocessing.get_context("spawn")
@@ -1007,7 +1012,7 @@ def test_a_process_pool_sweep_runs_programs_compiled_in_the_parent():
             rabi.lower(Q[3], 0.2).mlir()
         )
         # A result comes back from the worker as the parent computes it.
-        program = pulse.compile(reset, device=LADDER).lower(Q[0])
+        program = pulse.compile(reset, quantum_system=LADDER).lower(Q[0])
         simulated = pool.submit(_simulate_in_worker, program).result()
         with pytest.raises(ControllerLimitError, match="starts 21 cycles after") as caught:
             pool.submit(_over_the_limit).result()

@@ -212,8 +212,8 @@ def _adaptive_loop(q0, rounds: int):
 
 def test_a_long_adaptive_loop_follows_one_path_per_shot():
     target = _target(t1_us=5.0)
-    dev = pulse.device(target)
-    lowered = pulse.compile(_adaptive_loop, device=dev, control_system=_MACHINE).lower(
+    dev = pulse.quantum_system(target)
+    lowered = pulse.compile(_adaptive_loop, quantum_system=dev, control_system=_MACHINE).lower(
         dev.qudits[0], 60
     )
     result = pulse.simulate(lowered, shots_count=3, seed=1, branches="sampled", levels=2)

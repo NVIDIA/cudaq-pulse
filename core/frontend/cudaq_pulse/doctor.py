@@ -15,13 +15,13 @@ The compiler check always runs; any failure there exits non-zero. So does
 one of the cudaq-pulse-opt MLIR driver, from the cudaq-pulse-tools
 distribution, which an installed cudaq-pulse requires at its own version,
 and whose ``--version`` must print it.
-``--system FILE`` instead runs the checks of ``pulse.Device.load(FILE)`` and
+``--system FILE`` instead runs the checks of ``pulse.QuantumSystem.load(FILE)`` and
 prints each problem as ``FILE:LINE:COLUMN: error: PATH: MESSAGE``, or with
 ``--json`` as one JSON object; it exits 1 if the file has a problem.
 ``--setup-editor`` instead shows the change to the mypy and ruff
 configuration of the project in the current directory (or ``--project``)
 and writes it only when confirmed, or with ``--yes``. ``--system`` loads a
-system file (``Device.as_dict()``), lists every problem of its definition
+system file (``QuantumSystem.as_dict()``), lists every problem of its definition
 with its line, and shows its controllers, links and whether each
 controller's backend is installed; it exits non-zero if the file has a
 problem or names a backend that is not installed.
@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from . import _build_config
-from ._errors import UNSET, DeviceDefinitionError, Problem
+from ._errors import UNSET, Problem, QuantumSystemDefinitionError
 from .runtime import gpu
 
 __all__ = ["main"]
@@ -195,15 +195,15 @@ def _kernel_settings(write: Callable[[str], None]) -> bool:
         )
     else:
         try:
-            device = current_quantum_system()
+            quantum_system = current_quantum_system()
         except Exception as error:
             write("Process quantum system: INVALID")
             write(f"  {error}")
             ok = False
         else:
             write(
-                f"Process quantum system: {device.name} "
-                f"({device.source}, {len(device.layout)} qudits)"
+                f"Process quantum system: {quantum_system.name} "
+                f"({quantum_system.source}, {len(quantum_system.layout)} qudits)"
             )
     try:
         size = _cache_size(None)
@@ -353,13 +353,13 @@ def _problem_json(problem: Problem) -> dict[str, Any]:
 def _check_system(file: Path, as_json: bool, write: Callable[[str], None]) -> int:
     """Check the device or system file *file*, and that the backends of its
     controllers are installed; return the exit code."""
-    from ._device import Device
+    from ._device import QuantumSystem
 
     problems: tuple[Problem, ...] = ()
     summary: dict[str, Any] | None = None
     try:
-        dev = Device.load(file)
-    except DeviceDefinitionError as error:
+        dev = QuantumSystem.load(file)
+    except QuantumSystemDefinitionError as error:
         problems = error.problems
     except OSError as error:
         problems = (Problem(f"cannot read the file: {error.strerror or error}", file=str(file)),)
@@ -373,7 +373,7 @@ def _check_system(file: Path, as_json: bool, write: Callable[[str], None]) -> in
         report = {
             "file": str(file),
             "ok": not problems,
-            "device": summary,
+            "quantum_system": summary,
             "problems": [_problem_json(p) for p in problems],
         }
         write(json.dumps(report, indent=2))
@@ -480,7 +480,7 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         "--system",
         type=Path,
         metavar="FILE",
-        help="check the system file FILE as pulse.Device.load(FILE) does: every "
+        help="check the system file FILE as pulse.QuantumSystem.load(FILE) does: every "
         "problem, its controllers and links, and whether their backends are installed",
     )
     parser.add_argument(

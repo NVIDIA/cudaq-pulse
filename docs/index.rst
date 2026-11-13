@@ -36,7 +36,7 @@ quantum control. Its Python DSL drives an MLIR-based compiler pipeline:
    user_guide/kernels
    user_guide/operations
    user_guide/compilation
-   user_guide/devices
+   user_guide/quantum_systems
    user_guide/custom_passes
    user_guide/editors
    user_guide/classical_calls

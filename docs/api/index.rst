@@ -12,7 +12,7 @@ API Reference
    simulation
    classical
    controller
-   devices
+   quantum_systems
    targets
    kernel
    ops

@@ -25,9 +25,9 @@ class LineCalibrations:
     def __init__(self, emitter: PulseIREmitter, held: _Held) -> None:
         builder = emitter.b
         # line_tones is the device's own method.
-        device = getattr(getattr(builder, "line_tones", None), "__self__", None)
+        quantum_system = getattr(getattr(builder, "line_tones", None), "__self__", None)
         qudit = getattr(builder, "_qref_to_qudit", {}).get(held.key[0])
-        if device is None or qudit is None:
+        if quantum_system is None or qudit is None:
             raise CompilationError(
                 "line.get_calibration needs the device's calibrations; this trace has no device"
             )
@@ -38,7 +38,7 @@ class LineCalibrations:
                 "calibration outside the kernel, dev.qudits[i].get_calibration(gate), and pass "
                 "its values in, or leave the parameter unannotated"
             )
-        self._device = device
+        self._device = quantum_system
         self._qudit = qudit
         self._readout = held.key[1] == "get_readout_line"
 

@@ -335,10 +335,10 @@ def test_a_wait_from_an_answer_and_a_float_runs_their_sum_clamped(tau):
     from cudaq_pulse.targets import DeviceDescription, PhysicalQudit
 
     qudits = {i: PhysicalQudit(i, 5e9 + 1e8 * i, -2e8, 2.0, 0.0) for i in range(2)}
-    dev = pulse.device(DeviceDescription(name="decay", qudits=qudits))
+    dev = pulse.quantum_system(DeviceDescription(name="decay", qudits=qudits))
     q, p = dev.qudits
     length = min(max(round(2.0 * 10.0 + tau), 8), 1000)
-    low = pulse.compile(offset_by_tau, device=dev).lower(q, p, tau)
+    low = pulse.compile(offset_by_tau, quantum_system=dev).lower(q, p, tau)
     # The drive on d, then the wait once its answer is due, where the static
     # schedule puts them; the other line plays on.
     drive_d = next(e for e in low.schedule if e.kind == "drive" and e.line == 0)
@@ -358,7 +358,9 @@ def test_a_wait_from_an_answer_and_a_float_runs_their_sum_clamped(tau):
         drive(d, square(40, 0.1))
 
     mixed = pulse.simulate(low)
-    reference = pulse.simulate(pulse.compile(fixed, device=dev, schedule="asap").lower(q, p))
+    reference = pulse.simulate(
+        pulse.compile(fixed, quantum_system=dev, schedule="asap").lower(q, p)
+    )
     np.testing.assert_allclose(mixed.density_matrix, reference.density_matrix, atol=1e-9)
 
 

@@ -896,7 +896,7 @@ def export(
     elif limits is not None:
         _check_at_export(lowered, limits, clocks, (lines, events, frames, off, problems))
     if clocks is None:
-        clock = lowered.device.clock_ghz
+        clock = lowered.quantum_system.clock_ghz
     else:
         from . import _clocks
 
@@ -906,7 +906,7 @@ def export(
     base = emulation(lowered, False)
     program = {
         "format": FORMAT,
-        "quantum_system": lowered.device.name,
+        "quantum_system": lowered.quantum_system.name,
         "clock_ghz": clock,
         **({} if clocks is None else _clocks.clock_keys(clocks, clocks.controllers[0])),
         "schedule": lowered.options.schedule,
@@ -1039,7 +1039,7 @@ def _export_structured(
     if limits is not None:
         _check_at_export(lowered, limits, clocks, None)
     own = None if clocks is None else clocks.controllers[0]
-    clock = lowered.device.clock_ghz if own is None else own.clock_ghz
+    clock = lowered.quantum_system.clock_ghz if own is None else own.clock_ghz
     samples_of: list[dict[str, list[float]] | None] = []
     # The controller's converter rate, else sample_rate_ghz, else one sample
     # per cycle.
@@ -1060,7 +1060,7 @@ def _export_structured(
     base = emulation(lowered, False)
     program: dict[str, Any] = {
         "format": _STRUCTURED,
-        "quantum_system": lowered.device.name,
+        "quantum_system": lowered.quantum_system.name,
         "clock_ghz": clock,
     }
     if clocks is not None:
@@ -1611,7 +1611,7 @@ def _export_part(
         if own.ratio != 1 or own.grid > 1:
             alone = _clocks.ClockPlan(clocks.program_ghz, (own,), clocks.reference_clock_ghz)
             _clocks.off_grid(alone, lines, mine, True, True, _computes_at_run_time(lowered))
-    clock = lowered.device.clock_ghz if own is None else own.clock_ghz
+    clock = lowered.quantum_system.clock_ghz if own is None else own.clock_ghz
     if sample_rate_ghz is not None:
         _add_samples(mine, sample_rate_ghz, clock)
     functions = frozenset(e["function"] for e in mine if e["kind"] in ("submit", "answer"))
@@ -1619,7 +1619,7 @@ def _export_part(
     played = [line for line, owner in zip(lines, owners, strict=True) if owner == index]
     exported = {
         "format": FORMAT,
-        "quantum_system": lowered.device.name,
+        "quantum_system": lowered.quantum_system.name,
         "clock_ghz": clock,
         **keys,
         "controller": index,
@@ -1672,9 +1672,9 @@ def _symbols(
         elif source == _CARRIER:
             entry["value"] = carriers[k]
         elif source == _NATIVE:
-            entry["value"] = lowered.device.frequencies[carriers[k]]
+            entry["value"] = lowered.quantum_system.frequencies[carriers[k]]
         else:
-            target = lowered.device
+            target = lowered.quantum_system
             carrier = carriers[k]
             entry["value"] = target._frequency_tables(carrier + 1)[2][carrier]
         found.append(entry)
@@ -1840,7 +1840,7 @@ def _native_check(
     once. With *unresolved*, a tone or waveform whose value is not known yet
     counts only if the limit is exceeded whatever its value; a limit that
     only some values exceed is appended to *unresolved*."""
-    num, den = _samples_per_own_cycle(limits, lowered.device.clock_ghz)
+    num, den = _samples_per_own_cycle(limits, lowered.quantum_system.clock_ghz)
     module = lowered._concrete()
     found: list[str]
     with lowered._lock:
@@ -2011,7 +2011,7 @@ def _violations(
     for event in timed:
         by_line.setdefault(event["line"], []).append(event)
     issue, gap = limits.instruction_cycles, limits.instruction_cycles + limits.min_idle_cycles
-    num, den = _samples_per_own_cycle(limits, lowered.device.clock_ghz)
+    num, den = _samples_per_own_cycle(limits, lowered.quantum_system.clock_ghz)
     shared = limits.waveform_memory is WaveformMemoryScope.SHARED
     stored: dict[Any, int] = {}
     unknown_stored = 0
@@ -2364,7 +2364,7 @@ def _compile_check(
     else:
         from . import _clocks
 
-        clocks = _clocks.plan(limits, lowered.device.clock_ghz, machine.reference_clock_ghz)
+        clocks = _clocks.plan(limits, lowered.quantum_system.clock_ghz, machine.reference_clock_ghz)
     slots = lowered._role is not None and lowered._role.slots > 0
     if system is None and not slots:
         assert limits is not None
@@ -2510,7 +2510,7 @@ def _sample_rates(lowered: Lowered, limits: Controller) -> tuple[float, float] |
 
     machine = lowered.options.machine
     made = None
-    program = lowered.device.clock_ghz
+    program = lowered.quantum_system.clock_ghz
     if machine.controller is not None:
         made = _clocks.sample_rate(machine.controller, program)
     plays = _clocks.sample_rate(limits, program)

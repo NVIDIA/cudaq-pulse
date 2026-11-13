@@ -13,7 +13,7 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 
-from tests.physics._sim import basis, cycles, device, run
+from tests.physics._sim import basis, cycles, quantum_system, run
 
 P, T1_US, T2_US, T2_ECHO_US = 0.08, 10.0, 12.0, 18.0
 
@@ -28,7 +28,9 @@ def _idle(duration):
 
 
 def _thermal_qudit(**qudit):
-    return device([5.0e9], [-200e6], t1_us=T1_US, t2_us=T2_US, thermal_population=P, **qudit)
+    return quantum_system(
+        [5.0e9], [-200e6], t1_us=T1_US, t2_us=T2_US, thermal_population=P, **qudit
+    )
 
 
 def test_a_qudit_starts_in_its_thermal_mixture_and_stays_there():

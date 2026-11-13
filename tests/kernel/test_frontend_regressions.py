@@ -187,7 +187,7 @@ def test_a_sync_over_many_lines_takes_an_extended_record(n):
 
 def test_a_sync_over_a_thousand_lines_compiles_schedules_and_exports():
     n = 1200
-    dev = pulse.device(ladder_target(n))
+    dev = pulse.quantum_system(ladder_target(n))
 
     @pulse.kernel
     def wide(qs):
@@ -197,7 +197,7 @@ def test_a_sync_over_a_thousand_lines_compiles_schedules_and_exports():
         for d in lines:
             drive(d, square(8, 0.1))
 
-    lowered = pulse.compile(wide, device=dev, schedule="asap").lower(dev.qudits[0:n])
+    lowered = pulse.compile(wide, quantum_system=dev, schedule="asap").lower(dev.qudits[0:n])
     drives = lowered.schedule
     assert len(drives) == n + 1
     assert {e.start_cycles for e in drives[1:]} == {40}

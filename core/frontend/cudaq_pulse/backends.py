@@ -23,7 +23,7 @@ controller's program; ``run(artifact, shots_count=...)`` runs it::
 
     backend = backends.get("toy")
     system = backend.control_system()
-    lowered = pulse.compile(kernel, device=dev, control_system=system).lower(q)
+    lowered = pulse.compile(kernel, quantum_system=dev, control_system=system).lower(q)
     artifact = backend.emit(lowered.export_controller())
     result = backend.run(artifact, shots_count=100)
 

@@ -7,7 +7,7 @@ Targets API
 ===========
 
 A target describes a device's qudits, couplings and decoherence; a device
-(:doc:`devices`) pairs one with a qudit layout.
+(:doc:`quantum_systems`) pairs one with a qudit layout.
 
 .. autoclass:: cudaq_pulse.targets.DeviceDescription
    :members:

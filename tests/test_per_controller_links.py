@@ -10,7 +10,7 @@ import tomllib
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse._errors import DeviceDefinitionError
+from cudaq_pulse._errors import QuantumSystemDefinitionError
 from cudaq_pulse.classical import Link
 from cudaq_pulse.controller import resources
 
@@ -71,11 +71,13 @@ def _controllers(processors=False):
 def _device(per_controller, processors=False, slots=1):
     link = Link(fixed_ns=10, slots=slots, per_controller=per_controller)
     system = pulse.ControlSystem(controllers=_controllers(processors), links={"decoder": link})
-    return pulse.device(ladder_target(4), control_system=system)
+    return pulse.quantum_system(ladder_target(4), control_system=system)
 
 
 def _lower(kernel, qpu, schedule="asap"):
-    return pulse.compile(kernel, device=qpu, schedule=schedule).lower(qpu.qudits[0], qpu.qudits[2])
+    return pulse.compile(kernel, quantum_system=qpu, schedule=schedule).lower(
+        qpu.qudits[0], qpu.qudits[2]
+    )
 
 
 # ── Declaring one ─────────────────────────────────────────────────────────────
@@ -93,7 +95,7 @@ def test_a_system_file_states_a_per_controller_link_in_json_and_toml():
     qpu = _device(True)
     data = json.loads(json.dumps(qpu.as_dict()))
     assert data["control_system"]["links"]["decoder"]["per_controller"] is True
-    again = pulse.Device.from_dict(data)
+    again = pulse.QuantumSystem.from_dict(data)
     assert again.control_system.links["decoder"].per_controller
     table = tomllib.loads(
         "[[control_system.controllers]]\ndrive_lines = [0, 1]\nreadout_lines = [0, 1]\n"
@@ -101,7 +103,7 @@ def test_a_system_file_states_a_per_controller_link_in_json_and_toml():
         "[control_system.links.decoder]\nfixed_ns = 10\nslots = 1\n"
         "per_controller = true\n"
     )
-    loaded = pulse.Device.from_dict({"quantum_system": ladder_target(4)} | table)
+    loaded = pulse.QuantumSystem.from_dict({"quantum_system": ladder_target(4)} | table)
     assert loaded.control_system.links["decoder"] == Link(fixed_ns=10, slots=1, per_controller=True)
     shared = _device(False).as_dict()["control_system"]["links"]["decoder"]
     assert "per_controller" not in shared
@@ -174,7 +176,7 @@ def test_one_controller_schedules_a_per_controller_link_as_a_shared_one():
     for per in (False, True):
         link = Link(fixed_ns=10, slots=1, per_controller=per)
         system = pulse.ControlSystem(controllers=single, links={"decoder": link})
-        qpu = pulse.device(ladder_target(4), control_system=system)
+        qpu = pulse.quantum_system(ladder_target(4), control_system=system)
         reports.append(
             [(c.submit_cycles, c.due_cycles) for c in _lower(two_rounds, qpu).classical_report()]
         )
@@ -185,7 +187,7 @@ def test_one_controller_schedules_a_per_controller_link_as_a_shared_one():
 
 
 def test_each_controller_places_a_per_controller_link_on_its_own_processor():
-    with pytest.raises(DeviceDefinitionError, match="is also a link of controllers"):
+    with pytest.raises(QuantumSystemDefinitionError, match="is also a link of controllers"):
         _device(False, processors=True)
     lowered = _lower(two_rounds, _device(True, processors=True))
     usage = lowered.controller_usage
@@ -201,7 +203,7 @@ def test_two_processors_of_one_controller_cannot_both_hold_its_instance():
         drive_lines=[0, 1],
         processors=[pulse.Processor(links=["decoder"]), pulse.Processor(links=["decoder"])],
     )
-    with pytest.raises(DeviceDefinitionError, match="per controller"):
+    with pytest.raises(QuantumSystemDefinitionError, match="per controller"):
         pulse.ControlSystem(controllers=[two], links={"decoder": Link(per_controller=True)})
 
 
@@ -226,12 +228,12 @@ def calls_only(q):
 
 def _three():
     system = pulse.ControlSystem(controllers=_controllers(), links={"controller": Link()})
-    return pulse.device(ladder_target(4), control_system=system)
+    return pulse.quantum_system(ladder_target(4), control_system=system)
 
 
 def test_a_controller_the_program_does_not_use_exports_an_empty_program():
     qpu = _three()
-    lowered = pulse.compile(driven, device=qpu).lower(qpu.qudits[0])
+    lowered = pulse.compile(driven, quantum_system=qpu).lower(qpu.qudits[0])
     used = lowered.export_controller(controller=0)
     for index in (1, 2):
         program = lowered.export_controller(controller=index)
@@ -245,7 +247,7 @@ def test_a_controller_the_program_does_not_use_exports_an_empty_program():
 
 def test_a_program_of_calls_only_is_exported_by_the_controller_making_them():
     qpu = _three()
-    lowered = pulse.compile(calls_only, device=qpu).lower(qpu.qudits[0])
+    lowered = pulse.compile(calls_only, quantum_system=qpu).lower(qpu.qudits[0])
     program = lowered.export_controller()
     assert [c["function"] for c in program["calls"]] == ["gain"]
     assert [e["kind"] for e in program["events"]] == ["submit", "answer"]

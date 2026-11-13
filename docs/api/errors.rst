@@ -18,7 +18,7 @@ is a ``ValueError``, ``NotFoundError`` and ``UnknownQuantumSystemError`` are
    :members: problems, location
 
 An error that finds several problems at once, such as
-``DeviceDefinitionError``, lists each as a ``Problem`` in ``problems``:
+``QuantumSystemDefinitionError``, lists each as a ``Problem`` in ``problems``:
 
 .. autoclass:: cudaq_pulse.Problem
 
@@ -54,13 +54,13 @@ Running
 Devices and targets
 -------------------
 
-.. autoexception:: cudaq_pulse.DeviceDefinitionError
+.. autoexception:: cudaq_pulse.QuantumSystemDefinitionError
 
-.. autoexception:: cudaq_pulse.NoDeviceError
+.. autoexception:: cudaq_pulse.NoQuantumSystemError
 
 .. autoexception:: cudaq_pulse.NoProcessQuantumSystemError
 
-.. autoexception:: cudaq_pulse.DeviceMismatchError
+.. autoexception:: cudaq_pulse.QuantumSystemMismatchError
 
 .. autoexception:: cudaq_pulse.targets.UnknownQuantumSystemError
 

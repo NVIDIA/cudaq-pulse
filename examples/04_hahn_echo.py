@@ -66,7 +66,7 @@ def cpmg_echo(qudit, sigma, amp_half_pi, amp_pi, tau, refocus_count):
 
 def cycles(time):
     """*time* in cycles of the device's program clock."""
-    return time / pulse.ns * dev.clock_ghz
+    return time / pulse.ns * qs.clock_ghz
 
 
 def main():
@@ -76,8 +76,8 @@ def main():
     tau = 250 * pulse.ns
 
     print("=== Hahn Echo ===")
-    compiled_kernel = pulse.compile(hahn_echo, device=dev).lower(
-        dev.qudits[0], sigma, amp_half_pi, amp_pi, tau
+    compiled_kernel = pulse.compile(hahn_echo, quantum_system=qs).lower(
+        qs.qudits[0], sigma, amp_half_pi, amp_pi, tau
     )
     total_hahn = 2 * (4 * sigma) + 4 * sigma + 2 * tau
     print(f"  Expected duration: {cycles(total_hahn):.0f} clock cycles")
@@ -86,8 +86,8 @@ def main():
 
     print("\n=== CPMG-4 Echo ===")
     refocus_count = 4
-    compiled_kernel = pulse.compile(cpmg_echo, device=dev).lower(
-        dev.qudits[0], sigma, amp_half_pi, amp_pi, tau, refocus_count
+    compiled_kernel = pulse.compile(cpmg_echo, quantum_system=qs).lower(
+        qs.qudits[0], sigma, amp_half_pi, amp_pi, tau, refocus_count
     )
     total_cpmg = 2 * (4 * sigma) + refocus_count * (4 * sigma + 2 * tau)
     print(f"  Expected duration: {cycles(total_cpmg):.0f} clock cycles")
@@ -96,5 +96,5 @@ def main():
 
 
 if __name__ == "__main__":
-    dev = pulse.device("transmon_17q")
+    qs = pulse.quantum_system("transmon_17q")
     main()

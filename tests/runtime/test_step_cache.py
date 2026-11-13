@@ -94,7 +94,7 @@ def test_a_recalibrated_device_changes_the_step_and_the_warning(steps):
     assert _coarse(lambda: pulse.simulate(lowered, levels=3, dt_ns=0.25)) == []
     # A device is read-only by contract, not enforced: a target set on it in
     # place is the one simulated, and the one its step is kept for.
-    lowered.device._description = _target(alpha_hz=-400.0e6)
+    lowered.quantum_system._description = _target(alpha_hz=-400.0e6)
     assert _coarse(lambda: pulse.simulate(lowered, levels=3, dt_ns=0.25)) == ["400 MHz"]
     pulse.simulate(lowered, levels=5)
     assert steps[-1] == _STEP_5[-400.0e6]
@@ -104,7 +104,7 @@ def test_a_device_s_clock_set_in_place_changes_the_step(steps):
     lowered = on(_target(), _flip, Q[0])
     pulse.simulate(lowered, levels=5)
     assert steps[-1] == 0.5 / 12
-    lowered.device.clock_ghz = 2.5  # a 0.4 ns cycle: 10 steps
+    lowered.quantum_system.clock_ghz = 2.5  # a 0.4 ns cycle: 10 steps
     pulse.simulate(lowered, levels=5)
     assert steps[-1] == 0.4 / 10
 
@@ -123,7 +123,7 @@ def test_a_target_registered_again_under_its_name_changes_the_step(steps):
     try:
         for alpha in (-200.0e6, -400.0e6, -200.0e6):
             register_quantum_system(name, lambda arg, a=alpha: _target(a))
-            dev = pulse.device(name)
+            dev = pulse.quantum_system(name)
             pulse.simulate(pulse.compile(_flip).lower(dev.qudits[0]), levels=5)
             assert steps[-1] == _STEP_5[alpha]
     finally:
@@ -227,7 +227,7 @@ def test_kept_steps_hold_no_target_and_go_with_it(steps):
     ids = {id(target), id(plant)}
     assert len([k for k in simulate_module._STEPS if ids & set(k[:2])]) == 2
     assert ids <= simulate_module._WATCHED.keys()
-    refs = [weakref.ref(target), weakref.ref(plant), weakref.ref(lowered.device)]
+    refs = [weakref.ref(target), weakref.ref(plant), weakref.ref(lowered.quantum_system)]
     del target, plant, lowered
     gc.collect()
     assert [r() for r in refs] == [None, None, None]

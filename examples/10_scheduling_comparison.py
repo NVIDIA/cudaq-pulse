@@ -38,12 +38,12 @@ def print_timeline(compiled: pulse.Lowered, label: str) -> int:
 
 
 def main():
-    args = [dev.qudits[:4]]
+    args = [qs.qudits[:4]]
     control_system = pulse.ControlSystem(max_concurrent_drives=2, line_switch_penalty_cycles=5)
     totals = {}
     for policy in ("asap", "alap", "rcp"):
         compiled = pulse.compile(
-            four_qudit, schedule=policy, control_system=control_system, device=dev
+            four_qudit, schedule=policy, control_system=control_system, quantum_system=qs
         ).lower(*args)
         label = policy.upper()
         if policy == "rcp":
@@ -56,5 +56,5 @@ def main():
 
 
 if __name__ == "__main__":
-    dev = pulse.device("transmon_17q")
+    qs = pulse.quantum_system("transmon_17q")
     main()

@@ -206,7 +206,7 @@ takes. They belong to the control system, by name:
            "controller": Link(fixed_ns=4, feedback_ns=8, slots=4),
        }
    )
-   lowered = pulse.compile(kernel, device=dev, control_system=control_system).lower(q)
+   lowered = pulse.compile(kernel, quantum_system=qs, control_system=control_system).lower(q)
 
 A function's ``link=`` names a link of the control system, or gives a link
 id: the link's position, so the first is link 0, the default. A link id the
@@ -538,7 +538,7 @@ when it is known.
        longest_wait = 20 * pulse.us
        wait(d, read_wait.submit().result() * pulse.ns, bounds=(0, longest_wait))
 
-   compiled = pulse.compile(shot, device=dev, control_system=control_system)
+   compiled = pulse.compile(shot, quantum_system=qs, control_system=control_system)
    for i in range(10_000):
        lowered = compiled.lower(q, amplitude)   # no compiling after the first
        ...
@@ -633,7 +633,7 @@ from the ``Processor`` of a controller that runs the functions on its
        controllers=[pulse.Controller(processors=[processor])],
        links={"controller": Link(fixed_ns=4)},
    )
-   lowered = pulse.compile(chain, device=dev, control_system=system).lower(q)
+   lowered = pulse.compile(chain, quantum_system=qs, control_system=system).lower(q)
    print(controller.resources(lowered))
 
 .. :spellcheck-enable:

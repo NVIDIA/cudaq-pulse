@@ -34,8 +34,8 @@ def rabi_with_readout(qudit, duration, amplitude):
 
 
 if __name__ == "__main__":
-    dev = pulse.device("transmon_17q")
-    qudit = dev.qudits[0]
+    qs = pulse.quantum_system("transmon_17q")
+    qudit = qs.qudits[0]
 
     print("=== Compiled for the qubit's device ===")
     compiled_kernel = rabi.lower(qudit, cal["rabi_duration"], 0.5)
@@ -44,7 +44,7 @@ if __name__ == "__main__":
 
     print("\n=== Amplitude sweep (Rabi oscillation, CPU simulation) ===")
     # Pinning the device compiles for it ahead of the call.
-    sweep = pulse.compile(rabi, device=dev)
+    sweep = pulse.compile(rabi, quantum_system=qs)
     for amplitude in [0.0, 0.02, 0.04, 0.06, 0.08, 0.10, 0.12]:
         compiled_kernel = sweep.lower(qudit, cal["rabi_duration"], amplitude)
         p1 = pulse.simulate(compiled_kernel).level_population(1)
@@ -52,11 +52,11 @@ if __name__ == "__main__":
     print(f"  compiled {sweep.cache_info().compiled} time(s) for the whole sweep")
 
     print("\n=== The same kernel on a device with a 1 GHz clock ===")
-    slow = pulse.device("transmon_17q", clock_ghz=1.0)
-    for device in (dev, slow):
-        lowered = rabi.lower(device.qudits[0], cal["rabi_duration"], 0.5)
+    slow = pulse.quantum_system("transmon_17q", clock_ghz=1.0)
+    for quantum_system in (qs, slow):
+        lowered = rabi.lower(quantum_system.qudits[0], cal["rabi_duration"], 0.5)
         cycles = lowered.schedule[0].duration_cycles
-        print(f"  {device.clock_ghz:g} GHz: {cal['rabi_duration']} is {cycles} cycles")
+        print(f"  {quantum_system.clock_ghz:g} GHz: {cal['rabi_duration']} is {cycles} cycles")
 
     print("\n=== With readout ===")
     compiled_kernel = rabi_with_readout.lower(qudit, cal["rabi_duration"], 0.5)

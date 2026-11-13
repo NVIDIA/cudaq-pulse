@@ -112,8 +112,8 @@ def t1_shot(q, wait_ns: int):
 
 if __name__ == "__main__":
     target = transmon_17q()
-    dev = pulse.device(target)
-    q = dev.qudits[0]
+    qs = pulse.quantum_system(target)
+    q = qs.qudits[0]
     qudit = target.qudits[0]
 
     print("=== 1. Frequency binary search in one shot (2 rounds) ===")
@@ -125,7 +125,9 @@ if __name__ == "__main__":
             0: qudit.replace(frequency_hz=qudit.frequency_hz + offset_hz),
         },
     )
-    lowered = pulse.compile(binary_search, device=dev, control_system=control_system).lower(q, 2)
+    lowered = pulse.compile(binary_search, quantum_system=qs, control_system=control_system).lower(
+        q, 2
+    )
     result = pulse.simulate(lowered, plant=detuned, dt_ns=0.25)
     print(f"  true detuning {offset_hz / 1e3:.0f} kHz; prior 0 +- {initial_sigma_hz / 1e6:.0f} MHz")
     for branch in sorted(result.branches, key=lambda branch: -branch.probability):
@@ -150,7 +152,7 @@ if __name__ == "__main__":
     )
     store = ParameterStore(alpha=1.0, beta=10_000.0, mean_hz=0.0, sigma_hz=1e6)
     log = EstimateLog()
-    compiled = pulse.compile(t1_shot, device=dev)
+    compiled = pulse.compile(t1_shot, quantum_system=qs)
     iterations, block = 6000, 150
     for i in range(iterations):
         alpha, beta, mean, sigma = store.values("alpha", "beta", "mean_hz", "sigma_hz")

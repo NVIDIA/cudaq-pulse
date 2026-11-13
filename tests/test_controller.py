@@ -203,7 +203,7 @@ def test_a_line_is_listed_with_its_role_even_when_it_only_waits():
 
 
 def test_export_samples_envelopes_at_a_multiple_of_the_clock():
-    program = _program(sample_rate_ghz=4 * pulse.device().clock_ghz)
+    program = _program(sample_rate_ghz=4 * pulse.quantum_system().clock_ghz)
     first = program["events"][0]
     samples = np.asarray(first["samples"]["re"]) + 1j * np.asarray(first["samples"]["im"])
     assert len(samples) == 16 * 4
@@ -213,7 +213,7 @@ def test_export_samples_envelopes_at_a_multiple_of_the_clock():
     np.testing.assert_allclose(samples.real, 0.5 * np.exp(-0.5 * t**2 / 16.0))
     assert "samples" not in program["events"][2]
     with pytest.raises(ValueError, match="whole multiple"):
-        _program(sample_rate_ghz=1.5 * pulse.device().clock_ghz)
+        _program(sample_rate_ghz=1.5 * pulse.quantum_system().clock_ghz)
 
 
 def test_drag_samples_carry_the_derivative_in_quadrature():
@@ -250,7 +250,7 @@ def sampled_envelopes(q, r):
 
 
 def test_custom_envelopes_are_exported_as_their_samples():
-    program = _program(sampled_envelopes, sample_rate_ghz=pulse.device().clock_ghz)
+    program = _program(sampled_envelopes, sample_rate_ghz=pulse.quantum_system().clock_ghz)
     traced, given = program["events"]
     expected = [(k + 0.5) / 8 for k in range(8)]
     assert traced["waveform"]["shape"] == "custom_samples"
@@ -304,7 +304,7 @@ def two_amplitudes(q, a: float, b: float):
 def test_waveforms_of_one_shape_at_float_amplitudes_share_waveform_memory():
     machine = ControlSystem(
         controllers=[
-            Controller(waveform_memory_samples=60, sample_rate_ghz=pulse.device().clock_ghz)
+            Controller(waveform_memory_samples=60, sample_rate_ghz=pulse.quantum_system().clock_ghz)
         ]
     )
     lowered = pulse.compile(two_amplitudes, control_system=machine).lower(Q[0], 0.5, 0.25)
@@ -350,7 +350,7 @@ def test_limits_report_instruction_spacing_detectors_and_feedback():
 
 def test_limits_report_clock_tones_memory_and_size():
     lowered = pulse.compile(drive_and_branch, schedule="asap").lower(Q[0], Q[1])
-    clock = lowered.device.clock_ghz
+    clock = lowered.quantum_system.clock_ghz
     # Every operation starts and lasts whole cycles of a controller at half
     # the clock; at an eighth, the readout and the two drives after it do not.
     assert check(lowered, Controller(clock_ghz=clock / 2)) == []
@@ -369,7 +369,7 @@ def test_limits_report_clock_tones_memory_and_size():
 
 def test_a_sample_rate_sets_the_samples_a_waveform_takes():
     lowered = pulse.compile(drive_and_branch, schedule="asap").lower(Q[0], Q[1])
-    clock = lowered.device.clock_ghz
+    clock = lowered.quantum_system.clock_ghz
     # At one and a half samples per cycle, the readout's 100 cycles take 150
     # samples and line 2's two shapes of 20 cycles 30 each.
     found = check(lowered, Controller(sample_rate_ghz=1.5 * clock, waveform_memory_samples=60))
@@ -555,7 +555,7 @@ def two_widths(q, a: float, b: float):
 def test_waveforms_of_float_widths_take_memory_by_their_values():
     machine = ControlSystem(
         controllers=[
-            Controller(waveform_memory_samples=60, sample_rate_ghz=pulse.device().clock_ghz)
+            Controller(waveform_memory_samples=60, sample_rate_ghz=pulse.quantum_system().clock_ghz)
         ]
     )
     compiled = pulse.compile(two_widths, control_system=machine)

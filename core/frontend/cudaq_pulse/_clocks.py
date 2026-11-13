@@ -3,7 +3,7 @@
 """Clocks: the program's, each controller's, and the grids between them.
 
 A kernel counts time in cycles of the device's *program clock*,
-``Device.clock_ghz``. A controller may run its own clock: at ``f_k`` against
+``QuantumSystem.clock_ghz``. A controller may run its own clock: at ``f_k`` against
 the program's ``f_p`` it counts ``r = f_k / f_p`` of its cycles per program
 cycle, and may start operations only every ``cycles_per_timestep`` of them.
 Its lines' timestep (their ``grid``) is the fewest whole program cycles

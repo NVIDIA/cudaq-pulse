@@ -284,7 +284,7 @@ def _device(system: ControlSystem) -> Any:
         clock_ghz=clock,
         qudits={i: PhysicalQudit(i, 5.0e9 + 1.5e8 * i, -2.5e8, 50.0, 30.0) for i in range(_QUDITS)},
     )
-    return pulse.device(target)
+    return pulse.quantum_system(target)
 
 
 def _formats(backend: Backend) -> list[str]:
@@ -453,7 +453,7 @@ def validate(
     first: dict[str, Any] | None = None
     for kind, kernel in _corpus().items():
         try:
-            compiled = pulse.compile(kernel, device=dev, control_system=system)
+            compiled = pulse.compile(kernel, quantum_system=dev, control_system=system)
             lowered = compiled.lower(*dev.qudits[:_QUDITS])
         except ControllerLimitError as e:
             report._add("SKIP", str(kind), f"exceeds the controller's limits: {e.violations[0]}")

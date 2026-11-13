@@ -69,7 +69,7 @@ def test_cooldowns_and_provenance(cal):
 def test_a_loaded_calibration_keeps_the_values_it_parsed():
     # Calibration.load keeps the dict it parsed without copying it, and the
     # shipped one is shared by every device: no use of it may change it.
-    shipped = pulse.device("transmon_17q").calibration
+    shipped = pulse.quantum_system("transmon_17q").calibration
     parsed = json.loads(_SHIPPED_17Q.read_text())
     for cal in (shipped, Calibration.load("transmon_17q", cooldown="2025-flux-tuning")):
         pair = cal.pairs[0]
@@ -145,7 +145,7 @@ def test_flux_quanta_and_detuning_convert_both_ways(cal):
 
 
 def test_the_17_qudit_device_carries_the_shipped_calibration(cal):
-    dev = pulse.device("transmon_17q")
+    dev = pulse.quantum_system("transmon_17q")
     assert dev.calibration == cal
     assert dev._description is transmon_17q()
 
@@ -181,12 +181,12 @@ def test_a_device_of_the_shipped_calibration_does_not_read_its_file(monkeypatch)
     from cudaq_pulse.targets import calibration, transmon
 
     read = transmon_17q()
-    read_device = pulse.device("transmon_17q")
+    read_device = pulse.quantum_system("transmon_17q")
     monkeypatch.setattr(transmon, "_BUILT", {})
     monkeypatch.setattr(calibration, "_LOADED", {})
     monkeypatch.setattr(calibration, "_read", lambda path: pytest.fail(f"read {path}"))
     assert transmon_17q() == read
-    assert pulse.device("transmon_17q").fingerprint == read_device.fingerprint
+    assert pulse.quantum_system("transmon_17q").fingerprint == read_device.fingerprint
     shipped = calibration.shipped_calibration("transmon_17q")
     digest = CALIBRATIONS["transmon_17q"]
     assert shipped._identity == ("shipped", "transmon_17q", "2022-main", digest)
@@ -216,8 +216,8 @@ def test_a_device_loads_a_calibration_from_its_config(tmp_path, cal):
         del entry["idle_frequencies_hz"]
     path = tmp_path / "custom.json"
     path.write_text(json.dumps(data))
-    base = pulse.device("transmon_17q")
-    custom = pulse.device("transmon_17q", calibration=str(path))
+    base = pulse.quantum_system("transmon_17q")
+    custom = pulse.quantum_system("transmon_17q", calibration=str(path))
     assert custom.calibration.name == "custom" and custom != base
 
     def x2_d4(dev):
@@ -227,8 +227,10 @@ def test_a_device_loads_a_calibration_from_its_config(tmp_path, cal):
 
     assert x2_d4(custom) == pytest.approx(1.1 * x2_d4(base), rel=1e-9)
     with pytest.raises(ValueError, match="cooldown"):
-        pulse.device("transmon_17q", cooldown="2025-flux-tuning")
-    other = pulse.device("transmon_17q", calibration="transmon_17q", cooldown="2025-flux-tuning")
+        pulse.quantum_system("transmon_17q", cooldown="2025-flux-tuning")
+    other = pulse.quantum_system(
+        "transmon_17q", calibration="transmon_17q", cooldown="2025-flux-tuning"
+    )
     assert other.calibration.cooldown == "2025-flux-tuning"
 
 

@@ -97,9 +97,9 @@ def clifford_sequence(qudit, gates):
 
 
 if __name__ == "__main__":
-    dev = pulse.device("transmon_17q")
-    qudit = dev.qudits[0]
-    rb = pulse.compile(clifford_sequence, device=dev)
+    qs = pulse.quantum_system("transmon_17q")
+    qudit = qs.qudits[0]
+    rb = pulse.compile(clifford_sequence, quantum_system=qs)
 
     print("=== RB sequence (depth=2, seed=42) ===")
     gates = rb_sequence(2, 42)

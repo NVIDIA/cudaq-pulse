@@ -31,9 +31,9 @@ def _machine(clock_ghz: float, **kwargs):
 
 
 def test_a_config_sets_the_program_clock_and_the_fingerprint_follows():
-    default = pulse.device(ladder_target(4))
-    same = pulse.device(ladder_target(4), clock_ghz=2.0)
-    slow = pulse.device(ladder_target(4), clock_ghz=1.0)
+    default = pulse.quantum_system(ladder_target(4))
+    same = pulse.quantum_system(ladder_target(4), clock_ghz=2.0)
+    slow = pulse.quantum_system(ladder_target(4), clock_ghz=1.0)
     assert default.clock_ghz == same.clock_ghz == 2.0 and default == same
     assert default.fingerprint == same.fingerprint
     assert slow.clock_ghz == 1.0 and slow._description.clock_ghz == 1.0
@@ -43,7 +43,7 @@ def test_a_config_sets_the_program_clock_and_the_fingerprint_follows():
 @pytest.mark.parametrize("bad", [0, -1.0, "2", True, math.inf])
 def test_a_config_clock_must_be_a_positive_number(bad):
     with pytest.raises(ValueError, match="clock_ghz"):
-        pulse.device(ladder_target(4), clock_ghz=bad)
+        pulse.quantum_system(ladder_target(4), clock_ghz=bad)
 
 
 def test_the_program_clock_comes_from_controllers_that_divide_evenly():

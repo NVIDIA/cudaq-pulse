@@ -49,7 +49,7 @@ behavior may change in any 0.x release.
   report, so a process pool re-raises them in the parent as they were
   raised. Targets now compare by content.
 - **Controllers with their own clocks.** Kernels count cycles of the
-  device's program clock, `pulse.device(..., clock_ghz=)` (or the
+  device's program clock, `pulse.quantum_system(..., clock_ghz=)` (or the
   target's). A controller whose clock is slower starts and times operations
   only every few program cycles: the scheduler puts each line's operations
   on its controller's grid and a `sync` on the grid its lines share, an
@@ -83,9 +83,9 @@ behavior may change in any 0.x release.
   plays, its peer latency, clock skew and alignment tolerance, its
   `supports`, `backend`, `model` and `version`) and `pulse.ControlSystem`
   (its controllers, its links by name, each `Link` with the `controllers`
-  it reaches). `pulse.device(quantum_system, control_system=...)` checks
+  it reaches). `pulse.quantum_system(quantum_system, control_system=...)` checks
   the wiring against the quantum system and raises one
-  `DeviceDefinitionError` listing every problem. `compile(kernel, device=qpu)` checks every program against
+  `QuantumSystemDefinitionError` listing every problem. `compile(kernel, quantum_system=qpu)` checks every program against
   the system: a line on no controller, each controller's own limits, a
   capability (`pulse.Capability`) a controller lacks, and a call over a link
   that does not reach its controllers fail to compile.
@@ -105,7 +105,7 @@ behavior may change in any 0.x release.
   programs again without tracing them. Without a
   declared `clock_ghz`, a device's program clock is its fastest
   controller clock when every other one divides it; clocks that do not
-  divide evenly are a `DeviceDefinitionError` that lists the program clocks
+  divide evenly are a `QuantumSystemDefinitionError` that lists the program clocks
   that work, and every controller clock must be a whole multiple of the
   reference clock. Each controller of a system may run its own clock: every
   line is scheduled on its own controller's grid, a `sync` and a wait from
@@ -172,9 +172,9 @@ behavior may change in any 0.x release.
   drive_lines=..., readout_lines=...)` loads a controller from a TOML
   description installed with cudaq-pulse (or one given by path), parsed
   once, with the installation's wiring. `reference.controller` ships.
-- **System files.** `Device.as_dict()` writes a QPU as one mapping, format
-  `cudaq-pulse.system/1`, which `pulse.Device.from_dict(data)` reads back,
-  and `pulse.Device.load(path)` from a JSON file, reporting each problem
+- **System files.** `QuantumSystem.as_dict()` writes a QPU as one mapping, format
+  `cudaq-pulse.system/1`, which `pulse.QuantumSystem.from_dict(data)` reads back,
+  and `pulse.QuantumSystem.load(path)` from a JSON file, reporting each problem
   with its line. A file written from
   another version of an installed description is noticed once
   (`UpgradeNotice`). `python -m cudaq_pulse.doctor --system FILE` checks a
@@ -293,8 +293,8 @@ behavior may change in any 0.x release.
   value before the
   `if`, raises a `CompilationError` naming it and the line of the `if`.
   Kernels take their qudits as parameters; a call without qudit
-  handles raises `NoDeviceError` unless the kernel was compiled for a device
-  (`pulse.compile(k, device=dev)`).
+  handles raises `NoQuantumSystemError` unless the kernel was compiled for a device
+  (`pulse.compile(k, quantum_system=dev)`).
 - **Lines and their tones.** `get_drive_line(q)` and `get_readout_line(q)`
   return the line alone, one value that is not unpacked or iterated;
   `line.tone` is its own tone, and `line.tones[(lower, upper)]`, a
@@ -417,7 +417,7 @@ behavior may change in any 0.x release.
   (`cudaq_pulse.compiler.ScheduledEvent`), `Lowered.duration` how long the
   program runs as a `pulse.Time`, `Lowered.metrics` the compile
   times (`cudaq_pulse.compiler.CompileMetrics`), and `Lowered.timeline()` a
-  plot (with the `[viz]` extra). `Device.qudit(label)` finds a qudit by
+  plot (with the `[viz]` extra). `QuantumSystem.qudit(label)` finds a qudit by
   its label and `DeviceDescription.coupling(a, b)` the coupling of two.
 - **Optimization passes.** `passes=` takes members of `pulse.Pass`, a
   string enum, or their names, in any order and combination: `VERIFY`,
@@ -441,17 +441,17 @@ behavior may change in any 0.x release.
   `pulse-hoist-loop-invariants`), as well as `pulse-unroll-classical-loops`
   and `pulse-schedule-rcp` with the control system's lanes as options (`max-drives`,
   `max-readouts`, `readout-latency`, `switch-penalty`, `alap`).
-- **Devices and targets.** `pulse.device` is the one device getter: it
+- **Devices and targets.** `pulse.quantum_system` is the one device getter: it
   describes a machine as a target plus a qudit layout, from a registered
-  target name (`pulse.device("transmon_17q")`) or a `DeviceDescription`,
+  target name (`pulse.quantum_system("transmon_17q")`) or a `DeviceDescription`,
   with `layout=`, `calibration=`, `cooldown=`, `control_system=` and
   `clock_ghz=` keywords, or, with no argument, the process quantum system; a string
-  is always a name, and `Device.load` / `Device.from_dict` read system
+  is always a name, and `QuantumSystem.load` / `QuantumSystem.from_dict` read system
   files. Devices compare by
   content and share compiled kernels, but handles of two devices, even
   equal ones, do not mix in one call or in a kernel compiled for one
-  (`DeviceMismatchError`), and an empty `layout` is a
-  `DeviceDefinitionError`. Target descriptions are
+  (`QuantumSystemMismatchError`), and an empty `layout` is a
+  `QuantumSystemDefinitionError`. Target descriptions are
   `cudaq_pulse.targets.DeviceDescription`; the shipped target,
   `"transmon_17q"`, is a 17-qubit transmon device built from
   Krinner et al., Nature 605, 669 (2022).
@@ -481,7 +481,7 @@ behavior may change in any 0.x release.
   this release), one per pair in either order, with finite strengths and
   rates (zero and negative allowed), a gate's non-empty name, times of 0 ns
   or more and an interaction frequency above 0 Hz. A config or file with
-  problems raises `pulse.DeviceDefinitionError` (a `ValueError`) listing all
+  problems raises `pulse.QuantumSystemDefinitionError` (a `ValueError`) listing all
   of them in `problems`, each a `pulse.Problem` with its path in the config
   (`layout[2]`), the offending value and a fix, and for a file its line and
   column; an unknown key or target name suggests the closest one, and the
@@ -489,7 +489,7 @@ behavior may change in any 0.x release.
   `python -m cudaq_pulse.doctor --system FILE [--json]` runs the same checks.
 - **Calibrations and the transmon model.** `cudaq_pulse.targets.Calibration`
   loads fitted values, each with its kind, source, uncertainty and cooldown,
-  apart from the published target, and `pulse.device` takes `calibration=`
+  apart from the published target, and `pulse.quantum_system` takes `calibration=`
   and `cooldown=`. `cudaq_pulse.targets.transmon_model` computes
   flux-tunable transmon levels and charge-coupled pairs from circuit values.
   The shipped `transmon_17q` calibration has one device-wide charge coupling,
@@ -689,12 +689,12 @@ behavior may change in any 0.x release.
   simulator. The report's `ok` and `str()` say what failed.
 - **Public API.** The top level is exactly `kernel`, `Kernel`, `compile`,
   `CompiledKernel`, `Lowered`, `Pass`, `simulate`, `SimulationResult`,
-  `BranchCoverage`, `device`, `Device`, `Qudit`, `Register`,
-  `PulseError`, `Problem`, `DeviceDefinitionError`, `InvalidValueError`,
+  `BranchCoverage`, `quantum_system`, `QuantumSystem`, `Qudit`, `Register`,
+  `PulseError`, `Problem`, `QuantumSystemDefinitionError`, `InvalidValueError`,
   `InvalidTypeError`, `NotFoundError`, `IndexOutOfRangeError`,
   `UnsupportedError`, `CompilationError`, `TimingError`, `ExecutionError`, `InternalError`,
-  `PulseWarning`, `UpgradeNotice`, `NoProcessQuantumSystemError`, `NoDeviceError`,
-  `DeviceMismatchError`, `GpuRuntimeError`, `viz`, `classical`,
+  `PulseWarning`, `UpgradeNotice`, `NoProcessQuantumSystemError`, `NoQuantumSystemError`,
+  `QuantumSystemMismatchError`, `GpuRuntimeError`, `viz`, `classical`,
   `controller` and `backends`, plus `__version__`.
   `simulate(program, *args, **options)` is the one way to simulate: it
   takes a kernel and its arguments as `compile` takes a kernel, or a

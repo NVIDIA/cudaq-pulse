@@ -56,7 +56,7 @@ def k(q):
             drive(d, square(20, 0.1))
 
 system = p.ControlSystem(links={"gpu": Link(fixed_ns=100, bytes_per_ns=10, feedback_ns=50)})
-dev = p.device("transmon_17q")
+dev = p.quantum_system("transmon_17q")
 low = p.compile(k, control_system=system).lower(dev.qudits[0])
 """
 
@@ -75,8 +75,8 @@ def _loaded(code: str, tmp_path: Path, modules: tuple[str, ...] = _HEAVY) -> lis
 def test_devices_and_a_classical_program_load_no_heavy_module(tmp_path):
     code = (
         _PROGRAM
-        + "p.device('transmon_generic:4')\n"
-        + "p.device('transmon_17q', clock_ghz=1.0)\n"
+        + "p.quantum_system('transmon_generic:4')\n"
+        + "p.quantum_system('transmon_17q', clock_ghz=1.0)\n"
         + "low.mlir(); low.schedule; low.segments; low.classical_report; str(low)\n"
         + "low.generic.bind([])\n"
     )
@@ -115,7 +115,7 @@ def test_a_device_with_a_control_system_loads_no_heavy_module(tmp_path):
     code = (
         "import sys\nimport cudaq_pulse as p\n"
         "c = p.controller('reference.controller', drive_lines=[0, 1], readout_lines=[0, 1])\n"
-        "p.device('transmon_17q', layout=[0, 1],\n"
+        "p.quantum_system('transmon_17q', layout=[0, 1],\n"
         "         control_system=p.ControlSystem(controllers=[c]))\n"
     )
     assert _loaded(code, tmp_path) == []
@@ -141,7 +141,7 @@ def k(q):
     d = get_drive_line(q)
     drive(d, drag(40, 0.2, 10.0, 0.5))
 
-dev = p.device("transmon_17q")
+dev = p.quantum_system("transmon_17q")
 low = p.compile(k).lower(dev.qudits[0])
 """
 
@@ -169,7 +169,7 @@ def test_times_load_no_fractions(tmp_path):
         _PLAIN + "t = (0.1 * p.us + 3 * p.ns) / 7 - p.ns\n"
         "assert repr(t) == '13.7143 ns' and t < low.duration and t // p.ns == 13\n"
         "assert (t % p.ns) * 7 == 5 * p.ns and abs(-t) == t\n"
-        "dev2 = p.device('transmon_17q', clock_ghz=1.5)\n"
+        "dev2 = p.quantum_system('transmon_17q', clock_ghz=1.5)\n"
         "low2 = p.compile(k).lower(dev2.qudits[0])\n"
         "assert low2.duration > 0 * p.ns\n"
     )
@@ -208,7 +208,7 @@ def test_a_name_with_no_close_match_loads_no_difflib(tmp_path):
     code = (
         "import sys\nimport cudaq_pulse as p\n\n@p.kernel\ndef k(q):\n"
         "    d = get_drive_line(q)\n    drive(d, zzz_not_a_waveform(40))\n\n"
-        "try:\n    p.compile(k).lower(p.device('transmon_17q').qudits[0])\n"
+        "try:\n    p.compile(k).lower(p.quantum_system('transmon_17q').qudits[0])\n"
         "except p.CompilationError as e:\n    assert 'did you mean' not in str(e), e\n"
     )
     assert _loaded(code, tmp_path, ("difflib",)) == []

@@ -690,7 +690,7 @@ def parts(
                 )
             found.append(text)
     issue, gap = limits.instruction_cycles, limits.instruction_cycles + limits.min_idle_cycles
-    num, den = _samples_per_own_cycle(limits, lowered.device.clock_ghz)
+    num, den = _samples_per_own_cycle(limits, lowered.quantum_system.clock_ghz)
     on_lines = sorted({events[i]["line"] for i in _events_of(timed)})
     shared = limits.waveform_memory is WaveformMemoryScope.SHARED
     stored: dict[Any, int] = {}

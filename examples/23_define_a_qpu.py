@@ -23,7 +23,7 @@ control = pulse.ControlSystem(
     controllers=[left, right],
     links={"feedback": pulse.Link(fixed_ns=40.0, feedback_ns=20.0, controllers=[left, right])},
 )
-qpu = pulse.device("transmon_17q", layout=[0, 1, 2, 3], control_system=control)
+qpu = pulse.quantum_system("transmon_17q", layout=[0, 1, 2, 3], control_system=control)
 
 
 @pulse.classical(max_latency_ns=400, link="feedback")
@@ -43,7 +43,7 @@ def measure_and_correct(measured, partner):
         drive(drive_line, gaussian(40, 0.5, 10.0))
 
 
-compiled = pulse.compile(measure_and_correct, schedule="rcp", device=qpu)
+compiled = pulse.compile(measure_and_correct, schedule="rcp", quantum_system=qpu)
 # Read out on the left controller, correct on the right one.
 lowered = compiled.lower(qpu.qudits[0], qpu.qudits[2])
 for index in range(len(control.controllers)):
@@ -54,7 +54,7 @@ for index in range(len(control.controllers)):
 with tempfile.TemporaryDirectory() as folder:
     path = Path(folder) / "qpu.json"
     path.write_text(json.dumps(qpu.as_dict(), indent=2))
-    assert pulse.Device.load(path) == qpu
+    assert pulse.QuantumSystem.load(path) == qpu
     print("saved and loaded", path.name, "format", json.loads(path.read_text())["format"])
 
     # A wiring mistake is reported with its place in the file.
@@ -62,7 +62,7 @@ with tempfile.TemporaryDirectory() as folder:
     broken["control_system"]["controllers"][1]["drive_lines"] = [2, 3, 30]
     path.write_text(json.dumps(broken, indent=2))
     try:
-        pulse.Device.load(path)
-    except pulse.DeviceDefinitionError as error:
+        pulse.QuantumSystem.load(path)
+    except pulse.QuantumSystemDefinitionError as error:
         for problem in error.problems:
             print("problem:", problem.path, "line", problem.line, "-", problem.message)

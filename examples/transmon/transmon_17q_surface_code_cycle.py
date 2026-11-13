@@ -21,10 +21,10 @@ cycle, is left out.
 import cudaq_pulse as pulse
 from cudaq_pulse.targets.transmon import CZ_LAYERS
 
-dev = pulse.device("transmon_17q")
-clock_ghz = dev.clock_ghz  # the program clock the schedule counts cycles of
-labels = {q.index: q.label for q in dev.physical_qudits.values()}
-qudit_count = len(dev.physical_qudits)
+qs = pulse.quantum_system("transmon_17q")
+clock_ghz = qs.clock_ghz  # the program clock the schedule counts cycles of
+labels = {q.index: q.label for q in qs.physical_qudits.values()}
+qudit_count = len(qs.physical_qudits)
 data_qudits = [i for i in range(qudit_count) if labels[i].startswith("D")]
 z_auxiliaries = [i for i in range(qudit_count) if labels[i].startswith("Z")]
 x_auxiliaries = [i for i in range(qudit_count) if labels[i].startswith("X")]
@@ -32,7 +32,7 @@ x_auxiliaries = [i for i in range(qudit_count) if labels[i].startswith("X")]
 # The CZs of each time step, (auxiliary, data), and their slot.
 z_steps = [list(CZ_LAYERS[0:2]), list(CZ_LAYERS[2:4])]
 x_steps = [list(CZ_LAYERS[4:6]), list(CZ_LAYERS[6:8])]
-cz_slot = max(c.get_calibration(pulse.gates.CZ).duration_ns for c in dev.couplings) * pulse.ns
+cz_slot = max(c.get_calibration(pulse.gates.CZ).duration_ns for c in qs.couplings) * pulse.ns
 
 for s, layer in enumerate(CZ_LAYERS, 1):
     print(f"CZ step {s}: " + ", ".join(f"{labels[a]}-{labels[d]}" for a, d in layer))
@@ -89,7 +89,7 @@ def surface_code_cycle(qudits):
             sync(lines[qudit_count - 2 - i], lines[qudit_count - 1 - i])
 
 
-compiled = pulse.compile(surface_code_cycle, device=dev).lower(dev.qudits[:qudit_count])
+compiled = pulse.compile(surface_code_cycle, quantum_system=qs).lower(qs.qudits[:qudit_count])
 total_ns = max(e.end for e in compiled.schedule) / clock_ghz
 print(
     f"\nCompiled and verified: {compiled.metrics.op_count} ops, "

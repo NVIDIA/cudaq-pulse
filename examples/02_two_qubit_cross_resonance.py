@@ -39,7 +39,7 @@ def echoed_cr(qudit_ctrl, qudit_tgt):
 
 
 if __name__ == "__main__":
-    dev = pulse.device("transmon_17q")
-    compiled_kernel = pulse.compile(echoed_cr, device=dev).lower(dev.qudits[0], dev.qudits[1])
+    qs = pulse.quantum_system("transmon_17q")
+    compiled_kernel = pulse.compile(echoed_cr, quantum_system=qs).lower(qs.qudits[0], qs.qudits[1])
     print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")

@@ -42,9 +42,9 @@ def parallel_x(qs):
 
 
 def main() -> None:
-    args = [dev.qudits[:4]]
+    args = [qs.qudits[:4]]
 
-    asap = pulse.compile(parallel_x, schedule="asap", device=dev).lower(*args)
+    asap = pulse.compile(parallel_x, schedule="asap", quantum_system=qs).lower(*args)
     print("ASAP violations of a 2-drive limit:", concurrent_drive_violations(asap, 2))
 
     rcp = pulse.compile(
@@ -56,5 +56,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    dev = pulse.device("transmon_17q")
+    qs = pulse.quantum_system("transmon_17q")
     main()

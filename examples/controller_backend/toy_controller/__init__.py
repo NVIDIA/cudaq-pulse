@@ -95,7 +95,7 @@ if __name__ == "__main__":
             )
         },
     )
-    dev = pulse.device(target, clock_ghz=1.0)
+    qs = pulse.quantum_system(target, clock_ghz=1.0)
     cal = {
         "x_duration": 40 * pulse.ns,
         "x_sigma": 10 * pulse.ns,
@@ -110,8 +110,10 @@ if __name__ == "__main__":
         sync(drive_line, readout_line)
         readout(readout_line, square(cal["readout_duration"], 0.05))
 
-    compiled = pulse.compile(drive_and_measure, device=dev, control_system=backend.control_system())
-    program = backend.emit(compiled.lower(dev.qudits[0]).export_controller())
+    compiled = pulse.compile(
+        drive_and_measure, quantum_system=qs, control_system=backend.control_system()
+    )
+    program = backend.emit(compiled.lower(qs.qudits[0]).export_controller())
     print(program, end="")
     print(backend.run(program, shots_count=2))
     backends.unregister("toy")

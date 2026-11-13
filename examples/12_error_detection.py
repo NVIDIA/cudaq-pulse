@@ -105,11 +105,11 @@ def main():
 
     print("=== the same check on a kernel ===")
     try:
-        pulse.compile(zero_length, device=dev).lower(dev.qudits[0])
+        pulse.compile(zero_length, quantum_system=qs).lower(qs.qudits[0])
     except RuntimeError as error:
         print(error)
 
 
 if __name__ == "__main__":
-    dev = pulse.device("transmon_17q")
+    qs = pulse.quantum_system("transmon_17q")
     main()

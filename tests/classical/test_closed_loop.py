@@ -61,9 +61,9 @@ def t1_shot(q, amplitude: float):
 
 
 def test_ten_thousand_iterations_run_without_compiling_again():
-    dev = pulse.device(_target())
+    dev = pulse.quantum_system(_target())
     q = dev.qudits[0]
-    compiled = pulse.compile(t1_shot, device=dev)
+    compiled = pulse.compile(t1_shot, quantum_system=dev)
     start = time.perf_counter()
     for i in range(10_000):
         compiled.lower(q, STORE["amplitude"])

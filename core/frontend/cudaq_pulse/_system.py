@@ -11,13 +11,13 @@ the classical devices beside them (by name) and the limits that apply to
 all of them::
 
     controllers = [pulse.Controller(drive_lines=range(8), readout_lines=range(8))]
-    qpu = pulse.device(
+    qpu = pulse.quantum_system(
         "transmon_17q", control_system=pulse.ControlSystem(controllers=controllers)
     )
-    compiled = pulse.compile(kernel, device=qpu)
+    compiled = pulse.compile(kernel, quantum_system=qpu)
 
-``Device.as_dict()`` writes a QPU as one JSON-serializable mapping (format
-``SYSTEM_FORMAT``), which ``Device.from_dict`` reads back (``Device.load`` from a
+``QuantumSystem.as_dict()`` writes a QPU as one JSON-serializable mapping (format
+``SYSTEM_FORMAT``), which ``QuantumSystem.from_dict`` reads back (``QuantumSystem.load`` from a
 file).
 """
 
@@ -37,11 +37,11 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from ._errors import (
-    DeviceDefinitionError,
     InvalidTypeError,
     InvalidValueError,
     NotFoundError,
     Problem,
+    QuantumSystemDefinitionError,
     UpgradeNotice,
     _closest,
     _count,
@@ -58,7 +58,7 @@ if TYPE_CHECKING:
 
     from . import _clocks
     from ._capability import Capability
-    from ._device import Device
+    from ._device import QuantumSystem
     from ._op_classes import OpClass
     from ._op_tables import OpCycles
     from .compiler import Lowered, _MachineModel
@@ -473,7 +473,7 @@ class Controller:
     every limit is in its own clock cycles.
 
     ``clock_ghz``: the controller's clock (``None``: the program clock,
-    ``Device.clock_ghz``). It must be a whole-cycle ratio of the program
+    ``QuantumSystem.clock_ghz``). It must be a whole-cycle ratio of the program
     clock; its program counts its own cycles.
     ``cycles_per_timestep``: the controller starts and times operations only
     every this many of its own cycles; every operation on its lines must
@@ -825,8 +825,8 @@ def _one_controller(controller: Controller) -> ControlSystem:
     the whole system."""
     try:
         system = ControlSystem(controllers=[controller])
-    except DeviceDefinitionError as error:
-        raise DeviceDefinitionError(
+    except QuantumSystemDefinitionError as error:
+        raise QuantumSystemDefinitionError(
             f"{_count(len(error.problems), 'problem')} in the control system of the one "
             f"Controller compile() was given; {_DESCRIBE}",
             problems=error.problems,
@@ -978,7 +978,7 @@ class ControlSystem:
         )
         problems = _structure_problems(self, "")
         if problems:
-            raise DeviceDefinitionError(
+            raise QuantumSystemDefinitionError(
                 f"{_count(len(problems), 'problem')} in the control system",
                 problems=problems,
             )
@@ -1544,7 +1544,9 @@ class ControlSystem:
         else:
             needs = self._needs(lowered, events, owners, unresolved)
             needs.extend(self._forwarding(events, owners, clocks))
-            needs.extend(self._alignment(lines, events, owners, clocks, lowered.device.clock_ghz))
+            needs.extend(
+                self._alignment(lines, events, owners, clocks, lowered.quantum_system.clock_ghz)
+            )
             if self._blocking:
                 needs.extend(self._held(lowered, events, owners))
             if clocks is not None and clocks.owners is not None:
@@ -2162,7 +2164,7 @@ def _parse_description(path: str) -> Controller:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as error:
         where = re.search(r"\(at line (\d+), column (\d+)\)", str(error))
-        raise DeviceDefinitionError(
+        raise QuantumSystemDefinitionError(
             "the controller description is not valid TOML",
             problems=[
                 Problem(
@@ -2197,7 +2199,7 @@ def _parse_description(path: str) -> Controller:
                 )
             )
     if problems:
-        raise DeviceDefinitionError(
+        raise QuantumSystemDefinitionError(
             f"{_count(len(problems), 'problem')} in the controller description",
             problems=problems,
         )
@@ -2205,7 +2207,7 @@ def _parse_description(path: str) -> Controller:
     try:
         return Controller(**given)
     except (TypeError, ValueError) as error:
-        raise DeviceDefinitionError(
+        raise QuantumSystemDefinitionError(
             "the controller description has a bad value",
             problems=[Problem(str(error), file=path)],
         ) from None
@@ -2429,19 +2431,21 @@ def _quantum_data(target: DeviceDescription) -> dict[str, Any]:
     }
 
 
-def _device_data(device: Device) -> dict[str, Any]:
+def _device_data(quantum_system: QuantumSystem) -> dict[str, Any]:
     import json
 
     from . import __version__
     from .targets.calibration import Calibration
 
     data: dict[str, Any] = {"format": SYSTEM_FORMAT, "written_by": f"cudaq-pulse {__version__}"}
-    spec = device._spec
-    data["quantum_system"] = spec if spec is not None else _quantum_data(device._base_target)
-    data["layout"] = list(device.layout)
-    if device.clock_ghz != device._base_target.clock_ghz:
-        data["clock_ghz"] = device.clock_ghz
-    calibration = device.calibration
+    spec = quantum_system._spec
+    data["quantum_system"] = (
+        spec if spec is not None else _quantum_data(quantum_system._base_target)
+    )
+    data["layout"] = list(quantum_system.layout)
+    if quantum_system.clock_ghz != quantum_system._base_target.clock_ghz:
+        data["clock_ghz"] = quantum_system.clock_ghz
+    calibration = quantum_system.calibration
     if calibration is not None:
         shipped = None
         try:
@@ -2454,8 +2458,8 @@ def _device_data(device: Device) -> dict[str, Any]:
             else json.loads(json.dumps(calibration._data))
         )
         data["cooldown"] = calibration.cooldown
-    if device.control_system is not None:
-        data["control_system"] = device.control_system.as_dict()
+    if quantum_system.control_system is not None:
+        data["control_system"] = quantum_system.control_system.as_dict()
     return data
 
 
@@ -2605,7 +2609,7 @@ class _Reader:
                 residual_zz=[x for _, x in entries["residual_zz"]],
                 **rest,
             )
-        except DeviceDefinitionError as error:
+        except QuantumSystemDefinitionError as error:
             # The path in the file of an entry's problem, which the system
             # gives as couplings[3]... by its own index: entries the file
             # gives that could not be read are not in the system.
@@ -2770,7 +2774,7 @@ class _Reader:
         rest = {k: system[k] for k in _CONTROL_KEYS[2:] if k in system}
         try:
             return ControlSystem(controllers=controllers, links=links, **rest)
-        except DeviceDefinitionError as error:
+        except QuantumSystemDefinitionError as error:
             self.problems.extend(
                 Problem(p.message, path=f"{path}.{p.path}", value=p.value, fix=p.fix)
                 for p in error.problems

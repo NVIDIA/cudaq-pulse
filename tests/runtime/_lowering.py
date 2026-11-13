@@ -35,7 +35,7 @@ def _handles(dev, args):
 
 def on(target, kernel, *args, passes=EVOLVE_PASSES):
     """The module of ``kernel(*args)`` on a device of *target*."""
-    dev = pulse.device(target)
+    dev = pulse.quantum_system(target)
     return pulse.compile(kernel, passes=passes).lower(*_handles(dev, args))
 
 

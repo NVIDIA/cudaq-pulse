@@ -142,10 +142,10 @@ def _shares(result, shots_count):
 
 def adaptive_t1(n, seed):
     target = _att_target()
-    dev = pulse.device(target)
-    lowered = pulse.compile(att_paper, device=dev, control_system=P["control_system"]).lower(
-        dev.qudits[0]
-    )
+    dev = pulse.quantum_system(target)
+    lowered = pulse.compile(
+        att_paper, quantum_system=dev, control_system=P["control_system"]
+    ).lower(dev.qudits[0])
     start = time.perf_counter()
     result = pulse.simulate(
         lowered, shots_count=n, seed=seed, branches="sampled", readout="model", levels=2
@@ -175,9 +175,9 @@ def adaptive_t1(n, seed):
 
 def binary_search(n, seed):
     target = transmon_17q()
-    dev = pulse.device(target)
+    dev = pulse.quantum_system(target)
     lowered = pulse.compile(
-        P["binary_search"], device=dev, control_system=P["control_system"]
+        P["binary_search"], quantum_system=dev, control_system=P["control_system"]
     ).lower(dev.qudits[0], 15)
     rng = np.random.default_rng(seed)
     errors, sigmas = [], []
@@ -210,9 +210,9 @@ def binary_search(n, seed):
 
 def chain(n, seed):
     target = transmon_17q()
-    dev = pulse.device(target)
+    dev = pulse.quantum_system(target)
     lowered = pulse.compile(
-        P["calibration_chain"], device=dev, control_system=P["control_system"]
+        P["calibration_chain"], quantum_system=dev, control_system=P["control_system"]
     ).lower(dev.qudits[0], 20_000.0 * CLOCK)
     plant = P["chain_plant"](target)
     rows = []
@@ -258,7 +258,7 @@ def chain(n, seed):
 
 def steps(seed):
     target = transmon_17q()
-    dev = pulse.device(target)
+    dev = pulse.quantum_system(target)
     q = dev.qudits[0]
     plant = P["chain_plant"](target)
     shots_per_step = {
@@ -272,7 +272,9 @@ def steps(seed):
     out = {}
     for name, (kernel, shots_count) in shots_per_step.items():
         start = time.perf_counter()
-        lowered = pulse.compile(kernel, device=dev, control_system=P["control_system"]).lower(q)
+        lowered = pulse.compile(
+            kernel, quantum_system=dev, control_system=P["control_system"]
+        ).lower(q)
         compile_s = time.perf_counter() - start
         start = time.perf_counter()
         result = pulse.simulate(

@@ -8,7 +8,7 @@ import math
 import cudaq_pulse as pulse
 import pytest
 
-from tests.physics._sim import basis, cycles, device, population, run
+from tests.physics._sim import basis, cycles, population, quantum_system, run
 from tests.physics.conftest import ref
 
 
@@ -25,7 +25,7 @@ def test_ef_rabi_sign(tone):
         set_frequency(d.tone, f)
         drive(d, square(duration, p["A_rad_per_ns"]))
 
-    dev = device([p["f_q_hz"]], [p["alpha_hz"]])
+    dev = quantum_system([p["f_q_hz"]], [p["alpha_hz"]])
     result = run(
         dev, ef, frequency, levels=3, initial_state=basis(3, 1), dt_ns=entry["tolerance"]["dt_ns"]
     )
@@ -49,7 +49,9 @@ def test_cr_target_excitation(control):
         drive(dc, square(duration, p["drive_rad_per_ns"]))
         wait(dt, duration)
 
-    dev = device([p["fc_hz"], p["ft_hz"]], [p["alpha_c_hz"], p["alpha_t_hz"]], [(0, 1, p["g_hz"])])
+    dev = quantum_system(
+        [p["fc_hz"], p["ft_hz"]], [p["alpha_c_hz"], p["alpha_t_hz"]], [(0, 1, p["g_hz"])]
+    )
     result = run(
         dev,
         cr,
@@ -77,7 +79,7 @@ def test_shift_phase_is_a_mckay_virtual_z(theta, x, passes):
         shift_phase(d.tone, theta)
         drive(d, square(cycles(20.0), rate))
 
-    dev = device([5.0e9], [-200e6])
+    dev = quantum_system([5.0e9], [-200e6])
     lowered = pulse.compile(x90_after_z, passes=passes).lower(dev.qudits[0])
     rho = pulse.simulate(lowered, dt_ns=0.01, levels=2).density_matrix
     assert 2 * rho[0, 1].real == pytest.approx(x, abs=1e-6)

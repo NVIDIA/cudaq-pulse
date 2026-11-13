@@ -72,11 +72,13 @@ def fringe_top(qudit):
     drive(d, gaussian(pulse_duration, half_pi_amplitude, pulse_sigma))
 
 
-def calibrated_device(offset_hz):
+def calibrated_system(offset_hz):
     """The device whose qudit frequency is the nominal one plus *offset_hz*."""
     nominal = target.qudits[qudit_index]
     qudit = nominal.replace(frequency_hz=nominal.frequency_hz + offset_hz)
-    return pulse.device(dataclasses.replace(target, qudits={**target.qudits, qudit_index: qudit}))
+    return pulse.quantum_system(
+        dataclasses.replace(target, qudits={**target.qudits, qudit_index: qudit})
+    )
 
 
 # ── The background worker ────────────────────────────────────────────────────
@@ -85,7 +87,7 @@ def calibrated_device(offset_hz):
 def calibration_worker(records_in, updates_out):
     """Estimate the frequency from Ramsey records; recompile when the device changes."""
     mean_hz, sigma_hz = 0.0, prior_sigma_hz
-    start = calibrated_device(0.0)
+    start = calibrated_system(0.0)
     programs = {start.fingerprint: fringe_top.lower(start.qudits[qudit_index])}
     current = start.fingerprint
     counts = {"estimates": 0, "unchanged": 0, "compiled": 0, "reused": 0}
@@ -97,17 +99,19 @@ def calibration_worker(records_in, updates_out):
             mean_hz, sigma_hz = cal.frequency_update(mean_hz, sigma_hz, outcome, wait_ns, phase)
         counts["estimates"] += 1
         written_hz = calibration_step_hz * round(mean_hz / calibration_step_hz)
-        device = calibrated_device(written_hz)
+        quantum_system = calibrated_system(written_hz)
         fresh = None
-        if device.fingerprint == current:
+        if quantum_system.fingerprint == current:
             counts["unchanged"] += 1
         else:
-            if device.fingerprint in programs:
+            if quantum_system.fingerprint in programs:
                 counts["reused"] += 1
             else:
-                programs[device.fingerprint] = fringe_top.lower(device.qudits[qudit_index])
+                programs[quantum_system.fingerprint] = fringe_top.lower(
+                    quantum_system.qudits[qudit_index]
+                )
                 counts["compiled"] += 1
-            current = device.fingerprint
+            current = quantum_system.fingerprint
             fresh = (written_hz, programs[current])
         updates_out.put((batch, mean_hz, sigma_hz, fresh))
     updates_out.put(counts)
@@ -124,7 +128,7 @@ def error_against(program, plant):
 def follow(swapping, seed=5):
     plant = DriftingPlant(target, qudit_index, frequency=drift, seed=seed)
     in_use_hz = 0.0
-    program = fringe_top.lower(calibrated_device(0.0).qudits[qudit_index])
+    program = fringe_top.lower(calibrated_system(0.0).qudits[qudit_index])
     mean_hz, sigma_hz = 0.0, prior_sigma_hz
     spawn = multiprocessing.get_context("spawn")
     records_in, updates_out = spawn.Queue(), spawn.Queue()
@@ -165,7 +169,7 @@ if __name__ == "__main__":
     for offset_hz in (0.0, 0.0, 25e3):
         print(
             f"  qudit frequency +{offset_hz / 1e3:4.0f} kHz: fingerprint "
-            f"{calibrated_device(offset_hz).fingerprint}"
+            f"{calibrated_system(offset_hz).fingerprint}"
         )
 
     runs = {}
@@ -191,7 +195,7 @@ if __name__ == "__main__":
         f"on {settled_on.max():.4f}"
     )
     floor = error_against(
-        fringe_top.lower(calibrated_device(0.0).qudits[qudit_index]),
+        fringe_top.lower(calibrated_system(0.0).qudits[qudit_index]),
         DriftingPlant(target, qudit_index),
     )
     print(f"  (on resonance the error is {floor:.4f}: decay and thermal population)")

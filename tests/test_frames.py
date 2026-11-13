@@ -32,7 +32,7 @@ _TARGET = DeviceDescription(
     clock_ghz=_CLOCK_GHZ,
     qudits={i: PhysicalQudit(i, _FREQUENCY_HZ + 1.0e7 * i, -2.0e8, 50.0, 30.0) for i in range(2)},
 )
-_DEV = pulse.device(_TARGET)
+_DEV = pulse.quantum_system(_TARGET)
 Q = _DEV.qudits
 _PERSISTENT = ControlSystem(controllers=[Controller(persistent_frames=True)])
 
@@ -183,7 +183,7 @@ def idle_unchanged(q, r):
 
 
 def _compile(kernel, **options):
-    return pulse.compile(kernel, device=_DEV, **options).lower(Q[0])
+    return pulse.compile(kernel, quantum_system=_DEV, **options).lower(Q[0])
 
 
 def _wrapped(phase):
@@ -290,7 +290,7 @@ def test_frame_changes_are_stamped_on_the_timeline_with_no_duration():
 def test_a_frame_change_no_operation_takes_is_kept_as_a_frame_update():
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        lowered = pulse.compile(trailing, device=_DEV).lower(Q[0])
+        lowered = pulse.compile(trailing, quantum_system=_DEV).lower(Q[0])
     text = lowered.mlir()
     for op in ("shift_phase", "set_frequency"):
         assert re.search(rf"pulse\.{op} .*pulse\.unconsumed", text)
@@ -409,7 +409,7 @@ def test_a_change_a_loop_carries_through_a_branch_is_a_frame_update_at_each_exec
 def test_a_change_after_a_drive_in_a_loop_is_where_the_drive_ends(threshold):
     # With a threshold of 0 the second iteration is a loop of one, whose
     # drive repeats with no period.
-    lowered = pulse.compile(measured_rounds, device=_DEV, unroll_threshold=threshold)
+    lowered = pulse.compile(measured_rounds, quantum_system=_DEV, unroll_threshold=threshold)
     flat = lowered.lower(Q[0], Q[1]).export_controller()
     [update] = _updates(flat["events"])
     drives = [e for e in flat["events"] if e["kind"] == "drive" and e["line"] == update["line"]]
@@ -418,8 +418,8 @@ def test_a_change_after_a_drive_in_a_loop_is_where_the_drive_ends(threshold):
 
 
 def test_a_change_in_a_loop_on_a_tone_it_does_not_play_keeps_the_loop_rolled():
-    lowered = pulse.compile(idle, device=_DEV, unroll_threshold=0).lower(Q[0], Q[1])
-    plain = pulse.compile(idle_unchanged, device=_DEV, unroll_threshold=0).lower(Q[0], Q[1])
+    lowered = pulse.compile(idle, quantum_system=_DEV, unroll_threshold=0).lower(Q[0], Q[1])
+    plain = pulse.compile(idle_unchanged, quantum_system=_DEV, unroll_threshold=0).lower(Q[0], Q[1])
     # Each iteration's change at the start of the iteration.
     [stamp] = re.findall(r"pulse\.shift_phase [^<]*(<\{.*?\}> \{.*?\})", lowered.mlir())
     assert stamp == (
@@ -446,7 +446,7 @@ def test_a_change_in_a_loop_on_a_tone_it_does_not_play_keeps_the_loop_rolled():
 
 
 def test_frames_that_persist_keep_the_last_changes_and_export_the_final_frame():
-    lowered = pulse.compile(trailing, device=_DEV, control_system=_PERSISTENT).lower(Q[0])
+    lowered = pulse.compile(trailing, quantum_system=_DEV, control_system=_PERSISTENT).lower(Q[0])
     assert "pulse.shift_phase" in lowered.mlir()
     flat = lowered.export_controller()
     structured = lowered.export_controller(version=2)
@@ -462,7 +462,7 @@ def test_frames_that_persist_keep_the_last_changes_and_export_the_final_frame():
     assert structured["frame_state"] == flat["frame_state"]
     assert unroll(structured)["frame_state"] == flat["frame_state"]
     # The drives play as without the declaration.
-    plain = pulse.compile(untrailed, device=_DEV).lower(Q[0]).export_controller()
+    plain = pulse.compile(untrailed, quantum_system=_DEV).lower(Q[0]).export_controller()
     assert flat["events"] == plain["events"]
 
 
@@ -533,15 +533,17 @@ _UNFUSED = [p for p in DEFAULT_PASSES if p != Pass.FUSE_PULSES]
 
 @pytest.mark.parametrize("threshold", [None, 0], ids=["default", "rolled"])
 @pytest.mark.parametrize(
-    ("name", "kernel", "device"), _TIMING_CORPUS, ids=[n for n, _, _ in _TIMING_CORPUS]
+    ("name", "kernel", "quantum_system"), _TIMING_CORPUS, ids=[n for n, _, _ in _TIMING_CORPUS]
 )
-def test_keeping_frame_changes_moves_and_lengthens_nothing(name, kernel, device, threshold):
-    qudits = device.qudits[: kernel.__wrapped__.__code__.co_argcount]
+def test_keeping_frame_changes_moves_and_lengthens_nothing(name, kernel, quantum_system, threshold):
+    qudits = quantum_system.qudits[: kernel.__wrapped__.__code__.co_argcount]
     options = {} if threshold is None else {"unroll_threshold": threshold}
     bare_kernel = _without_frame_changes(kernel)
 
     def lower(kernel, **more):
-        return pulse.compile(kernel, device=device, **options, **more).lower(*qudits)
+        return pulse.compile(kernel, quantum_system=quantum_system, **options, **more).lower(
+            *qudits
+        )
 
     assert lower(kernel).duration == lower(bare_kernel).duration
     # Without fusion, which a change between two drives keeps apart, every

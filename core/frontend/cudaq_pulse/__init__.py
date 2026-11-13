@@ -11,7 +11,7 @@ Usage::
         drive_line = get_drive_line(qudit)
         drive(drive_line, gaussian(64, amplitude, 16.0))
 
-    dev = pulse.device("transmon_17q")
+    dev = pulse.quantum_system("transmon_17q")
     rabi(dev.qudits[0], 0.5)            # compile on first call, then run
     lowered = rabi.lower(dev.qudits[0], 0.5)
     print(lowered.mlir())
@@ -43,14 +43,13 @@ from typing import Annotated as Length
 
 from . import _build_config
 from . import ops as ops
-from ._device import Device as Device
-from ._device import DeviceMismatchError as DeviceMismatchError
-from ._device import NoDeviceError as NoDeviceError
+from ._device import NoQuantumSystemError as NoQuantumSystemError
+from ._device import QuantumSystem as QuantumSystem
+from ._device import QuantumSystemMismatchError as QuantumSystemMismatchError
 from ._device import Qudit as Qudit
 from ._device import Register as Register
-from ._device import device as device
+from ._device import quantum_system as quantum_system
 from ._errors import CompilationError as CompilationError
-from ._errors import DeviceDefinitionError as DeviceDefinitionError
 from ._errors import ExecutionError as ExecutionError
 from ._errors import IndexOutOfRangeError as IndexOutOfRangeError
 from ._errors import InternalError as InternalError
@@ -60,6 +59,7 @@ from ._errors import NotFoundError as NotFoundError
 from ._errors import Problem as Problem
 from ._errors import PulseError as PulseError
 from ._errors import PulseWarning as PulseWarning
+from ._errors import QuantumSystemDefinitionError as QuantumSystemDefinitionError
 from ._errors import TimingError as TimingError
 from ._errors import UnsupportedError as UnsupportedError
 from ._errors import UpgradeNotice as UpgradeNotice
@@ -153,8 +153,8 @@ __all__ = [
     "simulate",
     "SimulationResult",
     "BranchCoverage",
-    "device",
-    "Device",
+    "quantum_system",
+    "QuantumSystem",
     "Qudit",
     "Register",
     "Controller",
@@ -164,7 +164,7 @@ __all__ = [
     "Link",
     "PulseError",
     "Problem",
-    "DeviceDefinitionError",
+    "QuantumSystemDefinitionError",
     "InvalidValueError",
     "InvalidTypeError",
     "NotFoundError",
@@ -177,8 +177,8 @@ __all__ = [
     "PulseWarning",
     "UpgradeNotice",
     "NoProcessQuantumSystemError",
-    "NoDeviceError",
-    "DeviceMismatchError",
+    "NoQuantumSystemError",
+    "QuantumSystemMismatchError",
     "GpuRuntimeError",
     "round_duration",
     "RoundDirection",

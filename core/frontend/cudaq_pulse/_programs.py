@@ -16,7 +16,7 @@ from .compiler import Lowered, _bind_checked
 
 if TYPE_CHECKING:
     from . import _clocks
-    from ._device import Device
+    from ._device import QuantumSystem
     from .compiler import CompileOptions
 
 # Placements whose qudits a role remembers.
@@ -56,7 +56,7 @@ def _concrete_general(self: Lowered) -> Any:
         args = _schedule_args(self.options, self.clocks)
         with self._lock:
             if self.carriers:
-                target = self.device
+                target = self.quantum_system
                 _, frequencies, readouts = target._frequency_tables(max(self.carriers) + 1)
                 module = self._module.specialize_placed(
                     list(arguments),
@@ -121,10 +121,10 @@ class _Role:
         self.placed: dict[tuple[int, ...], tuple[int, ...]] = {}
         # A call without float values is its carriers and device: its view,
         # shared by the calls that repeat them (at most _PLACEMENTS).
-        self.views: dict[tuple[tuple[int, ...], Device], Lowered] = {}
+        self.views: dict[tuple[tuple[int, ...], QuantumSystem], Lowered] = {}
         # The module with a placement's carriers bound and its float
         # arguments kept, for simulations (the latest _PLACED_MODULES).
-        self.modules: dict[tuple[tuple[int, ...], Device], Any] = {}
+        self.modules: dict[tuple[tuple[int, ...], QuantumSystem], Any] = {}
         # What every export shares, built by the first (controller._export_plan).
         self.export_plan: Any = None
         # The format /2 export's: each event's kind, trips and symbols.
@@ -139,7 +139,11 @@ class _Role:
 
     @staticmethod
     def identify(
-        buffer: Any, name: str, parameters: Sequence[str], target: Device, options: CompileOptions
+        buffer: Any,
+        name: str,
+        parameters: Sequence[str],
+        target: QuantumSystem,
+        options: CompileOptions,
     ) -> str:
         import hashlib
 
@@ -150,14 +154,14 @@ class _Role:
         return digest.hexdigest()
 
 
-def _structure(device: Device) -> str:
+def _structure(quantum_system: QuantumSystem) -> str:
     """``device._structure``: what a kernel whose qudits are runtime
     parameters depends on, not the carriers or their calibration, which are
     bound per call."""
     import hashlib
 
-    content = repr((device._description.model, device.clock_ghz)).encode()
-    made = device._structure = hashlib.blake2b(content, digest_size=16).hexdigest()
+    content = repr((quantum_system._description.model, quantum_system.clock_ghz)).encode()
+    made = quantum_system._structure = hashlib.blake2b(content, digest_size=16).hexdigest()
     return made
 
 
@@ -195,7 +199,7 @@ class _Placed(Lowered):
         self,
         values: Sequence[float],
         carriers: tuple[int, ...] = (),
-        target: Device | None = None,
+        target: QuantumSystem | None = None,
     ) -> Lowered:
         """This module with values for its float parameters and, with
         *carriers*, its runtime qudits bound on *target*, sharing it. The
@@ -208,11 +212,11 @@ def _placement(view: Lowered) -> Any:
     shared by the views of one placement."""
     role = view._role
     assert role is not None and view.carriers
-    key = (view.carriers, view.device)
+    key = (view.carriers, view.quantum_system)
     module = role.modules.get(key)
     if module is None:
         with view._lock:
-            target = view.device
+            target = view.quantum_system
             _, frequencies, readouts = target._frequency_tables(max(view.carriers) + 1)
             module = view._module.place_carriers(view.carriers, frequencies, readouts)
         if len(role.modules) >= _PLACED_MODULES:
@@ -222,7 +226,10 @@ def _placement(view: Lowered) -> Any:
 
 
 def _place(
-    lowered: Lowered, values: Sequence[float], carriers: tuple[int, ...], target: Device | None
+    lowered: Lowered,
+    values: Sequence[float],
+    carriers: tuple[int, ...],
+    target: QuantumSystem | None,
 ) -> _Placed:
     """``Lowered.bind`` of a module with list or qudit parameters."""
     try:
@@ -245,7 +252,7 @@ def _place(
     view._text = None
     view._lock = lowered._lock
     view._concrete_module = None
-    view.device = lowered.device
+    view.quantum_system = lowered.quantum_system
     view.metrics = lowered.metrics
     view.parameters = ()
     view.arguments = tuple(values)
@@ -262,7 +269,7 @@ def _place(
     view.fine_delays = lowered.fine_delays
     if carriers:
         assert target is not None
-        view.device = target
+        view.quantum_system = target
         placed = role.placed.get(carriers)
         if placed is None:
             qudits = {*role.used, *(carriers[k] for k in role.lines)}
@@ -284,7 +291,7 @@ class _CheckedPerCall(Lowered):
     def __init__(self, lowered: Lowered) -> None:
         super().__init__(
             lowered._module,
-            device=lowered.device,
+            quantum_system=lowered.quantum_system,
             metrics=lowered.metrics,
             parameters=lowered.parameters,
             qudits=lowered.qudits,
@@ -340,13 +347,13 @@ class _CheckedPlaced(_CheckedPerCall):
         self,
         values: Sequence[float],
         carriers: tuple[int, ...] = (),
-        target: Device | None = None,
+        target: QuantumSystem | None = None,
     ) -> Lowered:
         view = _place(self, values, carriers, target)
         if not carriers:
             return self._accept(view)
         return self._accept(
-            view, _bits(tuple(map(float, carriers))) + view.device.fingerprint.encode()
+            view, _bits(tuple(map(float, carriers))) + view.quantum_system.fingerprint.encode()
         )
 
 

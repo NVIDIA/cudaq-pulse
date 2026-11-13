@@ -273,7 +273,7 @@ def test_verify_does_constant_work_per_unused_line(tmp_path):
     opt = shutil.which("cudaq-pulse-opt", path=str(_BUILD_BIN)) or shutil.which("cudaq-pulse-opt")
     if opt is None:
         missing("cudaq-pulse-opt", "cudaq-pulse-opt is not built or on PATH")
-    wide = pulse.device(ladder_target(2000)).qudits
+    wide = pulse.quantum_system(ladder_target(2000)).qudits
     for n in (500, 2000):
         module = tmp_path / f"half_unused_{n}.mlir"
         module.write_text(pulse.compile(_half_unused(n), passes=()).lower(wide[0:n]).mlir())
@@ -319,7 +319,7 @@ def test_compiling_a_kernel_that_reads_a_dict_is_flat_in_its_size():
 
 @pytest.mark.scaling
 def test_a_wide_sync_traces_in_linear_time():
-    wide = pulse.device(ladder_target(4000)).qudits
+    wide = pulse.quantum_system(ladder_target(4000)).qudits
 
     def program(n: int):
         @pulse.kernel
@@ -565,7 +565,7 @@ _SIMULATE_PAIRS = """
 import json, resource, sys
 import cudaq_pulse as pulse
 
-q = pulse.device("transmon_17q").qudits
+q = pulse.quantum_system("transmon_17q").qudits
 
 
 @pulse.kernel
@@ -640,7 +640,7 @@ def test_a_cached_kernel_that_calls_lowers_in_microseconds():
     bench = _classical_benchmarks()
     dev = bench._device()
     q = dev.qudits[0]
-    compiled = pulse.compile(bench.decoded_reset, device=dev)
+    compiled = pulse.compile(bench.decoded_reset, quantum_system=dev)
     compiled.lower(q)
     per_call = _best(lambda: [compiled.lower(q) for _ in range(100)], 5) / 100
     assert compiled.cache_info().compiled == 1
@@ -651,8 +651,8 @@ def test_a_call_adds_little_to_simulation_on_the_same_timeline():
     bench = _classical_benchmarks()
     dev = bench._device(t1_us=20.0)
     q = dev.qudits[0]
-    plain = pulse.compile(bench.waiting_reset, device=dev).lower(q)
-    called = pulse.compile(bench.decoded_reset, device=dev).lower(q)
+    plain = pulse.compile(bench.waiting_reset, quantum_system=dev).lower(q)
+    called = pulse.compile(bench.decoded_reset, quantum_system=dev).lower(q)
     plus = [2**-0.5, 2**-0.5]
     a = _best(lambda: pulse.simulate(plain, initial_state=plus, levels=2, dt_ns=0.5), 3, 0)
     b = _best(lambda: pulse.simulate(called, initial_state=plus, levels=2, dt_ns=0.5), 3, 0)
@@ -716,8 +716,8 @@ def test_a_long_idle_simulates_in_constant_time():
         drive(d, square(40, 0.157))
         wait(d, wait_cycles)
 
-    dev = pulse.device(ladder_target(1))
-    compiled = pulse.compile(idle, device=dev)
+    dev = pulse.quantum_system(ladder_target(1))
+    compiled = pulse.compile(idle, quantum_system=dev)
     q = dev.qudits[0]
     short, long = compiled.lower(q, 2_000), compiled.lower(q, 400_000)
     times = {
@@ -752,8 +752,10 @@ def test_an_adaptive_loop_of_fifty_rounds_simulates_one_path_per_shot():
             wait(d, w, bounds=(40, 200_000))
 
     machine = ControlSystem(links={"controller": Link(fixed_ns=4, feedback_ns=8)})
-    dev = pulse.device(ladder_target(1))
-    lowered = pulse.compile(rounds, device=dev, control_system=machine).lower(dev.qudits[0], 50)
+    dev = pulse.quantum_system(ladder_target(1))
+    lowered = pulse.compile(rounds, quantum_system=dev, control_system=machine).lower(
+        dev.qudits[0], 50
+    )
     seconds = _best(
         lambda: pulse.simulate(lowered, shots_count=1, seed=1, branches="sampled", dt_ns=0.125),
         2,

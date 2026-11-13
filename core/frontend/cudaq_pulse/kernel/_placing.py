@@ -19,7 +19,6 @@ from ._kernel import (
     _FLOAT,
     _QUDIT,
     _VECTOR,
-    _devices,
     _Dispatcher,
     _Entry,
     _execute,
@@ -28,12 +27,13 @@ from ._kernel import (
     _pin_mismatch,
     _QuditTwiceError,
     _static_key,
+    _systems,
     _ticks,
 )
 from .ir_builder import Parameter
 
 if TYPE_CHECKING:
-    from .._device import Device
+    from .._device import QuantumSystem
     from ._kernel import Kernel
 
 
@@ -42,26 +42,26 @@ class _Placing(_Dispatcher):
     the module depends on lists only through their lengths and, with runtime
     qudits, on the device only through its structure; each call binds them."""
 
-    def _device(self, values: tuple[Any, ...]) -> Device:
+    def _device(self, values: tuple[Any, ...]) -> QuantumSystem:
         kernel = self.kernel
         slotted = kernel._slotted
         if len(slotted) == 1 and not kernel._split[0]:
             value = values[slotted[0]]
             if type(value) is Qudit:
-                device: Device = value.device
+                quantum_system: QuantumSystem = value.quantum_system
                 pin = self.pin
-                if pin is None or pin is device:
-                    return device
-                if device != pin:
-                    raise _pin_mismatch(kernel.__name__, pin, device)
+                if pin is None or pin is quantum_system:
+                    return quantum_system
+                if quantum_system != pin:
+                    raise _pin_mismatch(kernel.__name__, pin, quantum_system)
                 return pin
         name = kernel.__name__
-        found: Device | None = None
+        found: QuantumSystem | None = None
         seen: set[int] = set()
         wrong = None
         try:
             for i in kernel._split[0]:
-                found = _devices(values[i], found, name, seen)
+                found = _systems(values[i], found, name, seen)
             for i in kernel._slotted:
                 value = values[i]
                 if type(value) is not Qudit and not (
@@ -69,7 +69,7 @@ class _Placing(_Dispatcher):
                 ):
                     wrong = i
                     continue
-                found = _devices(value, found, name, seen)
+                found = _systems(value, found, name, seen)
         except _QuditTwiceError as twice:
             names = kernel._names
             met = [*kernel._split[0], *kernel._slotted]
@@ -90,7 +90,7 @@ class _Placing(_Dispatcher):
             return found
         raise _no_device(name)
 
-    def _key(self, target: Device, values: tuple[Any, ...]) -> Any:
+    def _key(self, target: QuantumSystem, values: tuple[Any, ...]) -> Any:
         kernel = self.kernel
         static = kernel._split[0]
         fingerprint = (
@@ -144,7 +144,7 @@ def _relocate(
     kinds = kernel._kinds
     numbers: list[float] = []
     carriers: list[int] = []
-    device = None
+    quantum_system = None
     for i in runtime:
         kind = kinds[i]
         v = values[i]
@@ -157,24 +157,24 @@ def _relocate(
             numbers.extend(_vector_values(kernel, v, i))
         elif kind == _QUDIT:
             carriers.append(v.index)
-            device = v.device
+            quantum_system = v.quantum_system
         else:
             for q in v:
                 carriers.append(q.index)
-                device = q.device
+                quantum_system = q.quantum_system
     role = lowered._role
     placement = tuple(carriers)
     views = None
-    if not numbers and role is not None and device is not None:
+    if not numbers and role is not None and quantum_system is not None:
         views = role.views
-        view = views.get((placement, device))
+        view = views.get((placement, quantum_system))
         if view is not None:
             return view
     # A module with list or qudit parameters is a _Placed or _CheckedPlaced.
     place: Callable[..., Lowered] = lowered.bind
-    view = place(numbers, placement, device)
-    if views is not None and device is not None and len(views) < _PLACEMENTS:
-        views[(placement, device)] = view
+    view = place(numbers, placement, quantum_system)
+    if views is not None and quantum_system is not None and len(views) < _PLACEMENTS:
+        views[(placement, quantum_system)] = view
     return view
 
 

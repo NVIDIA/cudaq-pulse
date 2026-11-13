@@ -8,7 +8,7 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 
-from tests.physics._sim import CLOCK_GHZ, cycles, device, run
+from tests.physics._sim import CLOCK_GHZ, cycles, quantum_system, run
 from tests.physics.conftest import ref
 
 ENTRY = ref("drag_leakage_vs_beta")
@@ -25,7 +25,7 @@ def _pi_pulse(beta_cycles):
         drive(d, drag(duration, amplitude, sigma, beta))
 
     result = run(
-        device([P["f_q_hz"]], [P["alpha_hz"]]),
+        quantum_system([P["f_q_hz"]], [P["alpha_hz"]]),
         pi_pulse,
         beta_cycles,
         levels=3,

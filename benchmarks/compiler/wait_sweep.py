@@ -40,7 +40,7 @@ _TARGET = DeviceDescription(
         )
     },
 )
-_QUDIT = pulse.device(_TARGET).qudits[0]
+_QUDIT = pulse.quantum_system(_TARGET).qudits[0]
 
 
 @pulse.kernel

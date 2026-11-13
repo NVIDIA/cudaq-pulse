@@ -21,10 +21,10 @@ import subprocess
 import cudaq_pulse as pulse
 from cudaq_pulse.targets.transmon import CZ_LAYERS
 
-dev = pulse.device("transmon_17q")
-clock_ghz = dev.clock_ghz  # the program clock the schedule counts cycles of
-qudit_aux, qudit_data = dev.qudit("X1"), dev.qudit("D2")
-coupling = dev.coupling(qudit_aux, qudit_data)
+qs = pulse.quantum_system("transmon_17q")
+clock_ghz = qs.clock_ghz  # the program clock the schedule counts cycles of
+qudit_aux, qudit_data = qs.qudit("X1"), qs.qudit("D2")
+coupling = qs.coupling(qudit_aux, qudit_data)
 # The transmon_17q target publishes each coupling's CZ; a generic coupling
 # has none (get_calibration raises NotFoundError).
 cz = coupling.get_calibration(pulse.gates.CZ)
@@ -60,7 +60,7 @@ def cz_pair(qudit_aux, qudit_data):
 
 
 print("=== Stage 1: compile (default passes, ALAP schedule) ===")
-compiled = pulse.compile(cz_pair, device=dev).lower(qudit_aux, qudit_data)
+compiled = pulse.compile(cz_pair, quantum_system=qs).lower(qudit_aux, qudit_data)
 total_cycles = max(e.end for e in compiled.schedule)
 print(f"  {compiled.metrics.op_count} ops, {total_cycles / clock_ghz:.0f} ns total")
 

@@ -16,7 +16,7 @@ def ladder_target(n: int = 64) -> DeviceDescription:
     )
 
 
-LADDER = pulse.device(ladder_target(256))
+LADDER = pulse.quantum_system(ladder_target(256))
 Q = LADDER.qudits
 
 

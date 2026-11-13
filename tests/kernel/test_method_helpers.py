@@ -17,11 +17,11 @@ import pytest
 
 from tests._handles import Q
 from tests._ir import python_ir
-from tests.kernel._gate_library import Device, Doubled, Gates
+from tests.kernel._gate_library import Doubled, Gates, QuantumSystem
 
 _GATES = Gates(0.2)
 _DOUBLED = Doubled(0.3)
-_DEVICE = Device(0.15)
+_DEVICE = QuantumSystem(0.15)
 _STORED = _GATES.x90_wf
 
 

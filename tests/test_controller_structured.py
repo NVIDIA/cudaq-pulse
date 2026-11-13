@@ -22,7 +22,7 @@ _TARGET = DeviceDescription(
     clock_ghz=2.0,
     qudits={i: PhysicalQudit(i, 5.0e9 + 1.0e7 * i, -2.0e8, 50.0, 30.0) for i in range(4)},
 )
-_DEV = pulse.device(_TARGET)
+_DEV = pulse.quantum_system(_TARGET)
 Q = _DEV.qudits
 
 

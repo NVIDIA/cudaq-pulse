@@ -442,7 +442,7 @@ def _export(lowered: Any, with_events: bool, part: _Part | None = None) -> dict[
     machine = lowered.options.machine
     data = {
         "format": _EMULATION_FORMAT,
-        "clock_ghz": lowered.device.clock_ghz,
+        "clock_ghz": lowered.quantum_system.clock_ghz,
         "links": {
             str(machine.link_id(fn.link)): {
                 **machine.link(fn.link).cost(),

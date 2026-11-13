@@ -45,7 +45,7 @@ _TARGET = DeviceDescription(
         )
     },
 )
-Q = pulse.device(_TARGET).qudits
+Q = pulse.quantum_system(_TARGET).qudits
 
 
 def t1(q, tau: float):

@@ -36,7 +36,7 @@ def test_a_long_schedule_gives_what_the_list_of_every_event_would(name, schedule
     with pytest.raises(IndexError):
         lazy[len(every)]
     end = max(e.start_cycles + e.duration_cycles for e in every)
-    assert float(lowered.duration) == end / lowered.device.clock_ghz
+    assert float(lowered.duration) == end / lowered.quantum_system.clock_ghz
 
 
 def test_up_to_10_000_events_the_schedule_is_a_list():
@@ -55,7 +55,7 @@ def test_a_loop_of_10_15_iterations_is_read_without_its_iterations():
     schedule = lowered.schedule
     assert len(schedule) == 10**15
     assert schedule[-1] == ScheduledEvent("wait", 0, 0, 4 * (10**15 - 1), 4)
-    assert float(lowered.duration) == 4 * 10**15 / lowered.device.clock_ghz
+    assert float(lowered.duration) == 4 * 10**15 / lowered.quantum_system.clock_ghz
     assert repr(schedule) == f"<{10**15} scheduled events>"
     assert pickle.loads(pickle.dumps(schedule[7])) == schedule[7]
 

@@ -31,7 +31,7 @@ TARGET = DeviceDescription(
         )
     },
 )
-Q = pulse.device(TARGET).qudits[0]
+Q = pulse.quantum_system(TARGET).qudits[0]
 UNROLL_ALL = 10**9
 
 

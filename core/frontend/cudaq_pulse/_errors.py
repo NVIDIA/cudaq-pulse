@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Final
 
 __all__ = [
     "CompilationError",
-    "DeviceDefinitionError",
+    "QuantumSystemDefinitionError",
     "ExecutionError",
     "IndexOutOfRangeError",
     "InternalError",
@@ -197,8 +197,8 @@ class PulseError(Exception):
         return text + ":\n  " + "\n  ".join(lines)
 
 
-class DeviceDefinitionError(PulseError, ValueError):
-    """A device's definition is wrong: ``pulse.device()`` lists every problem
+class QuantumSystemDefinitionError(PulseError, ValueError):
+    """A device's definition is wrong: ``pulse.quantum_system()`` lists every problem
     of its config or file in ``problems``, each with its path in the config
     (and, for a file, its line and column)."""
 

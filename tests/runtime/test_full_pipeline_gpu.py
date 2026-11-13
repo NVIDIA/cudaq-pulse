@@ -53,7 +53,7 @@ def test_full_pipeline_gpu():
             )
         },
     )
-    q0 = pulse.device(target).qudits[0]
+    q0 = pulse.quantum_system(target).qudits[0]
 
     @pulse.kernel
     def my_kernel(q0):

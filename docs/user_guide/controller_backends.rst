@@ -410,7 +410,7 @@ Clocks
 ------
 
 A kernel counts time in cycles of the device's program clock,
-``Device.clock_ghz`` (``pulse.device(..., clock_ghz=)``, else the
+``QuantumSystem.clock_ghz`` (``pulse.quantum_system(..., clock_ghz=)``, else the
 target's); a duration written as a time converts to them when the kernel
 compiles (see :ref:`durations`). A controller may run its own clock,
 ``Controller.clock_ghz``, at a whole-cycle ratio of it; may start
@@ -457,7 +457,7 @@ cycles, which budgets between controllers count.
 Each ``pulse.Controller`` of a control system may run its own clock.
 Without a declared ``"clock_ghz"`` the device's program clock is the
 fastest controller clock when it is a whole multiple of every other; clocks
-that are not are a ``DeviceDefinitionError`` listing the program clocks
+that are not are a ``QuantumSystemDefinitionError`` listing the program clocks
 that would work, never one picked for you. Every line is then scheduled on
 the timesteps of the controller that plays it, and checked against that
 controller's limits in its own cycles. A sync, and a wait whose length
@@ -743,7 +743,7 @@ same name:
 
    backends.register("text", TextBackend)
    backend = backends.get("text")
-   dev = pulse.device(
+   qs = pulse.quantum_system(
        DeviceDescription(name="one-qubit", qudits={0: PhysicalQudit(0, 5.0e9, -2.0e8, 50.0, 30.0)}),
        clock_ghz=1.0,
    )
@@ -759,8 +759,8 @@ same name:
        readout(readout_line, square(cal["readout_duration"], 0.05))
 
 
-   compiled = pulse.compile(drive_and_measure, device=dev, control_system=backend.control_system())
-   program = compiled.lower(dev.qudits[0]).export_controller()
+   compiled = pulse.compile(drive_and_measure, quantum_system=qs, control_system=backend.control_system())
+   program = compiled.lower(qs.qudits[0]).export_controller()
    print(backend.run(backend.emit(program), shots_count=1))
    # [['0 drive line 0 gaussian at 5e+09 Hz', '40 readout line 1 square at 5e+09 Hz']]
 

@@ -235,9 +235,9 @@ _PAIRS = [
 
 
 def _lower(kernel, n, schedule):
-    device = pulse.device(_target(n))
+    quantum_system = pulse.quantum_system(_target(n))
     compiled = pulse.compile(kernel, passes=EVOLVE_PASSES, schedule=schedule)
-    return compiled.lower(*_handles(device, [Q[i] for i in range(n)]))
+    return compiled.lower(*_handles(quantum_system, [Q[i] for i in range(n)]))
 
 
 def _timing(lowered):

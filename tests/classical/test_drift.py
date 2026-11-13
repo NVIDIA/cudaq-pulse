@@ -112,9 +112,9 @@ def test_the_surrogates_match_simulating_the_plant():
     target = plant.now()
     assert target.qudits[0].t1_us == state.t1_us
     assert target.qudits[0].frequency_hz == pytest.approx(5e9 + state.frequency_offset_hz)
-    dev = pulse.device(_target())
+    dev = pulse.quantum_system(_target())
     q = dev.qudits[0]
-    compiled_t1 = pulse.compile(t1_shot, device=dev)
+    compiled_t1 = pulse.compile(t1_shot, quantum_system=dev)
     for wait_cycles in (0.0, 4000.0, 16000.0):
         result = pulse.simulate(
             compiled_t1.lower(q, wait_cycles), plant=target, dt_ns=1.0, levels=2
@@ -125,7 +125,7 @@ def test_the_surrogates_match_simulating_the_plant():
         assert p1 == pytest.approx(plant.p_survive(elapsed), abs=0.03)
     # On resonance the amplitude scale stretches the rotation exactly.
     resonant = DriftingPlant(_target(t1_us=0.0), amplitude=OrnsteinUhlenbeck(0.05, 1.0), seed=3)
-    compiled_rabi = pulse.compile(rabi, device=dev)
+    compiled_rabi = pulse.compile(rabi, quantum_system=dev)
     for scale in (0.5, 1.0):
         result = pulse.simulate(compiled_rabi.lower(q, scale), plant=resonant.now(), levels=2)
         assert result.density_matrix[1, 1].real == pytest.approx(
@@ -134,7 +134,7 @@ def test_the_surrogates_match_simulating_the_plant():
     # Ramsey: the simulated sequence gives (1 + cos(2 pi d T - phase)) / 2,
     # which is the estimators' convention at phase pi - phase.
     offset_only = DriftingPlant(_target(t1_us=0.0), frequency=OrnsteinUhlenbeck(1e6, 1.0), seed=4)
-    compiled_ramsey = pulse.compile(ramsey, device=dev)
+    compiled_ramsey = pulse.compile(ramsey, quantum_system=dev)
     separation_ns = (400 + 40) / dev.clock_ghz
     for phase in (0.0, 1.0, 2.5):
         result = pulse.simulate(compiled_ramsey.lower(q, phase), plant=offset_only.now(), levels=2)
@@ -143,8 +143,8 @@ def test_the_surrogates_match_simulating_the_plant():
 
 
 def test_the_plant_must_define_the_programs_qudits():
-    dev = pulse.device(_target())
-    lowered = pulse.compile(rabi, device=dev).lower(dev.qudits[0], 1.0)
+    dev = pulse.quantum_system(_target())
+    lowered = pulse.compile(rabi, quantum_system=dev).lower(dev.qudits[0], 1.0)
     empty = DeviceDescription(name="none", qudits={})
     with pytest.raises(ValueError, match="does not define qudits"):
         pulse.simulate(lowered, plant=empty, levels=2)

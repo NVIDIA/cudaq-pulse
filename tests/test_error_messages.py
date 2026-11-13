@@ -106,15 +106,15 @@ def test_needing_a_float_arguments_value_says_how_to_keep_it_symbolic():
 
 
 def test_qudits_of_two_devices_of_one_target_name_their_layouts():
-    a = pulse.device("transmon_generic:4")
-    b = pulse.device("transmon_generic:4", layout=[2, 3])
+    a = pulse.quantum_system("transmon_generic:4")
+    b = pulse.quantum_system("transmon_generic:4", layout=[2, 3])
 
     @pulse.kernel
     def k(q0, q1):
         d = get_drive_line(q0)
         drive(d, square(8, 0.1))
 
-    with pytest.raises(pulse.DeviceMismatchError) as info:
+    with pytest.raises(pulse.QuantumSystemMismatchError) as info:
         k.lower(a.qudits[0], b.qudits[1])
     assert str(info.value) == (
         "k() got qudits of two different devices, both of target 'transmon_generic:4': one "
@@ -200,7 +200,7 @@ def test_no_shots_is_the_documented_simulate_default(idle):
     ],
 )
 def test_a_qudit_index_past_the_device_says_how_many_qudits_it_has(index, message):
-    handles = pulse.device("transmon_17q").qudits
+    handles = pulse.quantum_system("transmon_17q").qudits
     with pytest.raises(pulse.IndexOutOfRangeError, match=message) as info:
         handles[index]
     assert isinstance(info.value, IndexError)
@@ -208,7 +208,7 @@ def test_a_qudit_index_past_the_device_says_how_many_qudits_it_has(index, messag
 
 
 def test_a_qudit_index_past_a_register_says_how_many_qudits_it_has():
-    register = pulse.device("transmon_17q").qudits[0:3]
+    register = pulse.quantum_system("transmon_17q").qudits[0:3]
     with pytest.raises(pulse.IndexOutOfRangeError) as info:
         register[5]
     assert str(info.value) == (

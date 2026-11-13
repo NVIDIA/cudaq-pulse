@@ -20,11 +20,11 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, NoReturn, overload
 
 from .._errors import (
-    DeviceDefinitionError,
     InvalidTypeError,
     InvalidValueError,
     NotFoundError,
     Problem,
+    QuantumSystemDefinitionError,
     UnsupportedError,
     _closest,
     _count,
@@ -932,7 +932,7 @@ class DeviceDescription:
     pickled.
 
     A target's couplings and residual ZZ entries are checked when it is built,
-    and a ``DeviceDefinitionError`` lists every problem, each at its path in
+    and a ``QuantumSystemDefinitionError`` lists every problem, each at its path in
     the target (``couplings[3].qudits[1]``).
     """
 
@@ -961,7 +961,7 @@ class DeviceDescription:
         # Every problem with the target's entries, each at its path in it.
         problems = _entries_problems(self)
         if problems:
-            raise DeviceDefinitionError(
+            raise QuantumSystemDefinitionError(
                 f"{_count(len(problems), 'problem')} in the quantum system {self.name!r}",
                 problems=problems,
             )

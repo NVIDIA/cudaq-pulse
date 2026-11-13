@@ -86,7 +86,7 @@ def test_variable_waits_take_their_emulated_lengths():
     result = emulation.emulate(
         low, shots_count=20, seed=1, outcomes=lambda q, _, rng: int(rng.integers(0, 2))
     )
-    clock = low.device.clock_ghz
+    clock = low.quantum_system.clock_ghz
     for outcomes, _end in zip(result.outcomes, result.ends_ns, strict=True):
         # A 1 waits 400 cycles longer before the second readout.
         assert outcomes[0] in (0, 1)
@@ -109,8 +109,8 @@ def test_late_answers_take_the_timeout_arm_at_the_modelled_rate():
     assert all(len(shot) == 1 for shot in result.calls)
     # The timeout, and the cycle the request takes on the link.
     (call,) = low.classical_report()
-    due_ns = (call.due_cycles - call.submit_cycles) / low.device.clock_ghz
-    assert due_ns == 500 + 1 / low.device.clock_ghz
+    due_ns = (call.due_cycles - call.submit_cycles) / low.quantum_system.clock_ghz
+    assert due_ns == 500 + 1 / low.quantum_system.clock_ghz
     assert all(c.budget_ns == due_ns for shot in result.calls for c in shot)
 
 
@@ -136,7 +136,7 @@ def test_an_answer_is_in_time_when_the_compiled_program_can_use_it(arrival_ns):
     machine = ControlSystem(links={"host": Link(fixed_ns=100, bytes_per_ns=10, feedback_ns=50)})
     low = pulse.compile(feedback, control_system=machine).lower(Q[0])
     (call,) = low.classical_report()
-    assert (call.due_cycles - call.submit_cycles) / low.device.clock_ghz == 652.5
+    assert (call.due_cycles - call.submit_cycles) / low.quantum_system.clock_ghz == 652.5
     transport = emulation.Transport(fixed_ns=arrival_ns / 2)
     result = emulation.emulate(low, shots_count=4, transport=transport, service_time="none", seed=1)
     for (trace,) in result.calls:

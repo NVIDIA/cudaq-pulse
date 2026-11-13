@@ -29,7 +29,7 @@ def _device(t1_us=0.0, **readout):
         readout=DispersiveReadout(**fields),
         calibrations={pulse.gates.READOUT: ReadoutPulse(**tuned)},
     )
-    return pulse.device(DeviceDescription(name="sim", qudits={0: qudit}))
+    return pulse.quantum_system(DeviceDescription(name="sim", qudits={0: qudit}))
 
 
 def _centers(dev, amplitude=0.05, duration_ns=None):
@@ -69,7 +69,7 @@ def test_discrimination_errors_match_the_gaussian_overlap():
     discriminate = _threshold(dev)
     shots_count = 4000
     result = pulse.simulate(
-        pulse.compile(_iq_reset(discriminate), device=dev).lower(q),
+        pulse.compile(_iq_reset(discriminate), quantum_system=dev).lower(q),
         initial_state=PLUS,
         shots_count=shots_count,
         seed=11,
@@ -106,7 +106,10 @@ def test_iq_points_scale_with_the_readout_amplitude():
             record.submit(result).result()
 
         pulse.simulate(
-            pulse.compile(probe, device=dev).lower(q, amplitude), shots_count=600, seed=5, levels=2
+            pulse.compile(probe, quantum_system=dev).lower(q, amplitude),
+            shots_count=600,
+            seed=5,
+            levels=2,
         )
 
     mean_low = np.mean(seen[0.05])
@@ -142,7 +145,7 @@ def test_iq_points_follow_a_readout_amplitude_computed_from_an_answer():
         r = get_readout_line(q)
         record.submit(readout(r, square(1000, a * 0.5))).result()
 
-    lowered = pulse.compile(probe, device=dev).lower(q)
+    lowered = pulse.compile(probe, quantum_system=dev).lower(q)
     emulation.emulate(lowered, shots_count=400, outcomes=lambda q, _, rng: 0, seed=2)
     pulse.simulate(lowered, initial_state=[1, 0], shots_count=400, seed=2, levels=2)
     # Played at 0.1, twice the readout's amplitude: the points are twice as far.
@@ -165,14 +168,17 @@ def test_a_readout_the_model_cannot_evaluate_is_an_error():
         r = get_readout_line(q)
         record.submit(readout(r, custom_samples([0.05] * 200))).result()
 
-    lowered = pulse.compile(probe, device=dev).lower(q)
+    lowered = pulse.compile(probe, quantum_system=dev).lower(q)
     message = r"qudit 0 depend on its pulse's peak amplitude, .* READOUT calibration's amplitude"
     with pytest.raises(pulse.UnsupportedError, match=message):
         pulse.simulate(lowered, shots_count=10, seed=2, levels=2)
     # Without a readout amplitude the pulse's does not matter.
     plain = _device()
     pulse.simulate(
-        pulse.compile(probe, device=plain).lower(plain.qudits[0]), shots_count=10, seed=2, levels=2
+        pulse.compile(probe, quantum_system=plain).lower(plain.qudits[0]),
+        shots_count=10,
+        seed=2,
+        levels=2,
     )
     # Nor, without a readout frequency, does the frequency; with one, an unknown
     # frequency is an error.
@@ -216,7 +222,7 @@ def test_relaxation_during_the_window_pulls_one_toward_zero():
 def test_iq_calls_need_shots_and_are_seeded():
     dev = _device()
     q = dev.qudits[0]
-    lowered = pulse.compile(_iq_reset(_threshold(dev)), device=dev).lower(q)
+    lowered = pulse.compile(_iq_reset(_threshold(dev)), quantum_system=dev).lower(q)
     with pytest.raises(ValueError, match="simulate with shots"):
         pulse.simulate(lowered, initial_state=PLUS, levels=2)
     a = pulse.simulate(lowered, initial_state=PLUS, shots_count=50, seed=4, levels=2)
@@ -235,7 +241,7 @@ def test_emulation_draws_iq_points_at_the_reported_levels():
     from cudaq_pulse.classical import emulation
 
     dev = _device()
-    lowered = pulse.compile(_iq_reset(_threshold(dev)), device=dev).lower(dev.qudits[0])
+    lowered = pulse.compile(_iq_reset(_threshold(dev)), quantum_system=dev).lower(dev.qudits[0])
     result = emulation.emulate(lowered, shots_count=200, outcomes=lambda q, _, rng: 1, seed=3)
     answers = [traces[0].answer for traces in result.calls]
     assert all(a == [1] for a in answers)  # 5 sigma apart: no errors expected
@@ -248,7 +254,7 @@ def test_the_17_qudit_twin_separates_its_readout_states():
     from cudaq_pulse.classical import emulation
     from cudaq_pulse.targets import transmon_17q
 
-    dev = pulse.device(transmon_17q())
+    dev = pulse.quantum_system(transmon_17q())
     q = dev.qudits[0]
     target = dev._description
     model = IQModel(target, (0,), decay=False)
@@ -267,7 +273,7 @@ def test_the_17_qudit_twin_separates_its_readout_states():
         result = readout(r, square(400, 0.1))
         record.submit([result]).result()
 
-    lowered = pulse.compile(probe, device=dev).lower(q)
+    lowered = pulse.compile(probe, quantum_system=dev).lower(q)
     result = emulation.emulate(lowered, shots_count=200, outcomes=lambda q, _, rng: 0, seed=1)
     points = [traces[0].inputs[0][0] for traces in result.calls]
     assert all(math.isfinite(p.real) and math.isfinite(p.imag) for p in points)

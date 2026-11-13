@@ -543,7 +543,7 @@ def test_answers_on_one_link_moving_by_different_periods_are_summarized():
 
 def _on_system(kernel: Any, schedule: str, qpu: Any) -> Any:
     try:
-        compiled = pulse.compile(kernel, device=qpu, schedule=schedule, unroll_threshold=0)
+        compiled = pulse.compile(kernel, quantum_system=qpu, schedule=schedule, unroll_threshold=0)
         return compiled.lower(*qpu.qudits[:3]).metrics.op_count
     except ControllerLimitError as error:
         return list(error.violations)
@@ -557,7 +557,7 @@ def test_a_long_rolled_loop_with_calls_on_a_control_system_is_checked_as_every_i
 ):
     from cudaq_pulse import _system
 
-    qpu = pulse.device(ladder_target(4), control_system=_systems()[system])
+    qpu = pulse.quantum_system(ladder_target(4), control_system=_systems()[system])
     # Loops whose lines all move by one period are summarized on a system,
     # their answers' values and capabilities checked once. The scheduler may
     # run up to 16 iterations in each of the loop's, so that one is longer.

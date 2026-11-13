@@ -97,15 +97,15 @@ def ghz_n(qudit_0, qudit_1, qudit_count):
 
 
 if __name__ == "__main__":
-    dev = pulse.device("transmon_17q")
+    qs = pulse.quantum_system("transmon_17q")
     print("=== 3-qubit GHZ (explicit) ===")
-    compiled_kernel = pulse.compile(ghz_3, device=dev).lower(
-        dev.qudits[0], dev.qudits[1], dev.qudits[2]
+    compiled_kernel = pulse.compile(ghz_3, quantum_system=qs).lower(
+        qs.qudits[0], qs.qudits[1], qs.qudits[2]
     )
     print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")
 
     print("\n=== N-qubit GHZ (loop-based, N=5) ===")
-    compiled_kernel = pulse.compile(ghz_n, device=dev).lower(dev.qudits[0], dev.qudits[1], 5)
+    compiled_kernel = pulse.compile(ghz_n, quantum_system=qs).lower(qs.qudits[0], qs.qudits[1], 5)
     print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")

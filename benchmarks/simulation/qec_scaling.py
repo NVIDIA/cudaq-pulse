@@ -20,12 +20,12 @@ import statistics
 import cudaq_pulse as pulse
 
 
-def _device(frequencies: dict[int, float]) -> pulse.Device:
+def _device(frequencies: dict[int, float]) -> pulse.QuantumSystem:
     """A device with these drive frequencies, indexed by qudit."""
     from cudaq_pulse.targets import DeviceDescription, PhysicalQudit
 
     qudits = {q: PhysicalQudit(q, f, -300e6, 50.0, 30.0) for q, f in frequencies.items()}
-    return pulse.device(DeviceDescription(name="bench", qudits=qudits))
+    return pulse.quantum_system(DeviceDescription(name="bench", qudits=qudits))
 
 
 _STAGES = ("trace_ms", "ffi_ms", "passes_ms", "schedule_ms", "total_ms")
@@ -84,11 +84,11 @@ def surface_code_cycle(d: int):
 
 def bench(d: int, repeats: int) -> tuple[int, int, dict[str, float]]:
     kernel, qudit_count = surface_code_cycle(d)
-    device = _device({q: 5.0e9 + 0.05e9 * (q % 8) for q in range(qudit_count)})
+    quantum_system = _device({q: 5.0e9 + 0.05e9 * (q % 8) for q in range(qudit_count)})
 
     def compile_once() -> pulse.Lowered:
         # A fresh compiled kernel holds no specializations: this compiles.
-        return pulse.compile(kernel, passes=("verify",)).lower(device.qudits[:qudit_count])
+        return pulse.compile(kernel, passes=("verify",)).lower(quantum_system.qudits[:qudit_count])
 
     op_count = compile_once().metrics.op_count
     samples: dict[str, list[float]] = {stage: [] for stage in _STAGES}

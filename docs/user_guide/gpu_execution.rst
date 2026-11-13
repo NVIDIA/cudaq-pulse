@@ -142,8 +142,8 @@ To inspect the lowered LLVM IR:
        sigma = 5 * pulse.ns
        drive(drive_line, gaussian(duration, 0.3, sigma))
 
-   dev = pulse.device("transmon_17q")
-   llvm_ir = my_kernel.lower(dev.qudits[0]).mlir("llvm")
+   qs = pulse.quantum_system("transmon_17q")
+   llvm_ir = my_kernel.lower(qs.qudits[0]).mlir("llvm")
    print(llvm_ir)
 
 The lowering passes through three dialect conversions:
@@ -192,9 +192,9 @@ To execute on a GPU (requires cuDensityMat runtime):
        drive_line = get_drive_line(qubit)
        drive(drive_line, square(duration, math.pi / 20.0))
 
-   dev = pulse.device(target)
+   qs = pulse.quantum_system(target)
    pi_time = 20 * pulse.ns
-   lowered = x_gate.lower(dev.qudits[0], pi_time)
+   lowered = x_gate.lower(qs.qudits[0], pi_time)
    result = pulse.simulate(lowered, backend="gpu", t_end=20.0, dt_ns=0.1, integrator="rk4")
    print(result.density_matrix)
 
@@ -330,7 +330,7 @@ of the outcomes from the same branch probabilities.
        if result:
            drive(drive_line, square(pi_time, math.pi / 20.0))
 
-   lowered = active_reset.lower(dev.qudits[0])
+   lowered = active_reset.lower(qs.qudits[0])
    result = pulse.simulate(lowered, shots_count=1000, backend="cpu")
    result.density_matrix   # ensemble state at the end
    result.level_population(1)   # P(1) of the one qudit; level_population(1, qudit=q) for one of several

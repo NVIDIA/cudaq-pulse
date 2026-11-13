@@ -22,7 +22,7 @@ from .._errors import InvalidTypeError, InvalidValueError, NotFoundError, PulseE
 from .base import DeviceDescription
 
 if TYPE_CHECKING:
-    from .._device import Device
+    from .._device import QuantumSystem
 
 ENV_VAR = "CUDAQ_PULSE_QUANTUM_SYSTEM"
 
@@ -69,7 +69,7 @@ def _builtin_factories() -> dict[str, QuantumSystemFactory]:
 
 _lock = threading.Lock()
 _factories: dict[str, QuantumSystemFactory] = {}
-_resolved: dict[str, Device] = {}
+_resolved: dict[str, QuantumSystem] = {}
 
 
 def _registry() -> dict[str, QuantumSystemFactory]:
@@ -125,7 +125,7 @@ def make_quantum_system(spec: str) -> DeviceDescription:
     return target
 
 
-def current_quantum_system() -> Device:
+def current_quantum_system() -> QuantumSystem:
     """The process quantum system; ``NoProcessQuantumSystemError`` if none is
     configured.
 

@@ -111,7 +111,7 @@ def test_timeline_takes_the_keywords_of_plot_schedule(lowered):
     fig = lowered.timeline(figsize=(6, 2), title="two lines")
     assert tuple(fig.get_size_inches()) == (6, 2)
     assert fig.axes[0].get_title() == "two lines"
-    compiled = pulse.compile(_two_lines, device=Q[0].device)
+    compiled = pulse.compile(_two_lines, quantum_system=Q[0].quantum_system)
     with pytest.raises(TypeError):
         lowered.timeline(dpi=100)  # type: ignore[call-arg]
     with pytest.raises(TypeError):

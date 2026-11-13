@@ -150,7 +150,7 @@ def track_t1(qudit, rounds: int, alpha: float, beta: float, first_wait):
 def print_report(lowered):
     """Each call's issue time, the time its answer is due, and its slack
     (how much later the answer could come without delaying a pulse)."""
-    clock = lowered.device.clock_ghz
+    clock = lowered.quantum_system.clock_ghz
     print(f"  {'function':<10} {'link':>10} {'issue ns':>9} {'ready ns':>9} {'slack ns':>9}")
     for call in lowered.classical_report():
         slack = "-" if call.slack_cycles is None else f"{call.slack_cycles / clock:.1f}"
@@ -187,16 +187,16 @@ if __name__ == "__main__":
             )
         },
     )
-    dev = pulse.device(target)
-    q = dev.qudits[0]
+    qs = pulse.quantum_system(target)
+    q = qs.qudits[0]
     # A 0.25 ns step resolves the third level's 200 MHz anharmonicity, with
     # 20 steps per period.
     dt_ns = 0.25
 
     print("=== 1. Decoding with feed-forward ===")
-    decoded = pulse.compile(decoded_feed_forward, device=dev, control_system=control_system).lower(
-        q
-    )
+    decoded = pulse.compile(
+        decoded_feed_forward, quantum_system=qs, control_system=control_system
+    ).lower(q)
     print_report(decoded)
     # Branch on whether the answer is in time, with the decoder's latency
     # model (triangular over 200-400 ns, mode 300 ns): P(L <= 350) = 0.875.
@@ -211,7 +211,7 @@ if __name__ == "__main__":
 
     print("\n=== 2. Adaptive T1 tracking (3 rounds, true T1 = 10 us) ===")
     rounds, alpha0, beta0, first_wait = 3, 1.0, 5000.0, 5 * pulse.us  # prior T1 = 5 us
-    tracker = pulse.compile(track_t1, device=dev, control_system=control_system).lower(
+    tracker = pulse.compile(track_t1, quantum_system=qs, control_system=control_system).lower(
         q, rounds, alpha0, beta0, first_wait
     )
     # The static schedule places each variable wait at its lower bound; every

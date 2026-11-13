@@ -517,16 +517,16 @@ def x_then_wait(q):
 
 
 def test_one_kernel_compiles_for_devices_with_different_clocks():
-    fast = pulse.device("transmon_17q", clock_ghz=2.0)
-    slow = pulse.device("transmon_17q", clock_ghz=1.0)
-    on_fast = pulse.compile(x_then_wait, device=fast).lower(fast.qudits[0])
-    on_slow = pulse.compile(x_then_wait, device=slow).lower(slow.qudits[0])
+    fast = pulse.quantum_system("transmon_17q", clock_ghz=2.0)
+    slow = pulse.quantum_system("transmon_17q", clock_ghz=1.0)
+    on_fast = pulse.compile(x_then_wait, quantum_system=fast).lower(fast.qudits[0])
+    on_slow = pulse.compile(x_then_wait, quantum_system=slow).lower(slow.qudits[0])
     assert _events(on_fast) == [("drive", 0, 40), ("wait", 40, 200), ("drive", 240, 40)]
     assert _events(on_slow) == [("drive", 0, 20), ("wait", 20, 100), ("drive", 120, 20)]
     # The same nanoseconds on both.
-    for lowered, device in ((on_fast, fast), (on_slow, slow)):
+    for lowered, quantum_system in ((on_fast, fast), (on_slow, slow)):
         end = lowered.schedule[-1].start_cycles + lowered.schedule[-1].duration_cycles
-        assert end / device.clock_ghz == 140.0
+        assert end / quantum_system.clock_ghz == 140.0
 
 
 # ── Times outside kernels ────────────────────────────────────────────────────
