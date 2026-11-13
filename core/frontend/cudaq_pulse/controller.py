@@ -157,7 +157,7 @@ class Event(StrEnum):
     """The kind of an event of a format /2 program: what the controller
     does, named alike for every modality.
 
-    ``PLAY`` plays a waveform on a line and ``ACQUIRE`` plays one and
+    ``PLAY`` plays a waveform on a line and ``READOUT`` plays one and
     acquires a measurement result; ``WAIT`` idles a line, ``SYNC`` aligns
     lines and ``LOOP`` repeats its body. ``CALL`` sends a request to a
     classical function over a link and ``ANSWER`` takes its answer. An event
@@ -169,7 +169,7 @@ class Event(StrEnum):
     """
 
     PLAY = "play"
-    ACQUIRE = "acquire"
+    READOUT = "readout"
     WAIT = "wait"
     SYNC = "sync"
     LOOP = "loop"
@@ -180,9 +180,7 @@ class Event(StrEnum):
 
 _EVENT_KINDS = frozenset(Event)
 # The /2 kinds of /1 events whose /1 names differ.
-_KINDS: Mapping[str, str] = MappingProxyType(
-    {"drive": "play", "readout": "acquire", "submit": "call"}
-)
+_KINDS: Mapping[str, str] = MappingProxyType({"drive": "play", "submit": "call"})
 _FLAT_KINDS: Mapping[str, str] = MappingProxyType({v: k for k, v in _KINDS.items()})
 
 
@@ -214,7 +212,7 @@ _AMPLITUDES: Mapping[str, tuple[int, ...]] = MappingProxyType(
 _AMPLITUDE_NAMES: Mapping[str, frozenset[str]] = MappingProxyType(
     {shape: frozenset(_PARAMETERS[shape][i] for i in at) for shape, at in _AMPLITUDES.items()}
 )
-_PLAYED = frozenset({"drive", "readout", "play", "acquire"})
+_PLAYED = frozenset({"drive", "readout", "play"})
 # The keys a format /2 waveform has beside its expression.
 _IDS = ("id", "shape_id")
 

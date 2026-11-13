@@ -294,7 +294,7 @@ length; for one on its own clock, or with line delays, export
 ``events``
     Each event's ``kind`` is one of ``cudaq_pulse.Event``, named for what a
     controller does whatever the modality: ``"play"`` (a ``/1`` drive),
-    ``"acquire"`` (a readout), ``"wait"``, ``"sync"``, ``"loop"``,
+    ``"readout"`` (a ``/1`` readout), ``"wait"``, ``"sync"``, ``"loop"``,
     ``"call"`` (a ``/1`` submit), ``"answer"`` and ``"frame_update"``. An
     event in a branch keeps its kind and lists its ``conditions``, and phase
     and frequency changes are in the ``tones`` of the events that play
@@ -311,7 +311,7 @@ length; for one on its own clock, or with line delays, export
     iteration that differs from the rest is exported before its loop; a
     loop that does not repeat is exported once per iteration, as in ``/1``.
 ``waveforms``
-    Each distinct waveform expression once; a play or acquire gives the
+    Each distinct waveform expression once; a play or readout gives the
     index of its own in ``waveform``. With ``sample_rate_ghz``, ``samples``
     holds each one's samples, in the same order. Each also has ``id``, 16
     hex digits that depend on its expression alone, so they stay the same
@@ -371,7 +371,7 @@ Segments in a rolled loop
 Values known at run time
     As in ``/1``, and only where a value is computed from a readout or an
     answer: ``tone``, ``frame_updates`` and ``phase_offset_rad`` on a play
-    or acquire, ``length``, ``min_cycles`` and ``max_cycles`` on a wait, and
+    or readout, ``length``, ``min_cycles`` and ``max_cycles`` on a wait, and
     ``operands`` on a call; an expression's ``readout`` and ``answer`` are
     places, like other references, and resolve to the latest execution of
     that place before the event, so a rolled body refers to its own

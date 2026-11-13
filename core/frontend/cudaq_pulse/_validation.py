@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 
 # The kinds whose timing and order a backend reports and is checked on: the
 # others (waits, syncs, loops) follow from them.
-_TIMED = frozenset({Event.PLAY, Event.ACQUIRE, Event.CALL, Event.ANSWER})
+_TIMED = frozenset({Event.PLAY, Event.READOUT, Event.CALL, Event.ANSWER})
 _QUDITS = 2
 
 
@@ -179,7 +179,7 @@ def _build() -> dict[str, Kernel[[Qudit, Qudit]]]:
 
     return {
         Event.PLAY: plays,
-        Event.ACQUIRE: acquires,
+        Event.READOUT: acquires,
         Event.WAIT: waits,
         Event.SYNC: syncs,
         Event.LOOP: loops,
@@ -341,14 +341,14 @@ def _limits(limits: Controller | None, emitted: Mapping[Any, list[tuple[Any, ...
     if limits is None:
         return None
     played = sum(
-        1 for events in emitted.values() for e in events if e[0] in (Event.PLAY, Event.ACQUIRE)
+        1 for events in emitted.values() for e in events if e[0] in (Event.PLAY, Event.READOUT)
     )
     # A controller that runs loops holds a rolled body once, and emits it
     # once per iteration.
     if limits.max_pulses is not None and not limits._runs_loops and played > limits.max_pulses:
         return f"emitted {played} pulses; the controller plays at most {limits.max_pulses}"
     for line, events in emitted.items():
-        starts = sorted(e[1] for e in events if e[0] in (Event.PLAY, Event.ACQUIRE))
+        starts = sorted(e[1] for e in events if e[0] in (Event.PLAY, Event.READOUT))
         for a, b in zip(starts, starts[1:], strict=False):
             if b - a < limits.instruction_cycles:
                 return (

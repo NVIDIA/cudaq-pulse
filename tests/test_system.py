@@ -85,8 +85,8 @@ def test_a_controller_checks_its_wiring_fields():
         pulse.Controller(drive_lines=["q0"])
     with pytest.raises(ValueError, match="twice"):
         pulse.Controller(readout_lines=[1, 1])
-    with pytest.raises(ValueError, match="did you mean 'acquire'"):
-        pulse.Controller(supports=["play", "aquire"])
+    with pytest.raises(ValueError, match="did you mean 'readout'"):
+        pulse.Controller(supports=["play", "raedout"])
     with pytest.raises(ValueError, match="negative"):
         pulse.Controller(clock_skew_cycles=-1)
     box = pulse.Controller(drive_lines=range(3), supports=["play", pulse.Capability.SYNC])
@@ -469,7 +469,7 @@ def loops(q):
 # two on one controller, or (0, 2) across two.
 _NEEDING = {
     pulse.Capability.PLAY: (plays, (0,)),
-    pulse.Capability.ACQUIRE: (acquires, (0,)),
+    pulse.Capability.READOUT: (acquires, (0,)),
     pulse.Capability.WAIT: (waits_for_an_answer, (0,)),
     pulse.Capability.SYNC: (syncs, (0,)),
     pulse.Capability.CALL: (corrected, (0, 1)),
@@ -692,7 +692,7 @@ def _round_trip(qpu):
 
 def test_a_qpu_round_trips_through_its_system_file():
     a, b = _two_boxes(
-        peer_latency_cycles={0: 12}, supports=["play", "acquire", "sync"], backend="toy"
+        peer_latency_cycles={0: 12}, supports=["play", "readout", "sync"], backend="toy"
     )
     qpu = _qpu(
         a, b, links={"feedback": pulse.Link(fixed_ns=40.0, controllers=[b])}, layout=range(6)
@@ -702,7 +702,7 @@ def test_a_qpu_round_trips_through_its_system_file():
     system = data["control_system"]
     assert system["links"]["feedback"]["controllers"] == [1]
     assert system["controllers"][1]["peer_latency_cycles"] == {"0": 12}
-    assert system["controllers"][1]["supports"] == ["play", "acquire", "sync"]
+    assert system["controllers"][1]["supports"] == ["play", "readout", "sync"]
 
 
 def test_a_qudit_s_drive_and_readout_round_trip_through_the_system_file():

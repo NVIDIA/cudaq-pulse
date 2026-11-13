@@ -12,7 +12,7 @@ __all__ = ["Capability"]
 class Capability(enum.StrEnum):
     """What a controller can do, for ``Controller.supports``.
 
-    ``play`` a drive; ``acquire`` a readout; ``wait`` for a length computed
+    ``play`` a drive; ``readout`` a qudit; ``wait`` for a length computed
     while the QPU runs; ``sync`` lines; ``call`` a classical function and
     take its ``answer``; ``branch`` on an outcome or an answer;
     ``runtime_frame_update`` a tone's frequency or phase from a value
@@ -26,7 +26,7 @@ class Capability(enum.StrEnum):
     """
 
     PLAY = "play"
-    ACQUIRE = "acquire"
+    READOUT = "readout"
     WAIT = "wait"
     SYNC = "sync"
     CALL = "call"

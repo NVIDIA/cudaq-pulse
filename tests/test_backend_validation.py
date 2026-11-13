@@ -144,7 +144,7 @@ def test_emitted_pulses_must_respect_the_declared_limits():
     assert _validation._limits(limits, close) == (
         "line 0: two pulses start 2 cycles apart; the controller issues one per 4"
     )
-    many = {0: [("play", 0, 4), ("play", 8, 4)], 1: [("acquire", 0, 4)]}
+    many = {0: [("play", 0, 4), ("play", 8, 4)], 1: [("readout", 0, 4)]}
     assert _validation._limits(limits, many) is None
     no_loop = [c for c in pulse.Capability if c is not pulse.Capability.LOOP]
     unrolled = Controller(instruction_cycles=4, max_pulses=2, supports=no_loop)
@@ -155,12 +155,12 @@ def test_emitted_pulses_must_respect_the_declared_limits():
 def test_an_emulator_that_disagrees_with_the_simulator_fails(monkeypatch):
     monkeypatch.setattr(_validation, "_simulated", lambda lowered: [0.5] * _readouts(lowered))
     report = backends.validate(ToyBackend(), shots=200)
-    assert "FAIL acquire (/1): measurement 0: the emulator gives 1 in 0.000 of shots" in str(report)
+    assert "FAIL readout (/1): measurement 0: the emulator gives 1 in 0.000 of shots" in str(report)
 
 
 def test_the_emulator_is_compared_with_the_simulator():
     lowered = pulse.compile(
-        _validation._corpus()[pulse.Event.ACQUIRE], device=_validation._device(ControlSystem())
+        _validation._corpus()[pulse.Event.READOUT], device=_validation._device(ControlSystem())
     ).lower(*_validation._device(ControlSystem()).qudit_handles[:2])
     (p,) = _validation._simulated(lowered)
     assert 0.0 < p < 1.0

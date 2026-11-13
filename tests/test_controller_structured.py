@@ -208,14 +208,14 @@ def test_every_structured_event_kind_is_an_event_and_exported_as_a_plain_string(
         program = json.loads(json.dumps(lowered.export_controller(**export, version=2)))
         seen.update(_kinds(program["events"]))
     assert seen <= set(pulse.Event)
-    assert {"play", "acquire", "sync", "loop", "call", "answer"} <= seen
-    assert pulse.Event.PLAY == "play" and pulse.Event("acquire") is pulse.Event.ACQUIRE
+    assert {"play", "readout", "sync", "loop", "call", "answer"} <= seen
+    assert pulse.Event.PLAY == "play" and pulse.Event("readout") is pulse.Event.READOUT
 
 
 # Each kind of /2 event, its string, and the /1 kind it unrolls to.
 _EVENT_TABLE = [
     (pulse.Event.PLAY, "play", "drive"),
-    (pulse.Event.ACQUIRE, "acquire", "readout"),
+    (pulse.Event.READOUT, "readout", "readout"),
     (pulse.Event.WAIT, "wait", "wait"),
     (pulse.Event.SYNC, "sync", "sync"),
     (pulse.Event.LOOP, "loop", None),
@@ -335,7 +335,7 @@ def _played(events):
     for event in events:
         if event["kind"] == "loop":
             yield from _played(event["body"])
-        elif event["kind"] in ("play", "acquire"):
+        elif event["kind"] in ("play", "readout"):
             yield event
 
 
@@ -697,7 +697,7 @@ def test_a_loop_whose_calls_and_amplitudes_come_from_answers_stays_rolled():
     place = {e["kind"]: structured["events"].index(loop) + 1 + i for i, e in enumerate(body)}
     by_kind = {e["kind"]: e for e in body}
     # References are places in the export: the body's own events.
-    assert by_kind["call"]["operands"] == [{"readout": place["acquire"]}]
+    assert by_kind["call"]["operands"] == [{"readout": place["readout"]}]
     assert _amplitude_of(structured, by_kind["play"]) == {
         "of": [{"answer": place["answer"], "result": 0}, {"const": 0.5}],
         "op": "mul",

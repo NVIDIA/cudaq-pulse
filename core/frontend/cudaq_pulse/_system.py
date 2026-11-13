@@ -80,7 +80,7 @@ SYSTEM_FORMAT = "cudaq-pulse.system/1"
 
 
 _PLAYED = frozenset({"drive", "readout"})
-_NEEDS = MappingProxyType({"drive": "play", "readout": "acquire", "wait": "wait"})
+_NEEDS = MappingProxyType({"drive": "play", "readout": "readout", "wait": "wait"})
 
 
 class _Line(tuple[int, float]):

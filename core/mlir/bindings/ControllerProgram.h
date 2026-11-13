@@ -2554,8 +2554,6 @@ private:
   static const char *structuredKind(const char *kind) {
     if (std::strcmp(kind, "drive") == 0)
       return "play";
-    if (std::strcmp(kind, "readout") == 0)
-      return "acquire";
     if (std::strcmp(kind, "submit") == 0)
       return "call";
     return kind;
@@ -2622,7 +2620,7 @@ private:
     return event;
   }
 
-  /// The frame of the tone of a play, acquire or frame update: in format /2
+  /// The frame of the tone of a play, readout or frame update: in format /2
   /// as its `tones`.
   void frame(const ControllerRecord &r, nb::handle event) {
     if (!compact) {
