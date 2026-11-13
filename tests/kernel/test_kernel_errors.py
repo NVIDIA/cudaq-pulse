@@ -207,10 +207,10 @@ def _unrewritten(source: str):
 
 def test_assert_with_a_message_from_the_friction_log():
     k = _unrewritten(
-        "def k(q, n_rounds: int):\n"
-        "    assert n_rounds > 0, 'boom'\n"
+        "def k(q, round_count: int):\n"
+        "    assert round_count > 0, 'boom'\n"
         "    d = get_drive_line(q)\n"
-        "    drive(d, square(8 * n_rounds, 0.1))\n"
+        "    drive(d, square(8 * round_count, 0.1))\n"
     )
     python_ir(k, Q[0], 2)
     with pytest.raises(CompilationError) as e:

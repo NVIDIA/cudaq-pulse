@@ -82,7 +82,7 @@ def test_compile_builds_the_kernel_ir(case):
     module = PulseModuleBuilder().build_from_packed(
         builder.get_buffer(),
         2.0,
-        builder.n_qubits,
+        builder.qudit_count,
         builder.get_freq_array(),
         [p.name for p in params],
         [p.dtype for p in params],

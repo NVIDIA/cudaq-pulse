@@ -19,8 +19,8 @@ from tests.kernel.ir_corpus import active_reset, feedback_in_loop, negated_feedb
 _FREQ = {0: 5.0e9, 1: 5.1e9}
 
 
-def _compile(kernel, n_qubits=1, **kwargs):
-    return pulse.compile(kernel, **kwargs).lower(*[Q[i] for i in range(n_qubits)])
+def _compile(kernel, qudit_count=1, **kwargs):
+    return pulse.compile(kernel, **kwargs).lower(*[Q[i] for i in range(qudit_count)])
 
 
 def _makespan(compiled):

@@ -227,7 +227,7 @@ def vqe_hea(q0, q1, q2, q3):
     drive(lines[3], drag(40, 0.025, 10.0, 0.5), tone=tones[3])
 
 
-# ── Workload registry: (name, kernel_fn, n_qubits, freq_dict) ───────────────
+# ── Workload registry: (name, kernel_fn, qudit_count, freq_dict) ───────────────
 
 WORKLOADS = [
     ("bell", bell, 2, {0: 5.0e9, 1: 5.1e9}),
@@ -239,9 +239,9 @@ WORKLOADS = [
 ]
 
 
-def _bench(kernel_fn, n_qubits: int, freq_dict: dict, iterations: int) -> tuple[float, int]:
+def _bench(kernel_fn, qudit_count: int, freq_dict: dict, iterations: int) -> tuple[float, int]:
     device = _device(freq_dict)
-    qubits = device.qudit_handles[:n_qubits]
+    qubits = device.qudit_handles[:qudit_count]
     op_count = pulse.compile(kernel_fn).lower(*qubits).metrics.op_count
     total = 0.0
     for _ in range(iterations):
@@ -300,8 +300,8 @@ def main():
     print(f"  {'-' * 20}  {'-' * 10}  {'-' * 6}")
 
     results: list[BenchResult] = []
-    for name, kernel_fn, n_qubits, freq_dict in WORKLOADS:
-        ms, ops = _bench(kernel_fn, n_qubits, freq_dict, args.iterations)
+    for name, kernel_fn, qudit_count, freq_dict in WORKLOADS:
+        ms, ops = _bench(kernel_fn, qudit_count, freq_dict, args.iterations)
         results.append(BenchResult(name=name, ms=ms, op_count=ops))
         print(f"  {name:20s}  {ms:10.3f}  {ops:6d}")
 

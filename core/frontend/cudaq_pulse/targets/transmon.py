@@ -197,7 +197,7 @@ def transmon_17q_idle_zz_hz(calibration: Any = "transmon_17q") -> dict[tuple[int
 
 
 def transmon_generic(
-    n_qubits: int,
+    qudit_count: int,
     *,
     base_frequency_hz: float = 5.0e9,
     frequency_spread_hz: float = 100e6,
@@ -211,7 +211,7 @@ def transmon_generic(
 
     Parameters
     ----------
-    n_qubits : int
+    qudit_count : int
         Number of qubits.
     base_frequency_hz : float
         Frequency of qubit 0.
@@ -225,18 +225,18 @@ def transmon_generic(
         Uniform decoherence times.
     topology : str
         ``"linear"`` (chain), ``"ring"``, or ``"grid"`` (square lattice
-        with side length = ceil(sqrt(n_qubits))).
+        with side length = ceil(sqrt(qudit_count))).
     """
-    if n_qubits < 1:
-        raise InvalidValueError(f"n_qubits must be >= 1, got {n_qubits}")
+    if qudit_count < 1:
+        raise InvalidValueError(f"qudit_count must be >= 1, got {qudit_count}")
 
     import math as _math
 
     qubits = {}
-    for i in range(n_qubits):
+    for i in range(qudit_count):
         qubits[i] = Qubit(
             index=i,
-            frequency_hz=base_frequency_hz + i * frequency_spread_hz / max(n_qubits - 1, 1),
+            frequency_hz=base_frequency_hz + i * frequency_spread_hz / max(qudit_count - 1, 1),
             anharmonicity_hz=anharmonicity_hz,
             t1_us=t1_us,
             t2_star_us=t2_star_us,
@@ -245,16 +245,16 @@ def transmon_generic(
 
     edges: list[tuple[int, int]] = []
     if topology == "linear":
-        edges = [(i, i + 1) for i in range(n_qubits - 1)]
+        edges = [(i, i + 1) for i in range(qudit_count - 1)]
     elif topology == "ring":
-        edges = [(i, (i + 1) % n_qubits) for i in range(n_qubits)]
+        edges = [(i, (i + 1) % qudit_count) for i in range(qudit_count)]
     elif topology == "grid":
-        side = _math.ceil(_math.sqrt(n_qubits))
-        for i in range(n_qubits):
+        side = _math.ceil(_math.sqrt(qudit_count))
+        for i in range(qudit_count):
             r, c = divmod(i, side)
-            if c + 1 < side and i + 1 < n_qubits:
+            if c + 1 < side and i + 1 < qudit_count:
                 edges.append((i, i + 1))
-            if r + 1 < side and i + side < n_qubits:
+            if r + 1 < side and i + side < qudit_count:
                 edges.append((i, i + side))
     else:
         raise InvalidValueError(f"Unknown topology {topology!r}. Use 'linear', 'ring', or 'grid'.")
@@ -262,7 +262,7 @@ def transmon_generic(
     couplings = [Coupling((a, b), coupling_strength_hz) for a, b in edges]
 
     return TargetDescription(
-        name=f"transmon_generic_{n_qubits}q_{topology}",
+        name=f"transmon_generic_{qudit_count}q_{topology}",
         qubits=qubits,
         couplings=couplings,
     )

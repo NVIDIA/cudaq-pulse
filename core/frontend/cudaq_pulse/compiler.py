@@ -1161,7 +1161,7 @@ def build(
     # The device's tables, of which the module records qudits 0 to
     # qudit_count - 1: when the target defines all of those, it defines every
     # qudit of the program, else they are checked.
-    qudit_count = builder.n_qubits
+    qudit_count = builder.qudit_count
     carrier_count, freq, readout_freqs = target._tables
     if carrier_count < qudit_count:
         carrier_count, freq, readout_freqs = target._frequency_tables(qudit_count)
@@ -1194,7 +1194,7 @@ def build(
                 list(parameters),
                 ["f64"] * len(parameters),
                 name=name,
-                n_slots=slots,
+                slot_count=slots,
                 readout_freqs=readout_freqs,
             )
         elif parameters:
@@ -1374,22 +1374,22 @@ def _clocked_module(
     """Set the grid, controller and line delay attributes of *module*; the
     fine delays."""
     if clocks is not None:
-        grids = clocks.attributes(builder.n_qubits)
+        grids = clocks.attributes(builder.qudit_count)
         if grids is not None:
             module.set_attributes(grids)
     system = machine._system
     if system is not None and machine.controller is None:
-        module.set_attributes(system._controllers_attribute(target.clock_ghz, builder.n_qubits))
+        module.set_attributes(system._controllers_attribute(target.clock_ghz, builder.qudit_count))
     fine_delays = None
     if machine._line_delays:
-        shifts, fine_delays = _line_delays(machine, target, clocks, builder.n_qubits)
+        shifts, fine_delays = _line_delays(machine, target, clocks, builder.qudit_count)
         if shifts is not None:
             module.set_attributes(f"{{pulse.line_delays = {shifts}}}")
     return fine_delays
 
 
 def _line_delays(
-    machine: _MachineModel, target: Device, clocks: _clocks.ClockPlan | None, n_qudits: int
+    machine: _MachineModel, target: Device, clocks: _clocks.ClockPlan | None, qudit_count: int
 ) -> tuple[str | None, dict[tuple[str, int], float]]:
     from . import _clocks
 
@@ -1400,7 +1400,7 @@ def _line_delays(
             machine.controller,
             clocks,
             target.clock_ghz,
-            n_qudits,
+            qudit_count,
             None if system is None else system.controllers,
             None if system is None else system._line_owners,
         )
@@ -1433,8 +1433,8 @@ def _check_controller(lowered: Lowered) -> Lowered:
     return (_CheckedPerCall if lowered._role is None else _CheckedPlaced)(lowered)
 
 
-def with_line_delays(lowered: Lowered, options: CompileOptions, n_qudits: int) -> Lowered | None:
-    """*lowered*, a scheduled module of *n_qudits* qudits, compiled again for
+def with_line_delays(lowered: Lowered, options: CompileOptions, qudit_count: int) -> Lowered | None:
+    """*lowered*, a scheduled module of *qudit_count* qudits, compiled again for
     *options*, which differ from its own only in the machine's line delays:
     its module before scheduling is kept, and only scheduling, the checks and
     the exports are done again. ``None`` when scheduling it again fails, for
@@ -1447,7 +1447,7 @@ def with_line_delays(lowered: Lowered, options: CompileOptions, n_qudits: int) -
     fine_delays = None
     shifts = None
     if options.machine._line_delays:
-        shifts, fine_delays = _line_delays(options.machine, target, clocks, n_qudits)
+        shifts, fine_delays = _line_delays(options.machine, target, clocks, qudit_count)
     if clocks is None or clocks.readout_latency_cycles is None:
         schedule_args = options.schedule_args()
     else:

@@ -25,7 +25,7 @@ qubit_idx = 4  # D5 -- central data qubit
 qubit_d5 = target.qubits[qubit_idx]
 clock_ghz = dev.clock_ghz  # the program clock the schedule counts cycles of
 
-print(f"Target: {target.name} ({target.n_qubits} qubits)")
+print(f"Target: {target.name} ({target.qudit_count} qubits)")
 print(f"Qubit {qubit_d5.label} (idx {qubit_idx}):")
 print(f"  frequency = {qubit_d5.frequency_hz / 1e9:.3f} GHz")
 print(f"  anharmonicity = {qubit_d5.anharmonicity_hz / 1e6:.1f} MHz")
@@ -40,15 +40,15 @@ print(
 )
 
 gap = 50 * pulse.ns
-n_rabi_points = 21
+rabi_point_count = 21
 
 
 @pulse.kernel
 def rabi_d5(qubit):
     drive_line = get_drive_line(qubit)
     pi_pulse = drive_line.get_calibration(pulse.gates.X)
-    for i in range(n_rabi_points):
-        scale = 2 * i / (n_rabi_points - 1)
+    for i in range(rabi_point_count):
+        scale = 2 * i / (rabi_point_count - 1)
         drive(drive_line, pi_pulse.replace(amplitude=pi_pulse.amplitude * scale))
         wait(drive_line, gap)
 

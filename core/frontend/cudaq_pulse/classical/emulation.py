@@ -87,10 +87,10 @@ class Transport:
     bytes_per_ns: float = 0.0
     jitter_ns: float = 0.0
 
-    def delay_ns(self, n_bytes: int, rng: np.random.Generator) -> float:
+    def delay_ns(self, byte_count: int, rng: np.random.Generator) -> float:
         delay = self.fixed_ns
         if self.bytes_per_ns > 0:
-            delay += n_bytes / self.bytes_per_ns
+            delay += byte_count / self.bytes_per_ns
         if self.jitter_ns > 0:
             delay += float(rng.exponential(self.jitter_ns))
         return delay

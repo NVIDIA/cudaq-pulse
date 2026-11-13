@@ -130,13 +130,13 @@ def _compile_time_workloads():
     return {name: (k, n, f) for name, k, n, f in module.WORKLOADS}
 
 
-def _kernel_ir(kernel, n_qubits: int) -> Callable[[], object]:
-    return lambda: python_ir(kernel, *[Q[i] for i in range(n_qubits)])
+def _kernel_ir(kernel, qudit_count: int) -> Callable[[], object]:
+    return lambda: python_ir(kernel, *[Q[i] for i in range(qudit_count)])
 
 
 # A fresh compiled kernel holds no specializations, so these compile.
-def _compile(kernel, n_qubits: int) -> Callable[[], object]:
-    return lambda: pulse.compile(kernel).lower(*[Q[i] for i in range(n_qubits)])
+def _compile(kernel, qudit_count: int) -> Callable[[], object]:
+    return lambda: pulse.compile(kernel).lower(*[Q[i] for i in range(qudit_count)])
 
 
 def _fused(kernel, n: int) -> Callable[[], object]:
@@ -158,9 +158,9 @@ def _cases() -> dict[str, Callable[[], object]]:
     workloads = _compile_time_workloads()
     cases = {}
     for name in ("bell", "qaoa4", "dd_cpmg8", "vqe_hea"):
-        kernel, n_qubits, _ = workloads[name]
-        cases[f"tier1_{name}_trace"] = _kernel_ir(kernel, n_qubits)
-        cases[f"tier1_{name}_compile"] = _compile(kernel, n_qubits)
+        kernel, qudit_count, _ = workloads[name]
+        cases[f"tier1_{name}_trace"] = _kernel_ir(kernel, qudit_count)
+        cases[f"tier1_{name}_compile"] = _compile(kernel, qudit_count)
     for n in (8, 512):
         cases[f"dd_loop_n{n}"] = _kernel_ir(dd_loop(n), 1)
         cases[f"dd_loop_n{n}_compile"] = _compile(dd_loop(n), 1)
@@ -202,10 +202,10 @@ def test_compile_time_within_baseline(ratios, request):
 
 
 def test_building_the_module_costs_less_than_tracing_the_kernel():
-    kernel, n_qubits, _ = _compile_time_workloads()["bell"]
+    kernel, qudit_count, _ = _compile_time_workloads()["bell"]
     best = {"trace_ms": float("inf"), "ffi_ms": float("inf")}
     for _ in range(50):
-        metrics = _compile(kernel, n_qubits)().metrics
+        metrics = _compile(kernel, qudit_count)().metrics
         for stage in best:
             best[stage] = min(best[stage], getattr(metrics, stage))
     assert best["ffi_ms"] < best["trace_ms"], best
@@ -253,10 +253,10 @@ def test_retained_loop_compile_work_is_flat():
             assert retained[0][count] <= unrolled[count], (make.__name__, count)
 
 
-def _half_unused(n_qubits: int):
+def _half_unused(qudit_count: int):
     @pulse.kernel
     def kernel(qubits):
-        for q in range(n_qubits):
+        for q in range(qudit_count):
             line = get_drive_line(qubits[q])
             if q % 2 == 0:
                 drive(line, square(20, 0.1))

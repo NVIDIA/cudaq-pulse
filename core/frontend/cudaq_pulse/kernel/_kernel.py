@@ -392,10 +392,10 @@ class _Entry:
         "tick",
         "pins",
         "runtime",
-        "n_qudits",
+        "qudit_count",
     )
     # Set only on the entries kept to be scheduled again.
-    n_qudits: int
+    qudit_count: int
 
     def __init__(
         self,
@@ -759,7 +759,7 @@ class Kernel[**P]:
         entry = _Entry(lowered, guard, returns, pins, runtime)
         if options.machine._line_delays and lowered.scheduled:
             # Only a kept entry is scheduled again, for its qudits.
-            entry.n_qudits = builder.n_qubits
+            entry.qudit_count = builder.qudit_count
             self._keep_traced(self._traced_key(values, target, options), entry)
         return entry
 
@@ -792,11 +792,11 @@ class Kernel[**P]:
             or not prior.guard.check()
         ):
             return None
-        lowered = with_line_delays(prior.lowered, options, prior.n_qudits)
+        lowered = with_line_delays(prior.lowered, options, prior.qudit_count)
         if lowered is None:
             return None
         entry = _Entry(lowered, prior.guard, prior.returns, prior.pins, prior.runtime)
-        entry.n_qudits = prior.n_qudits
+        entry.qudit_count = prior.qudit_count
         self._keep_traced(self._traced_key(values, target, options), entry)
         return entry
 

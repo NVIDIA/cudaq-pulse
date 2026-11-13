@@ -17,10 +17,10 @@ from tests.test_region_scheduling import _DURATIONS, _programs
 _TRAIN = 0x100
 
 
-def _hamiltonian(text, n_lines, policy):
+def _hamiltonian(text, line_count, policy):
     module = MLIRPipeline().parse_to_module(text)
     module.schedule(policy)
-    freqs = ", ".join(f"{5.0e9 + 1.0e8 * i:e}" for i in range(n_lines))
+    freqs = ", ".join(f"{5.0e9 + 1.0e8 * i:e}" for i in range(line_count))
     module.set_attributes(
         f"{{pulse.clock_ghz = 2.0 : f64, pulse.qubit_freq_hz = array<f64: {freqs}>}}"
     )
@@ -42,8 +42,8 @@ def _coefficients(program, times):
     return total, trains
 
 
-def _ops(n_lines):
-    line = st.integers(0, n_lines - 1)
+def _ops(line_count):
+    line = st.integers(0, line_count - 1)
     return st.one_of(
         st.tuples(st.just("drive"), line, st.sampled_from(_DURATIONS)),
         st.tuples(st.just("wait"), line, st.sampled_from(_DURATIONS)),

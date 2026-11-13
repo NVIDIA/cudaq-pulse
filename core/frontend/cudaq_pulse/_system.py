@@ -1215,9 +1215,9 @@ class ControlSystem:
             table.append(row)
         return table
 
-    def _controllers_attribute(self, program_ghz: float, n_qudits: int) -> str:
+    def _controllers_attribute(self, program_ghz: float, qudit_count: int) -> str:
         """The module attribute ``pulse.controllers`` of a program at
-        *program_ghz* on *n_qudits* qudits: the controller of each line, the
+        *program_ghz* on *qudit_count* qudits: the controller of each line, the
         outcome latencies between controllers, how far apart their starts may
         be (in program cycles) and each one's start uncertainty in ns; with
         ``pulse.blocks_on_calls``, those that block on calls."""
@@ -1233,7 +1233,7 @@ class ControlSystem:
             return f"array<{kind}: {text}>" if text else f"array<{kind}>"
 
         fields = [
-            f"{role} = " + array("i64", (owners.get((role, q), -1) for q in range(n_qudits)))
+            f"{role} = " + array("i64", (owners.get((role, q), -1) for q in range(qudit_count)))
             for role in ("drive", "readout")
         ]
         latency = (v for row in self._outcome_latencies(clocks) for v in row)

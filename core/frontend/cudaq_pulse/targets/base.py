@@ -980,7 +980,7 @@ class TargetDescription:
         return frozen_reduce(self)
 
     @property
-    def n_qubits(self) -> int:
+    def qudit_count(self) -> int:
         return len(self.qubits)
 
     @property

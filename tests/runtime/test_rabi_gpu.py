@@ -63,7 +63,7 @@ def test_rabi_gpu_execution():
         drive(d0, wf)
 
     ir = (rabi, Q[0])
-    result = evolve(on(target, *ir), t_start=0.0, t_end=20.0, num_steps=200, integrator="rk4")
+    result = evolve(on(target, *ir), t_start=0.0, t_end=20.0, step_count=200, integrator="rk4")
 
     state = result.final_state
     assert state.shape == (2,)
@@ -102,7 +102,7 @@ def test_rabi_gpu_integrator_parity(integrator):
         drive(d0, wf)
 
     ir = (rabi, Q[0])
-    result = evolve(on(target, *ir), t_start=0.0, t_end=20.0, num_steps=200, integrator=integrator)
+    result = evolve(on(target, *ir), t_start=0.0, t_end=20.0, step_count=200, integrator=integrator)
 
     state = result.final_state
     assert state.shape == (2,)

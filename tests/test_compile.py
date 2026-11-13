@@ -343,7 +343,7 @@ def test_packed_ir_builder_basic():
     assert isinstance(buf, array.array)
     assert buf.typecode == "q" and buf.itemsize == 8
     assert len(buf) > 0
-    assert b.n_qubits == 1
+    assert b.qudit_count == 1
 
 
 def test_packed_ir_builder_readout():

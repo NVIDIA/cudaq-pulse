@@ -83,13 +83,13 @@ struct QOpToCuDensityMatPass
     b.setInsertionPoint(returnOp);
     auto loc = returnOp->getLoc();
 
-    // --- Determine n_qubits from module attributes or from qop.spin ops ---
-    int64_t nQubits = 1;
-    auto nqAttr = module->getAttrOfType<IntegerAttr>("qop.n_qubits");
+    // --- Determine qudit_count from module attributes or from qop.spin ops ---
+    int64_t quditCount = 1;
+    auto nqAttr = module->getAttrOfType<IntegerAttr>("qop.qudit_count");
     if (!nqAttr)
-      nqAttr = module->getAttrOfType<IntegerAttr>("n_qubits");
+      nqAttr = module->getAttrOfType<IntegerAttr>("qudit_count");
     if (nqAttr)
-      nQubits = nqAttr.getInt();
+      quditCount = nqAttr.getInt();
     else {
       // Count unique qubit targets from qop.spin ops
       DenseSet<int64_t> targets;
@@ -100,19 +100,19 @@ struct QOpToCuDensityMatPass
         }
       });
       if (!targets.empty())
-        nQubits = *std::max_element(targets.begin(), targets.end()) + 1;
+        quditCount = *std::max_element(targets.begin(), targets.end()) + 1;
     }
 
-    SmallVector<int64_t> modeExtents(nQubits, 2);
+    SmallVector<int64_t> modeExtents(quditCount, 2);
     if (auto extents =
             module->getAttrOfType<DenseI64ArrayAttr>("qop.mode_extents")) {
-      if (static_cast<int64_t>(extents.size()) < nQubits) {
+      if (static_cast<int64_t>(extents.size()) < quditCount) {
         module.emitError("qop.mode_extents has fewer entries than modes");
         return signalPassFailure();
       }
       modeExtents.assign(extents.asArrayRef().begin(),
                          extents.asArrayRef().end());
-      nQubits = static_cast<int64_t>(modeExtents.size());
+      quditCount = static_cast<int64_t>(modeExtents.size());
     }
 
     auto handleTy = cudm::HandleType::get(b.getContext());
@@ -349,7 +349,7 @@ struct QOpToCuDensityMatPass
         }
         auto elementary = spinToCudmElem.find(leaf);
         if (elementary == spinToCudmElem.end() || !mode || *mode < 0 ||
-            *mode >= nQubits) {
+            *mode >= quditCount) {
           product.emitError("operator target must be a valid constant mode "
                             "index");
           conversionFailed = true;
@@ -474,9 +474,9 @@ struct QOpToCuDensityMatPass
       teAttr = module->getAttrOfType<FloatAttr>("t_end");
     if (teAttr)
       tEnd = teAttr.getValueAsDouble();
-    auto nsAttr = module->getAttrOfType<IntegerAttr>("qop.num_steps");
+    auto nsAttr = module->getAttrOfType<IntegerAttr>("qop.step_count");
     if (!nsAttr)
-      nsAttr = module->getAttrOfType<IntegerAttr>("num_steps");
+      nsAttr = module->getAttrOfType<IntegerAttr>("step_count");
     if (nsAttr)
       numSteps = nsAttr.getInt();
 

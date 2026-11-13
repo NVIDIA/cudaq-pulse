@@ -106,12 +106,12 @@ clock_ghz = 2.0  # the transmon device's program clock; one sample per cycle
 
 def gaussian_derivative_samples(duration, amplitude, sigma):
     """d/dt of a Gaussian centered in *duration*, one sample per clock cycle."""
-    n_samples = round(duration / pulse.ns * clock_ghz)
+    sample_count = round(duration / pulse.ns * clock_ghz)
     sigma = sigma / pulse.ns * clock_ghz
-    center = (n_samples - 1) / 2
+    center = (sample_count - 1) / 2
     return [
         -amplitude * (t - center) / sigma**2 * math.exp(-((t - center) ** 2) / (2 * sigma**2))
-        for t in range(n_samples)
+        for t in range(sample_count)
     ]
 
 

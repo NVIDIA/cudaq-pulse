@@ -223,7 +223,7 @@ def test_gpu_setup_lowers_a_program_that_measures_at_any_start(t_start, t1_us, g
 
 def test_evolve_of_a_program_that_measures_runs_the_gpu_backend(gpu_on_cpu):
     lowered = on(_target(1), _active_reset(_HALF_PI), Q[0])
-    state = evolve(lowered, t_start=0.0, t_end=140.0, num_steps=2800).final_state
+    state = evolve(lowered, t_start=0.0, t_end=140.0, step_count=2800).final_state
     rho = np.outer(state, state.conj()) if state.ndim == 1 else state
     np.testing.assert_allclose(rho, np.diag([1.0, 0.0]), atol=1e-7)
 

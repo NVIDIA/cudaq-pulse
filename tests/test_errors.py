@@ -147,7 +147,7 @@ def test_library_errors_are_pulse_errors_of_their_kind():
 
     with pytest.raises(pulse.NotFoundError, match="no calibration 'missing'"):
         Calibration.load("missing")
-    with pytest.raises(pulse.InvalidValueError, match="n_qubits must be >= 1"):
+    with pytest.raises(pulse.InvalidValueError, match="qudit_count must be >= 1"):
         transmon_generic(0)
     with pytest.raises(pulse.UnsupportedError, match="not available yet"):
         emulation.device_call_text(None)

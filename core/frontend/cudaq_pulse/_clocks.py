@@ -188,19 +188,19 @@ class ClockPlan:
         """Where every line can meet."""
         return functools.reduce(math.lcm, (c.grid for c in self.controllers), 1)
 
-    def attributes(self, n_qudits: int) -> str | None:
+    def attributes(self, qudit_count: int) -> str | None:
         """The module attributes that put the scheduler on the grids."""
         if self.lcm == 1:
             return None
         if self.owners is None:
             return f"{{pulse.line_grid = {self.controllers[0].grid} : i64}}"
         # Every carrier a controller plays, for the qudits a call binds.
-        n_qudits = max(n_qudits, 1 + max((q for _, q in self.owners), default=-1))
-        if not n_qudits:
+        qudit_count = max(qudit_count, 1 + max((q for _, q in self.owners), default=-1))
+        if not qudit_count:
             return f"{{pulse.line_grid = {self.lcm} : i64}}"
         arrays = []
         for role in ("drive", "readout"):
-            grids = ", ".join(str(self.grid_of(role, q)) for q in range(n_qudits))
+            grids = ", ".join(str(self.grid_of(role, q)) for q in range(qudit_count))
             arrays.append(f"pulse.{role}_line_grid = array<i64: {grids}>")
         return f"{{pulse.line_grid = {self.lcm} : i64, " + ", ".join(arrays) + "}"
 
@@ -378,7 +378,7 @@ def line_delays(
     limits: Controller | None,
     plan: ClockPlan | None,
     program_ghz: float,
-    n_qudits: int,
+    qudit_count: int,
     controllers: Sequence[Controller] | None = None,
     owners: Mapping[tuple[str, int], int] | None = None,
 ) -> tuple[str | None, dict[tuple[str, int], float]]:
@@ -431,7 +431,7 @@ def line_delays(
         return None, fine
     arrays = []
     for role in ("drive", "readout"):
-        cycles = ", ".join(str(shifts.get((role, q), 0)) for q in range(n_qudits))
+        cycles = ", ".join(str(shifts.get((role, q), 0)) for q in range(qudit_count))
         arrays.append(f"{role} = array<i64: {cycles}>")
     return "{" + ", ".join(arrays) + "}", fine
 

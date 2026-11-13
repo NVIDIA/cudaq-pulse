@@ -39,8 +39,8 @@ def on(target, kernel, *args, passes=EVOLVE_PASSES):
     return pulse.compile(kernel, passes=passes).lower(*_handles(dev, args))
 
 
-def evolve(lowered, *, t_start, t_end, num_steps, integrator="rk4", levels=2, initial_state=None):
-    """GPU evolution over ``[t_start, t_end]`` in *num_steps* steps."""
+def evolve(lowered, *, t_start, t_end, step_count, integrator="rk4", levels=2, initial_state=None):
+    """GPU evolution over ``[t_start, t_end]`` in *step_count* steps."""
     result = _simulate_lowered(
         lowered,
         levels=levels,
@@ -48,7 +48,7 @@ def evolve(lowered, *, t_start, t_end, num_steps, integrator="rk4", levels=2, in
         backend="gpu",
         t_start=t_start,
         t_end=t_end,
-        dt_ns=(t_end - t_start) / num_steps,
+        dt_ns=(t_end - t_start) / step_count,
         integrator=integrator,
     )
     # The state the runtime evolved: a closed system's state vector, or the
@@ -58,7 +58,7 @@ def evolve(lowered, *, t_start, t_end, num_steps, integrator="rk4", levels=2, in
     # ends in the mixture of its branches.
     states = result._states
     state = states[0] if len(states) == 1 else result.density_matrix
-    return SimpleNamespace(final_state=state, times=np.linspace(t_start, t_end, num_steps + 1))
+    return SimpleNamespace(final_state=state, times=np.linspace(t_start, t_end, step_count + 1))
 
 
 def frequency_target(qubit_freq_hz, clock_ghz=2.0):

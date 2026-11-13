@@ -389,7 +389,7 @@ class PackedIRBuilder:
         self._next_id = 0
         # One past the highest qudit index allocated (runtime qudits are
         # negative), the qudits the module records.
-        self.n_qubits = 0
+        self.qudit_count = 0
         self._op_count = 0
         self._qref_to_qubit: dict[int, int] = {}
         self._line_qubit: dict[int, int] = {}  # line vid → qudit
@@ -521,10 +521,10 @@ class PackedIRBuilder:
 
         # --- Qubit alloc (not encoded, just tracked) ---
         if kind in ("pulse.qudit_arg", "pulse.qudit_alloc"):
-            idx = a.get("index", self.n_qubits)
+            idx = a.get("index", self.qudit_count)
             for r in results:
                 self._qref_to_qubit[r.vid] = idx
-            self.n_qubits = max(self.n_qubits, idx + 1)
+            self.qudit_count = max(self.qudit_count, idx + 1)
             return results
 
         # Like PythonIRBuilder.op_count(), count pulse-program ops but not qudit binding.
@@ -1044,21 +1044,21 @@ class PackedIRBuilder:
         self._classical_index[id(function)] = index
         return index
 
-    def _forget_classical(self, n_classical: int) -> None:
+    def _forget_classical(self, classical_count: int) -> None:
         """Drop the classical functions declared after the first
-        *n_classical*, with their keys and versions."""
+        *classical_count*, with their keys and versions."""
         dispatched = self._dispatched
         assert dispatched is not None and self.routes is not None
         for sent, entry in list(dispatched.items()):
-            if entry >= n_classical:
+            if entry >= classical_count:
                 del dispatched[sent]
-        del self.routes[n_classical:]
-        for function in self.classical[n_classical:]:
+        del self.routes[classical_count:]
+        for function in self.classical[classical_count:]:
             del self._classical_index[id(function)]
             template = function._template
             if template is not None and self._versions:
                 self._versions.get(template, {}).pop(function._key, None)
-        del self.classical[n_classical:]
+        del self.classical[classical_count:]
 
     def classical_submit(self, index: int, operands: list[int]) -> int:
         """Record a submission; returns the future's id."""
@@ -1131,7 +1131,7 @@ class PackedIRBuilder:
         return (
             self._cur,
             self._next_id,
-            self.n_qubits,
+            self.qudit_count,
             self._op_count,
             [dict(region) for region in self._regions],
             self._n_readouts,
@@ -1147,13 +1147,13 @@ class PackedIRBuilder:
         (
             self._cur,
             self._next_id,
-            self.n_qubits,
+            self.qudit_count,
             self._op_count,
             regions,
             self._n_readouts,
             waits,
             blocks,
-            n_classical,
+            classical_count,
             scope,
             flow,
             self._next_scope,
@@ -1167,8 +1167,8 @@ class PackedIRBuilder:
         del self._block_marks[blocks:]
         self._scope = scope
         self._flow = flow
-        if len(self.classical) > n_classical:
-            self._forget_classical(n_classical)
+        if len(self.classical) > classical_count:
+            self._forget_classical(classical_count)
         live = self._next_id
         for vid in [vid for vid in self.readouts if vid >= live]:
             del self.readouts[vid]
@@ -1536,7 +1536,7 @@ class PackedIRBuilder:
 
     def get_freq_array(self) -> array[float]:
         """Return qubit frequencies as float64 values indexed by qubit."""
-        n = self.n_qubits
+        n = self.qudit_count
         freq = self._freq_hz or {}
         arr = array("d", bytes(8 * n))
         # The program's qudits, not all of the target's.

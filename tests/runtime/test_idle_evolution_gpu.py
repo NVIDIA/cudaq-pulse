@@ -65,7 +65,7 @@ def _p1_after_wait(wait_ns):
         on(_target(), kernel, Q[0]),
         t_start=0.0,
         t_end=t_end,
-        num_steps=max(1, int(round(t_end))),
+        step_count=max(1, int(round(t_end))),
         integrator="rk4",
     )
     return result.final_state[1, 1].real
@@ -132,7 +132,7 @@ def test_split_idle_matches_single_idle():
             on(_target(), kernel, Q[0]),
             t_start=0.0,
             t_end=1020.0,
-            num_steps=1020,
+            step_count=1020,
             integrator="rk4",
         )
         return result.final_state[1, 1].real

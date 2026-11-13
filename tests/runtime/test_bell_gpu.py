@@ -77,7 +77,7 @@ def test_bell_gpu_execution():
         on(target, *ir),
         t_start=0.0,
         t_end=25.0,
-        num_steps=250,
+        step_count=250,
         integrator="rk4",
         initial_state=[0.0, 1.0, 0.0, 0.0],
     )

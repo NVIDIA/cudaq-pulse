@@ -151,7 +151,7 @@ def _amplitude(q, amp: float):
     drive(d, gaussian(44, amp, 10.0))
 
 
-def _tone_list(n_iter: int) -> Any:
+def _tone_list(iteration_count: int) -> Any:
     # tests/kernel/ir_corpus.py: tone_list_loop.
     @pulse.kernel
     def listed(qs):
@@ -159,7 +159,7 @@ def _tone_list(n_iter: int) -> Any:
         for d, f in zip(lines, (5.0e9, 5.1e9), strict=True):
             set_frequency(d.tone, f)
         x = square(40, 0.047)
-        for _ in range(n_iter):
+        for _ in range(iteration_count):
             for d in lines:
                 drive(d, x)
 
@@ -168,23 +168,23 @@ def _tone_list(n_iter: int) -> Any:
 
 def _surface(d: int) -> tuple[Any, int]:
     # tests/kernel/ir_corpus.py: surface_syndrome.
-    n_data = d * d
-    n_anc = (d - 1) * (d - 1) + 2 * (d - 1)
-    n_total = n_data + n_anc
+    data_count = d * d
+    ancilla_count = (d - 1) * (d - 1) + 2 * (d - 1)
+    total_count = data_count + ancilla_count
 
     @pulse.kernel
     def round_(qubits):
         lines = []
         tones = []
-        for i in range(n_total):
+        for i in range(total_count):
             line = get_drive_line(qubits[i])
             lines.append(line)
             tones.append(line.tone)
         h = drag(40, 0.25, 10.0, 0.5)
         cr_p = gaussian(160, 0.12, 40.0)
         cr_m = gaussian(160, -0.12, 40.0)
-        for a in range(n_anc):
-            anc = n_data + a
+        for a in range(ancilla_count):
+            anc = data_count + a
             row = a // (d - 1) if a < (d - 1) * (d - 1) else -1
             col = a % (d - 1) if a < (d - 1) * (d - 1) else a - (d - 1) * (d - 1)
             drive(lines[anc], h, tone=tones[anc])
@@ -198,7 +198,7 @@ def _surface(d: int) -> tuple[Any, int]:
                         drive(lines[anc], cr_p, tone=tones[q])
                         drive(lines[anc], cr_m, tone=tones[q])
 
-    return round_, n_total
+    return round_, total_count
 
 
 def _feedback_program(n: int) -> Any:

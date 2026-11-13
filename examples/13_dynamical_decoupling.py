@@ -13,7 +13,7 @@ import cudaq_pulse as pulse
 
 
 @pulse.kernel
-def xy4(qubit, sigma, amplitude_pi, tau, n_cycles):
+def xy4(qubit, sigma, amplitude_pi, tau, cycle_count):
     """XY4 dynamical decoupling: [X - tau - Y - tau - X - tau - Y - tau]^n.
 
     Suppresses both dephasing and amplitude noise by alternating X and Y
@@ -23,7 +23,7 @@ def xy4(qubit, sigma, amplitude_pi, tau, n_cycles):
 
     pi_x = gaussian(4 * sigma, amplitude_pi, sigma)
 
-    for _cycle in range(n_cycles):
+    for _cycle in range(cycle_count):
         # X refocus
         drive(drive_line, pi_x)
         wait(drive_line, tau)
@@ -46,14 +46,14 @@ def xy4(qubit, sigma, amplitude_pi, tau, n_cycles):
 
 
 @pulse.kernel
-def uhrig_dd(qubit, sigma, amplitude_pi, total_cycles, n_pulses):
+def uhrig_dd(qubit, sigma, amplitude_pi, total_cycles, pulse_count):
     """Uhrig dynamical decoupling (UDD).
 
     Places n refocusing pulses at non-uniform intervals:
         t_j = T * sin^2(pi * j / (2n + 2))
 
     Optimal for pure dephasing from a soft-cutoff noise spectrum.
-    The intervals are computed at compile time from n_pulses, in whole
+    The intervals are computed at compile time from pulse_count, in whole
     clock cycles of a sequence *total_cycles* long.
     """
     drive_line = get_drive_line(qubit)
@@ -62,8 +62,8 @@ def uhrig_dd(qubit, sigma, amplitude_pi, total_cycles, n_pulses):
     dur_pi = pulse.round_duration(drive_line, 4 * sigma)
 
     prev_time = 0
-    for j in range(n_pulses):
-        frac = math.sin(math.pi * (j + 1) / (2 * n_pulses + 2)) ** 2
+    for j in range(pulse_count):
+        frac = math.sin(math.pi * (j + 1) / (2 * pulse_count + 2)) ** 2
         tj = int(total_cycles * frac)
         gap = tj - prev_time - dur_pi
         if gap > 0:
@@ -77,7 +77,7 @@ def uhrig_dd(qubit, sigma, amplitude_pi, total_cycles, n_pulses):
 
 
 @pulse.kernel
-def cpmg(qubit, sigma, amplitude_half_pi, amplitude_pi, tau, n_refocus):
+def cpmg(qubit, sigma, amplitude_half_pi, amplitude_pi, tau, refocus_count):
     """Carr-Purcell-Meiboom-Gill: pi/2_X - [tau - pi_Y - tau]^n - pi/2_X.
 
     The standard multi-pulse echo for dephasing suppression.
@@ -89,7 +89,7 @@ def cpmg(qubit, sigma, amplitude_half_pi, amplitude_pi, tau, n_refocus):
 
     drive(drive_line, half_pi_pulse)
 
-    for _i in range(n_refocus):
+    for _i in range(refocus_count):
         wait(drive_line, tau)
         shift_phase(drive_line.tone, math.pi / 2)
         drive(drive_line, pi_pulse)

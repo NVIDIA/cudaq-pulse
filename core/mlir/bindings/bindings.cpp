@@ -3899,7 +3899,7 @@ public:
 
   /// The Hamiltonian and collapse operators pulse-to-qop builds, as data:
   /// (mode extents, Hamiltonian terms, collapse terms, t_start, t_end,
-  /// num_steps, integrator). A term is (coefficient real, imaginary,
+  /// step_count, integrator). A term is (coefficient real, imaginary,
   /// callback kind or 0, callback parameters, factors), and a factor is
   /// (mode, dimension, column-major interleaved complex matrix). Callback
   /// parameters that depend on the program's float arguments are evaluated
@@ -4111,7 +4111,8 @@ public:
     mlir::OpBuilder builder(module.getContext());
     builder.setInsertionPointToStart(&entryBlock);
     int64_t n = 0;
-    if (auto attr = module->getAttrOfType<mlir::IntegerAttr>("pulse.n_qubits"))
+    if (auto attr =
+            module->getAttrOfType<mlir::IntegerAttr>("pulse.qudit_count"))
       n = attr.getInt();
     for (unsigned i = 0; i < entryBlock.getNumArguments(); ++i) {
       auto slot = funcOp.getArgAttrOfType<mlir::IntegerAttr>(i, "pulse.slot");
@@ -4148,7 +4149,7 @@ public:
           qubit);
       arg.replaceAllUsesWith(alloc.getResult());
     }
-    module->setAttr("pulse.n_qubits", builder.getI64IntegerAttr(n));
+    module->setAttr("pulse.qudit_count", builder.getI64IntegerAttr(n));
     module->setAttr("pulse.qubit_freq_hz",
                     builder.getDenseF64ArrayAttr(llvm::ArrayRef<double>(
                         slots.frequencies, static_cast<size_t>(n))));
@@ -4429,10 +4430,10 @@ private:
                              attr.asArrayRef().end());
     else {
       int64_t modes = 1;
-      if (auto attr = top->getAttrOfType<mlir::IntegerAttr>("qop.n_qubits"))
+      if (auto attr = top->getAttrOfType<mlir::IntegerAttr>("qop.qudit_count"))
         modes = attr.getInt();
       else if (auto attr =
-                   top->getAttrOfType<mlir::IntegerAttr>("pulse.n_qubits"))
+                   top->getAttrOfType<mlir::IntegerAttr>("pulse.qudit_count"))
         modes = attr.getInt();
       for (const TermTemplate &t : program.hamiltonian)
         for (const Factor &f : std::get<4>(t.term))
@@ -4447,7 +4448,7 @@ private:
     program.tStart = number("qop.t_start", 0.0);
     program.tEnd = number("qop.t_end", 0.0);
     program.steps = 100;
-    if (auto attr = top->getAttrOfType<mlir::IntegerAttr>("qop.num_steps"))
+    if (auto attr = top->getAttrOfType<mlir::IntegerAttr>("qop.step_count"))
       program.steps = attr.getInt();
     program.integrator = "rk4";
     if (auto attr = top->getAttrOfType<mlir::StringAttr>("qop.integrator"))
@@ -4985,11 +4986,11 @@ public:
   // ─── Packed-buffer decoder (zero-copy path) ──────────────────────────
   PulseModule build_from_packed(
       nb::ndarray<int64_t, nb::ndim<1>, nb::c_contig> stream, double clock_ghz,
-      int64_t n_qubits,
+      int64_t qudit_count,
       nb::ndarray<double, nb::ndim<1>, nb::c_contig> qubit_freqs,
       std::vector<std::string> param_names = {},
       std::vector<std::string> param_types = {},
-      const std::string &name = "main", int64_t n_slots = 0,
+      const std::string &name = "main", int64_t slot_count = 0,
       std::optional<nb::ndarray<const double, nb::ndim<1>, nb::c_contig>>
           readout_freqs = std::nullopt) {
     std::lock_guard<std::mutex> guard(lock_);
@@ -5001,13 +5002,13 @@ public:
 
     if (clock_ghz <= 0.0)
       throw std::invalid_argument("packed: clock_ghz must be positive");
-    if (n_qubits < 0)
-      throw std::invalid_argument("packed: n_qubits cannot be negative");
-    if (n_slots < 0)
-      throw std::invalid_argument("packed: n_slots cannot be negative");
-    if (qubit_freqs.shape(0) < static_cast<size_t>(n_qubits))
+    if (qudit_count < 0)
+      throw std::invalid_argument("packed: qudit_count cannot be negative");
+    if (slot_count < 0)
+      throw std::invalid_argument("packed: slot_count cannot be negative");
+    if (qubit_freqs.shape(0) < static_cast<size_t>(qudit_count))
       throw std::invalid_argument(
-          "packed: fewer qubit frequencies than n_qubits");
+          "packed: fewer qubit frequencies than qudit_count");
     if (param_names.size() != param_types.size())
       throw std::invalid_argument(
           "packed: parameter names and types have different lengths");
@@ -5015,12 +5016,13 @@ public:
     auto module = mlir::ModuleOp::create(loc, mlir::StringRef(name));
     // Owned from the start, so a record that fails frees what was built.
     mlir::OwningOpRef<mlir::ModuleOp> owningModule(module);
-    module->setAttr("pulse.n_qubits", builder_->getI64IntegerAttr(n_qubits));
+    module->setAttr("pulse.qudit_count",
+                    builder_->getI64IntegerAttr(qudit_count));
     module->setAttr("pulse.clock_ghz", builder_->getF64FloatAttr(clock_ghz));
 
-    // Encode the frequencies of qudits 0 to n_qubits - 1 as module attribute
+    // Encode the frequencies of qudits 0 to qudit_count - 1 as module attribute
     const double *fdata = qubit_freqs.data();
-    size_t flen = static_cast<size_t>(n_qubits);
+    size_t flen = static_cast<size_t>(qudit_count);
     llvm::SmallVector<double> freqVec(fdata, fdata + flen);
     module->setAttr("pulse.qubit_freq_hz",
                     builder_->getDenseF64ArrayAttr(freqVec));
@@ -5046,10 +5048,10 @@ public:
     // their slot, bound to carriers by specialize().
     auto qrefTy = pulse::QuditType::get(ctx_.get());
     const unsigned firstSlot = argTypes.size();
-    argTypes.append(static_cast<size_t>(n_slots), qrefTy);
+    argTypes.append(static_cast<size_t>(slot_count), qrefTy);
     auto funcType = builder_->getFunctionType(argTypes, {});
     auto funcOp = mlir::func::FuncOp::create(loc, "main", funcType);
-    for (int64_t k = 0; k < n_slots; ++k)
+    for (int64_t k = 0; k < slot_count; ++k)
       funcOp.setArgAttr(firstSlot + k, "pulse.slot",
                         builder_->getI64IntegerAttr(k));
     module.push_back(funcOp);
@@ -5135,9 +5137,9 @@ public:
 
     // A negative index -1 - k is slot k.
     auto getQubit = [&](int64_t q) -> mlir::Value {
-      if (q < 0 && -1 - q < n_slots)
+      if (q < 0 && -1 - q < slot_count)
         return entryBlock->getArgument(firstSlot + (-1 - q));
-      if (q < 0 || q >= n_qubits)
+      if (q < 0 || q >= qudit_count)
         throw std::invalid_argument("packed: qubit index out of range: " +
                                     std::to_string(q));
       auto it = qubitSSA.find(q);
@@ -6677,12 +6679,12 @@ NB_MODULE(_cudaq_pulse_native, m) {
            nb::call_guard<nb::gil_scoped_release>(),
            "Build an in-memory PulseModule from a packed int64 numpy buffer; "
            "qubit_freqs and readout_freqs give each qudit's 0-1 frequency "
-           "and readout tone by index (the first n_qubits are recorded)",
-           nb::arg("stream"), nb::arg("clock_ghz"), nb::arg("n_qubits"),
+           "and readout tone by index (the first qudit_count are recorded)",
+           nb::arg("stream"), nb::arg("clock_ghz"), nb::arg("qudit_count"),
            nb::arg("qubit_freqs"),
            nb::arg("param_names") = std::vector<std::string>{},
            nb::arg("param_types") = std::vector<std::string>{},
-           nb::arg("name") = "main", nb::arg("n_slots") = 0,
+           nb::arg("name") = "main", nb::arg("slot_count") = 0,
            nb::arg("readout_freqs").none() = nb::none())
       .def(
           "load",

@@ -25,10 +25,10 @@ dev = pulse.device("transmon_17q")
 target = dev.target
 clock_ghz = dev.clock_ghz  # the program clock the schedule counts cycles of
 labels = {q.index: q.label for q in target.qubits.values()}
-n_qubits = target.n_qubits
-data_qubits = [i for i in range(n_qubits) if labels[i].startswith("D")]
-z_auxiliaries = [i for i in range(n_qubits) if labels[i].startswith("Z")]
-x_auxiliaries = [i for i in range(n_qubits) if labels[i].startswith("X")]
+qudit_count = target.qudit_count
+data_qubits = [i for i in range(qudit_count) if labels[i].startswith("D")]
+z_auxiliaries = [i for i in range(qudit_count) if labels[i].startswith("Z")]
+x_auxiliaries = [i for i in range(qudit_count) if labels[i].startswith("X")]
 
 # The CZs of each time step, (auxiliary, data), and their slot.
 z_steps = [list(CZ_LAYERS[0:2]), list(CZ_LAYERS[2:4])]
@@ -47,7 +47,7 @@ def surface_code_cycle(qubits):
     tones = []
     pi_pulses = []
     half_pi_pulses = []
-    for i in range(n_qubits):
+    for i in range(qudit_count):
         line = get_drive_line(qubits[i])
         lines.append(line)
         tones.append(line.tone)
@@ -65,17 +65,17 @@ def surface_code_cycle(qubits):
         for h in range(2):
             for gates in halves[h]:
                 # A barrier over every line, then the step's CZ slots.
-                for i in range(n_qubits - 1):
+                for i in range(qudit_count - 1):
                     sync(lines[i], lines[i + 1])
-                for i in range(n_qubits - 1):
-                    sync(lines[n_qubits - 2 - i], lines[n_qubits - 1 - i])
+                for i in range(qudit_count - 1):
+                    sync(lines[qudit_count - 2 - i], lines[qudit_count - 1 - i])
                 for a, d in gates:
                     wait(lines[a], cz_slot)
                     wait(lines[d], cz_slot)
-            for i in range(n_qubits - 1):
+            for i in range(qudit_count - 1):
                 sync(lines[i], lines[i + 1])
-            for i in range(n_qubits - 1):
-                sync(lines[n_qubits - 2 - i], lines[n_qubits - 1 - i])
+            for i in range(qudit_count - 1):
+                sync(lines[qudit_count - 2 - i], lines[qudit_count - 1 - i])
             if h == 0:
                 # The echo between the second and third step of each half.
                 for i in data_qubits:
@@ -84,13 +84,13 @@ def surface_code_cycle(qubits):
             drive(lines[i], half_pi_pulses[i], tone=tones[i])
         for i in basis_change:
             drive(lines[i], half_pi_pulses[i], tone=tones[i])
-        for i in range(n_qubits - 1):
+        for i in range(qudit_count - 1):
             sync(lines[i], lines[i + 1])
-        for i in range(n_qubits - 1):
-            sync(lines[n_qubits - 2 - i], lines[n_qubits - 1 - i])
+        for i in range(qudit_count - 1):
+            sync(lines[qudit_count - 2 - i], lines[qudit_count - 1 - i])
 
 
-compiled = pulse.compile(surface_code_cycle, device=dev).lower(dev.qudit_handles[:n_qubits])
+compiled = pulse.compile(surface_code_cycle, device=dev).lower(dev.qudit_handles[:qudit_count])
 total_ns = max(e.end for e in compiled.schedule) / clock_ghz
 print(
     f"\nCompiled and verified: {compiled.metrics.op_count} ops, "

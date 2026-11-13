@@ -441,8 +441,8 @@ UNDEFINED_VID = -1
 # The longest duration, in cycles: a time a float holds to the cycle.
 MAX_CYCLES = 2**53
 
-# (n_value_args, attr_names, result_types)
-#   n_value_args: leading args that are IR values; -1 = variadic all-values
+# (value_arg_count, attr_names, result_types)
+#   value_arg_count: leading args that are IR values; -1 = variadic all-values
 #   result_types: None = mirror operand types
 OP_TABLE: dict[str, tuple[int, tuple[str, ...], tuple[str, ...] | None]] = {
     "get_drive_line": (1, (), ("drive_line", "tone")),
@@ -538,5 +538,5 @@ class PythonIRBuilder:
         return len(self.ops), self._next_id
 
     def rollback(self, checkpoint: tuple[int, int]) -> None:
-        n_ops, self._next_id = checkpoint
-        del self.ops[n_ops:]
+        op_count, self._next_id = checkpoint
+        del self.ops[op_count:]

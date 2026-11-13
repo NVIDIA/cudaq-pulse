@@ -29,7 +29,7 @@ def test_jit_executes_target_aware_program():
             )
         },
     )
-    result = evolve(on(target, *ir), t_start=0.0, t_end=20.0, num_steps=200)
+    result = evolve(on(target, *ir), t_start=0.0, t_end=20.0, step_count=200)
     state = result.final_state
     assert state.shape == (2,)
     assert np.vdot(state, state).real == pytest.approx(1.0, abs=1.0e-8)

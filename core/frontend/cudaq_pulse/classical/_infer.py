@@ -2413,21 +2413,21 @@ class LengthRules:
     kept run holds for runs the body itself, and its run is kept too.
 
     *list_results* are the list results' positions with their type names,
-    *n_results* how many results there are, and *bits* the inputs whose
+    *result_count* how many results there are, and *bits* the inputs whose
     items are bits, so their sum counts the set ones."""
 
-    __slots__ = ("fn", "names", "list_results", "n_results", "bits", "rules", "runs")
+    __slots__ = ("fn", "names", "list_results", "result_count", "bits", "rules", "runs")
 
     def __init__(
         self,
         fn: Any,
         names: tuple[str, ...],
         list_results: list[tuple[int, str]],
-        n_results: int,
+        result_count: int,
         bits: frozenset[str] = frozenset(),
     ) -> None:
         self.fn, self.names, self.list_results = fn, names, list_results
-        self.n_results, self.bits = n_results, bits
+        self.result_count, self.bits = result_count, bits
         self.rules: list[_Rule] = []
         self.runs = 0  # how many versions ran the body
 
@@ -2439,7 +2439,13 @@ class LengthRules:
                 return out
         self.runs += 1
         out, rule = _run(
-            self.fn, where, self.names, input_lengths, self.list_results, self.n_results, self.bits
+            self.fn,
+            where,
+            self.names,
+            input_lengths,
+            self.list_results,
+            self.result_count,
+            self.bits,
         )
         if len(self.rules) < _RULES_KEPT:
             self.rules.append(rule)
@@ -2452,12 +2458,12 @@ def infer_lengths(
     names: tuple[str, ...],
     input_lengths: dict[str, int],
     list_results: list[tuple[int, str]],
-    n_results: int,
+    result_count: int,
     bits: frozenset[str] = frozenset(),
 ) -> tuple[int, ...]:
     """The lengths of one version's list results, from a run of the body
     (see ``LengthRules`` for the arguments)."""
-    return _run(fn, where, names, input_lengths, list_results, n_results, bits)[0]
+    return _run(fn, where, names, input_lengths, list_results, result_count, bits)[0]
 
 
 def _run(
@@ -2466,7 +2472,7 @@ def _run(
     names: tuple[str, ...],
     input_lengths: dict[str, int],
     list_results: list[tuple[int, str]],
-    n_results: int,
+    result_count: int,
     bits: frozenset[str],
 ) -> tuple[tuple[int, ...], _Rule]:
     position, type_name = list_results[0]
@@ -2511,12 +2517,14 @@ def _run(
             if run.changed <= forced:
                 break
             forced |= run.changed
-        got = _results(run, rets, list_results, n_results)
+        got = _results(run, rets, list_results, result_count)
         made = _Rule(code, trace, [n.e if n.__class__ is _Num else n for n in got])
         return tuple(n.v if n.__class__ is _Num else n for n in got), made
     except _NoLengthError as c:
         line = c.why[0] if c.why else 0
-        which = f"its {type_name} result" if n_results == 1 else f"result {position} ({type_name})"
+        which = (
+            f"its {type_name} result" if result_count == 1 else f"result {position} ({type_name})"
+        )
         at = f" (line {line})" if line else ""
         raise InferenceError(
             f"{where}: can't tell the length of {which} from the body{at}: {_rare().say(c.why)}."
@@ -2524,7 +2532,7 @@ def _run(
 
 
 def _results(
-    run: _Run, rets: list[Any], list_results: list[tuple[int, str]], n_results: int
+    run: _Run, rets: list[Any], list_results: list[tuple[int, str]], result_count: int
 ) -> tuple[int, ...]:
     if not rets:
         raise _NoLengthError(_why(0, "it always raises an exception"))
@@ -2537,14 +2545,14 @@ def _results(
             if value is NONE:
                 raise _NoLengthError(_why(line, "{}", ("noreturn", dec, i)))
             item = value
-            if n_results > 1:
-                if value.__class__ is not Tup or len(value.items) != n_results:
+            if result_count > 1:
+                if value.__class__ is not Tup or len(value.items) != result_count:
                     raise _NoLengthError(
                         _why(
                             line,
                             "`return {}` isn't a tuple of {} items",
                             ("ret", dec, i),
-                            n_results,
+                            result_count,
                         )
                     )
                 item = value.items[position]

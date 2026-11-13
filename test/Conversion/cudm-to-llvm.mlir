@@ -20,7 +20,7 @@ func.func @main() {
 
   // CHECK: llvm.call @cudm_evolve
   // CHECK: llvm.call @cudm_state_capture
-  %result = cudm.evolve %h, %op, %s_in, %s_out, %ws {integrator = #cudm<integrator rk4>, t_start = 0.0 : f64, t_end = 10.0 : f64, num_steps = 10 : i64} : !cudm.handle, !cudm.operator, !cudm.state, !cudm.state, !cudm.workspace -> !cudm.state
+  %result = cudm.evolve %h, %op, %s_in, %s_out, %ws {integrator = #cudm<integrator rk4>, t_start = 0.0 : f64, t_end = 10.0 : f64, step_count = 10 : i64} : !cudm.handle, !cudm.operator, !cudm.state, !cudm.state, !cudm.workspace -> !cudm.state
 
   // CHECK: llvm.call @cudm_operator_destroy
   cudm.destroy_operator %op : !cudm.operator
@@ -44,7 +44,7 @@ func.func @main_magnus() {
   // The magnus integrator lowers to the dialect enum value 5.
   // CHECK: llvm.mlir.constant(5 : i32)
   // CHECK: llvm.call @cudm_evolve
-  %result = cudm.evolve %h, %op, %s_in, %s_out, %ws {integrator = #cudm<integrator magnus>, t_start = 0.0 : f64, t_end = 10.0 : f64, num_steps = 10 : i64} : !cudm.handle, !cudm.operator, !cudm.state, !cudm.state, !cudm.workspace -> !cudm.state
+  %result = cudm.evolve %h, %op, %s_in, %s_out, %ws {integrator = #cudm<integrator magnus>, t_start = 0.0 : f64, t_end = 10.0 : f64, step_count = 10 : i64} : !cudm.handle, !cudm.operator, !cudm.state, !cudm.state, !cudm.workspace -> !cudm.state
   cudm.destroy_operator %op : !cudm.operator
   cudm.destroy_workspace %ws : !cudm.workspace
   cudm.destroy_state %s_out : !cudm.state
@@ -63,7 +63,7 @@ func.func @main_crank_nicolson() {
   // The crank_nicolson integrator lowers to the dialect enum value 6.
   // CHECK: llvm.mlir.constant(6 : i32)
   // CHECK: llvm.call @cudm_evolve
-  %result = cudm.evolve %h, %op, %s_in, %s_out, %ws {integrator = #cudm<integrator crank_nicolson>, t_start = 0.0 : f64, t_end = 10.0 : f64, num_steps = 10 : i64} : !cudm.handle, !cudm.operator, !cudm.state, !cudm.state, !cudm.workspace -> !cudm.state
+  %result = cudm.evolve %h, %op, %s_in, %s_out, %ws {integrator = #cudm<integrator crank_nicolson>, t_start = 0.0 : f64, t_end = 10.0 : f64, step_count = 10 : i64} : !cudm.handle, !cudm.operator, !cudm.state, !cudm.state, !cudm.workspace -> !cudm.state
   cudm.destroy_operator %op : !cudm.operator
   cudm.destroy_workspace %ws : !cudm.workspace
   cudm.destroy_state %s_out : !cudm.state

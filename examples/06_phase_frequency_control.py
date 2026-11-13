@@ -62,15 +62,15 @@ def set_phase_vs_shift_phase(qubit):
 
 
 @pulse.kernel
-def chirped_drive(qubit, n_steps, total_shift_hz):
+def chirped_drive(qubit, step_count, total_shift_hz):
     """Frequency-chirped pulse: step the drive frequency across the pulse.
 
     Useful for spectroscopy sweeps compiled as a single kernel.
     """
     drive_line = get_drive_line(qubit)
-    step_size = total_shift_hz / n_steps
+    step_size = total_shift_hz / step_count
 
-    for _i in range(n_steps):
+    for _i in range(step_count):
         drive(drive_line, square(cal["step_duration"], 0.1))
         shift_frequency(drive_line.tone, step_size)
 

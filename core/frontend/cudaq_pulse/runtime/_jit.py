@@ -55,12 +55,12 @@ class JITCompiler:
         module: JITModule,
         entry: str = "main",
         args: Sequence[Any] | None = None,
-        n_qubits: int = 1,
+        qudit_count: int = 1,
         state_dim: int | None = None,
     ) -> list[JITResult]:
         """Invoke a JIT-compiled entry point and collect its result state.
 
-        ``state_dim`` is the Hilbert-space dimension (``2**n_qubits`` by
+        ``state_dim`` is the Hilbert-space dimension (``2**qudit_count`` by
         default); a result that is neither a state vector nor a density
         matrix of that dimension is rejected.
         """
@@ -71,7 +71,7 @@ class JITCompiler:
         func(*c_args)
         del keep_alive
 
-        hilbert_dim = state_dim if state_dim is not None else 2**n_qubits
+        hilbert_dim = state_dim if state_dim is not None else 2**qudit_count
         itemsize = np.dtype(np.complex128).itemsize
         byte_count = runtime.cudm_last_result_size()
         if byte_count <= 0:

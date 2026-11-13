@@ -98,11 +98,11 @@ def _target_attributes(
     Ramsey T2* (*dephasing* ``"t2_star"``) or their Hahn-echo T2
     (``"t2_echo"``).
     """
-    n_qubits = _extent(qubits)
-    t1_ns = [0.0] * n_qubits
-    t2_ns = [0.0] * n_qubits
-    thermal = [0.0] * n_qubits
-    drive_scales = [1.0] * n_qubits
+    qudit_count = _extent(qubits)
+    t1_ns = [0.0] * qudit_count
+    t2_ns = [0.0] * qudit_count
+    thermal = [0.0] * qudit_count
+    drive_scales = [1.0] * qudit_count
     for qi in qubits:
         qubit = target.qubits[qi]
         t2_us = qubit.t2_star_us if dephasing == "t2_star" else qubit.t2_echo_us
@@ -114,7 +114,7 @@ def _target_attributes(
         thermal[qi] = qubit.thermal_population
         drive_scales[qi] = target.drive_amplitude_scale(qi)
     attrs = [
-        f"qop.n_qubits = {len(qubits)} : i64",
+        f"qop.qudit_count = {len(qubits)} : i64",
         f"pulse.modes = array<i64: {', '.join(map(str, qubits))}>",
         f'qop.integrator = "{integrator}"',
         "pulse.t1_times = [" + ", ".join(map(_f64, t1_ns)) + "]",

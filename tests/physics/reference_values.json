@@ -952,7 +952,7 @@
    "params": {},
    "expected": {
     "mean_pauli_error_per_fsim": 0.0038,
-    "n_fsim_gates": 525
+    "fsim_gate_count": 525
    },
    "tolerance": "reproduce within the published error bar where one is given"
   },
@@ -1127,7 +1127,7 @@
    "citation": "Heinsoo et al., PR Applied 10, 034040 (2018), arXiv:1801.07904",
    "params": {},
    "expected": {
-    "n_qubits": 5,
+    "qudit_count": 5,
     "readout_pulse_ns": 80,
     "mean_assignment": 0.97
    },

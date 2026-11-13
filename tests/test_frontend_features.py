@@ -58,8 +58,8 @@ def test_compile_time_workload_op_counts():
     }
     workloads = _compile_time_workloads()
     for name, count in expected.items():
-        kernel, n_qubits, freq = workloads[name]
-        ir = python_ir(kernel, *[Q[i] for i in range(n_qubits)])
+        kernel, qudit_count, freq = workloads[name]
+        ir = python_ir(kernel, *[Q[i] for i in range(qudit_count)])
         assert ir.op_count() == count, name
 
 
@@ -76,10 +76,10 @@ def test_compile_retains_loops_in_the_packed_program(n):
 
 
 def _surface_ops(d: int) -> int:
-    n_data = d * d
-    n_anc = (d - 1) * (d - 1) + 2 * (d - 1)
-    ops = (n_data + n_anc) + 3 + n_anc  # lines, waveforms, one H per ancilla
-    for a in range(n_anc):
+    data_count = d * d
+    ancilla_count = (d - 1) * (d - 1) + 2 * (d - 1)
+    ops = (data_count + ancilla_count) + 3 + ancilla_count  # lines, waveforms, one H per ancilla
+    for a in range(ancilla_count):
         bulk = a < (d - 1) * (d - 1)
         row = a // (d - 1) if bulk else -1
         col = a % (d - 1) if bulk else a - (d - 1) * (d - 1)
@@ -143,8 +143,8 @@ def test_loop_over_a_list_held_line_stays_rolled():
 def test_compile_with_default_passes_accepts_list_indexed_kernels():
     workloads = _compile_time_workloads()
     for name in ("qaoa4", "syndrome", "vqe_hea"):
-        kernel, n_qubits, freq = workloads[name]
-        kernel.lower(*[Q[i] for i in range(n_qubits)])
+        kernel, qudit_count, freq = workloads[name]
+        kernel.lower(*[Q[i] for i in range(qudit_count)])
     for kernel, n in (surface_syndrome(3), bicycle_syndrome(3, 3)):
         kernel.lower(Q[0:n])
 

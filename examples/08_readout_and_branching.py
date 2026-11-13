@@ -61,7 +61,7 @@ def active_reset(qubit):
 
 
 @pulse.kernel
-def repeated_measurement(qubit, n_shots):
+def repeated_measurement(qubit, shot_count):
     """Repeated preparation and measurement in a single kernel.
 
     A for loop wrapping prepare-measure cycles.
@@ -71,7 +71,7 @@ def repeated_measurement(qubit, n_shots):
 
     x_half = drag(cal["x_duration"], 0.25, cal["x_sigma"], cal["drag_beta"])
 
-    for _shot in range(n_shots):
+    for _shot in range(shot_count):
         drive(drive_line, x_half)
         sync(drive_line, readout_line)
 

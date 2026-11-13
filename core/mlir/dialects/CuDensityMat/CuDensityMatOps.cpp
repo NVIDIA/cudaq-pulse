@@ -85,12 +85,12 @@ LogicalResult OperatorComputeActionOp::verify() { return success(); }
 LogicalResult ExpectationComputeOp::verify() { return success(); }
 
 LogicalResult SSEEvolveOp::verify() {
-  const int64_t trajectories = getNumTrajectoriesAttr().getInt();
+  const int64_t trajectories = getTrajectoryCountAttr().getInt();
   if (trajectories < 1)
-    return emitOpError("num_trajectories must be >= 1, got ") << trajectories;
-  const int64_t steps = getNumStepsAttr().getInt();
+    return emitOpError("trajectory_count must be >= 1, got ") << trajectories;
+  const int64_t steps = getStepCountAttr().getInt();
   if (steps < 1)
-    return emitOpError("num_steps must be >= 1, got ") << steps;
+    return emitOpError("step_count must be >= 1, got ") << steps;
   double tStart = getTStart().convertToDouble();
   double tEnd = getTEnd().convertToDouble();
   if (tEnd <= tStart)

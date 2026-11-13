@@ -34,8 +34,8 @@ BASELINE = json.loads((_ROOT / "benchmarks" / "baselines" / "compile_time.json")
 
 @pytest.mark.parametrize("name", sorted(WORKLOADS))
 def test_a_program_without_calls_has_no_classical_ir(name):
-    kernel, n_qubits = WORKLOADS[name]
-    lowered = pulse.compile(kernel).lower(*[Q[i] for i in range(n_qubits)])
+    kernel, qudit_count = WORKLOADS[name]
+    lowered = pulse.compile(kernel).lower(*[Q[i] for i in range(qudit_count)])
     text = lowered.mlir()
     assert "classical" not in text
     assert lowered.classical_report() == []

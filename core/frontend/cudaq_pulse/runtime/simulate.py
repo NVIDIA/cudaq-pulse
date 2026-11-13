@@ -1064,7 +1064,7 @@ def _segment_attributes(entries: list[list[int]], t0: float, t1: float, steps: i
     path = ", ".join(f"array<i64: {', '.join(map(str, e))}>" for e in entries)
     return (
         f"{{pulse.path = [{path}], qop.t_start = {_f64(t0)}, qop.t_end = {_f64(t1)}, "
-        f"qop.num_steps = {steps} : i64}}"
+        f"qop.step_count = {steps} : i64}}"
     )
 
 
@@ -1479,7 +1479,7 @@ class _GpuBackend(_Backend):
         if library.cudm_set_initial_state(buffer.ctypes.data, buffer.nbytes) != 0:
             raise ExecutionError("could not set the cuDensityMat initial state")
         results = self.compiler.load_and_run(
-            jit_module, n_qubits=len(self.dims), state_dim=self.dim
+            jit_module, qudit_count=len(self.dims), state_dim=self.dim
         )
         values = results[0].to_numpy().ravel()
         if mixed:

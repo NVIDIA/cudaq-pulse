@@ -19,19 +19,19 @@ _TONE = "!pulse.tone"
 class _Writer:
     """Writes one function, renaming each line and tone as ops advance it."""
 
-    def __init__(self, n_lines: int):
-        self.n = n_lines
+    def __init__(self, line_count: int):
+        self.n = line_count
         self.lines: list[str] = []
         self.counter = 0
         self.text = ["func.func @main() {"]
-        for i in range(n_lines):
+        for i in range(line_count):
             self.emit(f"%q{i} = pulse.qudit_alloc {{qudit = {i} : i64}} : !pulse.qudit")
             self.emit(
                 f"%d{i}_0, %t{i}_0 = pulse.get_drive_line %q{i} : "
                 f"(!pulse.qudit) -> ({_LINE}, {_TONE})"
             )
-        self.tones = [f"%t{i}_0" for i in range(n_lines)]
-        self.lines = [f"%d{i}_0" for i in range(n_lines)]
+        self.tones = [f"%t{i}_0" for i in range(line_count)]
+        self.lines = [f"%d{i}_0" for i in range(line_count)]
         self.emit("%amp = arith.constant 0.1 : f64")
         self.emit("%zero = arith.constant 0.0 : f64")
         for d in _DURATIONS:
@@ -118,24 +118,24 @@ class _Writer:
         return "\n".join(self.text) + "\n}\n"
 
 
-def _programs(n_lines, pre, trips, body, post):
-    rolled = _Writer(n_lines)
-    unrolled = _Writer(n_lines)
+def _programs(line_count, pre, trips, body, post):
+    rolled = _Writer(line_count)
+    unrolled = _Writer(line_count)
     for op in [*pre, ("loop", trips, body), *post]:
         rolled.op(op)
         unrolled.op(op, unroll=True)
     return rolled.finish(), unrolled.finish()
 
 
-def _ops(n_lines):
-    line = st.integers(0, n_lines - 1)
+def _ops(line_count):
+    line = st.integers(0, line_count - 1)
     drive = st.tuples(st.just("drive"), line, st.sampled_from(_DURATIONS))
     wait = st.tuples(st.just("wait"), line, st.sampled_from(_DURATIONS))
     options = [drive, wait]
-    if n_lines > 1:
+    if line_count > 1:
         sync = st.tuples(
             st.just("sync"),
-            st.lists(st.integers(0, n_lines - 1), min_size=2, max_size=n_lines, unique=True),
+            st.lists(st.integers(0, line_count - 1), min_size=2, max_size=line_count, unique=True),
         )
         options.append(sync)
     return st.one_of(*options)

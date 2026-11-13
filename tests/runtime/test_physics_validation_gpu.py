@@ -60,7 +60,7 @@ def test_free_drift_stays_ground():
         on(_single_qubit_target(), idle, Q[0]),
         t_start=0.0,
         t_end=20.0,
-        num_steps=200,
+        step_count=200,
         integrator="rk4",
     )
     state = result.final_state
@@ -81,7 +81,7 @@ def test_rabi_half_pi_pulse():
         on(_single_qubit_target(), half_pi, Q[0]),
         t_start=0.0,
         t_end=20.0,
-        num_steps=200,
+        step_count=200,
         integrator="rk4",
     )
     state = result.final_state
@@ -101,7 +101,7 @@ def test_rabi_pi_pulse():
         on(_single_qubit_target(), pi_pulse, Q[0]),
         t_start=0.0,
         t_end=20.0,
-        num_steps=200,
+        step_count=200,
         integrator="rk4",
     )
     state = result.final_state
@@ -128,7 +128,7 @@ def test_two_qubit_selective_drive():
         on(target, drive_q0, Q[0], Q[1]),
         t_start=0.0,
         t_end=20.0,
-        num_steps=200,
+        step_count=200,
         integrator="rk4",
     )
     state = result.final_state
@@ -164,7 +164,7 @@ def test_xx_coupling_transfers_excitation():
         on(target, excite_and_exchange, Q[0], Q[1]),
         t_start=0.0,
         t_end=40.0,
-        num_steps=400,
+        step_count=400,
         integrator="rk4",
     )
     state = result.final_state

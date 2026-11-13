@@ -316,7 +316,7 @@ def test_native_scheduler_rejects_resource_limits_with_blocks():
     builder = PackedIRBuilder()
     _trace_kernel_with_builder(_after_long_drive(asap_pair).__wrapped__, builder, _qubits(3))
     module = PulseModuleBuilder().build_from_packed(
-        builder.get_buffer(), 2.0, builder.n_qubits, builder.get_freq_array()
+        builder.get_buffer(), 2.0, builder.qudit_count, builder.get_freq_array()
     )
     assert "pulse.schedule_block" in module.print()
     with pytest.raises(RuntimeError, match="does not support kernels with their own schedule"):
@@ -338,8 +338,8 @@ def _compile_time_workloads():
 
 @pytest.mark.parametrize("policy", ["asap", "alap", "rcp"])
 def test_programs_without_blocks_schedule_as_before(policy):
-    for _name, kernel_fn, n_qubits, _freq in _compile_time_workloads():
-        args = _qubits(n_qubits)
+    for _name, kernel_fn, qudit_count, _freq in _compile_time_workloads():
+        args = _qubits(qudit_count)
         default = pulse.compile(kernel_fn, schedule=policy).lower(*args)
         flat = pulse.compile(kernel_fn, schedule=policy, flatten_schedules=True).lower(*args)
         assert "schedule_block" not in default.mlir()

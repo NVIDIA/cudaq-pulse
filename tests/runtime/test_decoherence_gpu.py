@@ -63,7 +63,7 @@ def test_t1_excited_state_decays():
     """After a pi pulse and a wait, the excited population damps toward |0>."""
     target = _single_qubit_target(t1_us=0.2)
     ir = (_pi_pulse_then_wait(1000), Q[0])
-    result = evolve(on(target, *ir), t_start=0.0, t_end=520.0, num_steps=520, integrator="rk4")
+    result = evolve(on(target, *ir), t_start=0.0, t_end=520.0, step_count=520, integrator="rk4")
 
     rho = result.final_state
     assert rho.shape == (2, 2)
@@ -82,7 +82,7 @@ def test_t1_longer_wait_more_decay():
     def _run(wait_cycles, t_end):
         ir = (_pi_pulse_then_wait(wait_cycles), Q[0])
         result = evolve(
-            on(target, *ir), t_start=0.0, t_end=t_end, num_steps=int(t_end), integrator="rk4"
+            on(target, *ir), t_start=0.0, t_end=t_end, step_count=int(t_end), integrator="rk4"
         )
         return result.final_state[1, 1].real
 
@@ -103,7 +103,7 @@ def test_ground_state_stable_under_decoherence():
         wait(d0, 2000)  # 1000 ns of free evolution, no drive
 
     ir = (idle, Q[0])
-    result = evolve(on(target, *ir), t_start=0.0, t_end=1000.0, num_steps=1000, integrator="rk4")
+    result = evolve(on(target, *ir), t_start=0.0, t_end=1000.0, step_count=1000, integrator="rk4")
     rho = result.final_state
     assert rho.shape == (2, 2)
     assert rho[0, 0].real > 0.98
@@ -114,7 +114,7 @@ def test_decoherence_preserves_trace():
     """Lindblad evolution conserves the density-matrix trace."""
     target = _single_qubit_target(t1_us=0.2)
     ir = (_pi_pulse_then_wait(4000), Q[0])
-    result = evolve(on(target, *ir), t_start=0.0, t_end=2020.0, num_steps=2020, integrator="rk4")
+    result = evolve(on(target, *ir), t_start=0.0, t_end=2020.0, step_count=2020, integrator="rk4")
     rho = result.final_state
     assert np.trace(rho).real == pytest.approx(1.0, abs=1.0e-3)
 
@@ -155,7 +155,7 @@ def test_multiqubit_independent_decay():
         wait(d1, 1000)
 
     ir = (excite_both, Q[0], Q[1])
-    result = evolve(on(target, *ir), t_start=0.0, t_end=520.0, num_steps=520, integrator="rk4")
+    result = evolve(on(target, *ir), t_start=0.0, t_end=520.0, step_count=520, integrator="rk4")
 
     rho = result.final_state
     assert rho.shape == (4, 4)

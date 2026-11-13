@@ -575,7 +575,7 @@ struct EvolveLowering : public OpConversionPattern<cudm::EvolveOp> {
 
     double tStart = op.getTStart().convertToDouble();
     double tEnd = op.getTEnd().convertToDouble();
-    int64_t numSteps = op.getNumSteps();
+    int64_t numSteps = op.getStepCount();
     int32_t integrator = static_cast<int32_t>(op.getIntegrator());
 
     auto fn =

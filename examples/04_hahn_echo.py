@@ -39,7 +39,7 @@ def hahn_echo(qubit, sigma, amp_half_pi, amp_pi, tau):
 
 
 @pulse.kernel
-def cpmg_echo(qubit, sigma, amp_half_pi, amp_pi, tau, n_refocus):
+def cpmg_echo(qubit, sigma, amp_half_pi, amp_pi, tau, refocus_count):
     """CPMG dynamical decoupling: pi/2_X - [tau - pi_Y - tau]^n - pi/2_X."""
     drive_line = get_drive_line(qubit)
 
@@ -52,7 +52,7 @@ def cpmg_echo(qubit, sigma, amp_half_pi, amp_pi, tau, n_refocus):
     # Initial pi/2 about X
     drive(drive_line, half_pi_envelope)
 
-    for _i in range(n_refocus):
+    for _i in range(refocus_count):
         wait(drive_line, tau)
         # pi about Y = phase shift of pi/2 then pi_X
         shift_phase(drive_line.tone, np.pi / 2)
@@ -85,11 +85,11 @@ def main():
     print(f"  Compile metrics: {compiled_kernel.metrics}")
 
     print("\n=== CPMG-4 Echo ===")
-    n_refocus = 4
+    refocus_count = 4
     compiled_kernel = pulse.compile(cpmg_echo, device=dev).lower(
-        dev.qudit_handles[0], sigma, amp_half_pi, amp_pi, tau, n_refocus
+        dev.qudit_handles[0], sigma, amp_half_pi, amp_pi, tau, refocus_count
     )
-    total_cpmg = 2 * (4 * sigma) + n_refocus * (4 * sigma + 2 * tau)
+    total_cpmg = 2 * (4 * sigma) + refocus_count * (4 * sigma + 2 * tau)
     print(f"  Expected duration: {cycles(total_cpmg):.0f} clock cycles")
     print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")

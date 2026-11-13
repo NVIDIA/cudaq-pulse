@@ -157,7 +157,7 @@ def test_registering_targets_while_others_resolve(monkeypatch):
                 _registry.register_target(f"stress_{i}_{round}", lambda arg: None)
             else:
                 assert "transmon_generic" in pulse.targets.available_targets()
-                assert _registry.make_target("transmon_generic:2").n_qubits == 2
+                assert _registry.make_target("transmon_generic:2").qudit_count == 2
 
     _together(8, work)
     names = pulse.targets.available_targets()

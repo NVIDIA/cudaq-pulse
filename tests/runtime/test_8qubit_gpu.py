@@ -93,7 +93,7 @@ def test_8qubit_single_qubit_excitation():
 
     refs = [Q[i] for i in range(8)]
     result = evolve(
-        on(target, excite_q0, *refs), t_start=0.0, t_end=20.0, num_steps=200, integrator="rk4"
+        on(target, excite_q0, *refs), t_start=0.0, t_end=20.0, step_count=200, integrator="rk4"
     )
 
     state = result.final_state

@@ -867,8 +867,8 @@ _OPERAND_TYPES = {
 _OPTIONAL_LAST = {"wait": "bounds", "custom_samples": "sample_rate_ghz"}
 
 _EMIT_TABLE = {
-    name: (n_val, attrs, rtypes, _OPERAND_TYPES.get(name, ()))
-    for name, (n_val, attrs, rtypes) in OP_TABLE.items()
+    name: (value_count, attrs, rtypes, _OPERAND_TYPES.get(name, ()))
+    for name, (value_count, attrs, rtypes) in OP_TABLE.items()
 }
 _TYPE_WORDS = {
     "qref": "qudit",
@@ -1853,9 +1853,9 @@ class PulseIREmitter:
                     else:
                         values = stack[-arg:]
                         del stack[-arg:]
-                        n_pos = arg - len(names)
-                        kwargs = dict(zip(names, values[n_pos:], strict=False))
-                        self._dispatch_call(pop(), values[:n_pos], kwargs)
+                        positional_count = arg - len(names)
+                        kwargs = dict(zip(names, values[positional_count:], strict=False))
+                        self._dispatch_call(pop(), values[:positional_count], kwargs)
 
                 elif op is _jif or op is _jit:
                     cond = pop()
@@ -2298,8 +2298,8 @@ class PulseIREmitter:
 
         # Each channel value entering the branch, as (cell, value).
         held = self._lines.held
-        n_held = len(held)
-        entering = _channel_values(held) if n_held else ()
+        held_count = len(held)
+        entering = _channel_values(held) if held_count else ()
 
         first = builder._next_id  # the first id made in the if
         builder.emit("scf.if", (value,), ())
@@ -2316,7 +2316,7 @@ class PulseIREmitter:
         if then_copies:
             for obj, copy in then_copies:
                 self._restore_container(obj, copy)
-        _restore_channels(held, n_held, entering)
+        _restore_channels(held, held_count, entering)
         else_index = builder.mark()
         builder.emit("scf.else", (), ())
         else_locals, else_slots, else_copies = self._trace_arm(
@@ -2476,8 +2476,8 @@ class PulseIREmitter:
             cell.value = out
             out.chan = cell
         # A channel first acquired in one arm is not held after the if.
-        if len(held) != n_held:
-            _restore_channels(held, n_held, ())
+        if len(held) != held_count:
+            _restore_channels(held, held_count, ())
         self.locals.clear()
         self.locals.update(merged)
         if returns:
@@ -2702,8 +2702,8 @@ class PulseIREmitter:
         lines = self._lines
         # Each channel value entering the loop, as (cell, value).
         held = lines.held
-        n_held = len(held)
-        entering = _channel_values(held) if n_held else ()
+        held_count = len(held)
+        entering = _channel_values(held) if held_count else ()
         log = lines.log
         mark = len(log)
         checkpoint = self.b.checkpoint()
@@ -2777,7 +2777,7 @@ class PulseIREmitter:
                 self.locals.update(unbound)
             for obj, copy in containers:
                 self._restore_container(obj, copy)
-            _restore_channels(held, n_held, entering)
+            _restore_channels(held, held_count, entering)
             # Acquisitions the undone body made did not happen.
             self._acquired[0] = acquired
             undone = log[mark:]
@@ -3316,10 +3316,13 @@ class PulseIREmitter:
             if not _is_pure_host_call(fn):
                 return False
         keys = list(kwargs or {})
-        n_pos = len(call_args)
+        positional_count = len(call_args)
 
         def call(*values: Any) -> Any:
-            return fn(*values[:n_pos], **dict(zip(keys, values[n_pos:], strict=False)))
+            return fn(
+                *values[:positional_count],
+                **dict(zip(keys, values[positional_count:], strict=False)),
+            )
 
         try:
             result = _choice_map(call, *call_args, *(kwargs or {}).values())
@@ -3630,7 +3633,7 @@ class PulseIREmitter:
                 return (traced_round_duration(self.b, call_args, None),)
             raise CompilationError(f"unknown pulse op: {fname}")
 
-        n_val, attr_names, rtypes, operand_types = entry
+        value_count, attr_names, rtypes, operand_types = entry
         acquires = fname in _ACQUIRES
         line_op = False
         if acquires:
@@ -3645,15 +3648,15 @@ class PulseIREmitter:
                 line_op = True
             self._acquired[0] += 1
 
-        if n_val == -1:
+        if value_count == -1:
             call_args = _sync_lines(fname, call_args)
             operands = tuple(call_args)
             attrs: dict[str, Any] = {}
             out_types = tuple(v.vtype for v in operands) if rtypes is None else rtypes
         else:
             optional: tuple[str, StackVal] | None = None
-            if len(call_args) != n_val + len(attr_names):
-                if n_val == 3:
+            if len(call_args) != value_count + len(attr_names):
+                if value_count == 3:
                     # drive(line, waveform) and readout(line, waveform): the
                     # line's own tone; the operand checks name a non-line.
                     if len(call_args) != 2:
@@ -3668,9 +3671,9 @@ class PulseIREmitter:
                     call_args = [line, waveform, line_tone]
                 else:
                     last = _OPTIONAL_LAST.get(fname)
-                    if last is None or len(call_args) != n_val + len(attr_names) + 1:
+                    if last is None or len(call_args) != value_count + len(attr_names) + 1:
                         raise CompilationError(
-                            f"{fname}: expected {n_val + len(attr_names)} args, "
+                            f"{fname}: expected {value_count + len(attr_names)} args, "
                             f"got {len(call_args)}"
                         )
                     optional = (last, call_args[-1])
@@ -3679,7 +3682,7 @@ class PulseIREmitter:
             # container the tracer does not rebind (a tuple in a list, a dict)
             # may be an old value of its channel; the op consumes the channel's
             # current value. Unrolled by arity: this runs for every op.
-            if n_val == 3:
+            if value_count == 3:
                 a = call_args[0]
                 b = call_args[1]
                 c = call_args[2]
@@ -3700,7 +3703,7 @@ class PulseIREmitter:
                 if (ca is not None and ca.value is not a) or (cc is not None and cc.value is not c):
                     call_args[0] = _current(a)
                     call_args[2] = _current(c)
-            elif n_val == 1:
+            elif value_count == 1:
                 a = call_args[0]
                 try:
                     bad = a.vtype not in operand_types[0]
@@ -3713,8 +3716,8 @@ class PulseIREmitter:
                 ca = a.chan
                 if ca is not None and ca.value is not a:
                     call_args[0] = ca.value
-            elif n_val:
-                for i in range(n_val):
+            elif value_count:
+                for i in range(value_count):
                     v = call_args[i]
                     if v.__class__ is not IRValue or v.vtype not in operand_types[i]:
                         if v.__class__ is not _Choice or v.vtype not in operand_types[i]:
@@ -3723,8 +3726,8 @@ class PulseIREmitter:
                             raise operand_error(fname, call_args)
                     call_args[i] = _current(v)
             if attr_names:
-                operands = tuple(call_args[:n_val])
-                attrs = dict(zip(attr_names, call_args[n_val:], strict=False))
+                operands = tuple(call_args[:value_count])
+                attrs = dict(zip(attr_names, call_args[value_count:], strict=False))
             else:
                 operands = tuple(call_args)
                 attrs = {}
@@ -4067,13 +4070,13 @@ def _channel_values(held: dict[tuple[int, str], _Held]) -> list[tuple[_Chan, IRV
 
 def _restore_channels(
     held: dict[tuple[int, str], _Held],
-    n_held: int,
+    held_count: int,
     entering: Any,
 ) -> None:
-    """Drop the channels acquired after the first *n_held*, and give the
+    """Drop the channels acquired after the first *held_count*, and give the
     others back their *entering* values."""
-    if len(held) != n_held:
-        for key in list(held)[n_held:]:
+    if len(held) != held_count:
+        for key in list(held)[held_count:]:
             del held[key]
     for cell, value in entering:
         cell.value = value

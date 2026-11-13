@@ -55,7 +55,7 @@ class TransmonCircuit:
         return self.ej_max_hz * math.sqrt(math.cos(x) ** 2 + self.asymmetry**2 * math.sin(x) ** 2)
 
     def eigensystem(
-        self, flux: float, n_levels: int = 5
+        self, flux: float, level_count: int = 5
     ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
         """Energies above the ground state and the charge matrix ``<i|n|j>``.
 
@@ -66,8 +66,8 @@ class TransmonCircuit:
         off = np.full(n.size - 1, -0.5 * self.ej_hz(flux))
         h = np.diag(4.0 * self.ec_hz * n**2) + np.diag(off, 1) + np.diag(off, -1)
         energies, vectors = np.linalg.eigh(h)
-        energies, vectors = energies[:n_levels], vectors[:, :n_levels].copy()
-        for i in range(1, n_levels):
+        energies, vectors = energies[:level_count], vectors[:, :level_count].copy()
+        for i in range(1, level_count):
             if vectors[:, i - 1] @ (n * vectors[:, i]) < 0:
                 vectors[:, i] *= -1
         charge: npt.NDArray[np.float64] = vectors.T @ (n[:, None] * vectors)
@@ -84,8 +84,8 @@ class TransmonCircuit:
         e = self.eigensystem(flux, 3)[0]
         return float(e[2] - 2.0 * e[1])
 
-    def charge_matrix(self, flux: float, n_levels: int = 5) -> npt.NDArray[np.float64]:
-        return self.eigensystem(flux, n_levels)[1]
+    def charge_matrix(self, flux: float, level_count: int = 5) -> npt.NDArray[np.float64]:
+        return self.eigensystem(flux, level_count)[1]
 
     def flux_for_f01(self, f01_hz: float, tol: float = 1e-9) -> float:
         """The flux in [0, 1/2] at which f01 is ``f01_hz``."""
@@ -134,12 +134,12 @@ class ChargeCoupledPair:
     a: TransmonCircuit
     b: TransmonCircuit
     g_c_hz: float
-    n_levels: int = 5
+    level_count: int = 5
 
     def hamiltonian(self, flux_a: float, flux_b: float) -> npt.NDArray[np.float64]:
-        ea, na = self.a.eigensystem(flux_a, self.n_levels)
-        eb, nb = self.b.eigensystem(flux_b, self.n_levels)
-        eye = np.eye(self.n_levels)
+        ea, na = self.a.eigensystem(flux_a, self.level_count)
+        eb, nb = self.b.eigensystem(flux_b, self.level_count)
+        eye = np.eye(self.level_count)
         h: npt.NDArray[np.float64] = (
             np.kron(np.diag(ea), eye) + np.kron(eye, np.diag(eb)) + self.g_c_hz * np.kron(na, nb)
         )
@@ -149,7 +149,7 @@ class ChargeCoupledPair:
         """The dressed energy of each product state ``|i j>``, by largest overlap."""
         energies, vectors = np.linalg.eigh(self.hamiltonian(flux_a, flux_b))
         owner = np.argmax(np.abs(vectors) ** 2, axis=1)
-        n = self.n_levels
+        n = self.level_count
         return {(i, j): float(energies[owner[i * n + j]]) for i in range(n) for j in range(n)}
 
     def j_qq_hz(self, flux_a: float, flux_b: float) -> float:
@@ -177,7 +177,7 @@ class ChargeCoupledPair:
         """The splitting of the two levels that share ``|11>`` and ``|02>`` most,
         which stays defined through their avoided crossing."""
         energies, vectors = np.linalg.eigh(self.hamiltonian(flux_a, flux_b))
-        n = self.n_levels
+        n = self.level_count
         weight = np.abs(vectors[1 * n + 1]) ** 2 + np.abs(vectors[0 * n + 2]) ** 2
         k, m = np.argsort(weight)[-2:]
         return float(abs(energies[k] - energies[m]))
@@ -230,7 +230,7 @@ def anchored_charge_coupling_hz(
     auxiliary: TransmonCircuit,
     g_11_20_hz: float,
     interaction_frequency_hz: float,
-    n_levels: int = 5,
+    level_count: int = 5,
 ) -> float:
     """The g_c for which the pair's ``|11>-|20>`` coupling J_2 is ``g_11_20_hz``
     at its interaction point: the data transmon at
@@ -241,7 +241,7 @@ def anchored_charge_coupling_hz(
     """
     g_c = g_11_20_hz / math.sqrt(2.0)
     for _ in range(8):
-        j2 = ChargeCoupledPair(data, auxiliary, g_c, n_levels).j2_hz(interaction_frequency_hz)
+        j2 = ChargeCoupledPair(data, auxiliary, g_c, level_count).j2_hz(interaction_frequency_hz)
         step = g_11_20_hz / j2
         g_c *= step
         if abs(step - 1.0) < 1e-12:

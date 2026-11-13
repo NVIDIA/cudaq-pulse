@@ -12,7 +12,7 @@
 // RUN: cudaq-pulse-opt --pulse-schedule-asap --pulse-classical-check --pulse-verify %s > /dev/null
 // RUN: cudaq-pulse-opt --pulse-schedule-alap --pulse-classical-check --pulse-verify %s > /dev/null
 
-module attributes {pulse.clock_ghz = 1.0 : f64, pulse.n_qubits = 3 : i64,
+module attributes {pulse.clock_ghz = 1.0 : f64, pulse.qudit_count = 3 : i64,
     pulse.controllers = {drive = array<i64: 0, 1, 2>, readout = array<i64: 0, 1, 2>,
       outcome_latency = array<i64: 0, 0, 0, 0, 0, 0, 0, 0, 0>,
       spread = array<i64: 0, 0, 0, 0, 0, 0, 0, 0, 0>,

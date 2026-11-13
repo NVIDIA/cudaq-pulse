@@ -470,7 +470,7 @@ def test_a_segment_with_bound_answers_lowers_to_llvm_without_classical_ops():
     segment = module.placeholders()
     segment.set_attributes(
         "{pulse.path = [array<i64: 0, 1>], qop.t_start = 0.0 : f64, "
-        "qop.t_end = 600.0 : f64, qop.num_steps = 10 : i64}"
+        "qop.t_end = 600.0 : f64, qop.step_count = 10 : i64}"
     )
     qop = MLIRPipeline().run_pulse_to_qop(segment.print())
     assert "classical" not in qop

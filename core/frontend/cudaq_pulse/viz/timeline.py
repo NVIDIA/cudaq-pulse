@@ -66,7 +66,7 @@ def plot_schedule(
     line_ids.sort(key=lambda row: row[0])
 
     line_to_row = {lid: i for i, lid in enumerate(line_ids)}
-    n_rows = max(len(line_ids), 1)
+    row_count = max(len(line_ids), 1)
 
     fig, ax = plt.subplots(figsize=figsize)
 
@@ -122,12 +122,12 @@ def plot_schedule(
             )
             ax.add_patch(wait_rect)
 
-    ax.set_yticks(range(n_rows))
+    ax.set_yticks(range(row_count))
     ax.set_yticklabels(
         [(f"link {link_label.get(n, n)}" if link else f"line {n}") for link, n in line_ids]
     )
     ax.set_xlabel("Time (clock cycles)")
-    ax.set_ylim(-0.5, n_rows - 0.5)
+    ax.set_ylim(-0.5, row_count - 0.5)
 
     max_time = max((x + w for _, _, x, w in spans), default=100)
     ax.set_xlim(-max_time * 0.02, max_time * 1.05)

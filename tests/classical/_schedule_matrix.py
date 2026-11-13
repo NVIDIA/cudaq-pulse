@@ -670,13 +670,13 @@ def check_policy_order(case: Case, qudits: Sequence[Any]) -> None:
     assert max(e.end for e in asap) == max(e.end for e in alap)
 
 
-def callee_slices(low: Any, n_callee: int) -> list[list[Any]]:
+def callee_slices(low: Any, callee_count: int) -> list[list[Any]]:
     """The events of each call of the called kernel, in program order: the
     events of ``q`` and of the link after the program's own drive and
     readout of ``q`` (``p`` plays only the program's own pulses)."""
     spectator = low.qudits[1]
     events = [e for e in low.schedule if e.qubit != spectator][2:]
-    return [events[k : k + n_callee] for k in range(0, len(events), n_callee)]
+    return [events[k : k + callee_count] for k in range(0, len(events), callee_count)]
 
 
 def check_callee_shape(low: Any, own: Any) -> None:

@@ -63,7 +63,7 @@ def test_t1_decay_gpu():
         wait(d0, 1000)
 
     ir = (t1_decay, Q[0])
-    result = evolve(on(target, *ir), t_start=0.0, t_end=520.0, num_steps=520, integrator="rk4")
+    result = evolve(on(target, *ir), t_start=0.0, t_end=520.0, step_count=520, integrator="rk4")
 
     state = result.final_state
     assert state.shape == (2, 2)

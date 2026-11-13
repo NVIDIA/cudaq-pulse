@@ -62,7 +62,7 @@ def dump_python(ir: PythonIRBuilder) -> list[str]:
 
 def dump_packed(b: PackedIRBuilder) -> list[str]:
     return [
-        f"packed n_qubits={b.n_qubits} op_count={b.op_count}",
+        f"packed qudit_count={b.qudit_count} op_count={b.op_count}",
         "words " + " ".join(str(w) for w in b.get_buffer().tolist()),
         "freq " + _canon(b.get_freq_array().tolist()),
     ]
@@ -71,18 +71,18 @@ def dump_packed(b: PackedIRBuilder) -> list[str]:
 # ── Corpus kernels ───────────────────────────────────────────────────
 
 
-def dd_loop(n_iter: int) -> Callable[..., Any]:
+def dd_loop(iteration_count: int) -> Callable[..., Any]:
     @pulse.kernel
     def dd(q0):
         d0 = get_drive_line(q0)
         x = square(40, 0.047 + 0j)
-        for _ in range(n_iter):
+        for _ in range(iteration_count):
             drive(d0, x)
 
     return dd
 
 
-def tone_list_loop(n_iter: int) -> Callable[..., Any]:
+def tone_list_loop(iteration_count: int) -> Callable[..., Any]:
     """Tones kept in a list, retuned, then driven in a rolled loop."""
 
     @pulse.kernel
@@ -91,7 +91,7 @@ def tone_list_loop(n_iter: int) -> Callable[..., Any]:
         for d, f in zip(lines, (5.0e9, 5.1e9), strict=True):
             set_frequency(d.tone, f)
         x = square(40, 0.047)
-        for _ in range(n_iter):
+        for _ in range(iteration_count):
             for d in lines:
                 drive(d, x)
 
@@ -111,15 +111,15 @@ def cpmg_with_waits(q0):
 
 def surface_syndrome(d: int) -> Callable[..., Any]:
     """Rotated-lattice syndrome round: one ancilla per plaquette."""
-    n_data = d * d
-    n_anc = (d - 1) * (d - 1) + 2 * (d - 1)
-    n_total = n_data + n_anc
+    data_count = d * d
+    ancilla_count = (d - 1) * (d - 1) + 2 * (d - 1)
+    total_count = data_count + ancilla_count
 
     @pulse.kernel
     def round_(qubits):
         lines = []
         tones = []
-        for i in range(n_total):
+        for i in range(total_count):
             line = get_drive_line(qubits[i])
             lines.append(line)
             tones.append(line.tone)
@@ -127,8 +127,8 @@ def surface_syndrome(d: int) -> Callable[..., Any]:
         h = drag(40, 0.25, 10.0, 0.5)
         cr_p = gaussian(160, 0.12, 40.0)
         cr_m = gaussian(160, -0.12, 40.0)
-        for a in range(n_anc):
-            anc = n_data + a
+        for a in range(ancilla_count):
+            anc = data_count + a
             row = a // (d - 1) if a < (d - 1) * (d - 1) else -1
             col = a % (d - 1) if a < (d - 1) * (d - 1) else a - (d - 1) * (d - 1)
             drive(lines[anc], h, tone=tones[anc])
@@ -142,20 +142,20 @@ def surface_syndrome(d: int) -> Callable[..., Any]:
                         drive(lines[anc], cr_p, tone=tones[q])
                         drive(lines[anc], cr_m, tone=tones[q])
 
-    return round_, n_total
+    return round_, total_count
 
 
 def bicycle_syndrome(l: int, m: int) -> Callable[..., Any]:  # noqa: E741
     """Bivariate-bicycle style check: weight-6 stabilizers on a torus."""
-    n_data = 2 * l * m
-    n_checks = l * m
-    n_total = n_data + 2 * n_checks
+    data_count = 2 * l * m
+    check_count = l * m
+    total_count = data_count + 2 * check_count
 
     @pulse.kernel
     def checks(qubits):
         lines = []
         tones = []
-        for i in range(n_total):
+        for i in range(total_count):
             line = get_drive_line(qubits[i])
             lines.append(line)
             tones.append(line.tone)
@@ -165,17 +165,17 @@ def bicycle_syndrome(l: int, m: int) -> Callable[..., Any]:  # noqa: E741
         shifts_r = [0, 0, 3, 0, 1, 2]
         shifts_c = [0, 1, 0, 2, 0, 2]
         for kind in range(2):
-            for ci in range(n_checks):
-                anc = n_data + kind * n_checks + ci
+            for ci in range(check_count):
+                anc = data_count + kind * check_count + ci
                 r0, c0 = ci // m, ci % m
                 for s in range(6):
                     q = ((r0 + shifts_r[s]) % l) * m + (c0 + shifts_c[s]) % m
-                    q = q + l * m if kind == 1 and q + l * m < n_data else q
+                    q = q + l * m if kind == 1 and q + l * m < data_count else q
                     sync(lines[anc], lines[q])
                     drive(lines[q], sx, tone=tones[q])
                     drive(lines[anc], cr, tone=tones[q])
 
-    return checks, n_total
+    return checks, total_count
 
 
 _SCALE = 0.5
@@ -417,7 +417,7 @@ def trace(case: Case) -> dict[str, Any]:
         if case.path == "python":
             ir = compile_kernel_bytecode(fn, unroll_threshold=UNROLL_THRESHOLD)(*args)
             lines = dump_python(ir)
-            n_ops = len(ir.ops)
+            op_count = len(ir.ops)
         else:
             builder = PackedIRBuilder(
                 name=fn.__name__, clock_ghz=2.0, qubit_freq_hz={i: 5e9 + 1e6 * i for i in range(64)}
@@ -425,7 +425,7 @@ def trace(case: Case) -> dict[str, Any]:
             builder.unroll_threshold = UNROLL_THRESHOLD
             _trace_kernel_with_builder(fn, builder, args)
             lines = dump_packed(builder)
-            n_ops = builder.op_count
+            op_count = builder.op_count
     except Exception as e:
         record: dict[str, Any] = {"error": f"{type(e).__name__}: {e}"}
         source = getattr(e, "pulse_source", None)
@@ -437,4 +437,4 @@ def trace(case: Case) -> dict[str, Any]:
             record["span"] = [line - first, None if end_line is None else end_line - first]
             record["cols"] = [col, end_col]
         return record
-    return {"ops": n_ops, "dump": lines}
+    return {"ops": op_count, "dump": lines}

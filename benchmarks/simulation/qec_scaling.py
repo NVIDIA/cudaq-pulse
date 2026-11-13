@@ -39,12 +39,12 @@ def surface_code_cycle(d: int):
       Each ancilla interacts with up to 4 data neighbors via echoed CR, and
       Z-type ancillas are wrapped in Hadamards (phase, SX, phase).
     """
-    n_data = d * d
-    n_ancilla = d * d - 1
-    n_total = n_data + n_ancilla
+    data_count = d * d
+    ancilla_count = d * d - 1
+    total_count = data_count + ancilla_count
     neighbors = []
     is_z = []
-    for anc_idx in range(n_ancilla):
+    for anc_idx in range(ancilla_count):
         row, col = anc_idx // (d - 1), anc_idx % (d - 1)
         is_z.append((row + col) % 2 == 0)
         neighbors.append(
@@ -59,12 +59,12 @@ def surface_code_cycle(d: int):
     def surface(qubits):
         lines = []
         tones = []
-        for q in range(n_total):
+        for q in range(total_count):
             dl = get_drive_line(qubits[q])
             lines.append(dl)
             tones.append(dl.tone)
-        for anc_idx in range(n_ancilla):
-            anc = n_data + anc_idx
+        for anc_idx in range(ancilla_count):
+            anc = data_count + anc_idx
             if is_z[anc_idx]:
                 shift_phase(tones[anc], 1.5708)
                 drive(lines[anc], drag(20, 0.44, 5.0, 0.5), tone=tones[anc])
@@ -79,16 +79,16 @@ def surface_code_cycle(d: int):
                 drive(lines[anc], drag(20, 0.44, 5.0, 0.5), tone=tones[anc])
                 shift_phase(tones[anc], 1.5708)
 
-    return surface, n_total
+    return surface, total_count
 
 
 def bench(d: int, repeats: int) -> tuple[int, int, dict[str, float]]:
-    kernel, n_qubits = surface_code_cycle(d)
-    device = _device({q: 5.0e9 + 0.05e9 * (q % 8) for q in range(n_qubits)})
+    kernel, qudit_count = surface_code_cycle(d)
+    device = _device({q: 5.0e9 + 0.05e9 * (q % 8) for q in range(qudit_count)})
 
     def compile_once() -> pulse.Lowered:
         # A fresh compiled kernel holds no specializations: this compiles.
-        return pulse.compile(kernel, passes=("verify",)).lower(device.qudit_handles[:n_qubits])
+        return pulse.compile(kernel, passes=("verify",)).lower(device.qudit_handles[:qudit_count])
 
     op_count = compile_once().metrics.op_count
     samples: dict[str, list[float]] = {stage: [] for stage in _STAGES}
@@ -96,7 +96,7 @@ def bench(d: int, repeats: int) -> tuple[int, int, dict[str, float]]:
         metrics = compile_once().metrics
         for stage in _STAGES:
             samples[stage].append(getattr(metrics, stage))
-    return n_qubits, op_count, {stage: statistics.median(xs) for stage, xs in samples.items()}
+    return qudit_count, op_count, {stage: statistics.median(xs) for stage, xs in samples.items()}
 
 
 def main() -> None:
@@ -116,10 +116,10 @@ def main() -> None:
 
     rows = []
     for d in sorted(args.distances):
-        n_qubits, n_ops, stages = bench(d, args.repeats)
-        rows.append((d, n_qubits, n_ops, stages["total_ms"]))
+        qudit_count, op_count, stages = bench(d, args.repeats)
+        rows.append((d, qudit_count, op_count, stages["total_ms"]))
         print(
-            f"  {d:3d}  {n_qubits:7d}  {n_ops:7d}"
+            f"  {d:3d}  {qudit_count:7d}  {op_count:7d}"
             + "".join(f"  {stages[s]:11.2f}" for s in _STAGES)
         )
 

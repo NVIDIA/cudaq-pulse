@@ -218,14 +218,14 @@ class Calibration:
         value: float = couplings[couplings["used"]]["value"]
         return value
 
-    def pair(self, pair: str, n_levels: int = 5) -> ChargeCoupledPair:
+    def pair(self, pair: str, level_count: int = 5) -> ChargeCoupledPair:
         """The charge-coupled pair, data transmon first (so ``|02>`` is the
         auxiliary's second excited state)."""
         from .transmon_model import ChargeCoupledPair
 
         auxiliary, data = pair.split("-")
         return ChargeCoupledPair(
-            self.circuit(data), self.circuit(auxiliary), self.charge_coupling_hz(pair), n_levels
+            self.circuit(data), self.circuit(auxiliary), self.charge_coupling_hz(pair), level_count
         )
 
     def exchange_hz(

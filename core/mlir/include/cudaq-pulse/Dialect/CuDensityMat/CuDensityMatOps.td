@@ -248,11 +248,11 @@ def CUDM_OperatorComputeActionOp
   }];
   let arguments = (ins
     CUDM_HandleType:$handle, CUDM_OperatorType:$op,
-    F64:$time, I64:$batch_size, I32:$num_params, AnyType:$params,
+    F64:$time, I64:$batch_size, I32:$param_count, AnyType:$params,
     CUDM_StateType:$state_in, CUDM_StateType:$state_out,
     CUDM_WorkspaceType:$workspace
   );
-  let assemblyFormat = "$handle `,` $op `,` $time `,` $batch_size `,` $num_params `,` $params `,` $state_in `,` $state_out `,` $workspace attr-dict `:` type($handle) `,` type($op) `,` type($params) `,` type($state_in) `,` type($state_out) `,` type($workspace)";
+  let assemblyFormat = "$handle `,` $op `,` $time `,` $batch_size `,` $param_count `,` $params `,` $state_in `,` $state_out `,` $workspace attr-dict `:` type($handle) `,` type($op) `,` type($params) `,` type($state_in) `,` type($state_out) `,` type($workspace)";
   let hasVerifier = 1;
 }
 
@@ -279,11 +279,11 @@ def CUDM_ExpectationComputeOp
   }];
   let arguments = (ins
     CUDM_HandleType:$handle, CUDM_ExpectationType:$expectation,
-    F64:$time, I64:$batch_size, I32:$num_params, AnyType:$params,
+    F64:$time, I64:$batch_size, I32:$param_count, AnyType:$params,
     CUDM_StateType:$state, CUDM_WorkspaceType:$workspace
   );
   let results = (outs AnyType:$value);
-  let assemblyFormat = "$handle `,` $expectation `,` $time `,` $batch_size `,` $num_params `,` $params `,` $state `,` $workspace attr-dict `:` type($handle) `,` type($expectation) `,` type($params) `,` type($state) `,` type($workspace) `->` type($value)";
+  let assemblyFormat = "$handle `,` $expectation `,` $time `,` $batch_size `,` $param_count `,` $params `,` $state `,` $workspace attr-dict `:` type($handle) `,` type($expectation) `,` type($params) `,` type($state) `,` type($workspace) `->` type($value)";
   let hasVerifier = 1;
 }
 
@@ -303,7 +303,7 @@ def CUDM_EvolveOp : CuDensityMatOp<"evolve", [MemoryEffects<[MemWrite]>]> {
   let summary = "Time-evolve a quantum state under an operator";
   let description = [{
     Evolves `state_in` under the operator from `t_start` to `t_end` in
-    `num_steps` equal steps of the `integrator` (rk1, rk2, rk4, magnus or
+    `step_count` equal steps of the `integrator` (rk1, rk2, rk4, magnus or
     crank_nicolson), writing the final state to `state_out`, which is
     also the result. `cudm-to-llvm` lowers it to the runtime's
     `cudm_evolve` followed by a capture of the result for the host.
@@ -313,7 +313,7 @@ def CUDM_EvolveOp : CuDensityMatOp<"evolve", [MemoryEffects<[MemWrite]>]> {
     CUDM_StateType:$state_in, CUDM_StateType:$state_out,
     CUDM_WorkspaceType:$workspace,
     CUDM_IntegratorKindAttr:$integrator,
-    F64Attr:$t_start, F64Attr:$t_end, I64Attr:$num_steps,
+    F64Attr:$t_start, F64Attr:$t_end, I64Attr:$step_count,
     OptionalAttr<CUDM_ComputeTypeAttr>:$compute_type
   );
   let results = (outs CUDM_StateType:$result);
@@ -337,9 +337,9 @@ def CUDM_ApplyDecoherenceOp : CuDensityMatOp<"apply_decoherence", [MemoryEffects
 def CUDM_SSEEvolveOp : CuDensityMatOp<"sse_evolve", [MemoryEffects<[MemWrite]>]> {
   let summary = "Stochastic Schrodinger equation ensemble evolution";
   let description = [{
-    Evolves `num_trajectories` stochastic Schrodinger trajectories under
+    Evolves `trajectory_count` stochastic Schrodinger trajectories under
     a Hamiltonian and collapse operators from `t_start` to `t_end` in
-    `num_steps` steps, seeded by `seed`. The counts must be at least 1
+    `step_count` steps, seeded by `seed`. The counts must be at least 1
     and `t_end` later than `t_start`. Reserved for trajectory
     simulation; nothing lowers it yet.
   }];
@@ -350,8 +350,8 @@ def CUDM_SSEEvolveOp : CuDensityMatOp<"sse_evolve", [MemoryEffects<[MemWrite]>]>
     CUDM_StateType:$initial_state,
     CUDM_WorkspaceType:$workspace,
     CUDM_IntegratorKindAttr:$integrator,
-    I64Attr:$num_trajectories,
-    F64Attr:$t_start, F64Attr:$t_end, I64Attr:$num_steps,
+    I64Attr:$trajectory_count,
+    F64Attr:$t_start, F64Attr:$t_end, I64Attr:$step_count,
     I64Attr:$seed
   );
   let results = (outs CUDM_TrajectoryResultType:$result);

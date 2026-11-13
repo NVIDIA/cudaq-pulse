@@ -831,8 +831,8 @@ struct PulseToQOpPass
         module->setAttr("qop.t_start", b.getF64FloatAttr(0.0));
       if (!module->hasAttr("qop.t_end"))
         module->setAttr("qop.t_end", b.getF64FloatAttr(endNs));
-      if (!module->hasAttr("qop.num_steps"))
-        module->setAttr("qop.num_steps",
+      if (!module->hasAttr("qop.step_count"))
+        module->setAttr("qop.step_count",
                         b.getI64IntegerAttr(std::max<int64_t>(100, endCycles)));
       if (!module->hasAttr("qop.integrator"))
         module->setAttr("qop.integrator", b.getStringAttr("rk4"));
@@ -1156,9 +1156,10 @@ struct PulseToQOpPass
       module->setAttr("qop.mode_extents", b.getDenseI64ArrayAttr(extents));
     } else if (!levels.empty()) {
       int64_t modes = 0;
-      if (auto attr = module->getAttrOfType<IntegerAttr>("qop.n_qubits"))
+      if (auto attr = module->getAttrOfType<IntegerAttr>("qop.qudit_count"))
         modes = attr.getInt();
-      else if (auto attr = module->getAttrOfType<IntegerAttr>("pulse.n_qubits"))
+      else if (auto attr =
+                   module->getAttrOfType<IntegerAttr>("pulse.qudit_count"))
         modes = attr.getInt();
       for (auto [qudit, d] : levels)
         modes = std::max(modes, qudit + 1);

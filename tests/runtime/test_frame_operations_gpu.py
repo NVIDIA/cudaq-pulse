@@ -39,7 +39,7 @@ def _evolve(kernel):
         on(_target(), kernel, Q[0]),
         t_start=0.0,
         t_end=40.0,
-        num_steps=400,
+        step_count=400,
         integrator="rk4",
     ).final_state
 

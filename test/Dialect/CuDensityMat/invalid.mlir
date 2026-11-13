@@ -78,24 +78,24 @@ func.func @prepare_with_a_negative_workspace(%h: !cudm.handle, %op: !cudm.operat
 // -----
 
 func.func @sse_of_no_trajectories(%h: !cudm.handle, %op: !cudm.operator, %s: !cudm.state, %ws: !cudm.workspace) {
-  // expected-error @+1 {{'cudm.sse_evolve' op num_trajectories must be >= 1, got 0}}
-  %r = "cudm.sse_evolve"(%h, %op, %s, %ws) {integrator = #cudm<integrator rk4>, num_trajectories = 0 : i64, t_start = 0.0 : f64, t_end = 1.0 : f64, num_steps = 10 : i64, seed = 1 : i64} : (!cudm.handle, !cudm.operator, !cudm.state, !cudm.workspace) -> !cudm.trajectory_result
+  // expected-error @+1 {{'cudm.sse_evolve' op trajectory_count must be >= 1, got 0}}
+  %r = "cudm.sse_evolve"(%h, %op, %s, %ws) {integrator = #cudm<integrator rk4>, trajectory_count = 0 : i64, t_start = 0.0 : f64, t_end = 1.0 : f64, step_count = 10 : i64, seed = 1 : i64} : (!cudm.handle, !cudm.operator, !cudm.state, !cudm.workspace) -> !cudm.trajectory_result
   return
 }
 
 // -----
 
 func.func @sse_of_negative_trajectories(%h: !cudm.handle, %op: !cudm.operator, %s: !cudm.state, %ws: !cudm.workspace) {
-  // expected-error @+1 {{'cudm.sse_evolve' op num_trajectories must be >= 1, got -1}}
-  %r = "cudm.sse_evolve"(%h, %op, %s, %ws) {integrator = #cudm<integrator rk4>, num_trajectories = -1 : i64, t_start = 0.0 : f64, t_end = 1.0 : f64, num_steps = 10 : i64, seed = 1 : i64} : (!cudm.handle, !cudm.operator, !cudm.state, !cudm.workspace) -> !cudm.trajectory_result
+  // expected-error @+1 {{'cudm.sse_evolve' op trajectory_count must be >= 1, got -1}}
+  %r = "cudm.sse_evolve"(%h, %op, %s, %ws) {integrator = #cudm<integrator rk4>, trajectory_count = -1 : i64, t_start = 0.0 : f64, t_end = 1.0 : f64, step_count = 10 : i64, seed = 1 : i64} : (!cudm.handle, !cudm.operator, !cudm.state, !cudm.workspace) -> !cudm.trajectory_result
   return
 }
 
 // -----
 
 func.func @sse_of_no_steps(%h: !cudm.handle, %op: !cudm.operator, %s: !cudm.state, %ws: !cudm.workspace) {
-  // expected-error @+1 {{'cudm.sse_evolve' op num_steps must be >= 1, got 0}}
-  %r = "cudm.sse_evolve"(%h, %op, %s, %ws) {integrator = #cudm<integrator rk4>, num_trajectories = 8 : i64, t_start = 0.0 : f64, t_end = 1.0 : f64, num_steps = 0 : i64, seed = 1 : i64} : (!cudm.handle, !cudm.operator, !cudm.state, !cudm.workspace) -> !cudm.trajectory_result
+  // expected-error @+1 {{'cudm.sse_evolve' op step_count must be >= 1, got 0}}
+  %r = "cudm.sse_evolve"(%h, %op, %s, %ws) {integrator = #cudm<integrator rk4>, trajectory_count = 8 : i64, t_start = 0.0 : f64, t_end = 1.0 : f64, step_count = 0 : i64, seed = 1 : i64} : (!cudm.handle, !cudm.operator, !cudm.state, !cudm.workspace) -> !cudm.trajectory_result
   return
 }
 
@@ -103,6 +103,6 @@ func.func @sse_of_no_steps(%h: !cudm.handle, %op: !cudm.operator, %s: !cudm.stat
 
 func.func @sse_backwards_in_time(%h: !cudm.handle, %op: !cudm.operator, %s: !cudm.state, %ws: !cudm.workspace) {
   // expected-error @+1 {{'cudm.sse_evolve' op t_end (1.000000e+00) must be greater than t_start (2.000000e+00)}}
-  %r = "cudm.sse_evolve"(%h, %op, %s, %ws) {integrator = #cudm<integrator rk4>, num_trajectories = 8 : i64, t_start = 2.0 : f64, t_end = 1.0 : f64, num_steps = 10 : i64, seed = 1 : i64} : (!cudm.handle, !cudm.operator, !cudm.state, !cudm.workspace) -> !cudm.trajectory_result
+  %r = "cudm.sse_evolve"(%h, %op, %s, %ws) {integrator = #cudm<integrator rk4>, trajectory_count = 8 : i64, t_start = 2.0 : f64, t_end = 1.0 : f64, step_count = 10 : i64, seed = 1 : i64} : (!cudm.handle, !cudm.operator, !cudm.state, !cudm.workspace) -> !cudm.trajectory_result
   return
 }
