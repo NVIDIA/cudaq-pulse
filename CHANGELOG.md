@@ -291,7 +291,8 @@ behavior may change in any 0.x release.
   maps built at once (a 100 us T1 shot: 104 s to under 1 ms).
   `simulate(branches="sampled")` (or `pulse.BranchCoverage.SAMPLED`) follows
   only the branches the shots take, so a program that measures many times in
-  one shot costs time linear in its measurements. Finding a program's next measurement and next call is now
+  one shot does not cost time exponential in its measurements; the host time per interval grows with the
+  rounds before it, as the path is rescheduled after each call. Finding a program's next measurement and next call is now
   linear in its length.
 
 - **Kernels.** `@pulse.kernel` traces a Python function into Pulse-dialect

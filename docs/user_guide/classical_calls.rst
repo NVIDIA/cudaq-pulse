@@ -722,7 +722,9 @@ the qubit also decays through the call's latency.
 A program that measures hundreds of times in one shot is simulated one
 path per shot: ``pulse.simulate(scheduled, shots_count=n, branches="sampled")``. Idle
 waits and square pulses are propagated exactly, so a shot's cost does not
-grow with its waits.
+grow with its waits. The host time per interval between measurements grows
+with the rounds before it, as the path is rescheduled after each call and
+lowered again for each interval.
 
 What it costs the controller
 ----------------------------

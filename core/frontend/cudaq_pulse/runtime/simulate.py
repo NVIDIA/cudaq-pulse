@@ -309,8 +309,10 @@ def simulate(
         so the state is the exact ensemble. ``"sampled"`` follows only the
         outcomes the shots draw: at most ``shots_count`` branches, so a program
         that measures many times inside one shot (an adaptive loop of
-        readouts and calls) costs time linear in its measurements, not
-        exponential. The state is then the average over the shots'
+        readouts and calls) does not cost time exponential in its
+        measurements. The host time per interval grows with the rounds
+        before it, as the path is rescheduled after each call and lowered
+        again for each interval. The state is then the average over the shots'
         branches, and ``result.branches`` gives each one's share of the
         shots. It needs ``shots_count``. A ``BranchCoverage`` or its string.
     reset_time:
