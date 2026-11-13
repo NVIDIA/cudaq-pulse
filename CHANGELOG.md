@@ -26,7 +26,8 @@ behavior may change in any 0.x release.
   `dev.qudits[i].get_calibration(...)`, and from a coupling,
   `dev.coupling(a, b).get_calibration(pulse.gates.CZ)` (a `FluxCZ`). A
   qudit's `drive` and `readout` (`MicrowaveDrive`, `DispersiveReadout`)
-  hold its physics; its tuned pulses are its `calibrations`, by gate.
+  hold its physics; its tuned pulses are given as `calibrations=`, by gate,
+  and read only through `get_calibration`, as a coupling's are.
   What a quantum system does not publish is derived: an `X` amplitude from the
   pulse's area, `X90` at half of it, `Y` and `Y90` at +90 degrees; an
   unpublished `CZ`, `READOUT` or other transition is an error naming the

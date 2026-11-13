@@ -138,8 +138,9 @@ def test_the_depletion_comes_from_the_readout():
 def test_the_shipped_target_describes_its_drive_and_readout():
     qudit = transmon_surface17().physical_qudits[0]
     assert isinstance(qudit.drive, MicrowaveDrive) and isinstance(qudit.readout, DispersiveReadout)
-    x = qudit.calibrations[pulse.gates.X]
-    assert (x.duration_ns, x.sigma_ns, x.amplitude) == (40.0, 10.0, None)
+    x = qudit.get_calibration(pulse.gates.X)
+    # No amplitude is published: the one read is the pi rotation of the pulse's area.
+    assert (x.duration_ns, x.sigma_ns) == (40.0, 10.0) and x.amplitude > 0
     assert qudit.readout.frequency_hz > 6e9 and qudit.readout.linewidth_hz > 0
 
 

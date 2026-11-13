@@ -20,7 +20,6 @@ import copy
 import os
 import threading
 from collections.abc import Mapping
-from dataclasses import replace
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
@@ -298,9 +297,9 @@ class Calibration:
                 else:
                     strength = self.exchange_hz(name, *at)
                 if c.__class__ is Coupling:
-                    c = Coupling(c.qudits, strength, c.calibrations)
+                    c = Coupling(c.qudits, strength, c._calibrations)
                 else:
-                    c = replace(c, strength_hz=strength)
+                    c = c.replace(strength_hz=strength)
             couplings.append(c)
         return target.replace(couplings=couplings)
 

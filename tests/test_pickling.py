@@ -175,7 +175,8 @@ def test_targets_and_their_parts_unpickle_equal_with_equal_hashes():
     assert back.qudits[0].drive == shipped.qudits[0].drive
     assert back.qudits[0].readout == shipped.qudits[0].readout
     assert back.couplings == shipped.couplings and back.residual_zz == shipped.residual_zz
-    assert back.qudits[0].calibrations == shipped.qudits[0].calibrations
+    for gate in (pulse.gates.X, pulse.gates.READOUT):
+        assert back.qudits[0].get_calibration(gate) == shipped.qudits[0].get_calibration(gate)
 
 
 def test_targets_compare_by_content():

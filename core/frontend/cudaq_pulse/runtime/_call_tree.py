@@ -93,7 +93,7 @@ class ReadoutModel:
                     "outcomes come from a DispersiveReadout's errors"
                 )
             to0, to1 = float(r.error_1to0), float(r.error_0to1)
-            pulse = q.calibrations.get("readout")
+            pulse = q._calibrations.get("readout")
             window = None if pulse is None else pulse.duration_ns
             if decay and q.t1_us > 0 and window is not None:
                 to0 = to0 + (1 - to0) * (1 - math.exp(-float(window) / (2e3 * q.t1_us)))

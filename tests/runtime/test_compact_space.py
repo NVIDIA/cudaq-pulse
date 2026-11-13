@@ -21,9 +21,9 @@ def _slice(indices):
     target = _TRANSMON_SURFACE17
     new = {q: i for i, q in enumerate(sorted(indices))}
 
-    def renumbered(entries):
+    def renumbered(entries, replace):
         return [
-            dataclasses.replace(e, qudits=tuple(new[q] for q in e.qudits))
+            replace(e, qudits=tuple(new[q] for q in e.qudits))
             for e in entries
             if all(q in new for q in e.qudits)
         ]
@@ -31,8 +31,8 @@ def _slice(indices):
     sliced = pulse.quantum_system(
         name="transmon-surface17-slice",
         qudits={i: target.physical_qudits[q].replace(index=i) for q, i in new.items()},
-        couplings=renumbered(target.couplings),
-        residual_zz=renumbered(target.residual_zz),
+        couplings=renumbered(target.couplings, pulse.quantum_systems.Coupling.replace),
+        residual_zz=renumbered(target.residual_zz, dataclasses.replace),
         clock_ghz=target.clock_ghz,
     )
     return sliced.qudits, new

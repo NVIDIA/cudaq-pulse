@@ -239,5 +239,6 @@ def x90_alone(q):
 
 
 def test_a_generic_coupling_makes_no_gate_claims():
-    assert not Coupling((0, 1), strength_hz=5e6).calibrations
-    assert all(not c.calibrations for c in transmon_lattice(3).couplings)
+    for coupling in (Coupling((0, 1), strength_hz=5e6), *transmon_lattice(3).couplings):
+        with pytest.raises(pulse.NotFoundError, match="publishes no pulse.gates.CZ"):
+            coupling.get_calibration(pulse.gates.CZ)

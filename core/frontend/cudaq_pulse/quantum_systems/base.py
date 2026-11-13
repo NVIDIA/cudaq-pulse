@@ -14,7 +14,7 @@ from __future__ import annotations
 import math
 import numbers
 from collections.abc import Mapping, Sequence
-from dataclasses import FrozenInstanceError, dataclass
+from dataclasses import FrozenInstanceError
 from itertools import chain
 from operator import attrgetter, eq, is_, methodcaller
 from types import MappingProxyType
@@ -252,7 +252,7 @@ class MicrowaveDrive(Drive):
     The simulator turns a pulse's amplitude into a Rabi rate in rad/ns by
     ``amplitude_scale_rad_per_ns``; without it, by the scale that makes the
     qudit's ``X`` calibration a pi rotation, if that gives an amplitude;
-    else 1.0. The tuned pulses are the qudit's ``calibrations``.
+    else 1.0. The tuned pulses are the qudit's calibrations (``get_calibration``).
     """
 
     __slots__ = ()
@@ -609,7 +609,7 @@ def _qudit_calibration(qudit: PhysicalQudit, gate: Any, transition: Any) -> Any:
             f"{_gate_label('cz')} is calibrated on a coupling, not on {_qudit_name(qudit)}: "
             "qs.coupling(a, b).get_calibration(pulse.gates.CZ)"
         )
-    found: Any = qudit.calibrations.get(_calibration_key(name, at))
+    found: Any = qudit._calibrations.get(_calibration_key(name, at))
     if found is not None:
         if name != "readout" and found._values[2] is None:
             return found.replace(
@@ -625,7 +625,7 @@ def _qudit_calibration(qudit: PhysicalQudit, gate: Any, transition: Any) -> Any:
         return base.replace(phase_rad=base._values[4] + math.pi / 2)
     which = _gate_label(name) if at == _DEFAULT_TRANSITION else f"{_gate_label(name)} {at}"
     raise NotFoundError(
-        f"{_qudit_name(qudit)} publishes no {which} calibration; {_published(qudit.calibrations)}"
+        f"{_qudit_name(qudit)} publishes no {which} calibration; {_published(qudit._calibrations)}"
     )
 
 
@@ -654,7 +654,7 @@ class _QuditFields:
         "readout",
         "t2_echo_us",
         "thermal_population",
-        "calibrations",
+        "_calibrations",
         "metadata",
     )
 
@@ -671,7 +671,8 @@ class _QuditFields:
     # it starts and towards which T1 relaxes.
     t2_echo_us: float | None
     thermal_population: float
-    calibrations: Mapping[Any, DragPulse | ReadoutPulse]
+    # What calibrations= gives, which get_calibration reads.
+    _calibrations: Mapping[Any, DragPulse | ReadoutPulse]
     metadata: Mapping[str, Any]
 
 
@@ -687,11 +688,11 @@ class PhysicalQudit(_QuditFields):
     a ``TransmonModel`` of more than two levels refuses, naming the qudit.
     ``drive`` and ``readout`` are its physics: how it is driven and read
     out, each by the component of its modality (``MicrowaveDrive``,
-    ``DispersiveReadout``), or ``None`` when not given. ``calibrations``
-    are the pulses it is tuned for, by gate: ``{pulse.gates.X:
+    ``DispersiveReadout``), or ``None`` when not given. ``calibrations=``
+    gives the pulses it is tuned for, by gate: ``{pulse.gates.X:
     DragPulse(...), pulse.gates.READOUT: ReadoutPulse(...)}`` (a key
-    ``(gate, (lower, upper))`` for a transition other than (0, 1));
-    ``get_calibration`` reads them. ``metadata`` is the user's own data
+    ``(gate, (lower, upper))`` for a transition other than (0, 1)), and
+    ``get_calibration`` reads them, deriving what is not given. ``metadata`` is the user's own data
     (JSON values), which the library never reads, and which does not make
     a quantum system differ; values the library knows are fields, never metadata.
     A qubit is read-only: ``replace`` makes a changed copy.
@@ -732,7 +733,7 @@ class PhysicalQudit(_QuditFields):
         self.readout = readout
         self.t2_echo_us = t2_echo_us
         self.thermal_population = thermal_population
-        self.calibrations = calibrations
+        self._calibrations = calibrations
         self.metadata = metadata
         self.__class__ = cls
 
@@ -751,7 +752,9 @@ class PhysicalQudit(_QuditFields):
         return hash((self.index, self.frequency_hz, self.label))
 
     def __repr__(self) -> str:
-        shown = ", ".join(f"{n}={_plain_value(getattr(self, n))!r}" for n in _QuditFields.__slots__)
+        shown = ", ".join(
+            f"{n.lstrip('_')}={_plain_value(getattr(self, n))!r}" for n in _QuditFields.__slots__
+        )
         return f"{type(self).__name__}({shown})"
 
     def __reduce__(self) -> tuple[Any, ...]:
@@ -775,7 +778,7 @@ class PhysicalQudit(_QuditFields):
             self.readout,
             self.t2_echo_us,
             self.thermal_population,
-            self.calibrations,
+            self._calibrations,
             *metadata,
         ) = state
         self.metadata = MappingProxyType(metadata[0]) if metadata else _EMPTY
@@ -784,6 +787,7 @@ class PhysicalQudit(_QuditFields):
     def replace(self, **changes: Any) -> Self:
         """A copy with the fields *changes* names set to their values."""
         values = {n: getattr(self, n) for n in _QuditFields.__slots__}
+        values["calibrations"] = values.pop("_calibrations")
         values.update(changes)
         return type(self)(**values)
 
@@ -830,7 +834,6 @@ def _plain_value(value: Any) -> Any:
     return dict(value) if type(value) in (MappingProxyType, _Calibrations) else value
 
 
-@dataclass(frozen=True)
 class Coupling:
     """A coupling of the qudits ``qudits`` of a quantum system: two in this
     release, by the system's qudit index, in the order the coupling names
@@ -841,33 +844,78 @@ class Coupling:
     rotating-wave approximation, and ``strength_hz`` is g / 2 pi. A
     ``strength_hz`` of ``None`` is one not measured yet: the system
     compiles, schedules and exports, and ``simulate`` refuses it.
-    ``calibrations`` are the gates it is tuned for, ``{pulse.gates.CZ:
-    FluxCZ(...)}``, which ``get_calibration`` reads.
+    ``calibrations=`` gives the gates it is tuned for, ``{pulse.gates.CZ:
+    FluxCZ(...)}``, which ``get_calibration`` reads. A coupling is
+    read-only: ``replace`` makes a changed copy.
+
+    A plain slotted class, as ``PhysicalQudit`` is: its calibrations are
+    private storage, which a dataclass field could not be and still be the
+    constructor's ``calibrations=``.
     """
+
+    __slots__ = ("qudits", "strength_hz", "_calibrations")
+    __match_args__ = ("qudits", "strength_hz")
 
     qudits: tuple[int, ...]
     strength_hz: float | None
-    calibrations: Mapping[Any, FluxCZ] = _NO_CALIBRATIONS
+    # What calibrations= gives, which get_calibration reads.
+    _calibrations: Mapping[Any, FluxCZ]
 
-    def __post_init__(self) -> None:
-        if self.qudits.__class__ is not tuple or self.calibrations.__class__ is not _Calibrations:
-            self._normalize()
-
-    def _normalize(self) -> None:
-        qudits = self.qudits
+    def __init__(
+        self,
+        qudits: Sequence[int],
+        strength_hz: float | None,
+        calibrations: Mapping[Any, FluxCZ] = _NO_CALIBRATIONS,
+    ) -> None:
         if qudits.__class__ is not tuple and isinstance(qudits, Sequence):
-            object.__setattr__(self, "qudits", tuple(qudits))
-        owner = f"the coupling of qudits {self.qudits}"
-        calibrations = _calibrations(self.calibrations, owner, _COUPLING_GATES)
-        object.__setattr__(self, "calibrations", calibrations)
+            qudits = tuple(qudits)
+        if calibrations.__class__ is not _Calibrations:
+            calibrations = _calibrations(
+                calibrations, f"the coupling of qudits {qudits}", _COUPLING_GATES
+            )
+        set_ = object.__setattr__
+        set_(self, "qudits", qudits)
+        set_(self, "strength_hz", strength_hz)
+        set_(self, "_calibrations", calibrations)
+
+    def __setattr__(self, name: str, value: Any) -> NoReturn:
+        raise FrozenInstanceError(f"cannot assign to field {name!r}")
+
+    def __delattr__(self, name: str) -> NoReturn:
+        raise FrozenInstanceError(f"cannot delete field {name!r}")
+
+    def __eq__(self, other: object) -> bool:
+        if other.__class__ is not self.__class__:
+            return NotImplemented
+        return (self.qudits, self.strength_hz, self._calibrations) == (
+            other.qudits,
+            other.strength_hz,
+            other._calibrations,
+        )
 
     def __hash__(self) -> int:
         return hash((self.qudits, self.strength_hz))
 
-    def __reduce__(self) -> tuple[Any, ...]:
-        from .._pickling import frozen_reduce
+    def __repr__(self) -> str:
+        return (
+            f"{type(self).__name__}(qudits={self.qudits!r}, strength_hz={self.strength_hz!r}, "
+            f"calibrations={_plain_value(self._calibrations)!r})"
+        )
 
-        return frozen_reduce(self)
+    def __reduce__(self) -> tuple[Any, ...]:
+        return (type(self), (self.qudits, self.strength_hz, self._calibrations))
+
+    def replace(self, **changes: Any) -> Self:
+        """A copy with the fields *changes* names set to their values."""
+        values: dict[str, Any] = {
+            "qudits": self.qudits,
+            "strength_hz": self.strength_hz,
+            "calibrations": self._calibrations,
+        }
+        values.update(changes)
+        return type(self)(**values)
+
+    __replace__ = replace
 
     def get_calibration(self, gate: Any, transition: tuple[int, int] = (0, 1)) -> FluxCZ:
         """The calibration of *gate* (``pulse.gates.CZ``) on the coupling; a
@@ -879,13 +927,13 @@ class Coupling:
                 f"qs.qudits[i].get_calibration({_gate_label(name)})"
             )
         at = _transition(transition)
-        found: FluxCZ | None = self.calibrations.get(_calibration_key(name, at))
+        found: FluxCZ | None = self._calibrations.get(_calibration_key(name, at))
         if found is None:
             which = _gate_label(name) if at == _DEFAULT_TRANSITION else f"{_gate_label(name)} {at}"
             a, b = self.qudits
             raise NotFoundError(
                 f"the coupling of qudits {a} and {b} publishes no {which} calibration; "
-                f"{_published(self.calibrations)}"
+                f"{_published(self._calibrations)}"
             )
         return found
 
@@ -1129,7 +1177,7 @@ class _Description:
                 )
             return float(explicit)
         qudit = self.qudits[qudit_index]
-        x: Any = qudit.calibrations.get("x")
+        x: Any = qudit._calibrations.get("x")
         if x is not None and x.amplitude:
             return math.pi / (float(x.amplitude) * _area_ns(x, _qudit_name(qudit)))
         return 1.0
@@ -1193,7 +1241,7 @@ def _entries_problems(target: _Description) -> list[Problem]:
 # What the checks read of every entry or gate at once.
 _QUDITS = attrgetter("qudits")
 _STRENGTH = attrgetter("strength_hz")
-_CALIBRATIONS = attrgetter("calibrations")
+_CALIBRATIONS = attrgetter("_calibrations")
 _VALUES = methodcaller("values")
 _RATE = attrgetter("rate_hz")
 
@@ -1295,7 +1343,7 @@ def _entry_problems(
                     "measured yet",
                 )
             )
-        for key, cz in entry.calibrations.items():
+        for key, cz in entry._calibrations.items():
             problems += _flux_cz_problems(cz, f"{where}.calibrations[{_key_label(key)}]")
         return problems, pair
     if not _finite(entry.rate_hz):

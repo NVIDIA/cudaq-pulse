@@ -55,11 +55,12 @@ Gate calibrations
 -----------------
 
 The pulses a quantum system is tuned for are calibrations, by gate
-(``pulse.gates``): a qudit's ``calibrations`` hold its ``X`` (and, if
+(``pulse.gates``): a qudit's ``calibrations=`` give its ``X`` (and, if
 published, ``X90``, ``Y``, ``Y90``) as a ``DragPulse`` and its ``READOUT`` as
-a ``ReadoutPulse``; a coupling's hold its ``CZ`` as a ``FluxCZ``. A key
+a ``ReadoutPulse``; a coupling's ``calibrations=`` give its ``CZ`` as a ``FluxCZ``. A key
 ``(gate, (lower, upper))`` holds another transition's. ``get_calibration``
-reads them, deriving what is not published:
+reads them, deriving what is not published; neither a qudit nor a coupling
+has another read of them:
 
 .. code-block:: python
 

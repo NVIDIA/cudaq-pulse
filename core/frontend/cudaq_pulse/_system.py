@@ -2503,8 +2503,8 @@ def _qudit_data(q: Any) -> dict[str, Any]:
         for key in _QUDIT_FIELDS
         for value in (getattr(q, key),)
     }
-    if q.calibrations:
-        data["calibrations"] = _calibration_data(q.calibrations)
+    if q._calibrations:
+        data["calibrations"] = _calibration_data(q._calibrations)
     if q.metadata:
         data["metadata"] = _plain(q.metadata)
     return data
@@ -2540,7 +2540,7 @@ def _quantum_data(target: _Description) -> dict[str, Any]:
         "qudits": [_qudit_data(q) for q in sorted(target.qudits.values(), key=lambda q: q.index)],
         "couplings": [
             {"qudits": list(c.qudits), "strength_hz": c.strength_hz}
-            | ({"calibrations": _calibration_data(c.calibrations)} if c.calibrations else {})
+            | ({"calibrations": _calibration_data(c._calibrations)} if c._calibrations else {})
             for c in target.couplings
         ],
         "residual_zz": [

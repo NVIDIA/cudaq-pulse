@@ -478,9 +478,15 @@ def test_k18_readout_models_on_the_target(target):
     qudit = target.physical_qudits[0]
     given = qudit.readout
     params = given.replace(error_0to1=given.error_0to1 or 0.02, error_1to0=given.error_1to0 or 0.05)
-    pulses = qudit.calibrations
-    window = (pulses.get(pulse.gates.READOUT) or ReadoutPulse()).replace(duration_ns=400.0)
-    calibrations = {**pulses, pulse.gates.READOUT: window}
+    # The qudit's calibrations, read through get_calibration, with a longer readout window.
+    calibrations = {}
+    for gate, default in ((pulse.gates.X, None), (pulse.gates.READOUT, ReadoutPulse())):
+        try:
+            calibrations[gate] = qudit.get_calibration(gate)
+        except pulse.NotFoundError:
+            if default is not None:
+                calibrations[gate] = default
+    calibrations[pulse.gates.READOUT] = calibrations[pulse.gates.READOUT].replace(duration_ns=400.0)
     modelled = target.replace(
         qudits={
             **target.physical_qudits,

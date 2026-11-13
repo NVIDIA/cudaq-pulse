@@ -126,7 +126,7 @@ def test_another_transition_must_be_published():
     qudit = _qudit(calibrations={X: _X, (X, (1, 2)): x12})
     assert qudit.get_calibration(X, transition=(1, 2)) == x12
     assert qudit.get_calibration(X90, transition=[1, 2]) == x12.replace(amplitude=0.1)
-    assert qudit.calibrations == {"x": _X, ("x", (1, 2)): x12}
+    assert qudit == _qudit(calibrations={"x": _X, ("x", (1, 2)): x12})
     with pytest.raises(pulse.NotFoundError) as raised:
         _qudit().get_calibration(X, transition=(1, 2))
     assert "publishes no pulse.gates.X (1, 2) calibration; it publishes pulse.gates.X, " in str(
@@ -146,8 +146,8 @@ def test_a_qudit_checks_its_calibrations():
         _qudit(calibrations={CZ: FluxCZ(duration_ns=60.0)})
     with pytest.raises(pulse.InvalidTypeError, match="map gates to calibrations"):
         _qudit(calibrations=[X])
-    with pytest.raises(TypeError, match="read-only"):
-        _qudit().calibrations[X] = _X  # type: ignore[index]
+    # Given to the constructor, read only through get_calibration.
+    assert not hasattr(_qudit(), "calibrations")
 
 
 # ── On a quantum system ─────────────────────────────────────────────────────────────

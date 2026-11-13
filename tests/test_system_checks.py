@@ -10,6 +10,7 @@ its line, under the file's key names.
 from __future__ import annotations
 
 import dataclasses
+import inspect
 import json
 import math
 
@@ -171,14 +172,16 @@ def test_a_cz_calibration_belongs_to_its_coupling_and_is_read_only():
     assert cz == FluxCZ(duration_ns=98.0, buffer_ns=15.0, interaction_frequency_hz=4.4e9)
     with pytest.raises(AttributeError):
         cz.duration_ns = 4.5e9  # type: ignore[misc]
-    with pytest.raises(TypeError, match="read-only"):
-        coupling.calibrations[pulse.gates.CZ] = cz  # type: ignore[index]
+    # Given to the constructor, read only through get_calibration.
+    assert not hasattr(coupling, "calibrations")
+    with pytest.raises(AttributeError, match="cannot assign to field 'strength_hz'"):
+        coupling.strength_hz = 1.0  # type: ignore[misc]
     assert not hasattr(cz, "fidelity") and not hasattr(coupling, "gate")
     with pytest.raises(TypeError, match="missing 1 required keyword-only argument: 'duration_ns'"):
         FluxCZ()  # type: ignore[call-arg]
     with pytest.raises(TypeError, match="missing 1 required positional argument: 'strength_hz'"):
         Coupling((0, 1))  # type: ignore[call-arg]
-    assert {f for f in Coupling.__dataclass_fields__} == {"qudits", "strength_hz", "calibrations"}
+    assert list(inspect.signature(Coupling).parameters) == ["qudits", "strength_hz", "calibrations"]
 
 
 def test_a_coupling_has_only_a_couplings_calibrations():
@@ -189,7 +192,6 @@ def test_a_coupling_has_only_a_couplings_calibrations():
     with pytest.raises(pulse.InvalidValueError, match="did you mean pulse.gates.CZ"):
         Coupling((0, 1), 5.0e6, calibrations={"czz": FluxCZ(duration_ns=1.0)})
     plain = Coupling((0, 1), 5.0e6)
-    assert plain.calibrations == {}
     with pytest.raises(pulse.NotFoundError, match="qudits 0 and 1 publishes no pulse.gates.CZ"):
         plain.get_calibration(pulse.gates.CZ)
     with pytest.raises(pulse.InvalidValueError, match="calibrated on a qudit"):
@@ -275,9 +277,7 @@ def test_a_calibration_matches_a_pair_named_in_either_order():
     published = transmon_surface17(calibration=None)
     calibration = shipped_calibration("transmon_surface17")
     reversed_ = published.replace(
-        couplings=[
-            Coupling(c.qudits[::-1], c.strength_hz, c.calibrations) for c in published.couplings
-        ]
+        couplings=[c.replace(qudits=c.qudits[::-1]) for c in published.couplings]
     )
     forward = calibration._apply(published._description).couplings
     backward = calibration._apply(reversed_._description).couplings
@@ -409,7 +409,7 @@ def test_a_calibration_keeps_the_checks():
     from cudaq_pulse.quantum_systems import transmon_surface17
 
     target = transmon_surface17()
-    assert all(pulse.gates.CZ in c.calibrations for c in target.couplings)
+    assert all(c.get_calibration(pulse.gates.CZ) for c in target.couplings)
     with pytest.raises(
         QuantumSystemDefinitionError, match=r"couplings\[1\].qudits: names the same pair"
     ):
@@ -522,7 +522,8 @@ def test_a_cz_calibration_is_read_only_and_pickles_by_content():
     assert cz != FluxCZ(duration_ns=98.0, buffer_ns=15.0) and cz != (98.0, 15.0, 4.4e9)
     coupling = Coupling((0, 1), 1.0e6, _cz(98.0))
     back = pickle.loads(pickle.dumps(coupling))
-    assert back == coupling and back.calibrations.__class__ is coupling.calibrations.__class__
+    assert back == coupling and repr(back) == repr(coupling)
+    assert back.get_calibration(pulse.gates.CZ) == coupling.get_calibration(pulse.gates.CZ)
 
 
 def test_a_system_made_from_a_checked_one_is_checked_for_what_changed():
@@ -535,7 +536,7 @@ def test_a_system_made_from_a_checked_one_is_checked_for_what_changed():
     fewer = {i: q for i, q in described.qudits.items() if i < 2}
     with pytest.raises(QuantumSystemDefinitionError, match=r"couplings\[1\].qudits\[1\]: 2 is not"):
         described.replace(qudits=fewer)
-    restrengthened = [Coupling(c.qudits, math.nan, c.calibrations) for c in checked.couplings]
+    restrengthened = [c.replace(strength_hz=math.nan) for c in checked.couplings]
     problems = [str(p) for p in _problems_of(checked, restrengthened)]
     assert [p.split(":")[0] for p in problems] == [
         "couplings[0].strength_hz",

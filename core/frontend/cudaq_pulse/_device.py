@@ -123,12 +123,12 @@ def _fingerprint(target: _Description, layout: tuple[int, ...], calibration: Any
             q.thermal_population,
             None if (drive := q.drive) is None else (type(drive).__name__, drive._values),
             None if (readout := q.readout) is None else (type(readout).__name__, readout._values),
-            q.calibrations._content,  # type: ignore[attr-defined]
+            q._calibrations._content,  # type: ignore[attr-defined]
         )
         for q in sorted(target.qudits.values(), key=lambda q: q.index)
     ]
     couplings = [
-        (c.qudits, c.strength_hz, c.calibrations._content)  # type: ignore[attr-defined]
+        (c.qudits, c.strength_hz, c._calibrations._content)  # type: ignore[attr-defined]
         for c in target.couplings
     ]
     residual_zz = [(x.qudits, x.rate_hz) for x in target.residual_zz]

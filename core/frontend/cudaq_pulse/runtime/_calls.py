@@ -184,7 +184,7 @@ class IQModel:
                 )
             # DispersiveReadout._fields and ReadoutPulse._fields, in their order.
             f_r, chi, linewidth, eta, _, _, depletion = r._values
-            pulse = q.calibrations.get("readout") or ReadoutPulse()
+            pulse = q._calibrations.get("readout") or ReadoutPulse()
             _, amp, _, tau, photons = pulse._values
             if chi is None or linewidth is None:
                 from .._errors import UnsupportedError
