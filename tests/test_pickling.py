@@ -277,8 +277,11 @@ def test_an_unpickled_shipped_calibration_reads_its_file_when_used(monkeypatch):
     monkeypatch.setattr(calibration, "_LOADED", {})
     back = pickle.loads(data)
     assert back is not shipped and "_data" not in vars(back)
-    assert (back.name, back.cooldown) == (shipped.name, shipped.cooldown)
-    assert back.quantum_system == shipped.quantum_system and back.cooldowns == shipped.cooldowns
+    assert (back.name, back.measurement_run) == (shipped.name, shipped.measurement_run)
+    assert (
+        back.quantum_system == shipped.quantum_system
+        and back.measurement_runs() == shipped.measurement_runs()
+    )
     assert back == shipped and back.idle_zz_hz(back.pairs[0]) == shipped.idle_zz_hz(back.pairs[0])
     assert pickle.loads(data) is back
 
@@ -309,7 +312,7 @@ def test_a_calibration_of_other_values_makes_another_device():
     shipped = pulse.quantum_system(_SHIPPED_TARGET).calibration
     data = copy.deepcopy(shipped._data)
     same = Calibration(data, name="mine")
-    data["cooldowns"]["2022-main"] = "edited"
+    data["measurement_runs"]["2022-main"] = "edited"
     other = Calibration(data, name="mine")
     target = pulse.quantum_system(_SHIPPED_TARGET)
     quantum_systems = [rebuilt(target, calibration=c) for c in (same, other)]

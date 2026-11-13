@@ -230,14 +230,14 @@ def test_invalid_kernel_settings_fail(monkeypatch, name, value):
 
 def test_system_lists_every_problem_of_a_device_file(tmp_path):
     path = tmp_path / "lab.json"
-    path.write_text('{"name": "transmon_surface17",\n "layout": [4, 99], "cooldown": "x"}\n')
+    path.write_text('{"name": "transmon_surface17",\n "layout": [4, 99], "measurement_run": "x"}\n')
     code, output = _run("--system", str(path))
     assert code == 1
     assert output.splitlines() == [
         f"{path}:2:16: error: layout[1]: carrier 99 is not in quantum system "
         "'transmon_surface17' (it has 0..16)",
-        f"{path}:2:33: error: cooldown: 'x' is given without a calibration; add "
-        '"calibration", a shipped name or a file path, or remove "cooldown"',
+        f"{path}:2:40: error: measurement_run: 'x' is given without a calibration; add "
+        '"calibration", a shipped name or a file path, or remove "measurement_run"',
         f"{path}: 2 problems",
     ]
 

@@ -48,7 +48,7 @@ def test_every_pair_has_its_knobs_with_provenance(cal):
         ):
             entry = cal.entry("cz", "knobs", "per_pair", pair, name)
             assert entry["kind"] == "fitted", (pair, name)
-            assert entry["cooldown"] in cal.cooldowns, (pair, name)
+            assert entry["measurement_run"] in cal.measurement_runs(), (pair, name)
         assert abs(record["predicted_phi_c"]["value"] - 180.0) <= 1.0, pair
         assert isinstance(record["flags"], list)
 

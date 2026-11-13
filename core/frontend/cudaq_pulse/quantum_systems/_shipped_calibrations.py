@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """What a quantum system takes of each shipped calibration, so that building one
 does not read the file: the file's digest (as ``_source_stamp.CALIBRATIONS``
-records it), its default cooldown and cooldowns, and each pair's idle
+records it), its default measurement run and measurement runs, and each pair's idle
 exchange J_qq in Hz with the idle 0-1 frequencies (auxiliary, data) it was
 computed at. A file of another digest is read instead.
 
@@ -12,7 +12,7 @@ the entry to paste when the file changes.
 
 SHIPPED: dict[str, tuple[str, str, tuple[str, ...], dict[str, tuple[float, tuple[float, ...]]]]] = {
     "transmon_surface17": (
-        "e27fc5160ef31daf",
+        "1cbdc84d892f128d",
         "2022-main",
         (
             "2022-main",

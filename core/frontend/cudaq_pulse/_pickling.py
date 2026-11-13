@@ -20,7 +20,7 @@
   share it without building it again. A quantum system makes its description
   once. A control system, its controllers and their processors pickle as
   their inputs and are checked again. A calibration the package ships
-  pickles as its name, cooldown and the digest of its file, and unpickles
+  pickles as its name, measurement run and the digest of its file, and unpickles
   as the one shipped here if that has the same digest; any other pickles
   as its values. Qudit handles and registers pickle as their quantum system and
   indices.
@@ -153,12 +153,12 @@ def device_reduce(quantum_system: Any) -> tuple[Any, ...]:
     return (rebuilt_device, (key, description))
 
 
-def rebuilt_shipped_calibration(name: str, cooldown: str, digest: str, version: str) -> Any:
-    """The calibration *name* (*cooldown*) that this package ships, if it is
+def rebuilt_shipped_calibration(name: str, measurement_run: str, digest: str, version: str) -> Any:
+    """The calibration *name* (*measurement_run*) that this package ships, if it is
     the file of that *digest* that cudaq-pulse *version* shipped."""
     from .quantum_systems.calibration import _shipped_unread
 
-    found = _shipped_unread(name, cooldown, digest)
+    found = _shipped_unread(name, measurement_run, digest)
     if found is None:
         from ._build_config import PACKAGE_VERSION
         from ._errors import UnsupportedError

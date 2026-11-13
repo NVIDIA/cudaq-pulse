@@ -36,7 +36,7 @@ def _leaves(node, path=()):
             yield from _leaves(v, (*path, str(i)))
 
 
-def test_every_value_carries_its_kind_source_and_cooldown():
+def test_every_value_carries_its_kind_source_and_measurement_run():
     data = json.loads(_SHIPPED_SURFACE17.read_text())
     leaves = list(_leaves(data))
     assert len(leaves) > 200
@@ -44,7 +44,7 @@ def test_every_value_carries_its_kind_source_and_cooldown():
         name = "/".join(path)
         assert leaf["kind"] in KINDS, name
         assert leaf["source"], name
-        assert leaf["cooldown"] in data["cooldowns"], name
+        assert leaf["measurement_run"] in data["measurement_runs"], name
         assert "units" in leaf, name
 
 
@@ -55,13 +55,13 @@ def test_the_shipped_file_holds_no_local_paths_or_working_notes():
     )
 
 
-def test_cooldowns_and_provenance(cal):
-    assert cal.cooldown == "2022-main" and "2025-flux-tuning" in cal.cooldowns
+def test_measurement_runs_and_provenance(cal):
+    assert cal.measurement_run == "2022-main" and "2025-flux-tuning" in cal.measurement_runs()
     ec = cal.entry("qudits", "D4", "ec")
     assert ec["kind"] == "fitted" and ec["units"] == "Hz" and "Tab. I" in ec["source"]
     assert cal.value("coupling", "device_default", "g_11_20") == 7.0e6
-    with pytest.raises(ValueError, match="no cooldown"):
-        Calibration.load("transmon_surface17", cooldown="nope")
+    with pytest.raises(ValueError, match="no measurement run"):
+        Calibration.load("transmon_surface17", measurement_run="nope")
     with pytest.raises(pulse.NotFoundError, match="transmon_surface17"):
         Calibration.load("missing")
 
@@ -71,10 +71,13 @@ def test_a_loaded_calibration_keeps_the_values_it_parsed():
     # shipped one is shared by every quantum system: no use of it may change it.
     shipped = pulse.quantum_system("transmon_surface17").calibration
     parsed = json.loads(_SHIPPED_SURFACE17.read_text())
-    for cal in (shipped, Calibration.load("transmon_surface17", cooldown="2025-flux-tuning")):
+    for cal in (
+        shipped,
+        Calibration.load("transmon_surface17", measurement_run="2025-flux-tuning"),
+    ):
         pair = cal.pairs[0]
         qudit = cal.flux_qudits[0]
-        cal.cooldowns["2022-main"] = "changed"
+        cal.measurement_runs()["2022-main"] = "changed"
         cal.entry("qudits", qudit, "ec")["value"] = 0.0
         cal.entry("coupling", "device_default", "g_11_20")["uncertainty"] = None
         cal.value("coupling", "device_default", "g_11_20")
@@ -157,8 +160,8 @@ def _index_entry(name):
     exchange = data["coupling"]["charge_coupling_g_c"]["idle_exchange"]
     return (
         hashlib.sha256(raw).hexdigest()[:16],
-        data["_schema"]["default_cooldown"],
-        tuple(data["cooldowns"]),
+        data["_schema"]["default_measurement_run"],
+        tuple(data["measurement_runs"]),
         {p: (e["value"], tuple(e["idle_frequencies_hz"])) for p, e in exchange.items()},
     )
 
@@ -199,12 +202,15 @@ def test_an_indexed_shipped_calibration_reads_its_file_for_other_values(monkeypa
     monkeypatch.setattr(calibration, "_LOADED", {})
     shipped = calibration.shipped_calibration("transmon_surface17", "2022-a")
     assert "_data" not in vars(shipped)
-    assert shipped.cooldown == "2022-a" and shipped.cooldowns == cal.cooldowns
+    assert (
+        shipped.measurement_run == "2022-a" and shipped.measurement_runs() == cal.measurement_runs()
+    )
     assert shipped.value("qudits", "D4", "ec") == cal.value("qudits", "D4", "ec")
     assert (
-        shipped.fingerprint == Calibration.load("transmon_surface17", cooldown="2022-a").fingerprint
+        shipped.fingerprint
+        == Calibration.load("transmon_surface17", measurement_run="2022-a").fingerprint
     )
-    with pytest.raises(pulse.InvalidValueError, match="no cooldown 'nope'"):
+    with pytest.raises(pulse.InvalidValueError, match="no measurement run 'nope'"):
         calibration.shipped_calibration("transmon_surface17", "nope")
 
 
@@ -228,12 +234,12 @@ def test_a_device_loads_a_calibration_from_its_config(tmp_path, cal):
         return c.strength_hz
 
     assert x2_d4(custom) == pytest.approx(1.1 * x2_d4(base), rel=1e-9)
-    with pytest.raises(ValueError, match="cooldown"):
-        pulse.quantum_system("transmon_surface17", cooldown="2025-flux-tuning")
+    with pytest.raises(ValueError, match="measurement_run"):
+        pulse.quantum_system("transmon_surface17", measurement_run="2025-flux-tuning")
     other = pulse.quantum_system(
-        "transmon_surface17", calibration="transmon_surface17", cooldown="2025-flux-tuning"
+        "transmon_surface17", calibration="transmon_surface17", measurement_run="2025-flux-tuning"
     )
-    assert other.calibration.cooldown == "2025-flux-tuning"
+    assert other.calibration.measurement_run == "2025-flux-tuning"
 
 
 def test_a_published_only_target_uses_the_published_value_over_sqrt2():

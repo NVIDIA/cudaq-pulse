@@ -10,7 +10,7 @@ quantum system, so one compiled kernel serves every quantum system it is called 
 
 Quantum systems compare by content: two quantum systems built from the same values are equal
 and share compiled kernels. The content is the physics, layout and
-calibration (a shipped one by name, cooldown and file, any other by its
+calibration (a shipped one by name, measurement run and file, any other by its
 values); ``name`` and ``source`` are labels, and equal quantum systems may differ
 in them.
 """
@@ -93,7 +93,7 @@ _CONFIG_KEYS = (
     "attribution",
     "layout",
     "calibration",
-    "cooldown",
+    "measurement_run",
     "control_system",
     "clock_ghz",
 )
@@ -588,7 +588,7 @@ class QuantumSystem:
         """The quantum system of a system file, as ``as_dict`` writes one: JSON with
         its format (``cudaq-pulse.system/1``), its quantum system (a
         registered name, or every value inline), layout, calibration,
-        cooldown, control system and program clock, each as data. A file
+        measurement run, control system and program clock, each as data. A file
         with problems raises ``QuantumSystemDefinitionError`` listing all of them,
         each with its path in the file, its line and its column; ``python -m
         cudaq_pulse.doctor --system FILE`` runs the same checks."""
@@ -896,38 +896,41 @@ def _empty(layout: Sequence[Any], problems: list[Problem]) -> tuple[int, ...] | 
 
 def _calibration(config: Mapping[str, Any], problems: list[Problem]) -> Any:
     """The config's calibration: a Calibration, or a shipped name or a path,
-    for the config's ``cooldown`` (the file's default if absent)."""
+    for the config's ``measurement_run`` (the file's default if absent)."""
     from .quantum_systems.calibration import Calibration
 
     given = config.get("calibration")
-    cooldown = config.get("cooldown")
+    measurement_run = config.get("measurement_run")
     if given is None:
-        if cooldown is not None:
+        if measurement_run is not None:
             problems.append(
                 Problem(
-                    f"{cooldown!r} is given without a calibration",
-                    path="cooldown",
-                    value=cooldown,
-                    fix='add "calibration", a shipped name or a file path, or remove "cooldown"',
+                    f"{measurement_run!r} is given without a calibration",
+                    path="measurement_run",
+                    value=measurement_run,
+                    fix=(
+                        'add "calibration", a shipped name or a file path, '
+                        'or remove "measurement_run"'
+                    ),
                 )
             )
         return None
     if isinstance(given, Calibration):
-        if cooldown is not None and cooldown != given.cooldown:
+        if measurement_run is not None and measurement_run != given.measurement_run:
             problems.append(
                 Problem(
-                    f"asks for cooldown {cooldown!r} of a calibration loaded for "
-                    f"{given.cooldown!r}",
-                    path="cooldown",
-                    value=cooldown,
-                    fix=f"pass Calibration.load(..., cooldown={cooldown!r})",
+                    f"asks for measurement run {measurement_run!r} of a calibration loaded for "
+                    f"{given.measurement_run!r}",
+                    path="measurement_run",
+                    value=measurement_run,
+                    fix=f"pass Calibration.load(..., measurement_run={measurement_run!r})",
                 )
             )
             return None
         return given
     if isinstance(given, Mapping):
         try:
-            return Calibration(given, name="inline", cooldown=cooldown)
+            return Calibration(given, name="inline", measurement_run=measurement_run)
         except (KeyError, TypeError, ValueError) as error:
             problems.append(
                 Problem(f"is not calibration data: {Exception.__str__(error)}", path="calibration")
@@ -944,7 +947,7 @@ def _calibration(config: Mapping[str, Any], problems: list[Problem]) -> Any:
         )
         return None
     try:
-        return Calibration.load(given, cooldown=cooldown)
+        return Calibration.load(given, measurement_run=measurement_run)
     except NotFoundError as error:
         problems.append(Problem(str(error), path="calibration", value=given))
     except ValueError as error:
@@ -955,7 +958,7 @@ def _calibration(config: Mapping[str, Any], problems: list[Problem]) -> Any:
                 Problem(f"the calibration file is not valid JSON: {error}", path="calibration")
             )
         else:
-            problems.append(Problem(str(error), path="cooldown", value=cooldown))
+            problems.append(Problem(str(error), path="measurement_run", value=measurement_run))
     return None
 
 
@@ -1120,7 +1123,7 @@ def quantum_system(
     attribution: str = "",
     layout: Sequence[int] | None = None,
     calibration: Calibration | str | os.PathLike[str] | None = None,
-    cooldown: str | None = None,
+    measurement_run: str | None = None,
     control_system: ControlSystem | None = None,
     clock_ghz: float | None = None,
     parameter_drift: bool | ParameterDriftModel | Mapping[int, ParameterDriftModel] = False,
@@ -1151,7 +1154,7 @@ def quantum_system(
     ``layout[i]`` is the carrier that qudit ``i`` names; by default every
     carrier of the quantum system, in order. ``calibration`` is a
     ``Calibration``, the name of a shipped one or the path of a calibration
-    file, and ``cooldown`` one of its cooldowns; the calibration's couplings
+    file, and ``measurement_run`` one of its measurement runs; the calibration's couplings
     replace the system's, and ``QuantumSystem.calibration`` holds it. The
     ``transmon_surface17`` quantum system uses the shipped ``transmon_surface17`` calibration by
     default. ``control_system`` is a ``ControlSystem``, whose lines must be
@@ -1211,7 +1214,7 @@ def quantum_system(
         if (
             layout is None
             and calibration is None
-            and cooldown is None
+            and measurement_run is None
             and control_system is None
             and clock_ghz is None
             and not parameter_drift
@@ -1224,7 +1227,7 @@ def quantum_system(
         if (
             layout is None
             and calibration is None
-            and cooldown is None
+            and measurement_run is None
             and control_system is None
             and clock_ghz is None
             and not parameter_drift
@@ -1265,7 +1268,7 @@ def quantum_system(
         "name": name if qudits is None else described,
         "layout": layout,
         "calibration": calibration,
-        "cooldown": cooldown,
+        "measurement_run": measurement_run,
         "control_system": control_system,
         "clock_ghz": clock_ghz,
     }

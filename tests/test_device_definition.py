@@ -38,7 +38,7 @@ def test_every_problem_of_a_config_is_reported_in_its_key_order():
     error = _problems(
         {
             "layout": [0, 99, 0],
-            "cooldown": "x",
+            "measurement_run": "x",
             "name": TRANSMON_SURFACE17,
             "laout": [],
             "zones": [],
@@ -47,7 +47,7 @@ def test_every_problem_of_a_config_is_reported_in_its_key_order():
     assert [(p.path, p.value) for p in error.problems] == [
         ("layout[1]", 99),
         ("layout[2]", 0),
-        ("cooldown", "x"),
+        ("measurement_run", "x"),
         ("laout", "laout"),
         ("zones", pulse.Problem.UNSET),
     ]
@@ -59,7 +59,7 @@ def test_every_problem_of_a_config_is_reported_in_its_key_order():
 
 
 def test_a_device_definition_error_is_a_value_error_and_a_pulse_error():
-    error = _problems({"name": TRANSMON_SURFACE17, "cooldown": "x"})
+    error = _problems({"name": TRANSMON_SURFACE17, "measurement_run": "x"})
     assert isinstance(error, ValueError) and isinstance(error, pulse.PulseError)
     assert not isinstance(error, TypeError)
 
@@ -114,9 +114,13 @@ def test_a_device_definition_error_is_a_value_error_and_a_pulse_error():
             "must be a shipped calibration",
         ),
         (
-            {"name": TRANSMON_SURFACE17, "calibration": "transmon_surface17", "cooldown": "nope"},
-            "cooldown",
-            "has no cooldown 'nope'",
+            {
+                "name": TRANSMON_SURFACE17,
+                "calibration": "transmon_surface17",
+                "measurement_run": "nope",
+            },
+            "measurement_run",
+            "has no measurement run 'nope'",
         ),
         ({"name": TRANSMON_SURFACE17, "transport": {}}, "transport", "is reserved"),
     ],
@@ -127,13 +131,13 @@ def test_each_check_names_its_path(config, path, text):
     assert text in str(problem)
 
 
-def test_a_calibration_loaded_for_another_cooldown():
-    calibration = Calibration.load("transmon_surface17", cooldown="2025-flux-tuning")
+def test_a_calibration_loaded_for_another_measurement_run():
+    calibration = Calibration.load("transmon_surface17", measurement_run="2025-flux-tuning")
     (problem,) = _problems(
-        {"name": TRANSMON_SURFACE17, "calibration": calibration, "cooldown": "2022-main"}
+        {"name": TRANSMON_SURFACE17, "calibration": calibration, "measurement_run": "2022-main"}
     ).problems
-    assert problem.path == "cooldown"
-    assert problem.fix == "pass Calibration.load(..., cooldown='2022-main')"
+    assert problem.path == "measurement_run"
+    assert problem.fix == "pass Calibration.load(..., measurement_run='2022-main')"
 
 
 def test_a_built_quantum_system_is_checked_like_a_registered_one():
@@ -193,19 +197,19 @@ def test_the_device_constructor_checks_its_layout():
 def test_a_file_problem_gives_its_file_line_and_column(tmp_path: Path):
     path = tmp_path / "lab.json"
     path.write_text(
-        '{\n  "name": "transmon_surface17",\n  "layout": [4, 5, 99],\n  "cooldown": "x"\n}\n'
+        '{\n  "name": "transmon_surface17",\n  "layout": [4, 5, 99],\n  "measurement_run": "x"\n}\n'
     )
     error = _problems(path)
     assert [(p.file, p.line, p.column, p.path) for p in error.problems] == [
         (str(path), 3, 20, "layout[2]"),
-        (str(path), 4, 15, "cooldown"),
+        (str(path), 4, 22, "measurement_run"),
     ]
     assert str(error).splitlines() == [
         f"2 problems in quantum system file {path}:",
         f"  {path}:3:20: layout[2]: carrier 99 is not in quantum system 'transmon_surface17' "
         "(it has 0..16)",
-        f"  {path}:4:15: cooldown: 'x' is given without a calibration; add "
-        '"calibration", a shipped name or a file path, or remove "cooldown"',
+        f"  {path}:4:22: measurement_run: 'x' is given without a calibration; add "
+        '"calibration", a shipped name or a file path, or remove "measurement_run"',
     ]
     assert error.location == error.problems[0]
 
@@ -224,7 +228,7 @@ def test_a_file_that_is_not_json_or_not_an_object(tmp_path: Path):
 
 def test_a_calibration_file_that_is_not_json(tmp_path: Path):
     path = tmp_path / "cal.json"
-    path.write_text('{"cooldowns": ')
+    path.write_text('{"measurement_runs": ')
     (problem,) = _problems({"name": TRANSMON_SURFACE17, "calibration": str(path)}).problems
     assert problem.path == "calibration"
     assert problem.message.startswith("the calibration file is not valid JSON: ")
@@ -356,9 +360,11 @@ def test_data_that_is_not_a_mapping_is_a_type_error():
 
 def test_the_arguments_of_device_are_checked_at_their_names():
     with pytest.raises(pulse.QuantumSystemDefinitionError) as info:
-        pulse.quantum_system(TRANSMON_SURFACE17, layout=[0, 99], cooldown="x", clock_ghz=-1.0)
+        pulse.quantum_system(
+            TRANSMON_SURFACE17, layout=[0, 99], measurement_run="x", clock_ghz=-1.0
+        )
     assert str(info.value).startswith("3 problems in pulse.quantum_system():")
-    assert [p.path for p in info.value.problems] == ["layout[1]", "cooldown", "clock_ghz"]
+    assert [p.path for p in info.value.problems] == ["layout[1]", "measurement_run", "clock_ghz"]
     with pytest.raises(TypeError):
         pulse.quantum_system(description=TRANSMON_SURFACE17)  # type: ignore[call-arg]
     with pytest.raises(TypeError):

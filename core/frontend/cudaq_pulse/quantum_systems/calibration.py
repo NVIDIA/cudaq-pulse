@@ -3,10 +3,10 @@
 """Quantum system calibrations: fitted circuit values, kept apart from published systems.
 
 A calibration file is JSON whose leaves are ``{value, units, kind, source,
-uncertainty, cooldown[, method]}`` objects: ``kind`` is ``published``,
+uncertainty, measurement_run[, method]}`` objects: ``kind`` is ``published``,
 ``digitized`` or ``fitted``, ``source`` cites where the value comes from and
-``cooldown`` names one of the file's ``cooldowns``. ``Calibration.load``
-reads one, a shipped name (``"transmon_surface17"``) or a path, for one cooldown.
+``measurement_run`` names one of the file's ``measurement_runs``. ``Calibration.load``
+reads one, a shipped name (``"transmon_surface17"``) or a path, for one measurement run.
 
 A calibration gives each flux-tunable qubit its circuit (E_C, E_J,max and
 SQUID asymmetry d, so flux in flux quanta converts to frequency and back)
@@ -51,27 +51,29 @@ _SWEET_SPOT_FLUX = {"upper": 0.0, "lower": 0.5}
 
 
 class Calibration:
-    """One cooldown of a calibration file; see the module docstring.
+    """One measurement run of a calibration file; see the module docstring.
 
     Qubits and pairs are named by their labels (``"D4"``, ``"X2-D4"`` with
     the auxiliary first).
     """
 
-    def __init__(self, data: Mapping[str, Any], *, name: str, cooldown: str | None = None) -> None:
-        self._name(data, name, cooldown)
+    def __init__(self, data: Mapping[str, Any], *, name: str, measurement_run: str | None = None):
+        self._name(data, name, measurement_run)
         self._data = copy.deepcopy(dict(data))
 
-    def _name(self, data: Mapping[str, Any], name: str, cooldown: str | None) -> None:
+    def _name(self, data: Mapping[str, Any], name: str, measurement_run: str | None) -> None:
         schema = data.get("_schema", {})
-        cooldown = schema.get("default_cooldown") if cooldown is None else cooldown
-        cooldowns = data.get("cooldowns", {})
-        if cooldown not in cooldowns:
+        measurement_run = (
+            schema.get("default_measurement_run") if measurement_run is None else measurement_run
+        )
+        measurement_runs = data.get("measurement_runs", {})
+        if measurement_run not in measurement_runs:
             raise InvalidValueError(
-                f"calibration {name!r} has no cooldown {cooldown!r}; "
-                f"it has {', '.join(sorted(cooldowns))}"
+                f"calibration {name!r} has no measurement run {measurement_run!r}; "
+                f"it has {', '.join(sorted(measurement_runs))}"
             )
         self.name = name
-        self.cooldown: str = cooldown
+        self.measurement_run: str = measurement_run
         # The digest of the shipped file this was loaded from, if it was.
         self._shipped: str | None = None
 
@@ -90,7 +92,10 @@ class Calibration:
 
     @classmethod
     def load(
-        cls, source: str | os.PathLike[str] = "transmon_surface17", *, cooldown: str | None = None
+        cls,
+        source: str | os.PathLike[str] = "transmon_surface17",
+        *,
+        measurement_run: str | None = None,
     ) -> Calibration:
         """A shipped calibration by name, or a calibration file by path."""
         path = name = os.fspath(source)
@@ -110,17 +115,16 @@ class Calibration:
             name = stem
         data = _read(path)
         loaded = cls.__new__(cls)
-        loaded._name(data, name, cooldown)
+        loaded._name(data, name, measurement_run)
         # Not copied: parsed here, it is held by this calibration alone, which
-        # only reads it and hands out copies (entry, value, cooldowns).
+        # only reads it and hands out copies (entry, value, measurement_runs).
         loaded._data = data
         loaded._shipped = digest
         return loaded
 
-    @property
-    def cooldowns(self) -> Mapping[str, str]:
-        """Each cooldown of the file and what it is."""
-        return dict(self._data["cooldowns"])
+    def measurement_runs(self) -> Mapping[str, str]:
+        """Each measurement run of the file and what it is."""
+        return dict(self._data["measurement_runs"])
 
     def entry(self, *path: str) -> Mapping[str, Any]:
         """The leaf at *path* with its provenance, e.g. ``entry("qudits", "D4", "ec")``."""
@@ -136,7 +140,7 @@ class Calibration:
         return self.entry(*path)["value"]
 
     def __repr__(self) -> str:
-        return f"<Calibration {self.name} ({self.cooldown})>"
+        return f"<Calibration {self.name} ({self.measurement_run})>"
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, Calibration) and other.fingerprint == self.fingerprint
@@ -161,7 +165,7 @@ class Calibration:
 
         return (
             rebuilt_shipped_calibration,
-            (self.name, self.cooldown, self._shipped, PACKAGE_VERSION),
+            (self.name, self.measurement_run, self._shipped, PACKAGE_VERSION),
         )
 
     @cached_property
@@ -169,16 +173,16 @@ class Calibration:
         import hashlib
         import json
 
-        content = json.dumps(self._data, sort_keys=True).encode() + self.cooldown.encode()
+        content = json.dumps(self._data, sort_keys=True).encode() + self.measurement_run.encode()
         return hashlib.blake2b(content, digest_size=16).hexdigest()
 
     @property
     def _identity(self) -> tuple[str, ...]:
         """What a quantum system's fingerprint takes of it: a shipped calibration's
-        name, cooldown and the file's digest, recorded when the package was
+        name, measurement run and the file's digest, recorded when the package was
         built; any other's ``fingerprint``, a hash of its contents."""
         if self._shipped is not None:
-            return ("shipped", self.name, self.cooldown, self._shipped)
+            return ("shipped", self.name, self.measurement_run, self._shipped)
         return ("contents", self.fingerprint)
 
     # ── Circuits and couplings ──────────────────────────────────────────
@@ -319,53 +323,55 @@ _LOADED: dict[tuple[str, str | None], Calibration] = {}
 _LOADED_LOCK = threading.Lock()
 
 
-def shipped_calibration(name: str, cooldown: str | None = None) -> Calibration:
-    """A shipped calibration, loaded once: its default cooldown asked for by
+def shipped_calibration(name: str, measurement_run: str | None = None) -> Calibration:
+    """A shipped calibration, loaded once: its default measurement run asked for by
     name or as ``None`` is one calibration. One in ``_shipped_calibrations``
     is not read until a value beyond what a quantum system takes is used."""
-    key = (name, cooldown)
+    key = (name, measurement_run)
     loaded = _LOADED.get(key)
     if loaded is None:
         with _LOADED_LOCK:
             loaded = _LOADED.get(key)
             if loaded is None:
-                loaded = _indexed(name, cooldown) or Calibration.load(name, cooldown=cooldown)
-                loaded = _LOADED.setdefault((name, loaded.cooldown), loaded)
+                loaded = _indexed(name, measurement_run) or Calibration.load(
+                    name, measurement_run=measurement_run
+                )
+                loaded = _LOADED.setdefault((name, loaded.measurement_run), loaded)
                 _LOADED[key] = loaded
     return loaded
 
 
-def _indexed(name: str, cooldown: str | None) -> Calibration | None:
-    """The shipped calibration *name* (*cooldown*), unread, from
+def _indexed(name: str, measurement_run: str | None) -> Calibration | None:
+    """The shipped calibration *name* (*measurement_run*), unread, from
     ``_shipped_calibrations`` if its entry is of the file this package ships;
-    None otherwise, and for a cooldown the file does not have."""
+    None otherwise, and for a measurement run the file does not have."""
     from .._source_stamp import CALIBRATIONS
     from ._shipped_calibrations import SHIPPED
 
     entry = SHIPPED.get(name)
     if entry is None or CALIBRATIONS.get(name) != entry[0]:
         return None
-    digest, default, cooldowns, idle_exchange = entry
-    cooldown = default if cooldown is None else cooldown
-    if cooldown not in cooldowns:
+    digest, default, measurement_runs, idle_exchange = entry
+    measurement_run = default if measurement_run is None else measurement_run
+    if measurement_run not in measurement_runs:
         return None
     unread = Calibration.__new__(Calibration)
-    unread.name, unread.cooldown, unread._shipped = name, cooldown, digest
+    unread.name, unread.measurement_run, unread._shipped = name, measurement_run, digest
     unread._idle_exchange = idle_exchange
     return unread
 
 
-def _shipped_unread(name: str, cooldown: str, digest: str) -> Calibration | None:
-    """The shipped calibration *name* (*cooldown*), if this package ships the
+def _shipped_unread(name: str, measurement_run: str, digest: str) -> Calibration | None:
+    """The shipped calibration *name* (*measurement_run*), if this package ships the
     file of that *digest*, without reading the file until its values are used."""
     from .._source_stamp import CALIBRATIONS
 
     if CALIBRATIONS.get(name) != digest:
         return None
-    found = _LOADED.get((name, cooldown))
+    found = _LOADED.get((name, measurement_run))
     if found is None:
         unread = Calibration.__new__(Calibration)
-        unread.name, unread.cooldown, unread._shipped = name, cooldown, digest
+        unread.name, unread.measurement_run, unread._shipped = name, measurement_run, digest
         with _LOADED_LOCK:
-            found = _LOADED.setdefault((name, cooldown), unread)
+            found = _LOADED.setdefault((name, measurement_run), unread)
     return found

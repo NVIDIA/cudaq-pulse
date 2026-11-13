@@ -2569,7 +2569,9 @@ def _device_data(quantum_system: QuantumSystem) -> dict[str, Any]:
     if calibration is not None:
         shipped = None
         try:
-            shipped = Calibration.load(calibration.name, cooldown=calibration.cooldown)
+            shipped = Calibration.load(
+                calibration.name, measurement_run=calibration.measurement_run
+            )
         except (OSError, ValueError):
             pass
         data["calibration"] = (
@@ -2577,7 +2579,7 @@ def _device_data(quantum_system: QuantumSystem) -> dict[str, Any]:
             if shipped == calibration
             else json.loads(json.dumps(calibration._data))
         )
-        data["cooldown"] = calibration.cooldown
+        data["measurement_run"] = calibration.measurement_run
     if quantum_system.control_system is not None:
         data["control_system"] = quantum_system.control_system.as_dict()
     return data

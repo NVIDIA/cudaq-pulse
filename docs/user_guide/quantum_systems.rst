@@ -30,7 +30,7 @@ It is read-only.
 ``pulse.quantum_system`` takes a registered name, or builds a quantum system
 from ``name=`` and its ``qudits=``, ``couplings=``, ``residual_zz=``,
 ``model=`` and ``attribution=``; either way optionally ``layout=``,
-``calibration=`` and ``cooldown=``, ``control_system=`` and ``clock_ghz=``.
+``calibration=`` and ``measurement_run=``, ``control_system=`` and ``clock_ghz=``.
 A string is always a name: ``pulse.QuantumSystem.load(path)`` reads a system file
 (as ``QuantumSystem.as_dict()`` writes one, and ``json.dumps`` saves), and
 ``pulse.QuantumSystem.from_dict(data)`` its data, with the same keys.
@@ -88,7 +88,7 @@ the offending value and a fix; for a file, the line and column too:
 
    QuantumSystemDefinitionError: 2 problems in quantum system file lab.json:
      lab.json:3:20: layout[2]: carrier 99 is not in quantum system 'transmon_surface17' (it has 0..16)
-     lab.json:4:15: cooldown: 'x' is given without a calibration; add "calibration", a shipped name or a file path, or remove "cooldown"
+     lab.json:4:22: measurement_run: 'x' is given without a calibration; add "calibration", a shipped name or a file path, or remove "measurement_run"
 
 ``python -m cudaq_pulse.doctor --system lab.json`` runs the same checks
 without a script, one problem per line; ``--json`` prints them as JSON, and
@@ -207,11 +207,11 @@ other sweet spot of Fig. 1c), each pair's charge coupling, the flux-line
 model of Hellings et al., the in-model CZ knobs of all 24 pairs, crosstalk,
 defect bands and feedline groups. Every value records its
 ``kind`` (``published``, ``digitized`` or ``fitted``), ``source``,
-``uncertainty`` and ``cooldown``, one of the file's cooldowns.
+``uncertainty`` and ``measurement_run``, one of the file's measurement runs.
 
 .. code-block:: python
 
-   qs = pulse.quantum_system("transmon_surface17", calibration="transmon_surface17", cooldown="2022-main")
+   qs = pulse.quantum_system("transmon_surface17", calibration="transmon_surface17", measurement_run="2022-main")
    cal = qs.calibration
    cal.entry("qudits", "D4", "ec")        # value with its provenance
    cal.exchange_hz("X2-D4")               # J_qq at the idle points

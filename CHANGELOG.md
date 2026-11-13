@@ -467,7 +467,7 @@ behavior may change in any 0.x release.
   describes a machine's physics and a qudit layout, from a registered
   name (`pulse.quantum_system("transmon_surface17")`) or built directly
   (`pulse.quantum_system(name="chip", qudits={...}, couplings=[...],
-  model=...)`), with `layout=`, `calibration=`, `cooldown=`,
+  model=...)`), with `layout=`, `calibration=`, `measurement_run=`,
   `control_system=` and `clock_ghz=` keywords, or, with no argument, the
   process quantum system; a string is always a name, and
   `QuantumSystem.load` / `QuantumSystem.from_dict` read system files.
@@ -513,9 +513,9 @@ behavior may change in any 0.x release.
   reserved keys (`zones`, `sites`, `moves`, `transport`) are problems too.
   `python -m cudaq_pulse.doctor --system FILE [--json]` runs the same checks.
 - **Calibrations and the transmon model.** `cudaq_pulse.quantum_systems.Calibration`
-  loads fitted values, each with its kind, source, uncertainty and cooldown,
+  loads fitted values, each with its kind, source, uncertainty and measurement run,
   apart from the published quantum system, and `pulse.quantum_system` takes `calibration=`
-  and `cooldown=`. `cudaq_pulse.quantum_systems.transmon_model` computes
+  and `measurement_run=`. `cudaq_pulse.quantum_systems.transmon_model` computes
   flux-tunable transmon levels and charge-coupled pairs from circuit values.
   The shipped `transmon_surface17` calibration has one system-wide charge coupling,
   fitted to the measured `|11>`-`|20>` coupling of X2-D4, so the
