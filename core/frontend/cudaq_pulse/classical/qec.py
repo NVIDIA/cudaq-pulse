@@ -7,8 +7,8 @@ their dispatch keys and payloads, so a program built with it talks to a
 CUDA-QX decoding server unchanged. Every decoder sends the same three keys;
 the server tells them apart by the decoder id in the payload:
 
-- ``enqueue_syndromes(decoder, measurements, round)``: send one round's
-  syndrome bits (``{decoder id, round, mapping id, count}`` and the bits);
+- ``enqueue_syndromes(decoder, measurements, tag)``: send one round's
+  syndrome bits (``{decoder id, tag, mapping id, count}`` and the bits);
   nothing comes back.
 - ``get_corrections(decoder, reset=False)``: the corrections decoded from
   the syndromes enqueued since the last decode or reset; the call to wait on.
@@ -52,7 +52,6 @@ if TYPE_CHECKING:
 __all__ = [
     "Decoder",
     "enqueue_syndromes",
-    "enqueue_syndromes_mapped",
     "get_corrections",
     "reset_decoder",
 ]
@@ -171,7 +170,7 @@ class Decoder:
 
         def enqueue(
             decoder_id: int,
-            round: int,
+            tag: int,
             mapping: int,
             count: int,
             bits: list[int],
@@ -249,20 +248,12 @@ class _Session:
 
 
 def enqueue_syndromes(
-    decoder: Decoder, syndromes: Sequence[Any], round: Any = 0, mapping: int = 0
+    decoder: Decoder, syndromes: Sequence[Any], tag: Any = 0, mapping: int = 0
 ) -> Any:
     """Send one round of syndrome measurements to *decoder* (in a kernel)."""
     return decoder.enqueue_function.submit(
-        decoder.decoder_id, round, mapping, decoder.syndrome_count, syndromes
+        decoder.decoder_id, tag, mapping, decoder.syndrome_count, syndromes
     )
-
-
-def enqueue_syndromes_mapped(
-    decoder: Decoder, syndromes: Sequence[Any], round: Any, mapping: int
-) -> Any:
-    """``enqueue_syndromes`` with the syndrome-mapping row given, under the
-    name CUDA-QX uses for it."""
-    return enqueue_syndromes(decoder, syndromes, round, mapping)
 
 
 def get_corrections(decoder: Decoder, reset: bool = False) -> Any:

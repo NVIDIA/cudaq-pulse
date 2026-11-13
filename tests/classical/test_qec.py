@@ -379,10 +379,10 @@ def test_a_mapped_enqueue_sends_its_mapping_row():
         ms = []
         for _ in range(12):
             ms.append(readout(r, square(100, 0.05)))
-        qec.enqueue_syndromes_mapped(decoder, ms, 4, 2)
+        qec.enqueue_syndromes(decoder, ms, 4, mapping=2)
 
-    def enqueue(decoder_id, round, mapping, count, bits):
-        seen.append((decoder_id, round, mapping, count))
+    def enqueue(decoder_id, tag, mapping, count, bits):
+        seen.append((decoder_id, tag, mapping, count))
 
     dev = _device()
     lowered = pulse.compile(rounds, quantum_system=dev).lower(dev.qudits[0])
