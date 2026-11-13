@@ -203,7 +203,7 @@ takes. They belong to the control system, by name:
    control_system = pulse.ControlSystem(
        links={
            "gpu": Link(fixed_ns=100, bytes_per_ns=10, feedback_ns=50),
-           "controller": Link(fixed_ns=4, feedback_ns=8, max_in_flight=4),
+           "controller": Link(fixed_ns=4, feedback_ns=8, slots=4),
        }
    )
    lowered = pulse.compile(kernel, device=dev, control_system=control_system).lower(q)
@@ -301,7 +301,7 @@ same way:
 
 - A request is submitted once its arguments are ready (eager, the default)
   or as late as the budget allows (lazy). It holds its link for
-  ``fixed_ns + bytes / bytes_per_ns``, and a link holds ``max_in_flight``
+  ``fixed_ns + bytes / bytes_per_ns``, and a link holds ``slots``
   requests at once: one more waits until a slot is free, so a program never
   fails for having too many requests in flight.
 - Its answer is due after the budget: the maximum latency (or the timeout),
@@ -331,7 +331,7 @@ labelled with its name.
 After scheduling, ``pulse-classical-check`` verifies that every request and
 answer fits its link's slots, that deadlines and reaction times hold, that no
 answer is taken before it is due, that no link holds more requests than
-``max_in_flight``, and that the submissions on a link go out one after
+``slots``, and that the submissions on a link go out one after
 another, in program order.
 
 Simulation

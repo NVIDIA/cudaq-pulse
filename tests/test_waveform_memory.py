@@ -192,7 +192,7 @@ def test_the_structured_format_writes_the_controller_and_names_its_links_anew():
         waveform_memory_samples=4096,
         processors=[Processor(links=("ctl",), max_ops_per_function=64)],
     )
-    links = {"ctl": Link(fixed_ns=4, bytes_per_ns=2.0, feedback_ns=8, max_in_flight=4)}
+    links = {"ctl": Link(fixed_ns=4, bytes_per_ns=2.0, feedback_ns=8, slots=4)}
     machine = ControlSystem(controllers=[limits], links=links)
     lowered = pulse.compile(feedback, control_system=machine).lower(Q[0])
     program = lowered.export_controller(version=2)

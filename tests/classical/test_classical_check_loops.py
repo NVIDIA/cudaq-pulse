@@ -74,7 +74,7 @@ def _variants(text: str, seed: int) -> Iterator[str]:
     rng = random.Random(seed)
     yield text
     for slots in (1, 2, 5):
-        yield re.sub(r"max_in_flight = \d+", f"max_in_flight = {slots}", text)
+        yield re.sub(r"slots = \d+", f"slots = {slots}", text)
     for extra in (3, 40, 500):
         yield _requests(text, rng, _number("duration_cycles", lambda d, e=extra: d + e))
     yield _requests(text, rng, _number("start_cycles", lambda s: max(0, s - 30)))

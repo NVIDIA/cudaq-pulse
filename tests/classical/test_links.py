@@ -13,7 +13,7 @@ from cudaq_pulse.kernel.ir_builder import CompilationError
 from tests._handles import Q
 
 DECODER = Link(fixed_ns=100, feedback_ns=20)
-CONTROLLER = Link(fixed_ns=4, max_in_flight=4)
+CONTROLLER = Link(fixed_ns=4, slots=4)
 
 
 def _function(link):
@@ -54,7 +54,7 @@ def test_the_manifest_and_artifact_carry_link_names():
     low = pulse.compile(_kernel(_function("controller")), control_system=machine).lower(Q[0])
     (entry,) = emulation.manifest(low)["functions"]
     assert entry["link"] == 1 and entry["link_name"] == "controller"
-    assert entry["max_in_flight"] == 4
+    assert entry["slots"] == 4
     assert low.export_emulation()["links"]["1"]["name"] == "controller"
 
 

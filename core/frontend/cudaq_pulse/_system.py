@@ -2322,7 +2322,7 @@ _LINK_KEYS = (
     "fixed_ns",
     "bytes_per_ns",
     "feedback_ns",
-    "max_in_flight",
+    "slots",
     "slot_bytes",
     "controllers",
     "per_controller",

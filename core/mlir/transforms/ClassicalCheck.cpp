@@ -10,7 +10,7 @@
 //   waited on in the loop iteration that submitted it;
 // - a call with a reaction time reacts in it: its answer is due within
 //   `reaction_deadline_ns` of the end of the readouts its request carries;
-// - at no time does a link hold more requests than `max_in_flight` (S8);
+// - at no time does a link hold more requests than `slots` (S8);
 // - the submissions on one link go out one after another, in program order
 //   (S9), also inside branches (S11);
 // - a call starts after the readouts and answers it sends end (S10), and no
@@ -947,7 +947,7 @@ static mlir::LogicalResult checkClassicalCalls(mlir::ModuleOp module,
       if (runs.empty())
         continue;
       int64_t capacity =
-          classical::intAttr(runs.front().op, "classical.max_in_flight", 64);
+          classical::intAttr(runs.front().op, "classical.slots", 64);
       auto summarized = summarizedInFlight(runs);
       auto [worst, when] = summarized ? *summarized : sweepInFlight(runs);
       if (worst > capacity) {

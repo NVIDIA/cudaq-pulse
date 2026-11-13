@@ -14,7 +14,7 @@
 
 module attributes {pulse.clock_ghz = 2.0 : f64,
     classical.links = {"0" = {bytes_per_ns = 0.0 : f64, feedback_ns = 8.0 : f64,
-                              fixed_ns = 4.0 : f64, max_in_flight = 64 : i64,
+                              fixed_ns = 4.0 : f64, slots = 64 : i64,
                               slot_bytes = 1024 : i64}}} {
 
 classical.callable @update {args = ["bits:1", "f64", "f64", "f64"], device = 0 : i64,

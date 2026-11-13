@@ -355,7 +355,7 @@ length; for one on its own clock, or with line delays, export
 ``links``
     Each link with ``send_ns``, ``bandwidth_bytes_per_ns``,
     ``answer_delay_ns`` and ``slots`` for ``Link.fixed_ns``,
-    ``bytes_per_ns``, ``feedback_ns`` and ``max_in_flight``.
+    ``bytes_per_ns``, ``feedback_ns`` and ``slots``.
 ``lines``
     Each line's ``qudits``, a list.
 Played events and frame updates
@@ -487,7 +487,7 @@ lines, events or calls. ``export_emulation(controller=k)`` gives the same
 part for an emulator.
 
 A link is shared by default: every controller it reaches sends its
-requests to one instance, which holds ``max_in_flight`` requests for all
+requests to one instance, which holds ``slots`` requests for all
 of them. A link that each controller has its own instance of, a decoder
 beside each controller for example, is declared per controller:
 
@@ -495,7 +495,7 @@ beside each controller for example, is declared per controller:
 
    import cudaq_pulse as pulse
 
-   links = {"decoder": pulse.Link(fixed_ns=10, max_in_flight=1, per_controller=True)}
+   links = {"decoder": pulse.Link(fixed_ns=10, slots=1, per_controller=True)}
 
 or ``per_controller = true`` in the link's table of a system file
 (``[control_system.links.decoder]``). Each controller's calls over it then

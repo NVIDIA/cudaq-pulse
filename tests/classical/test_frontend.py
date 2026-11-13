@@ -379,11 +379,11 @@ def test_lengths_option_is_gone():
 
 
 def test_link_validation():
-    assert Link().max_in_flight == 64
+    assert Link().slots == 64
     for bad in (
         {"fixed_ns": -1},
         {"bytes_per_ns": math.nan},
-        {"max_in_flight": 0},
+        {"slots": 0},
         {"slot_bytes": 24},
     ):
         with pytest.raises(ValueError):

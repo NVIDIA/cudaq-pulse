@@ -570,7 +570,7 @@ private:
       bool merged = false;
       for (auto &[key, list] : perLink) {
         auto slots = static_cast<size_t>(std::max<int64_t>(
-            1, classical::linkModel(module, key.first).maxInFlight));
+            1, classical::linkModel(module, key.first).slots));
         for (size_t k = slots; k < list.size(); ++k) {
           join(list[k], list[k % slots]);
           merged = true;
@@ -1214,7 +1214,7 @@ public:
         spans;
     auto hold = [&](mlir::Operation *submit, int64_t start, int64_t busy) {
       auto &[slots, found] = spans[linkOf(submit)];
-      slots = classical::intAttr(submit, "classical.max_in_flight", 64);
+      slots = classical::intAttr(submit, "classical.slots", 64);
       found.push_back({start, 1});
       found.push_back({start + busy, -1});
     };
@@ -1835,7 +1835,7 @@ private:
         ok = false;
         return;
       }
-      slots = classical::intAttr(op, "classical.max_in_flight", 64);
+      slots = classical::intAttr(op, "classical.slots", 64);
     });
     for (auto &[device, entry] : perLink)
       ok = ok && entry.first <= entry.second;
@@ -2307,7 +2307,7 @@ private:
     if (inserted)
       it->second.free.assign(
           static_cast<size_t>(std::max<int64_t>(
-              1, classical::intAttr(submit, "classical.max_in_flight", 64))),
+              1, classical::intAttr(submit, "classical.slots", 64))),
           laneReset);
     return it->second;
   }
@@ -2448,7 +2448,7 @@ private:
         ok = false;
         return;
       }
-      slots = classical::intAttr(op, "classical.max_in_flight", 64);
+      slots = classical::intAttr(op, "classical.slots", 64);
     });
     for (auto &[device, entry] : perLink)
       ok = ok && entry.first <= entry.second;

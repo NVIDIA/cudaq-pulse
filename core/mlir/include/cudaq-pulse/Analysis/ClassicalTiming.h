@@ -10,7 +10,7 @@
 // 0 for unbounded), `feedback_ns` (from an answer arriving to a pulse being
 // able to use it), `start_uncertainty_ns` (on a link that joins controllers,
 // how far apart the starts of the two it joins known least well may be),
-// `max_in_flight` (requests a link holds at once) and `slot_bytes` (the
+// `slots` (requests a link holds at once) and `slot_bytes` (the
 // largest request or answer, header included). On several controllers, a
 // link with `per_controller` (and its `name`) is one instance per
 // controller, each with its own slots and its own order of submissions.
@@ -23,7 +23,7 @@
 // `annotateClassicalCalls` writes on every `classical.submit` the attributes
 // scheduling reads: `classical.submit_cycles` (how long the submission holds
 // the link), `classical.budget_cycles` (from its end until the answer is due),
-// `classical.device`, `classical.max_in_flight` and `classical.eager`; and on
+// `classical.device`, `classical.slots` and `classical.eager`; and on
 // every `classical.wait` `classical.device` and, in blocking mode,
 // `classical.blocking`. A call over a per-controller link gets, on its
 // submission and its waits, `classical.instance`: the controller that sends
@@ -61,7 +61,7 @@ struct LinkModel {
   double bytesPerNs = 0.0;
   double feedbackNs = 0.0;
   double uncertaintyNs = 0.0;
-  int64_t maxInFlight = 64;
+  int64_t slots = 64;
   int64_t slotBytes = 1024;
   bool perController = false;
   llvm::StringRef name;
@@ -87,8 +87,8 @@ inline LinkModel linkModel(mlir::ModuleOp module, int64_t device) {
   link.bytesPerNs = number("bytes_per_ns", link.bytesPerNs);
   link.feedbackNs = number("feedback_ns", link.feedbackNs);
   link.uncertaintyNs = number("start_uncertainty_ns", link.uncertaintyNs);
-  link.maxInFlight = static_cast<int64_t>(
-      number("max_in_flight", static_cast<double>(link.maxInFlight)));
+  link.slots =
+      static_cast<int64_t>(number("slots", static_cast<double>(link.slots)));
   link.slotBytes = static_cast<int64_t>(
       number("slot_bytes", static_cast<double>(link.slotBytes)));
   link.perController = static_cast<bool>(entry.get("per_controller"));
@@ -399,7 +399,7 @@ annotateClassicalCalls(mlir::func::FuncOp function) {
   mlir::StringAttr submitName = name("classical.submit_cycles"),
                    budgetName = name("classical.budget_cycles"),
                    deviceName = name("classical.device"),
-                   inFlightName = name("classical.max_in_flight"),
+                   inFlightName = name("classical.slots"),
                    eagerName = name("classical.eager"),
                    blockingName = name("classical.blocking"),
                    instanceName = name(kInstanceAttr),
@@ -442,7 +442,7 @@ annotateClassicalCalls(mlir::func::FuncOp function) {
              budgetCycles(callable, link, clock, waitTimeoutNs(submit),
                           callUncertaintyNs(submit, controllers, trace)));
       setInt(attrs, deviceName, callable.getDevice());
-      setInt(attrs, inFlightName, link.maxInFlight);
+      setInt(attrs, inFlightName, link.slots);
       if (callable.getSubmit() == "eager")
         attrs.set(eagerName, b.getUnitAttr());
       else
@@ -500,7 +500,7 @@ annotateClassicalCalls(mlir::func::FuncOp function) {
       continue;
     auto rank = static_cast<int64_t>(
         std::lower_bound(list.begin(), list.end(), t) - list.begin());
-    int64_t slots = linkOf(key.first).maxInFlight;
+    int64_t slots = linkOf(key.first).slots;
     int64_t share = slots / count + (rank < slots % count ? 1 : 0);
     int64_t send = cyclesOf(op) + (count - 1) * longest[key];
     mlir::NamedAttrList attrs(op->getDiscardableAttrDictionary());

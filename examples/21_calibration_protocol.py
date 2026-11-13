@@ -110,7 +110,7 @@ processor = pulse.Processor(
     max_ops_per_function=256,
     max_state_bytes_per_function=512,
 )
-links = {"controller": Link(fixed_ns=4, feedback_ns=8, max_in_flight=4)}
+links = {"controller": Link(fixed_ns=4, feedback_ns=8, slots=4)}
 control_system = pulse.ControlSystem(
     controllers=[pulse.Controller(processors=[processor])], links=links
 )

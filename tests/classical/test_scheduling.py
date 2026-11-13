@@ -174,7 +174,7 @@ def test_rounds_overlap_their_calls(policy, rolled):
 @pytest.mark.parametrize("policy", POLICIES)
 @pytest.mark.parametrize("slots", [1, 2, 3])
 def test_link_slots_bound_requests_in_flight(policy, slots):
-    machine = ControlSystem(links={"host": Link(max_in_flight=slots)})
+    machine = ControlSystem(links={"host": Link(slots=slots)})
     low = pulse.compile(
         _rounds(6), schedule=policy, control_system=machine, unroll_threshold=0
     ).lower(Q[0])
@@ -595,7 +595,7 @@ def test_a_block_waits_for_a_slot_the_caller_holds(callee, policy):
         twice(r)
         f.result()
 
-    machine = ControlSystem(links={"host": Link(max_in_flight=2)})
+    machine = ControlSystem(links={"host": Link(slots=2)})
     calls = pulse.compile(k, schedule=policy, control_system=machine).lower(Q[0]).classical_report()
     first, *block = calls
     # The block's second request needs the slot the first call frees.

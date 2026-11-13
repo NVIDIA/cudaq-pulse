@@ -198,7 +198,7 @@ def test_simulation_matches_an_explicit_schedule(case):
 
 
 def _in_flight(n, slots, schedule, callee):
-    machine = ControlSystem(links={"controller": Link(max_in_flight=slots)})
+    machine = ControlSystem(links={"controller": Link(slots=slots)})
     decode, _ = matrix.FUNCTIONS[("controller", "result")]
 
     def burst(r, rt):
@@ -228,8 +228,8 @@ def test_requests_beyond_max_in_flight_wait_for_a_slot(callee, schedule, over):
         return
     made = matrix.calls(_in_flight(slots + over, slots, schedule, callee))
     first = made[0].submit
-    # Up to max_in_flight go out back to back; each one more waits for the
-    # slot of the one max_in_flight before it.
+    # Up to slots requests go out back to back; each one more waits for
+    # the slot of the one that many before it.
     assert [c.submit - first for c in made[:slots]] == list(range(slots))
     for k in range(slots, len(made)):
         assert made[k].submit == made[k - slots].due

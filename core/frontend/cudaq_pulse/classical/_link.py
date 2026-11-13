@@ -28,7 +28,7 @@ class Link:
     ``fixed_ns + bytes / bytes_per_ns``, at least one clock cycle.
     ``feedback_ns`` is added to every latency: the time from an answer
     arriving to a pulse being able to use it. ``fixed_ns`` and
-    ``feedback_ns`` are times (``100 * pulse.ns``) or numbers of ns. ``max_in_flight`` is how many
+    ``feedback_ns`` are times (``100 * pulse.ns``) or numbers of ns. ``slots`` is how many
     requests the link holds at once (its slots), and ``slot_bytes`` the
     largest request or answer, its 24-byte header included.
 
@@ -47,7 +47,7 @@ class Link:
     fixed_ns: float | Time = 0.0
     bytes_per_ns: float = 0.0
     feedback_ns: float | Time = 0.0
-    max_in_flight: int = 64
+    slots: int = 64
     slot_bytes: int = 1024
     controllers: Sequence[Controller] | None = None
     per_controller: bool = False
@@ -73,10 +73,8 @@ class Link:
             value = getattr(self, name)
             if not (isinstance(value, (int, float)) and math.isfinite(value) and value >= 0):
                 raise InvalidValueError(f"Link.{name} must be a finite number >= 0, got {value!r}")
-        if not isinstance(self.max_in_flight, int) or self.max_in_flight < 1:
-            raise InvalidValueError(
-                f"Link.max_in_flight must be at least 1, got {self.max_in_flight!r}"
-            )
+        if not isinstance(self.slots, int) or self.slots < 1:
+            raise InvalidValueError(f"Link.slots must be at least 1, got {self.slots!r}")
         if not isinstance(self.slot_bytes, int) or self.slot_bytes <= 24:
             raise InvalidValueError(
                 f"Link.slot_bytes must exceed the 24-byte header, got {self.slot_bytes!r}"
@@ -93,7 +91,7 @@ class Link:
             "fixed_ns": self.fixed_ns,
             "bytes_per_ns": self.bytes_per_ns,
             "feedback_ns": self.feedback_ns,
-            "max_in_flight": self.max_in_flight,
+            "slots": self.slots,
             "slot_bytes": self.slot_bytes,
         }
         if self.per_controller:
@@ -117,7 +115,7 @@ class Link:
             f"bytes_per_ns = {float(self.bytes_per_ns)!r} : f64, "
             f"feedback_ns = {float(self.feedback_ns)!r} : f64, "
             f"{uncertainty}"
-            f"max_in_flight = {self.max_in_flight} : i64, "
+            f"slots = {self.slots} : i64, "
             f"slot_bytes = {self.slot_bytes} : i64{instances}}}"
         )
 

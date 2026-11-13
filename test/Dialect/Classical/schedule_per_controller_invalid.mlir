@@ -10,7 +10,7 @@ module attributes {pulse.clock_ghz = 1.0 : f64, pulse.n_qubits = 2 : i64,
       outcome_latency = array<i64: 0, 0, 0, 0>, spread = array<i64: 0, 0, 0, 0>,
       uncertainty_ns = array<f64: 0.5, 0.5>},
     classical.links = {"0" = {fixed_ns = 0.0 : f64, bytes_per_ns = 0.0 : f64,
-      feedback_ns = 0.0 : f64, max_in_flight = 1 : i64, slot_bytes = 1024 : i64,
+      feedback_ns = 0.0 : f64, slots = 1 : i64, slot_bytes = 1024 : i64,
       per_controller, name = "decoder"}}} {
 
 classical.callable @decode {dispatch_key = 1, device = 0 : i64,

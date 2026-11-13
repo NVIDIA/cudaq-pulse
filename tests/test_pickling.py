@@ -716,7 +716,7 @@ def anywhere(q: pulse.Qudit, amp: float):
     drive(d, square(4, 0.2))
 
 
-def _qpu(max_in_flight=1, **processor):
+def _qpu(slots=1, **processor):
     """Two controllers on their own clocks with a processor each, one
     without lines, and a link with an instance per controller."""
     cores = [pulse.Processor(links=["decoder"], **processor) for _ in range(2)]
@@ -729,7 +729,7 @@ def _qpu(max_in_flight=1, **processor):
         )
         for k, (clock, core) in enumerate(zip((1.0, 0.5), cores, strict=True))
     ]
-    link = Link(fixed_ns=10, max_in_flight=max_in_flight, per_controller=True)
+    link = Link(fixed_ns=10, slots=slots, per_controller=True)
     system = pulse.ControlSystem(
         controllers=[*controllers, pulse.Controller()], links={"decoder": link}
     )
@@ -793,7 +793,7 @@ def test_a_device_unpickles_with_its_control_system_and_program_clock(make, monk
 
 
 def test_devices_differing_only_in_their_control_systems_unpickle_as_each(monkeypatch):
-    one, two = _qpu(max_in_flight=1), _qpu(max_in_flight=2)
+    one, two = _qpu(slots=1), _qpu(slots=2)
     assert one.fingerprint == two.fingerprint and one != two
     data = pickle.dumps(two)
     monkeypatch.setattr(_pickling, "_devices", {})

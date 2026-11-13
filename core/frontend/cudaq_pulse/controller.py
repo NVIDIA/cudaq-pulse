@@ -146,7 +146,6 @@ _LINK_KEYS: Mapping[str, str] = MappingProxyType(
         "fixed_ns": "send_ns",
         "bytes_per_ns": "bandwidth_bytes_per_ns",
         "feedback_ns": "answer_delay_ns",
-        "max_in_flight": "slots",
     }
 )
 # The /2 name of the /1 key naming the quantum system.

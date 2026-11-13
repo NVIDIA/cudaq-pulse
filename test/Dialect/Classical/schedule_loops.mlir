@@ -14,7 +14,7 @@
 // UNROLL-NOT: scf.for
 
 module attributes {pulse.clock_ghz = 1.0 : f64,
-                   classical.links = {"0" = {max_in_flight = 2 : i64}}} {
+                   classical.links = {"0" = {slots = 2 : i64}}} {
 
 classical.callable @decode_wide {dispatch_key = 1, device = 1 : i64,
     args = ["bits:1"], results = ["bits:1"], latency_min_ns = 100.0,

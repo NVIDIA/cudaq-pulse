@@ -15,7 +15,7 @@ from cudaq_pulse.classical import Link
 
 from tests._handles import Q
 
-MACHINE = ControlSystem(links={"host": Link(fixed_ns=4, max_in_flight=4)})
+MACHINE = ControlSystem(links={"host": Link(fixed_ns=4, slots=4)})
 
 
 def _decide(bits: pulse.Bits) -> pulse.Bits:

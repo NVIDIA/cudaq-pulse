@@ -10,8 +10,8 @@
 // RUN: cudaq-pulse-opt '--pulse-schedule-rcp=alap' --pulse-classical-check %s > /dev/null
 
 module attributes {pulse.clock_ghz = 2.0 : f64,
-                   classical.links = {"0" = {fixed_ns = 4.0 : f64, max_in_flight = 1 : i64},
-                                      "1" = {fixed_ns = 4.0 : f64, max_in_flight = 6 : i64}}} {
+                   classical.links = {"0" = {fixed_ns = 4.0 : f64, slots = 1 : i64},
+                                      "1" = {fixed_ns = 4.0 : f64, slots = 6 : i64}}} {
 
 classical.callable @ask {dispatch_key = 1 : i64, device = 0 : i64,
     args = ["bits:1"], results = ["bits:1"], latency_min_ns = 0.0,

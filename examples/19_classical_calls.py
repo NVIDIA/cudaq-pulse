@@ -53,7 +53,7 @@ cal = {
 control_system = ControlSystem(
     links={
         "gpu": Link(fixed_ns=100, bytes_per_ns=10, feedback_ns=50),
-        "controller": Link(fixed_ns=4, feedback_ns=8, max_in_flight=4),
+        "controller": Link(fixed_ns=4, feedback_ns=8, slots=4),
     }
 )
 

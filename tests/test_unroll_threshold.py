@@ -167,7 +167,7 @@ def test_rolled_and_unrolled_programs_are_the_same(name):
 
 
 POLICIES = ("asap", "alap", "rcp", "alap_rcp")
-MACHINE = ControlSystem(links={"host": Link(fixed_ns=4, max_in_flight=4)})
+MACHINE = ControlSystem(links={"host": Link(fixed_ns=4, slots=4)})
 
 
 def _first(bits: pulse.Bits) -> pulse.Bits:

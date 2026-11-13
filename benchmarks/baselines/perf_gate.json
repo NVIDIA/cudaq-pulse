@@ -169,7 +169,7 @@
       }
     },
     "export_emulation": {
-      "export_bytes": 39800,
+      "export_bytes": 39736,
       "instructions": 5765137,
       "estimated_cycles": 8649082,
       "python_work": {

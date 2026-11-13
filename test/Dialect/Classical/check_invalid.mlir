@@ -97,7 +97,7 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
 
 // S8: three requests in flight on a link with two slots.
 module attributes {pulse.clock_ghz = 1.0 : f64,
-                   classical.links = {"0" = {max_in_flight = 2 : i64}}} {
+                   classical.links = {"0" = {slots = 2 : i64}}} {
   classical.callable @f {dispatch_key = 3809224601 : i64, device = 0 : i64,
       args = [], results = [], latency_min_ns = 0.0,
       latency_nominal_ns = 50.0, latency_max_ns = 100.0, mode = "bounded",
@@ -246,7 +246,7 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
 // 101, and the one before the loop is still in flight over the first three
 // iterations.
 module attributes {pulse.clock_ghz = 1.0 : f64,
-                   classical.links = {"0" = {max_in_flight = 3 : i64}}} {
+                   classical.links = {"0" = {slots = 3 : i64}}} {
   classical.callable @f {dispatch_key = 3809224601 : i64, device = 0 : i64,
       args = [], results = [], latency_min_ns = 0.0,
       latency_nominal_ns = 50.0, latency_max_ns = 100.0, mode = "bounded",
@@ -299,7 +299,7 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
 // to 20056, while only iterations 499 and 500 are; the loop's next request
 // makes four.
 module attributes {pulse.clock_ghz = 1.0 : f64,
-                   classical.links = {"0" = {max_in_flight = 3 : i64}}} {
+                   classical.links = {"0" = {slots = 3 : i64}}} {
   classical.callable @f {dispatch_key = 3809224601 : i64, device = 0 : i64,
       args = [], results = [], latency_min_ns = 0.0,
       latency_nominal_ns = 50.0, latency_max_ns = 100.0, mode = "bounded",

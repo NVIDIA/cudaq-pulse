@@ -326,7 +326,7 @@ def test_the_report_is_a_table_of_functions_and_links():
     assert "Links, per shot" in text and "Per shot: 6 calls" in text
     controller_link = next(u for u in report.links if u.link == "controller")
     assert controller_link.calls_per_shot == 3
-    assert 1 <= controller_link.peak_in_flight <= controller_link.max_in_flight
+    assert 1 <= controller_link.peak_slots_used <= controller_link.slots
     update = next(row for row in report.functions if row.compiled_name == "_update__1")
     # exp 12, a multiply, a load and an add, at 1 ns per cycle.
     assert update.on_controller and update.compute_ns == pytest.approx(15.0)

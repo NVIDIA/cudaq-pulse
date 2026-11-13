@@ -36,7 +36,7 @@ FLOAT_TAU = 37.4  # the kernels' float parameter: a wait length in cycles
 LOOP = 3
 
 LINKS = {
-    "controller": Link(fixed_ns=4, feedback_ns=8, max_in_flight=4),
+    "controller": Link(fixed_ns=4, feedback_ns=8, slots=4),
     "gpu": Link(fixed_ns=100, bytes_per_ns=10, feedback_ns=50),
 }
 MACHINE = ControlSystem(links=dict(LINKS))
@@ -533,7 +533,7 @@ def check_calls(case: Case, low: Any) -> None:
         assert call.first_use is None or call.first_use >= call.due, call
     spans = sorted((c.submit, c.due) for c in made)
     for start, _ in spans:
-        assert sum(s <= start < e for s, e in spans) <= link.max_in_flight
+        assert sum(s <= start < e for s, e in spans) <= link.slots
     # Lines that wait on their own share the link: each budgets its
     # requests as sent after the others', so they may go out at once.
     sharing = len(set(line_timelines(low).values()))

@@ -355,7 +355,7 @@ def _manifest(lowered: Any) -> dict[str, Any]:
                 "request_bytes": HEADER_BYTES + sum(a.wire_bytes for a in fn.args),
                 "answer_bytes": HEADER_BYTES + sum(r.wire_bytes for r in fn.results),
                 "slot_bytes": link.slot_bytes,
-                "max_in_flight": link.max_in_flight,
+                "slots": link.slots,
             }
         )
     return {"format": _MANIFEST_FORMAT, "functions": functions}

@@ -378,7 +378,7 @@ def _machines() -> dict[str, dict[str, Any]]:
         "two_slots": {
             "control_system": ControlSystem(
                 controllers=[pulse.Controller(feedback_latency_cycles=9)],
-                links={"host": Link(fixed_ns=3, max_in_flight=2), "decoder": Link(feedback_ns=20)},
+                links={"host": Link(fixed_ns=3, slots=2), "decoder": Link(feedback_ns=20)},
                 max_concurrent_drives=2,
             )
         },
@@ -1176,7 +1176,7 @@ def _one_after_another(n: int, *bodies: str, name: str | None = None) -> Any:
 
 
 def _link_slots(slots: int) -> ControlSystem:
-    return ControlSystem(links={"host": Link(fixed_ns=4, max_in_flight=slots)})
+    return ControlSystem(links={"host": Link(fixed_ns=4, slots=slots)})
 
 
 def _most_at_once(spans: list[tuple[int, int]]) -> int:

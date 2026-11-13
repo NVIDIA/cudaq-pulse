@@ -10,7 +10,7 @@
 
 module attributes {pulse.clock_ghz = 1.0 : f64, classical.links = {"0" = {
     fixed_ns = 0.0 : f64, bytes_per_ns = 0.0 : f64, feedback_ns = 0.0 : f64,
-    max_in_flight = 2 : i64, slot_bytes = 1024 : i64}}} {
+    slots = 2 : i64, slot_bytes = 1024 : i64}}} {
 
 classical.callable @decode {dispatch_key = 1, device = 0 : i64,
     args = ["bits:1"], results = ["bits:1"], latency_min_ns = 0.0,

@@ -816,8 +816,8 @@ class LinkUsage:
 
     link: int | str
     calls_per_shot: int
-    peak_in_flight: int
-    max_in_flight: int
+    peak_slots_used: int
+    slots: int
     largest_message_bytes: int
     slot_bytes: int
     bytes_per_shot: int
@@ -996,8 +996,8 @@ def resources(lowered: Lowered) -> ResourceReport:
             LinkUsage(
                 link=entry["name"] if entry["name"] is not None else link_id,
                 calls_per_shot=entry["calls"],
-                peak_in_flight=_peak(entry["spans"]),
-                max_in_flight=link.max_in_flight,
+                peak_slots_used=_peak(entry["spans"]),
+                slots=link.slots,
                 largest_message_bytes=entry["largest"],
                 slot_bytes=link.slot_bytes,
                 bytes_per_shot=entry["bytes"],
@@ -1011,10 +1011,10 @@ def resources(lowered: Lowered) -> ResourceReport:
             if usage_row.controller is None
             else f"link {usage_row.link!r} on controllers[{usage_row.controller}]"
         )
-        if usage_row.peak_in_flight > usage_row.max_in_flight:
+        if usage_row.peak_slots_used > usage_row.slots:
             found.append(
-                f"{where} holds {usage_row.peak_in_flight} requests at once; it "
-                f"has {usage_row.max_in_flight} slots"
+                f"{where} holds {usage_row.peak_slots_used} requests at once; it "
+                f"has {usage_row.slots} slots"
             )
         if usage_row.largest_message_bytes > usage_row.slot_bytes:
             found.append(
@@ -1061,7 +1061,7 @@ def format_report(report: ResourceReport) -> str:
                 name += f"@{usage.controller}"
             lines.append(
                 f"  {name:<11} {usage.calls_per_shot:>5} "
-                f"{usage.peak_in_flight:>4}/{usage.max_in_flight:<4} "
+                f"{usage.peak_slots_used:>4}/{usage.slots:<4} "
                 f"{usage.largest_message_bytes:>4}/{usage.slot_bytes:<4} {usage.bytes_per_shot:>7}"
             )
     lines.append(f"Per shot: {report.calls_per_shot} calls, {report.buffer_bytes} bytes")

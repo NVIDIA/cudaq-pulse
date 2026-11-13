@@ -68,8 +68,8 @@ def _controllers(processors=False):
     ]
 
 
-def _device(per_controller, processors=False, max_in_flight=1):
-    link = Link(fixed_ns=10, max_in_flight=max_in_flight, per_controller=per_controller)
+def _device(per_controller, processors=False, slots=1):
+    link = Link(fixed_ns=10, slots=slots, per_controller=per_controller)
     system = pulse.ControlSystem(controllers=_controllers(processors), links={"decoder": link})
     return pulse.device(ladder_target(4), control_system=system)
 
@@ -98,13 +98,11 @@ def test_a_system_file_states_a_per_controller_link_in_json_and_toml():
     table = tomllib.loads(
         "[[control_system.controllers]]\ndrive_lines = [0, 1]\nreadout_lines = [0, 1]\n"
         "[[control_system.controllers]]\ndrive_lines = [2, 3]\nreadout_lines = [2, 3]\n"
-        "[control_system.links.decoder]\nfixed_ns = 10\nmax_in_flight = 1\n"
+        "[control_system.links.decoder]\nfixed_ns = 10\nslots = 1\n"
         "per_controller = true\n"
     )
     loaded = pulse.Device.from_dict({"quantum_system": ladder_target(4)} | table)
-    assert loaded.control_system.links["decoder"] == Link(
-        fixed_ns=10, max_in_flight=1, per_controller=True
-    )
+    assert loaded.control_system.links["decoder"] == Link(fixed_ns=10, slots=1, per_controller=True)
     shared = _device(False).as_dict()["control_system"]["links"]["decoder"]
     assert "per_controller" not in shared
 
@@ -135,7 +133,7 @@ def test_each_controller_exports_the_calls_of_its_own_instance():
         assert [e["controller"] for e in calls] == [index, index]
         assert all(e["qudit"] == -1 for e in calls)
     links = resources(lowered).links
-    assert [(u.controller, u.peak_in_flight, u.calls_per_shot) for u in links] == [
+    assert [(u.controller, u.peak_slots_used, u.calls_per_shot) for u in links] == [
         (0, 1, 1),
         (1, 1, 1),
     ]
@@ -174,7 +172,7 @@ def test_one_controller_schedules_a_per_controller_link_as_a_shared_one():
     single = [pulse.Controller(drive_lines=range(4), readout_lines=range(4))]
     reports = []
     for per in (False, True):
-        link = Link(fixed_ns=10, max_in_flight=1, per_controller=per)
+        link = Link(fixed_ns=10, slots=1, per_controller=per)
         system = pulse.ControlSystem(controllers=single, links={"decoder": link})
         qpu = pulse.device(ladder_target(4), control_system=system)
         reports.append(

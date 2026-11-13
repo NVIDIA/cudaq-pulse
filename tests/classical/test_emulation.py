@@ -53,7 +53,7 @@ def adaptive(q):
 
 
 def test_export_and_manifest_are_json():
-    machine = ControlSystem(links={"host": Link(slot_bytes=256, max_in_flight=8)})
+    machine = ControlSystem(links={"host": Link(slot_bytes=256, slots=8)})
     low = pulse.compile(adaptive, control_system=machine).lower(Q[0])
     artifact = json.loads(json.dumps(low.export_emulation()))
     assert artifact["format"] == emulation.FORMAT
@@ -67,7 +67,7 @@ def test_export_and_manifest_are_json():
     assert entry["slot_bytes"] == 256
     assert entry["schema"] == wire.schema(version)
     assert entry["request_bytes"] == 25 and entry["answer_bytes"] == 32
-    assert artifact["links"]["0"]["max_in_flight"] == 8
+    assert artifact["links"]["0"]["slots"] == 8
 
 
 def test_a_call_exports_its_fields_in_order():
