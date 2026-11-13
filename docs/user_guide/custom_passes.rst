@@ -20,8 +20,8 @@ duration), so a pass that inspects the schedule is a plain Python function:
 
    import cudaq_pulse as pulse
 
-   def total_drive_time(lowered: pulse.Lowered) -> int:
-       return sum(e.end - e.start for e in lowered.schedule if e.kind == "drive")
+   def total_drive_time(compiled: pulse.Lowered) -> int:
+       return sum(e.end - e.start for e in compiled.schedule if e.kind == "drive")
 
 ``examples/custom_passes/python_pass.py`` enforces a concurrent-drive limit
 the scheduler does not know about and shows the ``rcp`` schedule satisfying

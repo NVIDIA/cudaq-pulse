@@ -29,8 +29,8 @@ if __name__ == "__main__":
 
     for i in range(4):
         f12_hz = float(qs.transition_freq[i, 1, 2])
-        lowered = excite_to_two.lower(qs.qudits[i], f12_hz)
-        drives = [e for e in lowered.export_to_controller()["events"] if e["kind"] == "drive"]
+        compiled = excite_to_two.lower(qs.qudits[i], f12_hz)
+        drives = [e for e in compiled.export_to_controller()["events"] if e["kind"] == "drive"]
         tones = ", ".join(f"{e['frequency_hz'] / 1e9:.4f}" for e in drives)
         print(f"qudit {i}: drive tones {tones} GHz")
 

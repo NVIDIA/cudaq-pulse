@@ -70,7 +70,7 @@ with its cycles, and its time when the processor has a clock.
 What a program uses of each processor and link
 ----------------------------------------------
 
-``lowered.controller_usage`` is :func:`~cudaq_pulse.controller.usage` of a
+``compiled.controller_usage`` is :func:`~cudaq_pulse.controller.usage` of a
 lowered program: each processor's functions and totals, and each link's
 calls, slots and bytes per shot (``links``). A program over a processor's
 limits does not compile: its ``ControllerLimitError`` carries the report as

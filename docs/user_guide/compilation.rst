@@ -25,8 +25,8 @@ only run it.
 
    rabi(q, 0.3)                    # compiles, then runs; returns None
    rabi(q, 0.4)                    # same compilation, new amplitude
-   lowered = rabi.lower(q, 0.3)    # compiles (or reuses), does not run
-   print(lowered.mlir())
+   compiled = rabi.lower(q, 0.3)    # compiles (or reuses), does not run
+   print(compiled.mlir())
 
 Arguments
 ---------

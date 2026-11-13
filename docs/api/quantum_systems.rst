@@ -80,7 +80,7 @@ size, its state and its compute time at the processor's ``cycles_per_op``, an
 ``OpCycles`` such as ``OpCycles(div=20)``, against its ``max_latency_ns``) and
 each processor's totals; a processor with ``OpClass.LOOP`` ``unsupported``
 runs loops unrolled, and their size is counted so.
-``lowered.controller_usage`` is the report: ``print`` it for a table, or
+``compiled.controller_usage`` is the report: ``print`` it for a table, or
 read ``.within_limits`` and ``.controllers[i].processors[j]``. In a
 description or a system file, a processor is a ``[[processors]]`` table,
 with ``[processors.dispatch_keys]`` beneath it.

@@ -44,10 +44,10 @@ def evolve_pair(qudit_aux, qudit_data):
     wait(drive_line_data, cz_slot)
 
 
-lowered = evolve_pair.lower(qudit_aux, qudit_data)
+compiled = evolve_pair.lower(qudit_aux, qudit_data)
 # The coupling turns at the 2.1 GHz detuning of the two frames: the step
 # resolves it with 24 steps per period.
-result = pulse.simulate(lowered, backend="gpu", dt_ns=0.02, integrator="rk4")
+result = pulse.simulate(compiled, backend="gpu", dt_ns=0.02, integrator="rk4")
 
 state = result.density_matrix
 print(f"=== Final state: qudits {result.qudits}, shape {state.shape} ===")

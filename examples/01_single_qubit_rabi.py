@@ -54,8 +54,8 @@ if __name__ == "__main__":
     print("\n=== The same kernel on a quantum system with a 1 GHz clock ===")
     slow = pulse.quantum_system("transmon_17q", clock_ghz=1.0)
     for quantum_system in (qs, slow):
-        lowered = rabi.lower(quantum_system.qudits[0], cal["rabi_duration"], 0.5)
-        cycles = lowered.schedule[0].duration_cycles
+        compiled = rabi.lower(quantum_system.qudits[0], cal["rabi_duration"], 0.5)
+        cycles = compiled.schedule[0].duration_cycles
         print(f"  {quantum_system.clock_ghz:g} GHz: {cal['rabi_duration']} is {cycles} cycles")
 
     print("\n=== With readout ===")

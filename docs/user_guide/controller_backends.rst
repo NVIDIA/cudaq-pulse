@@ -472,7 +472,7 @@ plays it, the waveforms made from it too; samples given to
 on a runtime qudit's line, whose rate depends on the call, ``custom()`` is
 a compile error when the controllers' rates differ.
 
-Each controller gets its own program: ``lowered.export_to_controller(controller=k)``
+Each controller gets its own program: ``compiled.export_to_controller(controller=k)``
 is controller ``k``'s part, in its own cycles, with ``"controller": k``,
 its ``lines`` and ``limits``, and the events it takes part in: those on its
 lines, a sync with only its lines, the submit of a call whose measurements
@@ -640,7 +640,7 @@ each violated limit. A limit that only some values of a ``float``
 parameter exceed, such as the tones a frequency shift adds or the memory
 a waveform width takes, is checked when a call supplies the values, once
 per distinct values, so a call that compiles also exports.
-``cudaq_pulse.controller.check(lowered, limits)`` returns the violations
+``cudaq_pulse.controller.check(compiled, limits)`` returns the violations
 without raising. A control system without controllers checks nothing
 more.
 

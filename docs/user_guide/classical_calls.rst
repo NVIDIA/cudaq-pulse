@@ -206,7 +206,7 @@ takes. They belong to the control system, by name:
            "controller": Link(fixed_ns=4, feedback_ns=8, slots=4),
        }
    )
-   lowered = pulse.compile(kernel, quantum_system=qs, control_system=control_system).lower(q)
+   compiled = pulse.compile(kernel, quantum_system=qs, control_system=control_system).lower(q)
 
 A function's ``link=`` names a link of the control system, or gives a link
 id: the link's position, so the first is link 0, the default. A link id the
@@ -346,7 +346,7 @@ it.
 .. code-block:: python
    :class: fragment
 
-   result = pulse.simulate(lowered, initial_state=plus, latency_branching=True)
+   result = pulse.simulate(compiled, initial_state=plus, latency_branching=True)
    for branch in result.branches:
        print(branch.levels, branch.probability, branch.answers("decode"))
 
@@ -441,7 +441,7 @@ or id; a name the control system has no link for is an ``InvalidValueError``.
    from cudaq_pulse.classical import emulation
 
    run = emulation.emulate(
-       lowered,
+       compiled,
        shots_count=200,
        transport={"gpu": emulation.Transport(fixed_ns=120, jitter_ns=40)},
        seed=1,
@@ -598,14 +598,14 @@ answer's length; under ASAP the excitation plays as early as it can, and
 the qubit also decays through the call's latency.
 
 A program that measures hundreds of times in one shot is simulated one
-path per shot: ``pulse.simulate(lowered, shots_count=n, branches="sampled")``. Idle
+path per shot: ``pulse.simulate(compiled, shots_count=n, branches="sampled")``. Idle
 waits and square pulses are propagated exactly, so a shot's cost does not
 grow with its waits.
 
 What it costs the controller
 ----------------------------
 
-``lowered.controller_usage`` reads the body of each classical function a
+``compiled.controller_usage`` reads the body of each classical function a
 processor runs once and reports how many operations it holds, its state in
 bytes, its compute time against its ``max_latency_ns`` and its calls per
 shot, with each link's calls, slots and bytes per shot. An expression of
@@ -631,8 +631,8 @@ from the ``Processor`` of a controller that runs the functions on its
        controllers=[pulse.Controller(processors=[processor])],
        links={"controller": Link(fixed_ns=4)},
    )
-   lowered = pulse.compile(chain, quantum_system=qs, control_system=system).lower(q)
-   print(lowered.controller_usage)
+   compiled = pulse.compile(chain, quantum_system=qs, control_system=system).lower(q)
+   print(compiled.controller_usage)
 
 .. :spellcheck-enable:
 

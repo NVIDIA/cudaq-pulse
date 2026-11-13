@@ -126,9 +126,9 @@ if __name__ == "__main__":
     # Start in (|0> + |1>) / sqrt(2): each outcome is equally likely, and
     # either way the qubit ends in |0>.
     reset_demo = pulse.quantum_system(target)
-    lowered = pulse.compile(active_reset, quantum_system=reset_demo).lower(reset_demo.qudits[0])
+    compiled = pulse.compile(active_reset, quantum_system=reset_demo).lower(reset_demo.qudits[0])
     result = pulse.simulate(
-        lowered, initial_state=[2**-0.5, 2**-0.5, 0.0], shots_count=1000, seed=7
+        compiled, initial_state=[2**-0.5, 2**-0.5, 0.0], shots_count=1000, seed=7
     )
     for branch in result.branches:
         print(f"  measured {branch.levels}: p = {branch.probability:.3f}")
