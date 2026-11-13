@@ -56,7 +56,7 @@ def test_a_device_config_without_a_control_system_loads_no_clock_modules(tmp_pat
         "    d = get_drive_line(q)\n"
         "    drive(d, square(40, 0.1))\n"
         "dev = p.quantum_system(\n"
-        "    name='t', qudits={0: PhysicalQudit(0, 5e9, -300e6, 50.0, 30.0)}\n"
+        "    name='t', qudits={0: PhysicalQudit(0, 5e9, 50.0, 30.0, anharmonicity_hz=-300e6)}\n"
         ")\n"
         "p.compile(k, quantum_system=dev).lower(dev.qudits[0])\n"
         "print(sorted(m for m in ('cudaq_pulse._clocks', 'cudaq_pulse._system',"

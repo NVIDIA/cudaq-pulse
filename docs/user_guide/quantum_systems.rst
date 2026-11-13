@@ -46,9 +46,17 @@ g (a^dagger b + a b^dagger):
    cz = FluxCZ(duration_ns=98.0)
    qpu = pulse.quantum_system(
        name="pair",
-       qudits={i: PhysicalQudit(i, f, -2.0e8, 50.0, 30.0) for i, f in enumerate([4.8e9, 6.9e9])},
+       qudits={
+           i: PhysicalQudit(i, f, 50.0, 30.0, anharmonicity_hz=-2.0e8)
+           for i, f in enumerate([4.8e9, 6.9e9])
+       },
        couplings=[Coupling((0, 1), strength_hz=5.7e6, calibrations={pulse.gates.CZ: cz})],
    )
+
+A ``PhysicalQudit`` takes its index, 0-1 frequency (Hz), T1 and T2* (us) in
+that order, and the rest by keyword. ``anharmonicity_hz`` is left out where
+a qudit has none to give; a transmon of more than two levels needs it, and
+compiling or simulating one without it is an error naming the qudit.
 
 A coupling's ``strength_hz`` is g / 2 pi; ``None`` says it is not measured
 yet, and such a system compiles, schedules and exports while

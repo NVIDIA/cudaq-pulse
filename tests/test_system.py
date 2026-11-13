@@ -718,13 +718,13 @@ def test_a_qudit_s_drive_and_readout_round_trip_through_the_system_file():
         0: PhysicalQudit(
             0,
             5.0e9,
-            -2e8,
             50.0,
             30.0,
+            anharmonicity_hz=-2e8,
             drive=MicrowaveDrive(amplitude_scale_rad_per_ns=0.3),
             readout=readout,
         ),
-        1: PhysicalQudit(1, 5.1e9, -2e8, 50.0, 30.0),
+        1: PhysicalQudit(1, 5.1e9, 50.0, 30.0, anharmonicity_hz=-2e8),
     }
     dev = pulse.quantum_system(name="ro", qudits=qudits)
     written = _round_trip(dev)["qudits"]
@@ -732,14 +732,16 @@ def test_a_qudit_s_drive_and_readout_round_trip_through_the_system_file():
     assert written[0]["readout"]["frequency_hz"] == 7.1e9
     assert written[0]["drive"] == {"kind": "microwave", "amplitude_scale_rad_per_ns": 0.3}
     assert written[1]["readout"] is None and written[1]["drive"] is None
-    other = PhysicalQudit(0, 5.0e9, -2e8, 50.0, 30.0, readout=readout.replace(linewidth_hz=2e6))
+    other = PhysicalQudit(
+        0, 5.0e9, 50.0, 30.0, anharmonicity_hz=-2e8, readout=readout.replace(linewidth_hz=2e6)
+    )
     moved = pulse.quantum_system(name="ro", qudits={**qudits, 0: other})
     assert moved.fingerprint != dev.fingerprint
 
 
 def test_a_system_file_refuses_an_unknown_component_kind_or_field():
     data = pulse.quantum_system(
-        name="ro", qudits={0: PhysicalQudit(0, 5.0e9, -2e8, 50.0, 30.0)}
+        name="ro", qudits={0: PhysicalQudit(0, 5.0e9, 50.0, 30.0, anharmonicity_hz=-2e8)}
     ).as_dict()
     qudit = data["qudits"][0]
     qudit["readout"] = {"kind": "fluorescence"}
@@ -785,7 +787,10 @@ def test_a_program_clock_round_trips_through_the_system_file():
 def test_a_custom_quantum_system_is_written_inline_with_the_new_key_names():
     qpu = pulse.quantum_system(
         name="pair",
-        qudits={i: PhysicalQudit(i, 5e9 + i * 1e8, -2.5e8, 50.0, 40.0) for i in range(2)},
+        qudits={
+            i: PhysicalQudit(i, 5e9 + i * 1e8, 50.0, 40.0, anharmonicity_hz=-2.5e8)
+            for i in range(2)
+        },
         couplings=[Coupling((0, 1), 3e6)],
     )
     data = _round_trip(qpu)
@@ -934,7 +939,9 @@ def test_doctor_checks_a_system_file(tmp_path):
 def test_a_system_file_keeps_the_simulation_model():
     qpu = pulse.quantum_system(
         name="other-pair",
-        qudits={i: PhysicalQudit(i, 5e9 + i * 1e8, 0.0, 50.0, 40.0) for i in range(2)},
+        qudits={
+            i: PhysicalQudit(i, 5e9 + i * 1e8, 50.0, 40.0, anharmonicity_hz=0.0) for i in range(2)
+        },
         model=SimulationModel(levels={1: 3}),
     )
     data = qpu.as_dict()
@@ -965,7 +972,9 @@ def test_a_system_file_names_a_model_it_cannot_hold():
 
     target = pulse.quantum_system(
         name="custom-pair",
-        qudits={i: PhysicalQudit(i, 5e9 + i * 1e8, 0.0, 50.0, 40.0) for i in range(2)},
+        qudits={
+            i: PhysicalQudit(i, 5e9 + i * 1e8, 50.0, 40.0, anharmonicity_hz=0.0) for i in range(2)
+        },
         model=Custom,
     )
     with pytest.raises(InvalidValueError, match="Custom is not one"):

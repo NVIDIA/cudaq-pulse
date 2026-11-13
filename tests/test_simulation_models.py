@@ -21,7 +21,9 @@ def _target(model=TransmonModel, n=3):
     return pulse.quantum_system(
         name="models",
         qudits={
-            q: PhysicalQudit(q, 5.0e9 + 0.1e9 * q, -300.0e6, t1_us=0.0, t2_star_us=0.0)
+            q: PhysicalQudit(
+                q, 5.0e9 + 0.1e9 * q, anharmonicity_hz=-300.0e6, t1_us=0.0, t2_star_us=0.0
+            )
             for q in range(n)
         },
         model=model,

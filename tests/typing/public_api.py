@@ -249,9 +249,9 @@ DragPulse(duration_ns=40.0)  # type: ignore[call-arg]
 qudit = PhysicalQudit(
     0,
     5.0e9,
-    -2.0e8,
     50.0,
     30.0,
+    anharmonicity_hz=-2.0e8,
     drive=MicrowaveDrive(amplitude_scale_rad_per_ns=0.2),
     readout=readout,
     calibrations={pulse.gates.X: x, pulse.gates.READOUT: ReadoutPulse(duration_ns=300.0)},
@@ -287,7 +287,7 @@ assert_type(zz.rate_hz, float)
 ResidualZZ((0, 1), 1.5e4, zz_coupling=0.5)  # type: ignore[call-arg]
 pair = pulse.quantum_system(
     name="pair",
-    qudits={0: PhysicalQudit(0, 5.0e9, -2.5e8, 50.0, 30.0)},
+    qudits={0: PhysicalQudit(0, 5.0e9, 50.0, 30.0, anharmonicity_hz=-2.5e8)},
     couplings=[edge],
     residual_zz=[zz],
 )

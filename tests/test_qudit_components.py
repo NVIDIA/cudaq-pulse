@@ -18,6 +18,8 @@ from cudaq_pulse.quantum_systems import (
     MicrowaveDrive,
     PhysicalQudit,
     Readout,
+    SimulationModel,
+    TransmonModel,
     transmon_surface17,
 )
 from cudaq_pulse.runtime._call_tree import ReadoutModel
@@ -45,7 +47,7 @@ class _Optical(Drive):
 
 def _target(**members):
     return pulse.quantum_system(
-        name="c", qudits={0: PhysicalQudit(0, 5e9, -2e8, 10.0, 5.0, **members)}
+        name="c", qudits={0: PhysicalQudit(0, 5e9, 10.0, 5.0, anharmonicity_hz=-2e8, **members)}
     )
 
 
@@ -94,13 +96,43 @@ def test_the_components_hold_physics_and_not_tuned_pulses():
             DispersiveReadout(**{tuned: 1.0})
 
 
+def test_the_anharmonicity_is_a_keyword_a_qudit_may_leave_out():
+    with pytest.raises(TypeError):
+        PhysicalQudit(0, 5e9, -2e8, 50.0, 30.0)  # type: ignore[misc]
+    qudit = PhysicalQudit(0, 5e9, 50.0, 30.0)
+    assert (qudit.t1_us, qudit.t2_star_us, qudit.anharmonicity_hz) == (50.0, 30.0, None)
+    assert pickle.loads(pickle.dumps(qudit)) == qudit == copy.deepcopy(qudit)
+    two_levels = TransmonModel(levels={0: 2})
+    assert (
+        pulse.quantum_system(name="two", qudits={0: qudit}, model=two_levels).qudit_freq[0] == 5e9
+    )
+    evenly = pulse.quantum_system(
+        name="even", qudits={0: qudit}, model=SimulationModel(levels={0: 3})
+    )
+    assert evenly.transition_freq[0, 1, 2] == 5e9
+    three_levels = pulse.quantum_system(name="three", qudits={0: qudit})
+    with pytest.raises(
+        pulse.InvalidValueError,
+        match=r"qudit 0 gives no anharmonicity_hz, which a transmon of 3 levels needs: .*"
+        r"TransmonModel\(levels=\{0: 2\}\)",
+    ):
+        _ = three_levels.transition_freq
+
+
 def test_the_depletion_comes_from_the_readout():
-    explicit = PhysicalQudit(0, 5e9, -2e8, 1, 1, readout=DispersiveReadout(depletion_ns=250.0))
-    from_kappa = PhysicalQudit(0, 5e9, -2e8, 1, 1, readout=DispersiveReadout(linewidth_hz=1e6))
+    explicit = PhysicalQudit(
+        0, 5e9, 1, 1, anharmonicity_hz=-2e8, readout=DispersiveReadout(depletion_ns=250.0)
+    )
+    from_kappa = PhysicalQudit(
+        0, 5e9, 1, 1, anharmonicity_hz=-2e8, readout=DispersiveReadout(linewidth_hz=1e6)
+    )
     assert explicit.depletion_ns == 250.0
     assert from_kappa.depletion_ns == pytest.approx(math.log(100) / (2 * math.pi * 1e-3))
-    assert PhysicalQudit(0, 5e9, -2e8, 1, 1).depletion_ns == 0.0
-    assert PhysicalQudit(0, 5e9, -2e8, 1, 1, readout=_Fluorescence()).depletion_ns == 0.0
+    assert PhysicalQudit(0, 5e9, 1, 1, anharmonicity_hz=-2e8).depletion_ns == 0.0
+    assert (
+        PhysicalQudit(0, 5e9, 1, 1, anharmonicity_hz=-2e8, readout=_Fluorescence()).depletion_ns
+        == 0.0
+    )
 
 
 def test_the_shipped_target_describes_its_drive_and_readout():

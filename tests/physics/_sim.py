@@ -31,9 +31,9 @@ def quantum_system(freqs_hz, alphas_hz, couplings=(), t1_us=0.0, t2_us=0.0, **qu
             i: PhysicalQudit(
                 i,
                 f,
-                a,
                 t1_us,
                 t2_us,
+                anharmonicity_hz=a,
                 drive=MicrowaveDrive(amplitude_scale_rad_per_ns=1.0),
                 **qudit,
             )

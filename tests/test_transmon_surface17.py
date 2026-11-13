@@ -144,7 +144,7 @@ def test_a_coupled_pair_idles_with_its_dispersive_zz(target, pair):
     index = {q.label: i for i, q in target.physical_qudits.items()}
     a, d = (index[label] for label in pair)
     qudits = {
-        k: PhysicalQudit(k, q.frequency_hz, q.anharmonicity_hz, 0.0, 0.0)
+        k: PhysicalQudit(k, q.frequency_hz, 0.0, 0.0, anharmonicity_hz=q.anharmonicity_hz)
         for k, q in enumerate((target.physical_qudits[a], target.physical_qudits[d]))
     }
     (g_hz,) = (c.strength_hz for c in target.couplings if c.qudits == (a, d))
@@ -205,7 +205,7 @@ def test_the_time_step_resolves_the_fastest_coupled_detuning():
     pair = pulse.quantum_system(
         name="x1-d2",
         qudits={
-            i: PhysicalQudit(i, q.idle_frequency_hz, q.anharmonicity_hz, 0.0, 0.0)
+            i: PhysicalQudit(i, q.idle_frequency_hz, 0.0, 0.0, anharmonicity_hz=q.anharmonicity_hz)
             for i, q in enumerate((x1, d2))
         },
         couplings=[Coupling((0, 1), _k.COUPLING_11_20_HZ / math.sqrt(2.0))],

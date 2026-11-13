@@ -63,7 +63,10 @@ def evolve(lowered, *, t_start, t_end, step_count, integrator="rk4", levels=2, i
 def frequency_target(qudit_freq_hz, clock_ghz=2.0):
     return pulse.quantum_system(
         name="frequencies",
-        qudits={q: PhysicalQudit(q, f, -300e6, 50.0, 30.0) for q, f in qudit_freq_hz.items()},
+        qudits={
+            q: PhysicalQudit(q, f, 50.0, 30.0, anharmonicity_hz=-300e6)
+            for q, f in qudit_freq_hz.items()
+        },
         clock_ghz=clock_ghz,
     )
 

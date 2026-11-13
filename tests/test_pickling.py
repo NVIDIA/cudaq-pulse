@@ -156,9 +156,9 @@ def test_targets_and_their_parts_unpickle_equal_with_equal_hashes():
     qudit = PhysicalQudit(
         3,
         5.1e9,
-        -300e6,
         50.0,
         30.0,
+        anharmonicity_hz=-300e6,
         label="D3",
         drive=MicrowaveDrive(amplitude_scale_rad_per_ns=0.2),
         calibrations={pulse.gates.X: DragPulse(duration_ns=40.0, sigma_ns=10.0)},
@@ -179,9 +179,15 @@ def test_targets_and_their_parts_unpickle_equal_with_equal_hashes():
 
 
 def test_targets_compare_by_content():
-    a = pulse.quantum_system(name="t", qudits={0: PhysicalQudit(0, 5e9, -3e8, 50.0, 30.0)})
-    b = pulse.quantum_system(name="t", qudits={0: PhysicalQudit(0, 5e9, -3e8, 50.0, 30.0)})
-    c = pulse.quantum_system(name="t", qudits={0: PhysicalQudit(0, 5.1e9, -3e8, 50.0, 30.0)})
+    a = pulse.quantum_system(
+        name="t", qudits={0: PhysicalQudit(0, 5e9, 50.0, 30.0, anharmonicity_hz=-3e8)}
+    )
+    b = pulse.quantum_system(
+        name="t", qudits={0: PhysicalQudit(0, 5e9, 50.0, 30.0, anharmonicity_hz=-3e8)}
+    )
+    c = pulse.quantum_system(
+        name="t", qudits={0: PhysicalQudit(0, 5.1e9, 50.0, 30.0, anharmonicity_hz=-3e8)}
+    )
     assert a == b and hash(a) == hash(b)
     assert a != c and a != "t"
 

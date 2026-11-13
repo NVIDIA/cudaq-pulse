@@ -92,7 +92,9 @@ def test_compile_single_qudit():
 def _sparse_device():
     from cudaq_pulse.quantum_systems import PhysicalQudit
 
-    qudits = {i: PhysicalQudit(i, 5.0e9 + 1e8 * i, -300e6, 50.0, 30.0) for i in (0, 2)}
+    qudits = {
+        i: PhysicalQudit(i, 5.0e9 + 1e8 * i, 50.0, 30.0, anharmonicity_hz=-300e6) for i in (0, 2)
+    }
     return pulse.quantum_system(name="sparse", qudits=qudits)
 
 

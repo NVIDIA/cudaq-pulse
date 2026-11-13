@@ -18,9 +18,9 @@ TARGET = pulse.quantum_system(
         i: PhysicalQudit(
             i,
             5.0e9 + 0.2e9 * i,
-            -300e6,
             0.0,
             0.0,
+            anharmonicity_hz=-300e6,
             drive=MicrowaveDrive(amplitude_scale_rad_per_ns=1.0),
         )
         for i in range(2)

@@ -137,7 +137,7 @@ def test_a_compiled_module_gives_the_frequencies_it_is_compiled_for():
 def test_simulate_writes_the_simulated_systems_own_frequencies():
     compiled_for = ladder_target(1)
     detuned = pulse.quantum_system(
-        name="detuned", qudits={0: PhysicalQudit(0, 5.001e9, -300e6, 50.0, 30.0)}
+        name="detuned", qudits={0: PhysicalQudit(0, 5.001e9, 50.0, 30.0, anharmonicity_hz=-300e6)}
     )
     lowered = pulse.compile(_one_pulse, quantum_system=compiled_for).lower(compiled_for.qudits[0])
     pulse.simulate(lowered, dt_ns=0.125, quantum_system=detuned)

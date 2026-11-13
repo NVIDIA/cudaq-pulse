@@ -37,7 +37,12 @@ def _pair(f0, f1, *, g_hz=0.0, zz_hz=0.0, alphas=(-200.0e6, -180.0e6)):
         name="coupled-pair",
         qudits={
             q: PhysicalQudit(
-                q, f, a, 0.0, 0.0, drive=MicrowaveDrive(amplitude_scale_rad_per_ns=1.0)
+                q,
+                f,
+                0.0,
+                0.0,
+                anharmonicity_hz=a,
+                drive=MicrowaveDrive(amplitude_scale_rad_per_ns=1.0),
             )
             for q, (f, a) in enumerate(zip((f0, f1), alphas, strict=True))
         },

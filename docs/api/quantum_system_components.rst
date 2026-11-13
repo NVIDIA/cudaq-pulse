@@ -67,7 +67,7 @@ reads them, deriving what is not published:
    from cudaq_pulse.quantum_systems import DragPulse, PhysicalQudit, ReadoutPulse
 
    qubit = PhysicalQudit(
-       0, 5.0e9, -2.0e8, 50.0, 30.0,
+       0, 5.0e9, 50.0, 30.0, anharmonicity_hz=-2.0e8,
        calibrations={
            pulse.gates.X: DragPulse(duration_ns=40.0, sigma_ns=10.0),
            pulse.gates.READOUT: ReadoutPulse(duration_ns=300.0, integration_ns=400.0),

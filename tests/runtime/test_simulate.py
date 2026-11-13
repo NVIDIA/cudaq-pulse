@@ -360,7 +360,7 @@ def test_the_check_follows_the_model_s_levels_not_a_transmon_s():
     # Evenly spaced levels (no anharmonicity) all turn with the frame.
     harmonic = pulse.quantum_system(
         name="harmonic",
-        qudits={0: PhysicalQudit(0, 5.0e9, 0.0, 0.0, 0.0)},
+        qudits={0: PhysicalQudit(0, 5.0e9, 0.0, 0.0, anharmonicity_hz=0.0)},
     )
     with warnings.catch_warnings():
         warnings.simplefilter("error", pulse.PulseWarning)
@@ -482,7 +482,10 @@ def test_a_gpu_result_that_is_not_finite_raises(monkeypatch):
 def test_a_step_too_coarse_for_coupled_qudits_names_their_detuning():
     pair = pulse.quantum_system(
         name="pair",
-        qudits={q: PhysicalQudit(q, 5.0e9 + 2.0e9 * q, -200.0e6, 0.0, 0.0) for q in range(2)},
+        qudits={
+            q: PhysicalQudit(q, 5.0e9 + 2.0e9 * q, 0.0, 0.0, anharmonicity_hz=-200.0e6)
+            for q in range(2)
+        },
         couplings=[Coupling((0, 1), 5.0e6)],
     )
     with pytest.warns(

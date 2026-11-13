@@ -28,7 +28,10 @@ from cudaq_pulse.quantum_systems.base import _COUPLING_OPERATORS, _coupling_oper
 
 
 def _qudits(n=3):
-    return {i: PhysicalQudit(i, 5.0e9 + 1.0e8 * i, -2.5e8, 50.0, 40.0) for i in range(n)}
+    return {
+        i: PhysicalQudit(i, 5.0e9 + 1.0e8 * i, 50.0, 40.0, anharmonicity_hz=-2.5e8)
+        for i in range(n)
+    }
 
 
 def _system(**fields):

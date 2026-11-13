@@ -30,7 +30,7 @@ _READOUT = ReadoutPulse(duration_ns=300.0, sigma_ns=10.0, integration_ns=400.0)
 
 def _qudit(index=0, **fields):
     fields.setdefault("calibrations", {X: _X, READOUT: _READOUT})
-    return PhysicalQudit(index, 5.0e9 + 1e8 * index, -2.0e8, 50.0, 30.0, **fields)
+    return PhysicalQudit(index, 5.0e9 + 1e8 * index, 50.0, 30.0, anharmonicity_hz=-2.0e8, **fields)
 
 
 def _device(**fields):

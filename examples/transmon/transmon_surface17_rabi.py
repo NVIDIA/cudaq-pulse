@@ -28,7 +28,8 @@ clock_ghz = qs.clock_ghz  # the program clock the schedule counts cycles of
 print(f"Quantum system: {qs.name} ({len(qs.physical_qudits)} qudits)")
 print(f"Qubit {qudit_d5.label} (idx {qudit_idx}):")
 print(f"  frequency = {qudit_d5.frequency_hz / 1e9:.3f} GHz")
-print(f"  anharmonicity = {qudit_d5.anharmonicity_hz / 1e6:.1f} MHz")
+if qudit_d5.anharmonicity_hz is not None:
+    print(f"  anharmonicity = {qudit_d5.anharmonicity_hz / 1e6:.1f} MHz")
 print(f"  T1 = {qudit_d5.t1_us:.1f} us, T2* = {qudit_d5.t2_star_us:.1f} us")
 
 # The quantum system's X calibration: the published pulse shape, and (with no

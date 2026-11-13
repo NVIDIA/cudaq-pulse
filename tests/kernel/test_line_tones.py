@@ -141,7 +141,7 @@ def test_tones_lists_the_transitions_of_the_qudit_s_levels():
 def _target(model):
     return pulse.quantum_system(
         name="tones-test",
-        qudits={0: PhysicalQudit(0, 5.0e9, -200e6, 50.0, 30.0)},
+        qudits={0: PhysicalQudit(0, 5.0e9, 50.0, 30.0, anharmonicity_hz=-200e6)},
         model=model,
     )
 
@@ -291,9 +291,9 @@ def test_driving_the_second_transition_moves_the_qudit_to_level_two():
             0: PhysicalQudit(
                 0,
                 5.0e9,
-                -200e6,
                 0.0,
                 0.0,
+                anharmonicity_hz=-200e6,
                 drive=MicrowaveDrive(amplitude_scale_rad_per_ns=1.0),
             )
         },

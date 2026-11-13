@@ -19,7 +19,8 @@ from cudaq_pulse.quantum_systems import PhysicalQudit
 PI_AMP = math.pi / 20  # square(40, PI_AMP) is a pi pulse
 
 _DEVICE = pulse.quantum_system(
-    name="three", qudits={i: PhysicalQudit(i, 5e9 + 1e8 * i, -2e8, 0.0, 0.0) for i in range(3)}
+    name="three",
+    qudits={i: PhysicalQudit(i, 5e9 + 1e8 * i, 0.0, 0.0, anharmonicity_hz=-2e8) for i in range(3)},
 )
 
 

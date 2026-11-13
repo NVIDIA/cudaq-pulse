@@ -57,8 +57,13 @@ def _level_attributes(
     fields = [f"level_counts = [{', '.join(map(str, by_index))}]"]
     if any(d > 2 for d in dims):
         alphas = [0.0] * _extent(qudits)
-        for q in qudits:
-            alphas[q] = float(target.qudits[q].anharmonicity_hz)
+        for q, d in zip(qudits, dims, strict=False):
+            qudit = target.qudits[q]
+            if qudit.anharmonicity_hz is None:
+                # The model refuses the levels if they need the anharmonicity.
+                model.energies_hz(qudit, d)
+                continue
+            alphas[q] = float(qudit.anharmonicity_hz)
         fields.append(f"anharmonicity_hz = {_f64_list(alphas)}")
     return dims, ", ".join(fields)
 

@@ -26,7 +26,9 @@ from tests._handles import Q
 
 PI_AMP = math.pi / 20  # square(40, PI_AMP) is a pi pulse at 2 GHz
 
-_DEVICE = pulse.quantum_system(name="sim", qudits={0: PhysicalQudit(0, 5e9, -2e8, 0.0, 0.0)})
+_DEVICE = pulse.quantum_system(
+    name="sim", qudits={0: PhysicalQudit(0, 5e9, 0.0, 0.0, anharmonicity_hz=-2e8)}
+)
 
 
 def _answers(n=5, x=0.05, b=1):

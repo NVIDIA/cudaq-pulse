@@ -281,7 +281,10 @@ def _device(system: ControlSystem) -> Any:
     clock = limits.clock_ghz if limits is not None and limits.clock_ghz else 1.0
     return pulse.quantum_system(
         name="validation",
-        qudits={i: PhysicalQudit(i, 5.0e9 + 1.5e8 * i, -2.5e8, 50.0, 30.0) for i in range(_QUDITS)},
+        qudits={
+            i: PhysicalQudit(i, 5.0e9 + 1.5e8 * i, 50.0, 30.0, anharmonicity_hz=-2.5e8)
+            for i in range(_QUDITS)
+        },
         clock_ghz=clock,
     )
 

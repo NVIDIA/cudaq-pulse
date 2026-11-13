@@ -132,6 +132,14 @@ class TransmonModel(SimulationModel):
 
     def energies_hz(self, qudit: PhysicalQudit, levels: int) -> list[float]:
         f01, alpha = qudit.frequency_hz, qudit.anharmonicity_hz
+        if alpha is None:
+            if levels > 2:
+                raise InvalidValueError(
+                    f"qudit {qudit.index} gives no anharmonicity_hz, which a transmon of "
+                    f"{levels} levels needs: give PhysicalQudit(..., anharmonicity_hz=...), "
+                    f"or simulate it with two levels (TransmonModel(levels={{{qudit.index}: 2}}))"
+                )
+            alpha = 0.0
         return [k * f01 + k * (k - 1) / 2 * alpha for k in range(levels)]
 
     def _simulate(self, *args: Any, **options: Any) -> SimulationResult:

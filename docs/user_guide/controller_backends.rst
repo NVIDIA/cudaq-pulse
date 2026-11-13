@@ -830,7 +830,7 @@ same name:
    backends.register("text", TextBackend)
    backend = backends.get("text")
    qs = pulse.quantum_system(
-       name="one-qubit", qudits={0: PhysicalQudit(0, 5.0e9, -2.0e8, 50.0, 30.0)}, clock_ghz=1.0
+       name="one-qubit", qudits={0: PhysicalQudit(0, 5.0e9, 50.0, 30.0, anharmonicity_hz=-2.0e8)}, clock_ghz=1.0
    )
    cal = {"x_duration": 40 * pulse.ns, "x_sigma": 10 * pulse.ns, "readout_duration": 200 * pulse.ns}
 

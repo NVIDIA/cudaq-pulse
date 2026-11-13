@@ -27,7 +27,10 @@ from tests.runtime._lowering import on
 def _target(alpha_hz=-200.0e6, couplings=(), **parts):
     return pulse.quantum_system(
         name="step-cache",
-        qudits={q: PhysicalQudit(q, 5.0e9 + 2.0e9 * q, alpha_hz, 0.0, 0.0) for q in range(2)},
+        qudits={
+            q: PhysicalQudit(q, 5.0e9 + 2.0e9 * q, 0.0, 0.0, anharmonicity_hz=alpha_hz)
+            for q in range(2)
+        },
         couplings=list(couplings),
         **parts,
     )

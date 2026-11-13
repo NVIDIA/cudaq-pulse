@@ -20,7 +20,10 @@ from tests.test_controller import answered, chained, chosen_by_readout, frame_in
 _TARGET = pulse.quantum_system(
     name="structured",
     clock_ghz=2.0,
-    qudits={i: PhysicalQudit(i, 5.0e9 + 1.0e7 * i, -2.0e8, 50.0, 30.0) for i in range(4)},
+    qudits={
+        i: PhysicalQudit(i, 5.0e9 + 1.0e7 * i, 50.0, 30.0, anharmonicity_hz=-2.0e8)
+        for i in range(4)
+    },
 )
 _DEV = _TARGET
 Q = _DEV.qudits

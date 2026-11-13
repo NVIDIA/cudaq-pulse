@@ -641,14 +641,14 @@ def _drive_scale(qudit: PhysicalQudit) -> float:
 
 class _QuditFields:
     """The fields of a ``PhysicalQudit``, which its ``__init__`` stores through
-    ``_Unfrozen``: the same layout, without PhysicalQudit's read-only ``__setattr__``."""
+    this class: the same layout, without PhysicalQudit's read-only ``__setattr__``."""
 
     __slots__ = (
         "index",
         "frequency_hz",
-        "anharmonicity_hz",
         "t1_us",
         "t2_star_us",
+        "anharmonicity_hz",
         "label",
         "drive",
         "readout",
@@ -660,9 +660,9 @@ class _QuditFields:
 
     index: int
     frequency_hz: float
-    anharmonicity_hz: float
     t1_us: float
     t2_star_us: float
+    anharmonicity_hz: float | None
     label: str
     drive: Drive | None
     readout: Readout | None
@@ -675,10 +675,6 @@ class _QuditFields:
     metadata: Mapping[str, Any]
 
 
-class _Unfrozen(_QuditFields):
-    __slots__ = ()
-
-
 # A qubit's fields but its metadata, in the order of PhysicalQudit's arguments.
 _QUDIT_STATE = attrgetter(*_QuditFields.__slots__[:-1])
 
@@ -686,6 +682,9 @@ _QUDIT_STATE = attrgetter(*_QuditFields.__slots__[:-1])
 class PhysicalQudit(_QuditFields):
     """One qudit of a quantum system.
 
+    ``anharmonicity_hz`` is where a level above the first sits off evenly
+    spaced levels; ``None`` (the default) is a qudit that gives none, which
+    a ``TransmonModel`` of more than two levels refuses, naming the qudit.
     ``drive`` and ``readout`` are its physics: how it is driven and read
     out, each by the component of its modality (``MicrowaveDrive``,
     ``DispersiveReadout``), or ``None`` when not given. ``calibrations``
@@ -699,28 +698,16 @@ class PhysicalQudit(_QuditFields):
     """
 
     __slots__ = ()
-    __match_args__ = (
-        "index",
-        "frequency_hz",
-        "anharmonicity_hz",
-        "t1_us",
-        "t2_star_us",
-        "label",
-        "drive",
-        "readout",
-        "t2_echo_us",
-        "thermal_population",
-        "calibrations",
-        "metadata",
-    )
+    __match_args__ = ("index", "frequency_hz", "t1_us", "t2_star_us")
 
     def __init__(
         self,
         index: int,
         frequency_hz: float,
-        anharmonicity_hz: float,
         t1_us: float,
         t2_star_us: float,
+        *,
+        anharmonicity_hz: float | None = None,
         label: str = "",
         drive: Drive | None = None,
         readout: Readout | None = None,
@@ -734,12 +721,12 @@ class PhysicalQudit(_QuditFields):
         if metadata is not _EMPTY:
             metadata = _metadata(metadata, index)
         cls = self.__class__
-        object.__setattr__(self, "__class__", _Unfrozen)
+        object.__setattr__(self, "__class__", _QuditFields)
         self.index = index
         self.frequency_hz = frequency_hz
-        self.anharmonicity_hz = anharmonicity_hz
         self.t1_us = t1_us
         self.t2_star_us = t2_star_us
+        self.anharmonicity_hz = anharmonicity_hz
         self.label = label
         self.drive = drive
         self.readout = readout
@@ -768,10 +755,31 @@ class PhysicalQudit(_QuditFields):
         return f"{type(self).__name__}({shown})"
 
     def __reduce__(self) -> tuple[Any, ...]:
+        # Most fields are keyword-only: a new instance takes them as state.
         state = _QUDIT_STATE(self)
         if self.metadata:
-            return (type(self), (*state, dict(self.metadata)))
-        return (type(self), state)
+            state = (*state, dict(self.metadata))
+        return (object.__new__, (type(self),), state)
+
+    def __setstate__(self, state: tuple[Any, ...]) -> None:
+        cls = self.__class__
+        object.__setattr__(self, "__class__", _QuditFields)
+        (
+            self.index,
+            self.frequency_hz,
+            self.t1_us,
+            self.t2_star_us,
+            self.anharmonicity_hz,
+            self.label,
+            self.drive,
+            self.readout,
+            self.t2_echo_us,
+            self.thermal_population,
+            self.calibrations,
+            *metadata,
+        ) = state
+        self.metadata = MappingProxyType(metadata[0]) if metadata else _EMPTY
+        self.__class__ = cls
 
     def replace(self, **changes: Any) -> Self:
         """A copy with the fields *changes* names set to their values."""
@@ -1042,7 +1050,7 @@ class _Description:
         return {q.index: q.frequency_hz for q in self.qudits.values()}
 
     @property
-    def anharmonicities(self) -> dict[int, float]:
+    def anharmonicities(self) -> dict[int, float | None]:
         return {q.index: q.anharmonicity_hz for q in self.qudits.values()}
 
     @property

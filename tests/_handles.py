@@ -13,7 +13,10 @@ def ladder_target(n: int = 64, **parts) -> pulse.QuantumSystem:
     are the other keywords of ``pulse.quantum_system``."""
     return pulse.quantum_system(
         name=f"ladder:{n}",
-        qudits={i: PhysicalQudit(i, 5.0e9 + 1.0e8 * i, -300e6, 50.0, 30.0) for i in range(n)},
+        qudits={
+            i: PhysicalQudit(i, 5.0e9 + 1.0e8 * i, 50.0, 30.0, anharmonicity_hz=-300e6)
+            for i in range(n)
+        },
         **parts,
     )
 

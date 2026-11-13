@@ -30,7 +30,10 @@ _CLOCK_GHZ = 2.0
 _TARGET = pulse.quantum_system(
     name="frames",
     clock_ghz=_CLOCK_GHZ,
-    qudits={i: PhysicalQudit(i, _FREQUENCY_HZ + 1.0e7 * i, -2.0e8, 50.0, 30.0) for i in range(2)},
+    qudits={
+        i: PhysicalQudit(i, _FREQUENCY_HZ + 1.0e7 * i, 50.0, 30.0, anharmonicity_hz=-2.0e8)
+        for i in range(2)
+    },
 )
 _DEV = _TARGET
 Q = _DEV.qudits

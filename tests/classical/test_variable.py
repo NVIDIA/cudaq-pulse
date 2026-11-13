@@ -334,7 +334,7 @@ def test_a_float_part_below_the_lowest_length_is_clamped_with_the_answer(tau):
 def test_a_wait_from_an_answer_and_a_float_runs_their_sum_clamped(tau):
     from cudaq_pulse.quantum_systems import PhysicalQudit
 
-    qudits = {i: PhysicalQudit(i, 5e9 + 1e8 * i, -2e8, 2.0, 0.0) for i in range(2)}
+    qudits = {i: PhysicalQudit(i, 5e9 + 1e8 * i, 2.0, 0.0, anharmonicity_hz=-2e8) for i in range(2)}
     dev = pulse.quantum_system(name="decay", qudits=qudits)
     q, p = dev.qudits
     length = min(max(round(2.0 * 10.0 + tau), 8), 1000)
