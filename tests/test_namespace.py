@@ -16,7 +16,7 @@ TOP_LEVEL = {
     "Kernel",
     "compile",
     "CompiledKernel",
-    "Lowered",
+    "ScheduledKernel",
     "Pass",
     "simulate",
     "SimulationResult",

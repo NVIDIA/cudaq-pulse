@@ -27,7 +27,7 @@ def four_qudit(qs):
         drive(lines[i], gaussian(durations[i], 0.25, cal["sigma"]), tone=tones[i])
 
 
-def print_timeline(compiled: pulse.Lowered, label: str) -> int:
+def print_timeline(compiled: pulse.ScheduledKernel, label: str) -> int:
     """Pretty-print the scheduled drives and return the makespan."""
     print(f"\n  --- {label} ---")
     events = sorted(compiled.schedule, key=lambda e: (e.start, e.line))

@@ -45,9 +45,9 @@ def measure_and_correct(measured, partner):
 
 compiled = pulse.compile(measure_and_correct, schedule="rcp", quantum_system=qpu)
 # Read out on the left controller, correct on the right one.
-lowered = compiled.lower(qpu.qudits[0], qpu.qudits[2])
+scheduled = compiled.lower(qpu.qudits[0], qpu.qudits[2])
 for index in range(len(control.controllers)):
-    program = lowered.export_to_controller(controller=index)
+    program = scheduled.export_to_controller(controller=index)
     events = [(e["kind"], e["line"], e["start_cycles"]) for e in program["events"]]
     print(f"controllers[{index}] events:", events)
 

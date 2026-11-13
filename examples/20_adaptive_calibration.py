@@ -125,10 +125,10 @@ if __name__ == "__main__":
             0: qudit.replace(frequency_hz=qudit.frequency_hz + offset_hz),
         },
     )
-    lowered = pulse.compile(binary_search, quantum_system=qs, control_system=control_system).lower(
-        q, 2
-    )
-    result = pulse.simulate(lowered, quantum_system=detuned, dt_ns=0.25)
+    scheduled = pulse.compile(
+        binary_search, quantum_system=qs, control_system=control_system
+    ).lower(q, 2)
+    result = pulse.simulate(scheduled, quantum_system=detuned, dt_ns=0.25)
     print(f"  true detuning {offset_hz / 1e3:.0f} kHz; prior 0 +- {initial_sigma_hz / 1e6:.0f} MHz")
     for branch in sorted(result.branches, key=lambda branch: -branch.probability):
         mean, sigma, _, _ = branch.answers("frequency_estimator")[-1]

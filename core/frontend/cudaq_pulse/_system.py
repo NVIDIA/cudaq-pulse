@@ -62,7 +62,7 @@ if TYPE_CHECKING:
     from ._device import QuantumSystem
     from ._op_classes import OpClass
     from ._op_tables import OpCycles
-    from .compiler import Lowered, _MachineModel
+    from .compiler import ScheduledKernel, _MachineModel
     from .controller import WaveformMemoryScope
     from .quantum_systems.base import DeviceDescription
 else:
@@ -1520,7 +1520,7 @@ class ControlSystem:
 
     def _violations(
         self,
-        lowered: Lowered,
+        lowered: ScheduledKernel,
         lines: Sequence[Mapping[str, Any]],
         events: Sequence[dict[str, Any]],
         clocks: _clocks.ClockPlan | None,
@@ -1607,7 +1607,7 @@ class ControlSystem:
 
     def _held(
         self,
-        lowered: Lowered,
+        lowered: ScheduledKernel,
         events: Sequence[Mapping[str, Any]],
         owners: Sequence[int | None],
     ) -> list[str]:
@@ -1647,7 +1647,7 @@ class ControlSystem:
 
     def _summarized(
         self,
-        lowered: Lowered,
+        lowered: ScheduledKernel,
         lines: Sequence[Mapping[str, Any]],
         events: Sequence[dict[str, Any]],
         repeats: Sequence[Sequence[int]],
@@ -1792,7 +1792,7 @@ class ControlSystem:
 
     def _needs(
         self,
-        lowered: Lowered,
+        lowered: ScheduledKernel,
         events: Sequence[Mapping[str, Any]],
         owners: Sequence[int | None],
         unresolved: list[str] | None = None,
@@ -1935,7 +1935,7 @@ class ControlSystem:
 
     def _reach(
         self,
-        lowered: Lowered,
+        lowered: ScheduledKernel,
         event: Mapping[str, Any],
         indices: Sequence[int],
         verb: str,

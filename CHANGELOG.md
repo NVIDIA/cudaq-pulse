@@ -161,7 +161,7 @@ behavior may change in any 0.x release.
   `FunctionCost.ops` is an `OpCounts`, and a built-in's `controller_cost`
   hook returns one. `pulse.controller.ExpressionTerm` names the terms of an
   exported run-time expression. `dispatch_keys={"name": key}` gives the
-  functions a processor runs fixed dispatch keys. `lowered.controller_usage` reports
+  functions a processor runs fixed dispatch keys. `scheduled.controller_usage` reports
   each processor's functions and totals against its limits
   (`.within_limits`; `print` it for a table). A program over them does not
   compile: its `ControllerLimitError` carries the report as `usage`, every
@@ -197,10 +197,10 @@ behavior may change in any 0.x release.
   found with every iteration played, in the same order. Past 10,000
   violations, `ControllerLimitError.violations` and `check()` give a
   sequence that builds each violation when read, with an exact `len()`;
-  `str(error)` is unchanged. `Lowered.schedule` is a list up to 10,000
+  `str(error)` is unchanged. `ScheduledKernel.schedule` is a list up to 10,000
   events and past that a sequence that builds each event when read, from
   its op and its loops' iterations, so its type is now
-  `Sequence[ScheduledEvent]`; `Lowered.duration` no longer lists the
+  `Sequence[ScheduledEvent]`; `ScheduledKernel.duration` no longer lists the
   events. `classical_report()` takes a long loop without classical calls
   once instead of once per iteration, with the same report.
 
@@ -257,7 +257,7 @@ behavior may change in any 0.x release.
   superconducting qubits", arXiv:2506.09576 (2025);
   `benchmarks/classical/calibration_protocol.py` checks it end to end over
   many seeds against the published numbers.
-- **What classical functions cost a controller.** `lowered.controller_usage`
+- **What classical functions cost a controller.** `scheduled.controller_usage`
   reports each classical function's operations (read from its body; an
   expression of constants folds, and dividing by a constant is a multiply),
   state in bytes and compute time against `max_latency_ns` on the
@@ -411,12 +411,12 @@ behavior may change in any 0.x release.
 - **Compilation.** Verification, constant and phase folding and pulse
   fusion by default; ASAP, ALAP and resource-constrained schedules
   (`pulse.compile(control_system=...)`); per-kernel schedule policies and
-  schedule blocks. `pulse.Lowered.mlir(level)` returns the module at an IR
+  schedule blocks. `pulse.ScheduledKernel.mlir(level)` returns the module at an IR
   level (`cudaq_pulse.compiler.IRLevel`: `"pulse"`, the scheduled Pulse
-  MLIR, `"qop"`, `"cudm"` or `"llvm"`), `Lowered.schedule` the timed events
-  (`cudaq_pulse.compiler.ScheduledEvent`), `Lowered.duration` how long the
-  program runs as a `pulse.Time`, `Lowered.metrics` the compile
-  times (`cudaq_pulse.compiler.CompileMetrics`), and `Lowered.timeline()` a
+  MLIR, `"qop"`, `"cudm"` or `"llvm"`), `ScheduledKernel.schedule` the timed events
+  (`cudaq_pulse.compiler.ScheduledEvent`), `ScheduledKernel.duration` how long the
+  program runs as a `pulse.Time`, `ScheduledKernel.metrics` the compile
+  times (`cudaq_pulse.compiler.CompileMetrics`), and `ScheduledKernel.timeline()` a
   plot (with the `[viz]` extra). `QuantumSystem.qudit(label)` finds a qudit by
   its label and `DeviceDescription.coupling(a, b)` the coupling of two.
 - **Optimization passes.** `passes=` takes members of `pulse.Pass`, a
@@ -509,7 +509,7 @@ behavior may change in any 0.x release.
   are evolved as an exact ensemble over outcomes. The simulated space holds
   only the qudits the program gets a line on, whatever their quantum system indices
   (a pair at qudits 13 and 3 is a two-mode problem); `SimulationResult.qudits`
-  and `Lowered.qudits` give the quantum system qudit of each mode, and the other
+  and `ScheduledKernel.qudits` give the quantum system qudit of each mode, and the other
   qudits are classical spectators. `result.level_population(level, qudit)`
   and `result.level_populations(qudit)` give a qudit's level probabilities
   from its reduced state, for any number of levels; `qudit` (a quantum system index
@@ -549,18 +549,18 @@ behavior may change in any 0.x release.
   `.submit()` returns a `Pending` of the result's type. Links are named in
   `ControlSystem(links={...})`. Every schedule budgets the worst-case
   latency, holds link slots and reports each call's slack and its hidden and
-  exposed latency (`Lowered.classical_report()`); `pulse-classical-check`
+  exposed latency (`ScheduledKernel.classical_report()`); `pulse-classical-check`
   verifies slots, deadlines and ordering. A wait whose length is an answer,
   and a blocking wait for an answer, are barriers for the lines that depend
   on them (through a `sync`, a measurement or answer, a branch or a shared
-  tone): those lines split into segments (`Lowered.segments()`) whose start
+  tone): those lines split into segments (`ScheduledKernel.segments()`) whose start
   shifts with the run-time lengths before them, and other lines keep their
   time, so qubits waiting on answers of their own run side by side.
 - **Simulating and emulating calls.** `pulse.simulate` binds answers per
   measurement path, with timeouts from the latency model, assignment errors
   and relaxation during readout, IQ points from a dispersive readout model,
   and `quantum_system=` to simulate a drifted quantum system without compiling again.
-  `Lowered.export_to_emulator()` writes the schedule, segments and call manifest
+  `ScheduledKernel.export_to_emulator()` writes the schedule, segments and call manifest
   for a controller; `classical.emulation.emulate` runs a program in virtual
   time against real services, in process or over UDP. Requests and answers
   use the CUDA-Q real-time wire format (`classical.wire`);
@@ -577,7 +577,7 @@ behavior may change in any 0.x release.
   controller nothing. Examples
   `19_classical_calls.py` and `20_adaptive_calibration.py`, and the
   "Classical Calls at QPU Runtime" guide.
-- **Controller backends.** `Lowered.export_to_controller()` exports a
+- **Controller backends.** `ScheduledKernel.export_to_controller()` exports a
   scheduled kernel for an out-of-tree controller backend, format
   `cudaq-pulse.controller/1` (`cudaq_pulse.controller.FORMAT`): the lines
   with their roles, and every drive, readout, wait, sync and classical call
@@ -688,7 +688,7 @@ behavior may change in any 0.x release.
   count and limits, and one with an emulator (`emulate()`) against the
   simulator. The report's `ok` and `str()` say what failed.
 - **Public API.** The top level is exactly `kernel`, `Kernel`, `compile`,
-  `CompiledKernel`, `Lowered`, `Pass`, `simulate`, `SimulationResult`,
+  `CompiledKernel`, `ScheduledKernel`, `Pass`, `simulate`, `SimulationResult`,
   `BranchCoverage`, `quantum_system`, `QuantumSystem`, `Qudit`, `Register`,
   `PulseError`, `Problem`, `QuantumSystemDefinitionError`, `InvalidValueError`,
   `InvalidTypeError`, `NotFoundError`, `IndexOutOfRangeError`,
@@ -700,7 +700,7 @@ behavior may change in any 0.x release.
   takes a kernel and its arguments as `compile` takes a kernel, or a
   program compiled already, such as one a worker process receives pickled,
   without compiling it again. A module with run-time float parameters
-  (`lowered.generic`) takes their values as `bind` does; the module of a
+  (`scheduled.generic`) takes their values as `bind` does; the module of a
   call, from `kernel.lower(*args)` or `bind`, takes none. `bind(values)`
   takes one real number per parameter, in the order of `parameters`; too
   few or too many values are an `InvalidTypeError` naming the parameters.

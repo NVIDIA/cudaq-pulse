@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Processors: the classical compute of a controller, and what a program
-uses of it (``Lowered.controller_usage``)."""
+uses of it (``ScheduledKernel.controller_usage``)."""
 
 from __future__ import annotations
 

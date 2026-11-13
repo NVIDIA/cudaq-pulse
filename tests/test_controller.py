@@ -606,7 +606,7 @@ def test_a_call_is_checked_once_per_distinct_values(monkeypatch):
     assert checked == [(0.0,), (-0.0,)]
     # A module no float value can push past a limit is not checked per call.
     lowered = pulse.compile(ramsey, control_system=machine).lower(Q[0], 0.75)
-    assert type(lowered.generic) is pulse.Lowered
+    assert type(lowered.generic) is pulse.ScheduledKernel
 
 
 def test_a_checked_call_names_a_value_that_is_not_a_finite_number():

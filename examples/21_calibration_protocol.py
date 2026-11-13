@@ -499,22 +499,22 @@ if __name__ == "__main__":
     print("=== 1. The calibration chain, on the controller ===")
     start = time.perf_counter()
     compiled = pulse.compile(calibration_chain, quantum_system=qs, control_system=control_system)
-    lowered = compiled.lower(q, 20_000.0 * clock_ghz)
+    scheduled = compiled.lower(q, 20_000.0 * clock_ghz)
     compile_s = time.perf_counter() - start
     end_cycles = max(
         e.start_cycles + e.duration_cycles
-        for e in lowered.schedule
+        for e in scheduled.schedule
         if e.start_cycles is not None and e.duration_cycles is not None
     )
     print(
-        f"  {sum(1 for e in lowered.schedule if e.kind == 'readout')} readouts, "
-        f"{len(lowered.classical_report())} calls, {len(lowered.segments())} segments; "
+        f"  {sum(1 for e in scheduled.schedule if e.kind == 'readout')} readouts, "
+        f"{len(scheduled.classical_report())} calls, {len(scheduled.segments())} segments; "
         f"compiled in {compile_s:.2f} s"
     )
     print(f"  the static schedule (every variable wait at its least) is {end_cycles / 2e3:.0f} us")
     start = time.perf_counter()
     result = pulse.simulate(
-        lowered,
+        scheduled,
         quantum_system=true_system,
         shots_count=1,
         seed=7,
@@ -532,14 +532,14 @@ if __name__ == "__main__":
 
     print("\n=== 2. Frequency binary search, 15 shots, no reset ===")
     rounds = 15
-    lowered = pulse.compile(binary_search, quantum_system=qs, control_system=control_system).lower(
-        q, rounds
-    )
+    scheduled = pulse.compile(
+        binary_search, quantum_system=qs, control_system=control_system
+    ).lower(q, rounds)
     errors, sigmas = [], []
     for seed in range(4):
         offset = (seed - 1.5) * 300e3
         found = pulse.simulate(
-            lowered,
+            scheduled,
             quantum_system=search_system(target, offset),
             shots_count=1,
             seed=seed,
@@ -557,8 +557,8 @@ if __name__ == "__main__":
     )
 
     print("\n=== 3. What the estimators cost the controller ===")
-    lowered = compiled.lower(q, 20_000.0 * clock_ghz)
-    print(lowered.controller_usage)
+    scheduled = compiled.lower(q, 20_000.0 * clock_ghz)
+    print(scheduled.controller_usage)
     slow = dataclasses.replace(processor, cycles_per_op=processor.cycles_per_op.replace(exp=400))
     slow_system = pulse.ControlSystem(
         controllers=[pulse.Controller(processors=[slow])], links=links

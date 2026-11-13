@@ -5,7 +5,7 @@
 ``cudaq_pulse.compile(k)`` returns a callable ``CompiledKernel`` (see
 ``kernel/_kernel.py``); this module holds what it is built from: the options
 that pick passes and a schedule, the native build of one specialization, and
-``Lowered``, the read-only view of one compiled module.
+``ScheduledKernel``, the read-only view of one compiled module.
 """
 
 from __future__ import annotations
@@ -45,11 +45,13 @@ if TYPE_CHECKING:
     from .controller import UsageReport
     from .kernel._kernel import CompiledKernel, Kernel
 
+    type _Kernel = ScheduledKernel
+
 __all__ = [
     "DEFAULT_PASSES",
     "CompileMetrics",
     "IRLevel",
-    "Lowered",
+    "ScheduledKernel",
     "Pass",
     "ScheduledEvent",
     "UnsupportedInterpreterError",
@@ -169,7 +171,7 @@ _LEVELS = tuple(IRLevel)
 # The parameters a measurement can select while the program runs, in the
 # order lowering asks about them, and those any target takes that way.
 _RUNTIME_KINDS = ("amplitude", "phase", "frequency")
-# Lowered.schedule is a list up to this many events.
+# ScheduledKernel.schedule is a list up to this many events.
 _LISTED_EVENTS = 10_000
 _SELECTED_AT_RUNTIME: frozenset[str] = frozenset()
 
@@ -456,7 +458,7 @@ class ScheduledEvent:
 
 @dataclass(frozen=True)
 class Segment:
-    """One segment of a compiled kernel, from ``Lowered.segments()``.
+    """One segment of a compiled kernel, from ``ScheduledKernel.segments()``.
 
     A variable wait (its length computed from a classical answer) or a
     blocking classical wait is a barrier for the lines that depend on it:
@@ -609,7 +611,7 @@ def _bind_checked(parameters: tuple[str, ...], values: Any) -> list[float]:
     return out
 
 
-class Lowered:
+class ScheduledKernel:
     """One compiled module of a kernel: read-only text, schedule and metrics.
 
     ``kernel.lower(*args)`` and ``compiled.lower(*args)`` return the module
@@ -698,14 +700,14 @@ class Lowered:
         self.options = options
         self.scheduled = scheduled
         # The module a call's view shares; None for that module itself.
-        self._generic: Lowered | None = None
+        self._generic: ScheduledKernel | None = None
         self.waits = waits
         # The classical functions the program calls, in declaration order.
         self.classical: tuple[Any, ...] = ()
         # Whether ops read values measurements select while the program runs.
         self.runtime_selects = False
 
-    def bind(self, values: Sequence[float]) -> Lowered:
+    def bind(self, values: Sequence[float]) -> ScheduledKernel:
         """This module with values for its float parameters, sharing it.
 
         *values* holds one real number per entry of ``parameters``, in that
@@ -754,7 +756,7 @@ class Lowered:
         view.runtime_selects = self.runtime_selects
         return view
 
-    def _with_values(self, values: Sequence[float]) -> Lowered:
+    def _with_values(self, values: Sequence[float]) -> ScheduledKernel:
         """``bind`` for *values* known to be one real number per parameter,
         such as a kernel call's. Whether each is a finite float is checked
         where the module uses them (``_concrete`` and simulation)."""
@@ -780,7 +782,7 @@ class Lowered:
         return view
 
     @property
-    def generic(self) -> Lowered:
+    def generic(self) -> ScheduledKernel:
         """The module without values: the one a call's view shares, or this
         module when it holds no values. ``generic.bind(values)`` makes a call
         of it with new values."""
@@ -999,10 +1001,10 @@ class Lowered:
         return plot_schedule(self, figsize=figsize, title=title)
 
     # Read-only: a copy is the module itself.
-    def __copy__(self) -> Lowered:
+    def __copy__(self) -> ScheduledKernel:
         return self
 
-    def __deepcopy__(self, memo: dict[int, Any]) -> Lowered:
+    def __deepcopy__(self, memo: dict[int, Any]) -> ScheduledKernel:
         return self
 
     def __reduce__(self) -> tuple[Any, ...]:
@@ -1012,12 +1014,14 @@ class Lowered:
 
     def __repr__(self) -> str:
         params = f", parameters={list(self.parameters)}" if self.parameters else ""
-        return f"<Lowered {self.metrics.op_count} ops on {self.quantum_system.name}{params}>"
+        return (
+            f"<ScheduledKernel {self.metrics.op_count} ops on {self.quantum_system.name}{params}>"
+        )
 
 
-class _View(Lowered):
+class _View(ScheduledKernel):
     """A call's view of a module, made by ``bind``: ``_View()`` runs no
-    ``__init__`` and is the cheapest way to make a ``Lowered``."""
+    ``__init__`` and is the cheapest way to make a ``ScheduledKernel``."""
 
     __slots__ = ()
     if TYPE_CHECKING:
@@ -1034,12 +1038,12 @@ def _lowered(
     fine_delays: Mapping[tuple[str, int], float] | None,
     role: _Role | None = None,
     **fields: Any,
-) -> Lowered:
+) -> ScheduledKernel:
     if role is None and clocks is None and fine_delays is None:
-        return Lowered(module, **fields)
+        return ScheduledKernel(module, **fields)
     from ._programs import _ClockedLowered, _Placed
 
-    lowered: Lowered
+    lowered: ScheduledKernel
     if role is not None:
         lowered = _Placed(module, role=role, **fields)
     else:
@@ -1049,10 +1053,10 @@ def _lowered(
     return lowered
 
 
-_report: Callable[[Lowered], list[ClassicalCall]] | None = None
+_report: Callable[[ScheduledKernel], list[ClassicalCall]] | None = None
 
 
-def _load_report() -> Callable[[Lowered], list[ClassicalCall]]:
+def _load_report() -> Callable[[ScheduledKernel], list[ClassicalCall]]:
     global _report
     from ._classical_report import report
 
@@ -1110,7 +1114,7 @@ def build(
     slots: int = 0,
     role: _Role | None = None,
     max_duration_cycles: int | None = None,
-) -> tuple[Lowered, Any]:
+) -> tuple[ScheduledKernel, Any]:
     """Trace *fn* and build its module on *target*.
 
     *trace_args* holds a ``Parameter`` sentinel for every float parameter
@@ -1281,7 +1285,7 @@ def build(
             module.program_length(),
         )
     if plain and role is None:
-        lowered = Lowered(
+        lowered = ScheduledKernel(
             module,
             quantum_system=target,
             metrics=metrics,
@@ -1411,7 +1415,7 @@ def _line_delays(
         raise CompilationError(str(e)) from None
 
 
-def _check_controller(lowered: Lowered) -> Lowered:
+def _check_controller(lowered: ScheduledKernel) -> ScheduledKernel:
     """*lowered*, checked against its controller limits: those it exceeds
     whatever its float values fail now, and when some values may exceed
     others, each call's values are checked when they are bound."""
@@ -1436,7 +1440,7 @@ def _check_controller(lowered: Lowered) -> Lowered:
     return (_CheckedPerCall if lowered._role is None else _CheckedPlaced)(lowered)
 
 
-def with_line_delays(lowered: Lowered, options: CompileOptions, qudit_count: int) -> Lowered | None:
+def with_line_delays(lowered: _Kernel, options: CompileOptions, qudit_count: int) -> _Kernel | None:
     """*lowered*, a scheduled module of *qudit_count* qudits, compiled again for
     *options*, which differ from its own only in the machine's line delays:
     its module before scheduling is kept, and only scheduling, the checks and
@@ -1497,7 +1501,7 @@ class _ClassicalFunctions(tuple[Any, ...]):
 _NO_KEYS: dict[str, tuple[int, str | None]] = {}
 
 
-def _dispatch_keys(lowered: Lowered) -> dict[str, tuple[int, str | None]]:
+def _dispatch_keys(lowered: ScheduledKernel) -> dict[str, tuple[int, str | None]]:
     """Per compiled name of a classical function *lowered* calls, its
     dispatch key and the controller that fixes it."""
     called = lowered.classical
@@ -1512,7 +1516,7 @@ def _dispatch_keys(lowered: Lowered) -> dict[str, tuple[int, str | None]]:
     return keys
 
 
-def _routes(lowered: Lowered) -> Sequence[tuple[int, int, str | None]]:
+def _routes(lowered: ScheduledKernel) -> Sequence[tuple[int, int, str | None]]:
     """Per classical function *lowered* calls, its link id, dispatch key and
     the controller that fixes the key."""
     routes: Sequence[tuple[int, int, str | None]] = getattr(lowered.classical, "routes", ())

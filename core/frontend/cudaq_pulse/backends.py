@@ -16,15 +16,15 @@ them, and ``get(name)`` loads one. A backend follows the ``Backend``
 protocol: ``control_system()`` is the control system to compile for (a
 ``ControlSystem``, or its one ``Controller``), so that programs the
 controller cannot play fail at compile time;
-``emit(program)`` takes ``Lowered.export_to_controller()`` and returns the
+``emit(program)`` takes ``ScheduledKernel.export_to_controller()`` and returns the
 controller's program; ``run(artifact, shots_count=...)`` runs it::
 
     from cudaq_pulse import backends
 
     backend = backends.get("toy")
     system = backend.control_system()
-    lowered = pulse.compile(kernel, quantum_system=dev, control_system=system).lower(q)
-    artifact = backend.emit(lowered.export_to_controller())
+    scheduled = pulse.compile(kernel, quantum_system=dev, control_system=system).lower(q)
+    artifact = backend.emit(scheduled.export_to_controller())
     result = backend.run(artifact, shots_count=100)
 
 A backend may also list the export formats it reads in ``formats``
@@ -78,7 +78,7 @@ class Backend(Protocol):
         ...
 
     def emit(self, program: Mapping[str, Any]) -> Any:
-        """The controller's program for ``Lowered.export_to_controller()``."""
+        """The controller's program for ``ScheduledKernel.export_to_controller()``."""
         ...
 
     def run(self, artifact: Any, *, shots_count: int = 1) -> Any:

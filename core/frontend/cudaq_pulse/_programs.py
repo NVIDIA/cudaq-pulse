@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
-from .compiler import Lowered, _bind_checked
+from .compiler import ScheduledKernel, _bind_checked
 
 if TYPE_CHECKING:
     from . import _clocks
@@ -41,8 +41,8 @@ def _bits(values: tuple[float, ...]) -> bytes:
         return pack(*values)
 
 
-def _concrete_general(self: Lowered) -> Any:
-    """``Lowered._concrete`` of a module with clocks or runtime qudits: the
+def _concrete_general(self: ScheduledKernel) -> Any:
+    """``ScheduledKernel._concrete`` of a module with clocks or runtime qudits: the
     module with the values and carriers substituted, shared by every view
     with the same ones, or the module itself without them."""
     if not self.arguments and not self.carriers:
@@ -73,7 +73,7 @@ def _concrete_general(self: Lowered) -> Any:
     return self._concrete_module
 
 
-class _ClockedLowered(Lowered):
+class _ClockedLowered(ScheduledKernel):
     """A module with a clock plan or line delays. Its own class keeps them off
     every other module and every call's view, which stay the size they are
     on one clock."""
@@ -121,7 +121,7 @@ class _Role:
         self.placed: dict[tuple[int, ...], tuple[int, ...]] = {}
         # A call without float values is its carriers and quantum system: its view,
         # shared by the calls that repeat them (at most _PLACEMENTS).
-        self.views: dict[tuple[tuple[int, ...], QuantumSystem], Lowered] = {}
+        self.views: dict[tuple[tuple[int, ...], QuantumSystem], ScheduledKernel] = {}
         # The module with a placement's carriers bound and its float
         # arguments kept, for simulations (the latest _PLACED_MODULES).
         self.modules: dict[tuple[tuple[int, ...], QuantumSystem], Any] = {}
@@ -182,7 +182,7 @@ def _rebuilt_role(
     return role
 
 
-class _Placed(Lowered):
+class _Placed(ScheduledKernel):
     """A module with list or qudit parameters, or a call's view of one."""
 
     __slots__ = ("_role", "carriers", "clocks", "fine_delays")
@@ -200,14 +200,14 @@ class _Placed(Lowered):
         values: Sequence[float],
         carriers: tuple[int, ...] = (),
         target: QuantumSystem | None = None,
-    ) -> Lowered:
+    ) -> ScheduledKernel:
         """This module with values for its float parameters and, with
         *carriers*, its runtime qudits bound on *target*, sharing it. The
-        values are checked as ``Lowered.bind`` checks them."""
+        values are checked as ``ScheduledKernel.bind`` checks them."""
         return _place(self, values, carriers, target)
 
 
-def _placement(view: Lowered) -> Any:
+def _placement(view: ScheduledKernel) -> Any:
     """*view*'s module with its carriers bound and its float arguments kept,
     shared by the views of one placement."""
     role = view._role
@@ -226,12 +226,12 @@ def _placement(view: Lowered) -> Any:
 
 
 def _place(
-    lowered: Lowered,
+    lowered: ScheduledKernel,
     values: Sequence[float],
     carriers: tuple[int, ...],
     target: QuantumSystem | None,
 ) -> _Placed:
-    """``Lowered.bind`` of a module with list or qudit parameters."""
+    """``ScheduledKernel.bind`` of a module with list or qudit parameters."""
     try:
         fits = len(values) == len(lowered.parameters)
     except TypeError:
@@ -280,7 +280,7 @@ def _place(
     return view
 
 
-class _CheckedPerCall(Lowered):
+class _CheckedPerCall(ScheduledKernel):
     """A module whose controller limits some float values exceed and others
     do not: each call's values are checked when they are bound, once per
     distinct values, so that no limit fails first at export."""
@@ -288,7 +288,7 @@ class _CheckedPerCall(Lowered):
     __slots__ = ("_accepted", "clocks", "fine_delays")
     _concrete = _concrete_general
 
-    def __init__(self, lowered: Lowered) -> None:
+    def __init__(self, lowered: ScheduledKernel) -> None:
         super().__init__(
             lowered._module,
             quantum_system=lowered.quantum_system,
@@ -305,13 +305,13 @@ class _CheckedPerCall(Lowered):
         self.fine_delays = lowered.fine_delays
         self._accepted: set[bytes] = set()
 
-    def bind(self, values: Sequence[float]) -> Lowered:
+    def bind(self, values: Sequence[float]) -> ScheduledKernel:
         return self._accept(super().bind(values))
 
-    def _with_values(self, values: Sequence[float]) -> Lowered:
+    def _with_values(self, values: Sequence[float]) -> ScheduledKernel:
         return self._accept(super()._with_values(values))
 
-    def _accept(self, view: Lowered, placement: bytes = b"") -> Lowered:
+    def _accept(self, view: ScheduledKernel, placement: bytes = b"") -> ScheduledKernel:
         """*view*, once its values are within the limits (checked once per
         distinct values and *placement*). Its values are checked here, not
         where it is used: the limits need them."""
@@ -338,7 +338,7 @@ class _CheckedPlaced(_CheckedPerCall):
 
     __slots__ = ("_role", "carriers")
 
-    def __init__(self, lowered: Lowered) -> None:
+    def __init__(self, lowered: ScheduledKernel) -> None:
         super().__init__(lowered)
         self._role = lowered._role
         self.carriers = ()
@@ -348,7 +348,7 @@ class _CheckedPlaced(_CheckedPerCall):
         values: Sequence[float],
         carriers: tuple[int, ...] = (),
         target: QuantumSystem | None = None,
-    ) -> Lowered:
+    ) -> ScheduledKernel:
         view = _place(self, values, carriers, target)
         if not carriers:
             return self._accept(view)

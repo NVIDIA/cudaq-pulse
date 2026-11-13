@@ -86,7 +86,7 @@ def bench(d: int, repeats: int) -> tuple[int, int, dict[str, float]]:
     kernel, qudit_count = surface_code_cycle(d)
     quantum_system = _device({q: 5.0e9 + 0.05e9 * (q % 8) for q in range(qudit_count)})
 
-    def compile_once() -> pulse.Lowered:
+    def compile_once() -> pulse.ScheduledKernel:
         # A fresh compiled kernel holds no specializations: this compiles.
         return pulse.compile(kernel, passes=("verify",)).lower(quantum_system.qudits[:qudit_count])
 

@@ -64,7 +64,7 @@ def test_an_interrupt_while_tracing_stops_the_compile():
 def test_an_interrupt_after_the_native_stages_stops_the_compile(monkeypatch):
     expected = _programs()
     kernel = _drives(200)
-    wrap = compiler.Lowered.__init__
+    wrap = compiler.ScheduledKernel.__init__
     calls = []
 
     def interrupted(self, *args, **kwargs):
@@ -72,7 +72,7 @@ def test_an_interrupt_after_the_native_stages_stops_the_compile(monkeypatch):
         _ctrl_c()
         wrap(self, *args, **kwargs)
 
-    monkeypatch.setattr(compiler.Lowered, "__init__", interrupted)
+    monkeypatch.setattr(compiler.ScheduledKernel, "__init__", interrupted)
     with pytest.raises(KeyboardInterrupt):
         pulse.compile(kernel).lower(Q[0])
     assert calls == [None]

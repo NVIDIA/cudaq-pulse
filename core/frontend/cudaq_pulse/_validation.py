@@ -45,7 +45,7 @@ from .ops import (
 from .quantum_systems import DeviceDescription, PhysicalQudit
 
 if TYPE_CHECKING:
-    from .compiler import Lowered
+    from .compiler import ScheduledKernel
 
 # The kinds whose timing and order a backend reports and is checked on: the
 # others (waits, syncs, loops) follow from them.
@@ -358,7 +358,7 @@ def _limits(limits: Controller | None, emitted: Mapping[Any, list[tuple[Any, ...
     return None
 
 
-def _simulated(lowered: Lowered) -> list[float]:
+def _simulated(lowered: ScheduledKernel) -> list[float]:
     """The probability of outcome 1 of each measurement, in end-time order."""
     result = pulse.simulate(lowered)
     p = [0.0] * len(result.measurements)
@@ -370,7 +370,7 @@ def _simulated(lowered: Lowered) -> list[float]:
 
 
 def _emulation(
-    backend: Backend, artifact: Any, lowered: Lowered, shots_count: int, tolerance: float
+    backend: Backend, artifact: Any, lowered: ScheduledKernel, shots_count: int, tolerance: float
 ) -> str | None:
     """How the backend's emulator differs from the simulator, or None."""
     rows = [list(row) for row in backend.emulate(artifact, shots_count=shots_count)]  # type: ignore[attr-defined]
@@ -396,7 +396,7 @@ def _emit(
     backend: Backend,
     name: str,
     program: dict[str, Any],
-    lowered: Lowered,
+    lowered: ScheduledKernel,
     limits: Controller | None,
     shots_count: int,
     tolerance: float,

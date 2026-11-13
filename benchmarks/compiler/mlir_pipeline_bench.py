@@ -93,7 +93,7 @@ BENCHMARKS = [
 ]
 
 
-def _compile(kernel, qudit_count: int, **kwargs: Any) -> pulse.Lowered:
+def _compile(kernel, qudit_count: int, **kwargs: Any) -> pulse.ScheduledKernel:
     quantum_system = _device({i: 5.0e9 + i * 0.1e9 for i in range(qudit_count)})
     # A fresh compiled kernel holds no specializations: this compiles.
     return pulse.compile(kernel, **kwargs).lower(*quantum_system.qudits[:qudit_count])

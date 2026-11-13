@@ -24,7 +24,7 @@
   as the one shipped here if that has the same digest; any other pickles
   as its values. Qudit handles and registers pickle as their quantum system and
   indices.
-- A program (``Lowered``, and a call's view of one) pickles as MLIR
+- A program (``ScheduledKernel``, and a call's view of one) pickles as MLIR
   bytecode and its metadata, stamped with the build that compiled it, and
   runs without compiling again. Only that build unpickles it: another
   raises ``UnsupportedError`` saying to compile it again. The stamp hashes

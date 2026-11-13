@@ -86,11 +86,11 @@ def spread(tau: float, *qudits: pulse.Qudit, amp: float = 0.1) -> None:
 
 spread(1.0)
 spread(1.0, *dev.qudits[0:3], amp=0.2)
-assert_type(spread.lower(1.0, dev.qudits[0], dev.qudits[1]), pulse.Lowered)
+assert_type(spread.lower(1.0, dev.qudits[0], dev.qudits[1]), pulse.ScheduledKernel)
 spread(1.0, dev.qudits[0:2])  # type: ignore[arg-type]
 
 lowered = rabi.lower(dev.qudits[0], 0.5)
-assert_type(lowered, pulse.Lowered)
+assert_type(lowered, pulse.ScheduledKernel)
 assert_type(lowered.mlir(), str)
 assert_type(lowered.mlir("llvm"), str)
 assert_type(lowered.metrics, CompileMetrics)
@@ -99,7 +99,7 @@ assert_type(lowered.arguments, tuple[float, ...])
 
 compiled = pulse.compile(rabi, schedule="asap", quantum_system=dev)
 compiled_kernels: list[pulse.CompiledKernel[...]] = [compiled]
-assert_type(compiled.lower(dev.qudits[0], 0.5), pulse.Lowered)
+assert_type(compiled.lower(dev.qudits[0], 0.5), pulse.ScheduledKernel)
 compiled(dev.qudits[0])  # type: ignore[call-arg]
 assert_type(compiled.parameters, tuple[str, ...])
 pulse.compile(rabi, schedule=1)  # type: ignore[arg-type]
@@ -107,9 +107,9 @@ pulse.compile(rabi, schedule=1)  # type: ignore[arg-type]
 # Loaded lazily at runtime, but fully typed for checkers.
 assert_type(pulse.simulate(lowered, shots_count=10), pulse.SimulationResult)
 # Every module has a generic one, which binds a call's new values.
-assert_type(lowered.generic, pulse.Lowered)
+assert_type(lowered.generic, pulse.ScheduledKernel)
 assert_type(pulse.simulate(lowered.generic, 0.7), pulse.SimulationResult)
-assert_type(lowered.generic.bind([0.7]), pulse.Lowered)
+assert_type(lowered.generic.bind([0.7]), pulse.ScheduledKernel)
 # Times take units or numbers of ns.
 assert_type(pulse.simulate(lowered, t_end=40 * pulse.ns, dt_ns=0.5), pulse.SimulationResult)
 assert_type(pulse.simulate(rabi, dev.qudits[0], 0.5), pulse.SimulationResult)

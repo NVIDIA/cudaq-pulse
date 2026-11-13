@@ -20,7 +20,7 @@ duration), so a pass that inspects the schedule is a plain Python function:
 
    import cudaq_pulse as pulse
 
-   def total_drive_time(compiled: pulse.Lowered) -> int:
+   def total_drive_time(compiled: pulse.ScheduledKernel) -> int:
        return sum(e.end - e.start for e in compiled.schedule if e.kind == "drive")
 
 ``examples/custom_passes/python_pass.py`` enforces a concurrent-drive limit
@@ -45,5 +45,5 @@ either as part of the cudaq-pulse build or on its own. Built on its own, it
 loads into the ``cudaq-pulse-opt`` a wheel installs, as
 ``tools/ci/opt-plugin-test.sh`` checks; the wheels carry no MLIR headers, so
 build plugins against the toolchain ``tools/fetch-mlir-toolchain.py``
-fetches. Get a kernel's MLIR from ``Lowered.mlir()`` to run plugin passes on
+fetches. Get a kernel's MLIR from ``ScheduledKernel.mlir()`` to run plugin passes on
 it.

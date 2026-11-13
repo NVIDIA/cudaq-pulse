@@ -268,7 +268,7 @@ nanoseconds:
 Such a variable wait is a barrier for the lines that depend on it, and it
 opens a new *segment* for them. The static schedule places it at its lower
 bound, and what follows it on those lines shifts by the wait's actual length,
-which is clamped to the bounds. ``Lowered.segments()`` lists the segments. A
+which is clamped to the bounds. ``ScheduledKernel.segments()`` lists the segments. A
 variable wait may not be inside a ``schedule_block`` or a branch; a blocking
 wait is a barrier in the same way.
 
@@ -314,7 +314,7 @@ same way:
 - A blocking wait, like a variable wait, starts once every line of its
   timeline is done.
 
-``Lowered.classical_report()`` gives one ``ClassicalCall`` per execution of a
+``ScheduledKernel.classical_report()`` gives one ``ClassicalCall`` per execution of a
 call, in clock cycles: when it is submitted (``submit_cycles``), when its answer
 is due (``due_cycles``) and taken, the first operation that uses it, its slack
 (``slack_cycles``, how much later the answer could arrive without delaying a
@@ -325,7 +325,7 @@ has depleted (``PhysicalQudit.depletion_ns``, from its ``DispersiveReadout``'s
 ``depletion_ns`` or ``linewidth_hz``). The rest of the budget, ``hidden_cycles``, overlaps
 work that had to happen anyway, so a latency within the depletion time costs
 nothing. The
-timeline (``Lowered.timeline()``) draws each link as a row of its own,
+timeline (``ScheduledKernel.timeline()``) draws each link as a row of its own,
 labelled with its name.
 
 After scheduling, ``pulse-classical-check`` verifies that every request and
@@ -384,7 +384,7 @@ it.
   answers of one function, in call order.
 
 A whole program with unanswered calls does not lower to LLVM:
-``Lowered.mlir("llvm")`` points to ``pulse.simulate``, which lowers each
+``ScheduledKernel.mlir("llvm")`` points to ``pulse.simulate``, which lowers each
 segment with its answers bound, on the CPU or the GPU.
 
 ``quantum_system=`` simulates another device description than the quantum system the program
@@ -416,7 +416,7 @@ emulation; ``serve_udp`` keeps one per decoder. Its ``min_latency_ns``,
 Emulation
 ---------
 
-``Lowered.export_to_emulator()`` writes what a controller or an emulator runs
+``ScheduledKernel.export_to_emulator()`` writes what a controller or an emulator runs
 the program from, as JSON-ready data: the static schedule, each event's
 segment, the segments, the calls, the links and the call manifest (every
 function's dispatch key, link, payload sizes, latency and slots).
@@ -540,7 +540,7 @@ when it is known.
 
    compiled = pulse.compile(shot, quantum_system=qs, control_system=control_system)
    for i in range(10_000):
-       lowered = compiled.lower(q, amplitude)   # no compiling after the first
+       scheduled = compiled.lower(q, amplitude)  # no compiling after the first
        ...
        store.set("wait_ns", next_wait, iteration=i)
 

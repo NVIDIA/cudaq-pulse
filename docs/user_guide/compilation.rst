@@ -213,7 +213,7 @@ caller is an error that names the fix, as is ``flatten_schedules=True``.
 Inspecting a compilation
 ------------------------
 
-``kernel.lower(*args)`` and ``compiled.lower(*args)`` return a ``Lowered``,
+``kernel.lower(*args)`` and ``compiled.lower(*args)`` return a ``ScheduledKernel``,
 the module of one call:
 
 ``.mlir(level="pulse")``
@@ -234,7 +234,7 @@ the module of one call:
 ``.duration``
    How long the program runs, as a time: the latest end of its operations,
    over both arms of every branch (``float(duration)`` is in ns). Only a
-   ``Lowered`` has one: a kernel or ``CompiledKernel`` has no duration until
+   ``ScheduledKernel`` has one: a kernel or ``CompiledKernel`` has no duration until
    it is lowered for a call, since the call's arguments decide it.
 
 The quantum system's handles find a qudit by its label, ``qs.qudit("D1")``, and the

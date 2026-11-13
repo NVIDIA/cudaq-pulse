@@ -52,7 +52,7 @@ if TYPE_CHECKING:
     import numpy.typing as npt
 
     from .._device import Qudit
-    from ..compiler import Lowered
+    from ..compiler import ScheduledKernel
     from ..kernel._kernel import CompiledKernel, Kernel
     from ..quantum_systems.models import SimulationModel
     from ._calls import CallRecord
@@ -185,7 +185,7 @@ class SimulationResult:
 
 
 def simulate(
-    program: Kernel[...] | CompiledKernel[...] | Lowered,
+    program: Kernel[...] | CompiledKernel[...] | ScheduledKernel,
     /,
     *args: Any,
     levels: int | dict[int, int] | None = None,
@@ -312,10 +312,10 @@ def simulate(
         branches, and ``result.branches`` gives each one's share of the
         shots. It needs ``shots_count``. A ``BranchCoverage`` or its string.
     """
-    from ..compiler import Lowered
+    from ..compiler import ScheduledKernel
     from ..kernel._kernel import CompiledKernel, Kernel
 
-    if isinstance(program, Lowered):
+    if isinstance(program, ScheduledKernel):
         if not args:
             lowered = program
         elif program.parameters:
@@ -355,7 +355,7 @@ def simulate(
 
 
 def _simulate_lowered(
-    lowered: Lowered,
+    lowered: ScheduledKernel,
     *,
     levels: int | dict[int, int] | None = None,
     initial_state: npt.ArrayLike | None = None,
@@ -450,7 +450,10 @@ def _simulate_lowered(
 
 
 def _step(
-    lowered: Lowered, target: Any, levels: int | dict[int, int] | None, dt_ns: float | Time | None
+    lowered: ScheduledKernel,
+    target: Any,
+    levels: int | dict[int, int] | None,
+    dt_ns: float | Time | None,
 ) -> float:
     """The integration step of a simulation of *lowered* on *target*: *dt_ns*,
     checked, or the default step; kept in ``_STEPS`` unless it warns or its
@@ -543,7 +546,7 @@ def _simulation_model(target: Any) -> Callable[..., SimulationResult]:
     return model._simulate
 
 
-def _check_quantum_system(lowered: Lowered, quantum_system: Any) -> Any:
+def _check_quantum_system(lowered: ScheduledKernel, quantum_system: Any) -> Any:
     """The description of *quantum_system*, a quantum system or a quantum system
     description, which defines every qudit of *lowered*."""
     from ..quantum_systems import DeviceDescription
@@ -570,7 +573,7 @@ _STEPS_PER_PERIOD = 20
 
 
 def _default_step(
-    lowered: Lowered, target: Any = None, levels: int | dict[int, int] | None = None
+    lowered: ScheduledKernel, target: Any = None, levels: int | dict[int, int] | None = None
 ) -> float:
     """The integration step: 0.05 ns, or 20 steps per period of the fastest
     frequency the simulation holds (see ``_fastest``), rounded down to a
@@ -724,7 +727,7 @@ class _DivergedError(Exception):
 
 
 def _diverged_error(
-    lowered: Lowered,
+    lowered: ScheduledKernel,
     target: Any,
     levels: int | dict[int, int] | None,
     dt_ns: float | None,

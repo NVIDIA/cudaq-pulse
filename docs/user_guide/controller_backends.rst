@@ -17,7 +17,7 @@ installable distribution.
 Exporting a program
 -------------------
 
-``Lowered.export_to_controller()`` returns a compiled kernel as JSON-serializable
+``ScheduledKernel.export_to_controller()`` returns a compiled kernel as JSON-serializable
 data. Its ``format`` is ``"cudaq-pulse.controller/1"``
 (``cudaq_pulse.controller.FORMAT``): the schema's name and, after the slash,
 its major version. Within one version keys and event kinds may be added, but
@@ -33,7 +33,7 @@ see below), and ``limits`` the controller limits it was
 checked against (``null`` without). ``events`` lists every drive, readout,
 wait, sync, classical call and frame update in program order, once per loop
 iteration and both arms of a branch. ``segments``, ``calls``, ``links`` and
-``manifest`` are those of ``Lowered.export_to_emulator()`` (see
+``manifest`` are those of ``ScheduledKernel.export_to_emulator()`` (see
 :doc:`classical_calls`).
 
 A kernel with list or qudit parameters compiles once for every call, and

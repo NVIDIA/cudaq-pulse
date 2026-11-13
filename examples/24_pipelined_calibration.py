@@ -128,7 +128,7 @@ class ThompsonSampler:
 
 # ── Worker processes: bind and export ────────────────────────────────────────
 
-worker_program: dict[str, pulse.Lowered] = {}
+worker_program: dict[str, pulse.ScheduledKernel] = {}
 
 
 def receive_program(program):

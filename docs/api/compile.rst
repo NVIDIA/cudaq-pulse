@@ -10,7 +10,7 @@ Compilation API
 .. autoclass:: cudaq_pulse.CompiledKernel
    :members:
 
-.. autoclass:: cudaq_pulse.Lowered
+.. autoclass:: cudaq_pulse.ScheduledKernel
    :members:
 
 .. autoclass:: cudaq_pulse.Pass

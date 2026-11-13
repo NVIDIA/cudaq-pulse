@@ -64,8 +64,8 @@ from ._errors import TimingError as TimingError
 from ._errors import UnsupportedError as UnsupportedError
 from ._errors import UpgradeNotice as UpgradeNotice
 from .classical import Bits as Bits
-from .compiler import Lowered as Lowered
 from .compiler import Pass as Pass
+from .compiler import ScheduledKernel as ScheduledKernel
 from .compiler import compile as compile
 from .kernel import kernel as kernel
 from .kernel._kernel import CompiledKernel as CompiledKernel
@@ -148,7 +148,7 @@ __all__ = [
     "Kernel",
     "compile",
     "CompiledKernel",
-    "Lowered",
+    "ScheduledKernel",
     "Pass",
     "simulate",
     "SimulationResult",

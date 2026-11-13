@@ -48,7 +48,7 @@ def _kernel(body: str) -> pulse.Kernel:
     return pulse.kernel(scope["k"])
 
 
-def _lower(body: str) -> pulse.Lowered:
+def _lower(body: str) -> pulse.ScheduledKernel:
     return pulse.compile(_kernel(body), quantum_system=_DEVICE).lower(*_DEVICE.qudits[:3])
 
 
@@ -66,7 +66,7 @@ _FORMS = [
 ]
 
 
-def _mlir(low: pulse.Lowered) -> str:
+def _mlir(low: pulse.ScheduledKernel) -> str:
     text = low.mlir()
     return re.sub(r"loc\([^)]*\)", "", text[text.index("func.func") :])
 

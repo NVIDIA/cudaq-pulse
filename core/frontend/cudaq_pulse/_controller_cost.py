@@ -52,7 +52,9 @@ if TYPE_CHECKING:
     from ._op_classes import OpClass
     from ._op_tables import OpCounts, OpCycles
     from ._system import Controller, Processor
-    from .compiler import Lowered
+    from .compiler import ScheduledKernel
+
+    type _Kernel = ScheduledKernel
 else:
     from ._errors import _dataclass_when_used
 
@@ -887,7 +889,7 @@ def function_usage(processor: Processor, function: Any) -> FunctionUsage:
     )
 
 
-def _link_usage(lowered: Lowered, calls: Sequence[Any], found: _Found) -> tuple[LinkUsage, ...]:
+def _link_usage(lowered: _Kernel, calls: Sequence[Any], found: _Found) -> tuple[LinkUsage, ...]:
     """Each link's use in one shot of *lowered*, from its scheduled *calls*,
     and the limits of the links they exceed."""
     machine = lowered.options.machine
@@ -953,7 +955,7 @@ def _link_usage(lowered: Lowered, calls: Sequence[Any], found: _Found) -> tuple[
 @_dataclass_when_used(frozen=True)
 class FunctionUsage:
     """One classical function on a processor: on the processor that runs it
-    in ``Lowered.controller_usage``, or on its own, ``processor.usage(fn)``.
+    in ``ScheduledKernel.controller_usage``, or on its own, ``processor.usage(fn)``.
 
     ``op_count`` is the operations it holds there: its body as written, or with
     every loop unrolled (``unrolled``) on a processor without ``"loop"``.
@@ -1045,7 +1047,7 @@ class LimitExceeded:
 @_dataclass_when_used(frozen=True)
 class UsageReport:
     """What a program's classical functions use of its control system
-    (``Lowered.controller_usage``): one row per controller with processors,
+    (``ScheduledKernel.controller_usage``): one row per controller with processors,
     the functions that run off them (``off_board``, by name, whose links
     alone are checked), each link's use in one shot (``links``) and the
     limits exceeded, as text (``violations``) and for each numeric limit by
@@ -1079,14 +1081,14 @@ def _peak(spans: Sequence[tuple[int, int]]) -> int:
     return peak
 
 
-def usage(lowered: Lowered) -> UsageReport:
+def usage(lowered: ScheduledKernel) -> UsageReport:
     """What *lowered*'s classical functions use of its control system's
     links and processors, and the limits they exceed (see ``Link`` and
     ``Processor``)."""
     return _usage(lowered, links=True)
 
 
-def _usage(lowered: Lowered, links: bool = False) -> UsageReport:
+def _usage(lowered: ScheduledKernel, links: bool = False) -> UsageReport:
     """``usage``, with the links' use only when *links*: the processors'
     limits are what compiling checks."""
     machine = lowered.options.machine
@@ -1145,7 +1147,7 @@ def _usage(lowered: Lowered, links: bool = False) -> UsageReport:
     )
 
 
-def _scheduled_calls(lowered: Lowered) -> Sequence[Any]:
+def _scheduled_calls(lowered: ScheduledKernel) -> Sequence[Any]:
     return lowered.classical_report() if lowered.classical and lowered.scheduled else []
 
 

@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""``Lowered.classical_report()``: one ``ClassicalCall`` per execution of a
+"""``ScheduledKernel.classical_report()``: one ``ClassicalCall`` per execution of a
 call to a classical function. Loaded on the first report."""
 
 import math
@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from .compiler import _routes
 
 if TYPE_CHECKING:
-    from .compiler import Lowered
+    from .compiler import ScheduledKernel
 
 
 # classical_report() sets the fields without __init__, so there is no
@@ -94,7 +94,7 @@ class _Exposure:
     """How long a call's first use waits beyond when it could start without
     the call (see ``ClassicalCall.exposed_cycles``), in O(log n) per call."""
 
-    def __init__(self, lowered: "Lowered", events: Sequence[Any]) -> None:
+    def __init__(self, lowered: "ScheduledKernel", events: Sequence[Any]) -> None:
         import bisect
 
         self._bisect = bisect.bisect_right
@@ -149,7 +149,7 @@ class _LoopExposure:
     call asks about counts from the bounds of those ops; only iterations
     that straddle them are looked at one by one."""
 
-    def __init__(self, lowered: "Lowered", nodes: Sequence[Any]) -> None:
+    def __init__(self, lowered: "ScheduledKernel", nodes: Sequence[Any]) -> None:
         clock = lowered.quantum_system.clock_ghz
         qudits = lowered.quantum_system._description.qudits
         holds: dict[int, int] = {}
@@ -289,7 +289,7 @@ class _Found:
         at.pop()
 
 
-def report(lowered: "Lowered") -> list[ClassicalCall]:
+def report(lowered: "ScheduledKernel") -> list[ClassicalCall]:
     """``lowered.classical_report()``."""
     module = lowered._module if lowered.scheduled and not lowered.carriers else lowered._concrete()
     with lowered._lock:

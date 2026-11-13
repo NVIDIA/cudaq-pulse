@@ -37,7 +37,7 @@ _FREQ_2Q = {0: 5.0e9, 1: 5.1e9}
 def test_compile_returns_compiled_kernel():
     ck = pulse.compile(_bell)
     assert isinstance(ck, pulse.CompiledKernel)
-    assert isinstance(ck.lower(Q[0], Q[1]), pulse.Lowered)
+    assert isinstance(ck.lower(Q[0], Q[1]), pulse.ScheduledKernel)
 
 
 def test_compile_produces_mlir():

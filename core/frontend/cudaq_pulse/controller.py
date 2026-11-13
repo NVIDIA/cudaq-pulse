@@ -2,14 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """A compiled kernel for a controller, and what a controller can play.
 
-``Lowered.export_to_controller()`` (``export`` here) writes a scheduled kernel in
+``ScheduledKernel.export_to_controller()`` (``export`` here) writes a scheduled kernel in
 the form an out-of-tree controller backend lowers to its own instructions,
 format ``FORMAT`` (``cudaq-pulse.controller/1``): the lines and the qudits
 they belong to, and every drive, readout, wait, sync and classical call with
 its exact start and end, its waveform (the shape and its parameters, and
 optionally its samples), its tone's frequency and frame phase, the
 measurement-conditioned branches it lies in, and the segments and calls of
-``Lowered.export_to_emulator()``. The schedule is final: a backend places each
+``ScheduledKernel.export_to_emulator()``. The schedule is final: a backend places each
 event at its ``start_cycles`` and does not schedule again.
 
 Times count the controller's own clock cycles, at ``clock_ghz``. When the
@@ -92,7 +92,7 @@ if TYPE_CHECKING:
     from ._system import Controller, ControlSystem
     from ._system import DriveLine as DriveLine
     from ._system import ReadoutLine as ReadoutLine
-    from .compiler import Lowered
+    from .compiler import ScheduledKernel
 
     # The real and the imaginary parts of a waveform's samples.
     _Samples = tuple[list[float], list[float]]
@@ -245,7 +245,7 @@ def _listed(violations: Sequence[str]) -> bool:
     return not isinstance(violations, Violations)
 
 
-def _limit_error(lowered: Lowered, violations: Sequence[str]) -> ControllerLimitError:
+def _limit_error(lowered: ScheduledKernel, violations: Sequence[str]) -> ControllerLimitError:
     """The error for the *violations* of *lowered*, with its usage report
     when its control system has processors and they were checked: always
     for one call, and at compile time without float or qudit parameters."""
@@ -637,7 +637,7 @@ def _digest(text: str) -> str:
 
 
 def _walk(
-    lowered: Lowered,
+    lowered: ScheduledKernel,
     values: bool = True,
     own: _clocks.ControllerClock | None = None,
     waveforms: bool = True,
@@ -753,7 +753,7 @@ def _walk(
 
 
 def _walk_structured(
-    lowered: Lowered, table: _Waveforms, slots: list[int] | None = None
+    lowered: ScheduledKernel, table: _Waveforms, slots: list[int] | None = None
 ) -> tuple[list[Any], list[dict[str, Any]], dict[str, Any], tuple[()], list[str]]:
     """``_walk`` for format /2, on the program clock: the lines as (role,
     qudit), loops whose iterations repeat stay loops, and events give their
@@ -781,7 +781,7 @@ def _walk_structured(
     return lines, events, frames, (), []
 
 
-def _computes_at_run_time(lowered: Lowered) -> bool:
+def _computes_at_run_time(lowered: ScheduledKernel) -> bool:
     """Whether the program computes values at run time: from the answers of
     classical calls, or values a readout selects while it runs."""
     return bool(lowered.classical) or lowered.runtime_selects
@@ -826,7 +826,7 @@ def _played(events: Sequence[dict[str, Any]]) -> Any:
 
 
 def export(
-    lowered: Lowered,
+    lowered: ScheduledKernel,
     sample_rate_ghz: float | None = None,
     controller: int | None = None,
     version: int = 1,
@@ -987,7 +987,7 @@ def _slot_names(events: Sequence[Mapping[str, Any]], role: Any) -> dict[int, str
 
 
 def _check_at_export(
-    lowered: Lowered,
+    lowered: ScheduledKernel,
     limits: Controller,
     clocks: Any,
     walked: tuple[Any, Any, Any, Any, Any] | None,
@@ -1006,7 +1006,7 @@ def _check_at_export(
 
 
 def _export_structured(
-    lowered: Lowered, sample_rate_ghz: float | None, emulation: Any, role: Any = None
+    lowered: ScheduledKernel, sample_rate_ghz: float | None, emulation: Any, role: Any = None
 ) -> dict[str, Any]:
     """``export`` in format ``cudaq-pulse.controller/2``; with the *role* of
     a module of list or qudit parameters, its symbols as format /1 gives
@@ -1504,7 +1504,7 @@ def _controller_index(controller: Any, count: int) -> int:
 
 
 def _part(
-    lowered: Lowered, controller: int | None
+    lowered: ScheduledKernel, controller: int | None
 ) -> tuple[
     list[dict[str, Any]],
     list[dict[str, Any]],
@@ -1550,7 +1550,7 @@ def _part(
 
 
 def _export_part(
-    lowered: Lowered, sample_rate_ghz: float | None, controller: int | None
+    lowered: ScheduledKernel, sample_rate_ghz: float | None, controller: int | None
 ) -> dict[str, Any]:
     """``export`` on a control system of several controllers: the program of
     one, in its own cycles, with its lines and limits and the events it
@@ -1647,7 +1647,7 @@ _ARGUMENT, _CARRIER, _NATIVE, _READOUT = range(4)
 
 
 def _symbols(
-    lowered: Lowered, templates: list[tuple[dict[str, Any], int, int]]
+    lowered: ScheduledKernel, templates: list[tuple[dict[str, Any], int, int]]
 ) -> list[dict[str, Any]]:
     """Every symbol of a call's module, with its value in the call: its
     float arguments, its slots (the carriers bound) and the native
@@ -1726,7 +1726,7 @@ def _named_dependencies(role: Any, found: Sequence[Sequence[Any]]) -> list[dict[
 
 
 def _structured_symbols(
-    lowered: Lowered, role: Any, events: list[dict[str, Any]], slots: Sequence[int]
+    lowered: ScheduledKernel, role: Any, events: list[dict[str, Any]], slots: Sequence[int]
 ) -> None:
     """Gives each event of a format /2 program the symbols its fields depend
     on, as format /1 gives them; an event of a loop's body, those of any of
@@ -1770,7 +1770,7 @@ def _structured_symbols(
 
 
 def _export_plan(
-    lowered: Lowered,
+    lowered: ScheduledKernel,
     role: Any,
     slots: Sequence[int],
     lines: Sequence[Mapping[str, Any]],
@@ -1822,7 +1822,7 @@ def _checks_natively(limits: Controller, clocks: _clocks.ClockPlan | None) -> bo
 
 
 def _native_check(
-    lowered: Lowered, limits: Controller, unresolved: list[str] | None = None
+    lowered: ScheduledKernel, limits: Controller, unresolved: list[str] | None = None
 ) -> list[str]:
     """The limits *lowered* exceeds as the native check finds them: a loop
     whose iterations repeat is checked once, its first iterations and its
@@ -1858,7 +1858,7 @@ def _native_check(
 
 
 def _found_natively(
-    lowered: Lowered, limits: Controller, unresolved: list[str] | None = None
+    lowered: ScheduledKernel, limits: Controller, unresolved: list[str] | None = None
 ) -> bool:
     """Whether *lowered* exceeds a limit of *limits* (``_checks_natively``):
     a check then lists its violations, one per execution, from a walk."""
@@ -1871,7 +1871,7 @@ def _found_natively(
 
 
 def _limit_violations(
-    lowered: Lowered,
+    lowered: ScheduledKernel,
     limits: Controller,
     clocks: _clocks.ClockPlan | None,
     walked: tuple[Any, Any, Any, Any, Any] | None = None,
@@ -1955,7 +1955,7 @@ def _pairs(
 
 
 def _violations(
-    lowered: Lowered,
+    lowered: ScheduledKernel,
     events: Sequence[dict[str, Any]],
     limits: Controller,
     lines: Sequence[Mapping[str, Any]],
@@ -2113,7 +2113,7 @@ def _violations(
     return found
 
 
-def _held(lowered: Lowered) -> list[str]:
+def _held(lowered: ScheduledKernel) -> list[str]:
     """The drives and readouts of *lowered* that play while one of its
     calls is out, from its submission until its answer is due, for a
     controller that blocks on calls; in program cycles."""
@@ -2195,7 +2195,7 @@ def _over_amplitude(
 
 
 def _amplitude_violations(
-    lowered: Lowered, module: Any, most: float, unresolved: list[str] | None
+    lowered: ScheduledKernel, module: Any, most: float, unresolved: list[str] | None
 ) -> list[str]:
     """``_over_amplitude`` on one clock, on the format /2 walk of *module*:
     each distinct waveform is sampled once, and a loop whose iterations
@@ -2316,7 +2316,7 @@ def _rolled_loops(timed: Sequence[Mapping[str, Any]]) -> list[tuple[int, int, in
     return [(trips, start, extra) for trips, start, extra in loops if extra]
 
 
-def check(lowered: Lowered, limits: Controller | None = None) -> Sequence[str]:
+def check(lowered: ScheduledKernel, limits: Controller | None = None) -> Sequence[str]:
     """The limits *lowered* exceeds, of *limits* or else its controller's:
     a list, or past 10,000 violations in rolled loops a sequence that builds
     each one when read (``ControllerLimitError.violations``).
@@ -2332,7 +2332,7 @@ def check(lowered: Lowered, limits: Controller | None = None) -> Sequence[str]:
 
 
 def _compile_check(
-    lowered: Lowered, limits: Controller | None, system: ControlSystem | None = None
+    lowered: ScheduledKernel, limits: Controller | None, system: ControlSystem | None = None
 ) -> tuple[Sequence[str], bool]:
     """The limits *lowered* exceeds whatever its float values, and whether
     that is exact: ``False`` when some values may exceed others. With
@@ -2424,7 +2424,7 @@ def _compile_check(
     return found, not unresolved
 
 
-def _call_violations(lowered: Lowered) -> Sequence[str]:
+def _call_violations(lowered: ScheduledKernel) -> Sequence[str]:
     """The limits one call's values exceed, as its export checks them."""
     machine = lowered.options.machine
     clocks = (lowered._generic or lowered).clocks
@@ -2471,7 +2471,7 @@ def _call_violations(lowered: Lowered) -> Sequence[str]:
 
 
 def _sample_rate_violations(
-    lowered: Lowered,
+    lowered: ScheduledKernel,
     limits: Controller,
     clocks: _clocks.ClockPlan | None,
     events: Sequence[Mapping[str, Any]] | None = None,
@@ -2493,7 +2493,7 @@ def _sample_rate_violations(
     ]
 
 
-def _sample_rates(lowered: Lowered, limits: Controller) -> tuple[float, float] | None:
+def _sample_rates(lowered: ScheduledKernel, limits: Controller) -> tuple[float, float] | None:
     """The rate, in GHz, the samples of *lowered* were made for and the one
     *limits*' lines play, when they differ."""
     from . import _clocks
@@ -2548,7 +2548,7 @@ class ControllerNames(Protocol):
         OpCounts: type[OpCounts]
         OpCycles: type[OpCycles]
 
-    def check(self, lowered: Lowered, limits: _Limits | None = None) -> Sequence[str]: ...
+    def check(self, lowered: ScheduledKernel, limits: _Limits | None = None) -> Sequence[str]: ...
     def evaluate_expression(
         self,
         expression: Any,
@@ -2557,7 +2557,7 @@ class ControllerNames(Protocol):
     ) -> float | int | bool: ...
     def export(
         self,
-        lowered: Lowered,
+        lowered: ScheduledKernel,
         sample_rate_ghz: float | None = None,
         controller: int | None = None,
         version: int = 1,
@@ -2567,7 +2567,7 @@ class ControllerNames(Protocol):
     ) -> np.ndarray: ...
     def shape_key(self, node: Mapping[str, Any] | None) -> tuple[Any, ...] | None: ...
     def unroll(self, program: Mapping[str, Any]) -> dict[str, Any]: ...
-    def usage(self, lowered: Lowered) -> _Usage: ...
+    def usage(self, lowered: ScheduledKernel) -> _Usage: ...
 
 
 class ControllerModule(ControllerNames, Protocol):

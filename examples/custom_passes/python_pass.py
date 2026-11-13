@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """A custom check written in Python, run on a compiled kernel's schedule.
 
-``Lowered.schedule`` lists every drive, readout and wait with its
+``ScheduledKernel.schedule`` lists every drive, readout and wait with its
 line, qubit and scheduled time, so a pass that inspects the schedule is a
 plain Python function. This one enforces a hardware limit the scheduler
 does not know about: at most ``max_drives`` drive lines may play at once.
@@ -16,7 +16,9 @@ import cudaq_pulse as pulse
 cal = {"x_duration": 20 * pulse.ns, "x_sigma": 5 * pulse.ns, "drag_beta": 0.25 * pulse.ns}
 
 
-def concurrent_drive_violations(compiled: pulse.Lowered, max_drives: int) -> list[tuple[int, int]]:
+def concurrent_drive_violations(
+    compiled: pulse.ScheduledKernel, max_drives: int
+) -> list[tuple[int, int]]:
     """Return (time, active drives) wherever more than *max_drives* overlap."""
     edges = []
     for event in compiled.schedule:

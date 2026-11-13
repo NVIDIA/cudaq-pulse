@@ -16,7 +16,7 @@ from .._errors import InvalidValueError
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
 
-    from ..compiler import Lowered, ScheduledEvent
+    from ..compiler import ScheduledEvent, ScheduledKernel
 
 _DRIVE_COLOR = "#4C72B0"
 _READOUT_COLOR = "#DD8452"
@@ -26,7 +26,7 @@ _CLASSICAL_KINDS = ("submit", "answer")
 
 
 def plot_schedule(
-    schedule: Lowered | Sequence[ScheduledEvent],
+    schedule: ScheduledKernel | Sequence[ScheduledEvent],
     figsize: tuple[float, float] = (14, 4),
     title: str | None = None,
 ) -> Figure:
@@ -148,7 +148,7 @@ def plot_schedule(
 
 
 def save_schedule(
-    schedule: Lowered | Sequence[ScheduledEvent],
+    schedule: ScheduledKernel | Sequence[ScheduledEvent],
     path: str,
     **kwargs: Any,
 ) -> None:

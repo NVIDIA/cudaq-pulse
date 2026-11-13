@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 from .._device import Qudit, Register
 from .._errors import InvalidTypeError
 from .._programs import _PLACEMENTS, _Role, _structure
-from ..compiler import CompileOptions, Lowered, build
+from ..compiler import CompileOptions, ScheduledKernel, build
 from ._kernel import (
     _FLOAT,
     _QUDIT,
@@ -123,11 +123,11 @@ class _Placing(_Dispatcher):
         entry = self.lookup(values)
         return _execute(self._bound(entry, values), entry.returns)
 
-    def lower(self, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Lowered:
+    def lower(self, args: tuple[Any, ...], kwargs: dict[str, Any]) -> ScheduledKernel:
         values = self.kernel._bind(*args, **kwargs)
         return self._bound(self.lookup(values), values)
 
-    def _bound(self, entry: _Entry, values: tuple[Any, ...]) -> Lowered:
+    def _bound(self, entry: _Entry, values: tuple[Any, ...]) -> ScheduledKernel:
         kernel = self.kernel
         if entry.lowered._role is not None:
             return _relocate(kernel, entry.lowered, values, entry.runtime)
@@ -137,8 +137,8 @@ class _Placing(_Dispatcher):
 
 
 def _relocate(
-    kernel: Kernel[Any], lowered: Lowered, values: tuple[Any, ...], runtime: tuple[int, ...]
-) -> Lowered:
+    kernel: Kernel[Any], lowered: ScheduledKernel, values: tuple[Any, ...], runtime: tuple[int, ...]
+) -> ScheduledKernel:
     """The call's view of a module with list or qudit parameters: its
     float values flattened, and the carrier of each slot."""
     kinds = kernel._kinds
@@ -171,7 +171,7 @@ def _relocate(
         if view is not None:
             return view
     # A module with list or qudit parameters is a _Placed or _CheckedPlaced.
-    place: Callable[..., Lowered] = lowered.bind
+    place: Callable[..., ScheduledKernel] = lowered.bind
     view = place(numbers, placement, quantum_system)
     if views is not None and quantum_system is not None and len(views) < _PLACEMENTS:
         views[(placement, quantum_system)] = view
@@ -195,7 +195,7 @@ def _build_placed(
     runtime: tuple[int, ...],
     target: Any,
     options: CompileOptions,
-) -> tuple[Lowered, Any]:
+) -> tuple[ScheduledKernel, Any]:
     """``build`` for a kernel with list, qudit or register parameters:
     *trace_args*, the call's values, gets their tracing stand-ins."""
     names = kernel._names

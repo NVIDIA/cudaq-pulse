@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
     from ._clocks import ClockPlan, ControllerClock
     from ._system import Controller, ControlSystem
-    from .compiler import Lowered
+    from .compiler import ScheduledKernel
 
 # Up to this many violations are a list, as without summarized loops.
 LAZY_AFTER = 10_000
@@ -210,7 +210,7 @@ class _Block:
 
 
 class Schedule(Sequence[Any]):
-    """``Lowered.schedule`` past ``LAZY_AFTER`` events: each event built when
+    """``ScheduledKernel.schedule`` past ``LAZY_AFTER`` events: each event built when
     read from its op and the iteration of each loop around it, whose start
     is the op's first plus each iteration's shift. ``len()`` is exact;
     indexing, slicing and iterating give what a list of every event would."""
@@ -568,7 +568,7 @@ def _rolled_loops(
 
 
 def violations(
-    lowered: Lowered,
+    lowered: ScheduledKernel,
     events: Sequence[Mapping[str, Any]],
     repeats: Sequence[Sequence[int]],
     limits: Controller,
@@ -637,7 +637,7 @@ def labeled(found: list[Any], label: str) -> list[Any]:
 
 
 def parts(
-    lowered: Lowered,
+    lowered: ScheduledKernel,
     events: Sequence[Mapping[str, Any]],
     repeats: Sequence[Sequence[int]],
     limits: Controller,
@@ -1069,7 +1069,7 @@ def loops_of(
 
 
 def summarized_check(
-    lowered: Lowered,
+    lowered: ScheduledKernel,
     limits: Controller | None,
     system: ControlSystem | None,
     clocks: ClockPlan | None,

@@ -141,7 +141,7 @@ Custom Passes
    * - File
      - Description
    * - ``python_pass.py``
-     - A schedule check written in Python over ``Lowered.schedule``
+     - A schedule check written in Python over ``ScheduledKernel.schedule``
    * - ``cpp/DriveCount.cpp``
      - An MLIR pass plugin loaded with ``cudaq-pulse-opt --load-pass-plugin``
 

@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// The walk behind Lowered.export_to_controller() and the controller limit
-// checks, included by bindings.cpp inside its anonymous namespace.
+// The walk behind ScheduledKernel.export_to_controller() and the controller
+// limit checks, included by bindings.cpp inside its anonymous namespace.
 //
 // The walk lists every timed op, sync and classical call with the frame of
 // its tone and the branches it lies in. It runs in one of three ways:

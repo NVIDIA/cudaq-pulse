@@ -46,7 +46,7 @@ from .._device import (
     Register,
 )
 from .._errors import InvalidTypeError
-from ..compiler import CompileOptions, Lowered, build, with_line_delays
+from ..compiler import CompileOptions, ScheduledKernel, build, with_line_delays
 from ._guard import Guard, build_guard
 from ._schedule_blocks import root_schedule, validate_kernel_schedule, validate_max_duration
 from ._unroll import resolve_unroll_threshold
@@ -278,7 +278,7 @@ def _materialize(spec: Any, outcome: Callable[[int], int]) -> Any:
     return copy.deepcopy(spec)
 
 
-def _execute(lowered: Lowered, returns: Any) -> Any:
+def _execute(lowered: ScheduledKernel, returns: Any) -> Any:
     from ..runtime.simulate import _simulate_lowered
 
     measured = _has_measurements(returns)
@@ -407,7 +407,7 @@ class _Entry:
 
     def __init__(
         self,
-        lowered: Lowered,
+        lowered: ScheduledKernel,
         guard: Guard,
         returns: Any,
         pins: tuple[Any, ...],
@@ -436,7 +436,7 @@ class _Dispatcher:
         self.evictions = 0
         self.pin: QuantumSystem | None = None
         # The specialization a pinned all-float kernel is built with.
-        self.general: Lowered | None = None
+        self.general: ScheduledKernel | None = None
         _dispatchers.add(self)
 
     def _device(self, values: tuple[Any, ...]) -> QuantumSystem:
@@ -497,7 +497,7 @@ class _Dispatcher:
             lowered = lowered._with_values(kernel._runtime_values(values, entry.runtime))
         return _execute(lowered, entry.returns)
 
-    def lower(self, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Lowered:
+    def lower(self, args: tuple[Any, ...], kwargs: dict[str, Any]) -> ScheduledKernel:
         kernel = self.kernel
         values = kernel._bind(*args, **kwargs)
         entry = self.lookup(values)
@@ -652,8 +652,8 @@ class Kernel[**P]:
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> Any:
         return self._dispatch.call(args, kwargs)
 
-    def lower(self, *args: P.args, **kwargs: P.kwargs) -> Lowered:
-        """Compile for these arguments without running; see ``Lowered``."""
+    def lower(self, *args: P.args, **kwargs: P.kwargs) -> ScheduledKernel:
+        """Compile for these arguments without running; see ``ScheduledKernel``."""
         return self._dispatch.lower(args, kwargs)
 
     def cache_info(self) -> CacheInfo:
@@ -919,11 +919,11 @@ class CompiledKernel[**P]:
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> Any:
         return self._dispatch.call(args, kwargs)
 
-    def lower(self, *args: P.args, **kwargs: P.kwargs) -> Lowered:
+    def lower(self, *args: P.args, **kwargs: P.kwargs) -> ScheduledKernel:
         """The module for these arguments, specialized and scheduled."""
         return self._dispatch.lower(args, kwargs)
 
-    def _view(self) -> Lowered:
+    def _view(self) -> ScheduledKernel:
         general = self._dispatch.general
         if general is None:
             if self.kernel._split[0]:
@@ -939,7 +939,7 @@ class CompiledKernel[**P]:
         return general
 
     def mlir(self, stage: str = "pulse") -> str:
-        """MLIR text of the compiled module; see ``Lowered.mlir``."""
+        """MLIR text of the compiled module; see ``ScheduledKernel.mlir``."""
         return self._view().mlir(stage)
 
     @property
@@ -947,7 +947,7 @@ class CompiledKernel[**P]:
         return self._view().schedule
 
     def timeline(self, *, figsize: tuple[float, float] = (14, 4), title: str | None = None) -> Any:
-        """The schedule's plot; see ``Lowered.timeline``."""
+        """The schedule's plot; see ``ScheduledKernel.timeline``."""
         return self._view().timeline(figsize=figsize, title=title)
 
     @property
