@@ -361,7 +361,7 @@ def test_reading_a_register_element_attribute_names_the_list_rewrite():
 
 
 def test_a_runtime_qudit_frequency_is_one_tone_until_its_line_is_retuned():
-    machine = pulse.ControlSystem(controllers=[Controller(max_tones_per_line=1)])
+    machine = pulse.ControlSystem(controllers=[Controller(max_frequencies_per_line=1)])
 
     @pulse.kernel
     def native(q: Qudit):

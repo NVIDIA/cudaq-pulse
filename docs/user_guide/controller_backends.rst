@@ -665,7 +665,7 @@ Per tone, as each tone is its own sequencer: the spacing of its operations
 (``instruction_cycles``, ``min_idle_cycles``) and ``max_amplitude`` (the
 sum of concurrent tones is not checked yet). Per physical line: its
 waveform memory (``waveform_memory_samples`` with ``"per_line"``, the
-distinct shapes of all its tones) and ``max_tones_per_line`` (the distinct
+distinct shapes of all its tones) and ``max_frequencies_per_line`` (the distinct
 tone frequencies of all its tones). ``max_pulses`` counts every drive and
 readout, as on dedicated lines. A kernel with runtime qudits compiles on
 shared lines, and each call is checked for the tones at once when it binds
@@ -715,7 +715,7 @@ Controller limits
 ``Controller`` states what a controller can play, in its own clock
 cycles: its clock, how
 closely two operations on one line can follow each other, its waveform
-memory and tones per line, which detector reads each qudit and how long a
+memory and distinct frequencies per line, which detector reads each qudit and how long a
 readout holds it, the least feedback latency from a readout to an operation
 that branches on it, whether it can stop waiting for an answer after a
 timeout, and the most drives and readouts in one program. Given to

@@ -1843,7 +1843,7 @@ struct ControllerLimitSpec {
   bool scaling = true;
   std::set<std::string> synthesized;
   bool hold = false;
-  int64_t tonesPerLine = -1;
+  int64_t maxFrequenciesPerLine = -1;
   int64_t maxEvents = -1;
   std::map<int64_t, int64_t> detectors;
   int64_t detectorRecovery = 0;
@@ -2036,7 +2036,7 @@ checkControllerLimits(const std::vector<ControllerRecord> &records,
             "; the controller needs exactly " + std::to_string(limits.issue) +
             " or at least " + std::to_string(limits.gap) + times(event));
     }
-    if (limits.tonesPerLine >= 0) {
+    if (limits.maxFrequenciesPerLine >= 0) {
       std::set<double> tones;
       int64_t unknown = 0;
       for (size_t i : items) {
@@ -2046,12 +2046,13 @@ checkControllerLimits(const std::vector<ControllerRecord> &records,
           unknown += records[i].weight;
       }
       int64_t known = static_cast<int64_t>(tones.size());
-      if (known > limits.tonesPerLine)
+      if (known > limits.maxFrequenciesPerLine)
         found.push_back("line " + std::to_string(line) + ": " +
                         std::to_string(tones.size()) +
                         " tone frequencies; the controller holds " +
-                        std::to_string(limits.tonesPerLine) + " per line");
-      else if (unresolved && known + unknown > limits.tonesPerLine)
+                        std::to_string(limits.maxFrequenciesPerLine) +
+                        " per line");
+      else if (unresolved && known + unknown > limits.maxFrequenciesPerLine)
         *unresolved = true;
     }
   }

@@ -203,7 +203,7 @@ def test_the_structured_format_writes_the_controller_and_names_its_links_anew():
     assert {"min_idle_cycles", "detectors", "detector_recovery_cycles", "sample_rate_ghz"} < set(
         controller
     )
-    assert {"max_tones_per_line", "max_pulses", "supports_timeouts"} < set(controller)
+    assert {"max_frequencies_per_line", "max_pulses", "supports_timeouts"} < set(controller)
     (processor,) = controller["processors"]
     assert processor == limits.processors[0].as_dict()
     assert processor["links"] == ["ctl"] and processor["max_ops_per_function"] == 64
@@ -241,7 +241,7 @@ def test_values_no_limit_depends_on_are_bound_without_a_check(monkeypatch):
 
     monkeypatch.setattr(controller, "_call_violations", counting)
     machine = ControlSystem(
-        controllers=[Controller(waveform_memory_samples=16, max_tones_per_line=1)]
+        controllers=[Controller(waveform_memory_samples=16, max_frequencies_per_line=1)]
     )
 
     @pulse.kernel

@@ -288,7 +288,7 @@ LIMITS = [
         instruction_cycles=2,
         detectors={0: 0, 1: 0},
         detector_recovery_cycles=30,
-        max_tones_per_line=1,
+        max_frequencies_per_line=1,
         waveform_memory_samples=50,
         feedback_latency_cycles=60,
     ),
@@ -756,7 +756,7 @@ def test_a_long_rolled_loop_of_runtime_qudits_is_summarized_and_checked_as_every
         return walk(*args, **kwargs)
 
     # A runtime qudit's own frequency is one tone wherever it plays.
-    tones = [Controller(max_tones_per_line=1), Controller(max_tones_per_line=2)]
+    tones = [Controller(max_frequencies_per_line=1), Controller(max_frequencies_per_line=2)]
     for limits in [*LIMITS, *tones]:
         if clock is not None:
             limits = dataclasses.replace(limits, **OWN_CLOCKS[clock])
@@ -772,7 +772,7 @@ def test_a_long_rolled_loop_of_runtime_qudits_is_summarized_and_checked_as_every
 def test_a_rolled_loop_of_10_15_iterations_of_a_runtime_qudit_is_checked_in_bounds():
     for limits in (
         "instruction_cycles=4, min_idle_cycles=4",
-        "max_tones_per_line=1, max_amplitude=0.05",
+        "max_frequencies_per_line=1, max_amplitude=0.05",
     ):
         few = _in_a_child("runtime", 20, limits)
         many = _in_a_child("runtime", 10**15, limits)
@@ -821,7 +821,7 @@ def _systems() -> dict[str, Any]:
         "delayed": two(1.0, {("drive", 2): 3.0}, cores=True, instruction_cycles=2),
         "skewed": two(1.0, skew=1, instruction_cycles=2),
         "shared": two(1.0, instruction_cycles=2, feedback_latency_cycles=60, peer_latency_cycles=8),
-        "counted": two(1.0, max_pulses=10, max_tones_per_line=1, waveform_memory_samples=50),
+        "counted": two(1.0, max_pulses=10, max_frequencies_per_line=1, waveform_memory_samples=50),
         "unrolled": two(1.0, supports=[c for c in _CAPABILITIES if c != "loop"], max_pulses=10),
         "unforwarded": two(1.0, supports=[c for c in _CAPABILITIES if c != "forward_outcome"]),
         "gridded": two(1.0, cycles_per_timestep=4, max_amplitude=0.05),

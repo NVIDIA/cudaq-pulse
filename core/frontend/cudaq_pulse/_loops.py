@@ -717,16 +717,16 @@ def parts(
             _Pairs(events, spacing, budget, (line,)).walk([(n, 0, ()) for n in items], None)[0]
         )
         templates = list(_events_of(items))
-        if limits.max_tones_per_line is not None:
+        if limits.max_frequencies_per_line is not None:
             tones = {
                 events[i]["frequency_hz"]
                 for i in templates
                 if events[i].get("frequency_hz") is not None
             }
-            if len(tones) > limits.max_tones_per_line:
+            if len(tones) > limits.max_frequencies_per_line:
                 found.append(
                     f"line {line}: {len(tones)} tone frequencies; the controller holds "
-                    f"{limits.max_tones_per_line} per line"
+                    f"{limits.max_frequencies_per_line} per line"
                 )
             elif unresolved is not None:
                 unknown = _keep(items, lambda i: events[i].get("frequency_hz") is None)
@@ -735,7 +735,7 @@ def parts(
                 else:
                     count = len({natives[i] for i in _events_of(unknown) if natives[i] >= 0})
                     count += _count(_keep(unknown, lambda i: natives[i] < 0))
-                if len(tones) + count > limits.max_tones_per_line:
+                if len(tones) + count > limits.max_frequencies_per_line:
                     unresolved.append(f"line {line}: tone frequencies")
         if limits.max_amplitude is not None:
             found.extend(_amplitudes(lines[line], items, events, limits.max_amplitude, unresolved))
@@ -1085,7 +1085,7 @@ def summarized_check(
     with fewer summarized."""
     machine = lowered.options.machine
     natives = None
-    if slots and limits is not None and limits.max_tones_per_line is not None:
+    if slots and limits is not None and limits.max_frequencies_per_line is not None:
         with lowered._lock:
             natives, again, moved = lowered._module.controller_native_tones(
                 True, periods is not None

@@ -41,7 +41,7 @@ behavior may change in any 0.x release.
   its tones, for `q`. The compiler checks that a line reaching several
   qudits plays at most `max_concurrent_tones` tones at once (a kernel with
   runtime qudits, when a call binds them); spacing and `max_amplitude`
-  apply per tone, waveform memory and `max_tones_per_line` per physical
+  apply per tone, waveform memory and `max_frequencies_per_line` per physical
   line. Format `/2` of the controller export lists a shared line once,
   with its `max_concurrent_tones`, and gives each event on it its
   `tone_slot` and `qudits`; format `/1` raises `UnsupportedError` for a

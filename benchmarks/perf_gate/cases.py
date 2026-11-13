@@ -207,7 +207,7 @@ def _feedback_program(n: int) -> Any:
     limits = Controller(
         instruction_cycles=2,
         detectors={0: 0},
-        max_tones_per_line=2,
+        max_frequencies_per_line=2,
         waveform_memory_samples=10**9,
         feedback_latency_cycles=1,
     )

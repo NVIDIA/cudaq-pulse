@@ -406,7 +406,7 @@ _NO_LOOP = [c for c in pulse.Capability if c is not pulse.Capability.LOOP]
 # own cases only.
 _LIMITS = {
     "issue": lambda: Controller(instruction_cycles=3, min_idle_cycles=5),
-    "tones": lambda: Controller(max_tones_per_line=1),
+    "tones": lambda: Controller(max_frequencies_per_line=1),
     "waveform_memory_samples": lambda: _sampled(2, waveform_memory_samples=60),
     "shared_memory": lambda: _sampled(2, waveform_memory_samples=60, waveform_memory="shared"),
     "detectors": lambda: Controller(detectors={0: 0, 1: 0}, detector_recovery_cycles=500),

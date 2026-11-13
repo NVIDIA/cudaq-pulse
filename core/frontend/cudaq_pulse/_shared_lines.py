@@ -344,7 +344,7 @@ def _per_line(
     from .controller import WaveformMemoryScope, _samples_per_own_cycle, shape_key
 
     found = []
-    most = controller.max_tones_per_line
+    most = controller.max_frequencies_per_line
     if most is not None:
         tones = {e["frequency_hz"] for e in played if e.get("frequency_hz") is not None}
         if len(tones) > most:

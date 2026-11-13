@@ -400,7 +400,7 @@ def test_branches_that_never_play_together_share_a_tone():
 
 
 def test_tone_frequencies_count_per_physical_line():
-    qs = _feedline(4, max_tones_per_line=2)
+    qs = _feedline(4, max_frequencies_per_line=2)
     with pytest.raises(pulse.controller.ControllerLimitError) as caught:
         _lowered(multiplexed, qs, 0, 1, 2, 3)
     assert list(caught.value.violations) == [

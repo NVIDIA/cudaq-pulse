@@ -597,7 +597,7 @@ class Controller:
     ``waveform_memory``: ``"per_line"`` (each line has a memory of
     ``waveform_memory_samples``) or ``"shared"`` (one memory serves every
     line); see ``WaveformMemoryScope``.
-    ``max_tones_per_line``: distinct tone frequencies one line plays.
+    ``max_frequencies_per_line``: distinct frequencies one line plays over a program.
     ``max_amplitude``: the largest magnitude of a sample its lines play
     (``None``: no limit). The compiler sets no amplitude limit of its own;
     a drive or readout whose envelope peaks above this one is a violation
@@ -674,7 +674,7 @@ class Controller:
     min_idle_cycles: int = 0
     sample_rate_ghz: float | None = None
     waveform_memory_samples: int | None = None
-    max_tones_per_line: int | None = None
+    max_frequencies_per_line: int | None = None
     max_amplitude: float | None = None
     detectors: Mapping[int, int] = field(default_factory=dict)
     detector_recovery_cycles: int = 0
@@ -760,7 +760,7 @@ class Controller:
             raise InvalidValueError(
                 f"Controller.sample_rate_ghz must be a positive number or None, got {rate!r}"
             )
-        for name in ("waveform_memory_samples", "max_tones_per_line", "max_pulses"):
+        for name in ("waveform_memory_samples", "max_frequencies_per_line", "max_pulses"):
             value = getattr(self, name)
             if value is not None and value < 1:
                 raise InvalidValueError(f"Controller.{name} must be positive or None")

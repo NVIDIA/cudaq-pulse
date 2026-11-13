@@ -356,7 +356,7 @@ def test_limits_report_clock_tones_memory_and_size():
     assert check(lowered, Controller(clock_ghz=clock / 2)) == []
     found = check(lowered, Controller(clock_ghz=clock / 8))
     assert len(found) == 3 and all("moves in timesteps of 8 cycles" in f for f in found)
-    assert check(lowered, Controller(max_tones_per_line=1)) == []
+    assert check(lowered, Controller(max_frequencies_per_line=1)) == []
     # Line 0 plays two shapes of 16 cycles, the readout line one of 100,
     # line 2 two of 20.
     found = check(lowered, Controller(sample_rate_ghz=4.0, waveform_memory_samples=64))
@@ -494,7 +494,7 @@ def test_limits_are_part_of_the_control_system_identity():
 
 
 def test_the_limits_travel_with_the_program():
-    limits = Controller(instruction_cycles=1, max_tones_per_line=2)
+    limits = Controller(instruction_cycles=1, max_frequencies_per_line=2)
     program = _program(machine=ControlSystem(controllers=[limits]))
     assert program["limits"] == limits.as_dict()
     assert _program()["limits"] is None
@@ -533,14 +533,14 @@ def retuned(q, shift: float):
 
 
 def test_a_float_tone_shift_beyond_the_limit_fails_at_the_call_not_at_export():
-    machine = ControlSystem(controllers=[Controller(max_tones_per_line=1)])
+    machine = ControlSystem(controllers=[Controller(max_frequencies_per_line=1)])
     compiled = pulse.compile(retuned, control_system=machine)
     with pytest.raises(ControllerLimitError, match="2 tone frequencies"):
         compiled.lower(Q[0], 50e6)
     # No shift plays one tone, which fits.
     assert len(compiled.lower(Q[0], 0.0).export_to_controller()["events"]) == 2
     # Two tones fit a line that plays two.
-    two = ControlSystem(controllers=[Controller(max_tones_per_line=2)])
+    two = ControlSystem(controllers=[Controller(max_frequencies_per_line=2)])
     lowered = pulse.compile(retuned, control_system=two).lower(Q[0], 50e6)
     assert len(lowered.export_to_controller()["events"]) == 2
 
@@ -598,7 +598,7 @@ def test_a_call_is_checked_once_per_distinct_values(monkeypatch):
         return check_call(view)
 
     monkeypatch.setattr(controller_module, "_call_violations", counted)
-    machine = ControlSystem(controllers=[Controller(max_tones_per_line=1)])
+    machine = ControlSystem(controllers=[Controller(max_frequencies_per_line=1)])
     compiled = pulse.compile(retuned, control_system=machine)
     for shift in (0.0, 0.0, 0.0, -0.0):
         compiled.lower(Q[0], shift)
@@ -610,7 +610,7 @@ def test_a_call_is_checked_once_per_distinct_values(monkeypatch):
 
 
 def test_a_checked_call_names_a_value_that_is_not_a_finite_number():
-    machine = ControlSystem(controllers=[Controller(max_tones_per_line=1)])
+    machine = ControlSystem(controllers=[Controller(max_frequencies_per_line=1)])
     compiled = pulse.compile(retuned, control_system=machine)
     with pytest.raises(pulse.InvalidValueError, match="argument 'shift' is nan"):
         compiled.lower(Q[0], float("nan"))
@@ -656,7 +656,7 @@ def test_a_call_that_lowers_exports(shift, widths, tones, samples):
         shift_frequency(d.tone, 25e6)
         drive(d, gaussian(40, 0.5, 10.0))
 
-    limits = Controller(max_tones_per_line=tones, waveform_memory_samples=samples)
+    limits = Controller(max_frequencies_per_line=tones, waveform_memory_samples=samples)
     # The call fails exactly when its program, compiled free, exceeds them.
     expected = check(pulse.compile(program).lower(Q[0], shift, *widths), limits)
     compiled = pulse.compile(program, control_system=ControlSystem(controllers=[limits]))

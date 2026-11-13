@@ -361,7 +361,7 @@ def test_a_long_program_is_exported_and_checked_in_linear_time():
     limits = Controller(
         instruction_cycles=2,
         detectors={0: 0},
-        max_tones_per_line=2,
+        max_frequencies_per_line=2,
         waveform_memory_samples=10**9,
         feedback_latency_cycles=1,
     )
@@ -426,7 +426,10 @@ def _sweep(compiled, sweep: list[float], monkeypatch) -> None:
 @pytest.mark.scaling
 def test_a_rolled_loop_is_checked_and_exported_rolled_in_constant_time():
     limits = Controller(
-        instruction_cycles=2, detectors={0: 0}, max_tones_per_line=2, waveform_memory_samples=10**9
+        instruction_cycles=2,
+        detectors={0: 0},
+        max_frequencies_per_line=2,
+        waveform_memory_samples=10**9,
     )
     machine = ControlSystem(controllers=[limits])
 

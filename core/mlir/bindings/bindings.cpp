@@ -3264,7 +3264,7 @@ public:
       int64_t issue, int64_t gap, int64_t samplesNum, int64_t samplesDen,
       const std::tuple<int64_t, int64_t, bool, bool, std::vector<std::string>,
                        bool> &memory,
-      int64_t tonesPerLine, int64_t maxEvents,
+      int64_t maxFrequenciesPerLine, int64_t maxEvents,
       const std::map<int64_t, int64_t> &detectors, int64_t detectorRecovery,
       int64_t feedbackLatency, bool answerTimeouts,
       const std::vector<std::string> &timeoutFunctions, bool resolve) {
@@ -3287,7 +3287,7 @@ public:
     limits.scaling = scaling;
     limits.synthesized = {synthesized.begin(), synthesized.end()};
     limits.hold = hold;
-    limits.tonesPerLine = tonesPerLine;
+    limits.maxFrequenciesPerLine = maxFrequenciesPerLine;
     limits.maxEvents = maxEvents;
     limits.detectors = detectors;
     limits.detectorRecovery = detectorRecovery;
@@ -6611,7 +6611,7 @@ NB_MODULE(_cudaq_pulse_native, m) {
       .def("controller_check", &PulseModule::controller_check,
            nb::call_guard<nb::gil_scoped_release>(), nb::arg("issue"),
            nb::arg("gap"), nb::arg("samples_num"), nb::arg("samples_den"),
-           nb::arg("memory"), nb::arg("max_tones_per_line"),
+           nb::arg("memory"), nb::arg("max_frequencies_per_line"),
            nb::arg("max_pulses"), nb::arg("detectors"),
            nb::arg("detector_recovery"), nb::arg("feedback_latency"),
            nb::arg("supports_timeouts"), nb::arg("timeout_functions"),

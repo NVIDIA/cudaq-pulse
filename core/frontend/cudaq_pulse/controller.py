@@ -1857,7 +1857,7 @@ def _native_check(
             num,
             den,
             _memory(limits),
-            -1 if limits.max_tones_per_line is None else limits.max_tones_per_line,
+            -1 if limits.max_frequencies_per_line is None else limits.max_frequencies_per_line,
             -1 if limits.max_pulses is None else limits.max_pulses,
             dict(limits.detectors),
             limits.detector_recovery_cycles,
@@ -2032,12 +2032,12 @@ def _violations(
                     f"{previous['start_cycles']}; the controller "
                     f"needs exactly {issue} or at least {gap}"
                 )
-        if limits.max_tones_per_line is not None:
+        if limits.max_frequencies_per_line is not None:
             tones = {e["frequency_hz"] for e in items if e.get("frequency_hz") is not None}
-            if len(tones) > limits.max_tones_per_line:
+            if len(tones) > limits.max_frequencies_per_line:
                 found.append(
                     f"line {line}: {len(tones)} tone frequencies; the controller holds "
-                    f"{limits.max_tones_per_line} per line"
+                    f"{limits.max_frequencies_per_line} per line"
                 )
             elif unresolved is not None:
                 unknown = [e for e in items if e.get("frequency_hz") is None]
@@ -2048,7 +2048,7 @@ def _violations(
                     # often it plays: an upper bound for every placement.
                     keys = [natives[e["index"]] for e in unknown]
                     count = len({k for k in keys if k >= 0}) + keys.count(-1)
-                if len(tones) + count > limits.max_tones_per_line:
+                if len(tones) + count > limits.max_frequencies_per_line:
                     unresolved.append(f"line {line}: tone frequencies")
         if limits.max_amplitude is not None:
             found.extend(_over_amplitude(lines[line], items, limits.max_amplitude, unresolved))
@@ -2426,7 +2426,7 @@ def _compile_check(
         return [], False
     unresolved: list[str] | None = [] if lowered.parameters or slots else None
     natives = None
-    if slots and limits is not None and limits.max_tones_per_line is not None:
+    if slots and limits is not None and limits.max_frequencies_per_line is not None:
         with lowered._lock:
             natives = lowered._module.controller_native_tones()
     if system is None:
