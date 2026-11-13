@@ -293,7 +293,7 @@ def _diagnose_gpu(write: Callable[[str], None]) -> gpu.GpuRuntimeError | None:
         write(f"  {error}")
         return error
     write(f"GPU execution: ready, CUDA {runtime.cuda_major} runtime {runtime.path}")
-    write(f"  quantum systems: {runtime.device_count}")
+    write(f"  devices: {runtime.device_count}")
     return None
 
 
