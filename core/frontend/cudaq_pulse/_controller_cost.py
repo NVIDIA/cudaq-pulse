@@ -1079,7 +1079,7 @@ class FunctionUsage:
     """One classical function on the processor that runs it, in
     ``Lowered.controller_usage``.
 
-    ``ops`` is the operations it holds there: its body as written, or with
+    ``op_count`` is the operations it holds there: its body as written, or with
     every loop unrolled (``unrolled``) on a processor without ``"loop"``.
     ``state_bytes`` adds its arguments, results and locals;
     ``request_bytes`` and ``answer_bytes`` are its messages with their
@@ -1092,7 +1092,7 @@ class FunctionUsage:
 
     function: str
     link: int | str
-    ops: int
+    op_count: int
     unrolled: bool
     state_bytes: int
     request_bytes: int
@@ -1123,7 +1123,7 @@ class ProcessorUsage:
     processor: Processor
     clock_ghz: float
     functions: tuple[FunctionUsage, ...]
-    ops: int
+    op_count: int
     state_bytes: int
     calls_per_shot: int
     bytes_per_shot: int
@@ -1281,7 +1281,7 @@ def _function_usage(
     row = FunctionUsage(
         function=fn.name,
         link=base.link,
-        ops=ops,
+        op_count=ops,
         unrolled=unrolled,
         state_bytes=base.state_bytes,
         request_bytes=base.request_bytes,
@@ -1350,7 +1350,7 @@ def _processor_usage(
     label: str,
     found: _Found,
 ) -> ProcessorUsage:
-    ops = sum(row.ops for row in functions)
+    ops = sum(row.op_count for row in functions)
     state = sum(row.state_bytes for row in functions)
     calls = sum(row.calls_per_shot for row in functions)
     bytes_per_shot = sum(
@@ -1415,7 +1415,7 @@ def _processor_usage(
         processor=processor,
         clock_ghz=clock,
         functions=tuple(functions),
-        ops=ops,
+        op_count=ops,
         state_bytes=state,
         calls_per_shot=calls,
         bytes_per_shot=bytes_per_shot,
@@ -1439,7 +1439,7 @@ def _format_usage(report: UsageReport, exceeds: bool = True) -> str:
                 f"(links: {links})"
             )
             lines.append(
-                f"  in all: ops {_of(usage_row.ops, p.max_ops_total)}, "
+                f"  in all: ops {_of(usage_row.op_count, p.max_ops_total)}, "
                 f"state {_of(usage_row.state_bytes, p.max_state_bytes_total, ' B')}, "
                 f"calls per shot {_of(usage_row.calls_per_shot, p.max_calls_per_shot)}, "
                 f"bytes per shot {_of(usage_row.bytes_per_shot, p.max_bytes_per_shot)}, "
@@ -1452,7 +1452,7 @@ def _format_usage(report: UsageReport, exceeds: bool = True) -> str:
                 f"{'calls':>5}"
             )
             for f in usage_row.functions:
-                ops = _of(f.ops, p.max_ops_per_function) + (" unrolled" if f.unrolled else "")
+                ops = _of(f.op_count, p.max_ops_per_function) + (" unrolled" if f.unrolled else "")
                 state = _of(f.state_bytes, p.max_state_bytes_per_function)
                 compute = f"{f.compute_ns:.0f} / {f.max_latency_ns:.0f} ns"
                 lines.append(

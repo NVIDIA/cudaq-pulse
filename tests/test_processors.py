@@ -248,10 +248,10 @@ def test_a_function_that_fits_its_processor_compiles_and_is_reported():
     (processor,) = row.processors
     assert (row.controller, row.model, processor.index, processor.clock_ghz) == (0, "box.a", 0, 1.0)
     (function,) = processor.functions
-    assert (function.function, function.ops, function.unrolled) == ("_parity", 4, False)
+    assert (function.function, function.op_count, function.unrolled) == ("_parity", 4, False)
     assert function.compute_cycles == 12 and function.compute_ns == 12.0
     assert function.slack_ns == 48.0 and function.calls_per_shot == 1
-    assert processor.ops == 4 and processor.calls_per_shot == 1
+    assert processor.op_count == 4 and processor.calls_per_shot == 1
     assert processor.bytes_per_shot == function.request_bytes + function.answer_bytes
     text = str(usage)
     assert text.startswith("Controller usage: within limits\n")
@@ -269,7 +269,7 @@ def test_a_processor_without_loop_holds_the_unrolled_body_and_says_so():
     ) in text
     fits = pulse.Processor(links=["cores"], unsupported=["loop"])
     (function,) = _lower(corrected, fits).controller_usage.controllers[0].processors[0].functions
-    assert (function.ops, function.unrolled, function.compute_cycles) == (8, True, 8)
+    assert (function.op_count, function.unrolled, function.compute_cycles) == (8, True, 8)
 
 
 def test_an_operation_a_processor_does_not_support_is_named_with_its_line():
@@ -299,7 +299,7 @@ def test_totals_and_per_shot_limits_count_every_function_of_a_processor():
     assert "(max_bytes_per_shot)" in text
     # Each limit left out is no limit: the program fits.
     fits = _lower(both, pulse.Processor(links=["cores"], max_concurrent_calls=2))
-    assert fits.controller_usage.controllers[0].processors[0].ops == 7
+    assert fits.controller_usage.controllers[0].processors[0].op_count == 7
 
 
 def test_the_error_carries_the_usage_report_with_by_how_much_each_limit_is_exceeded():
@@ -315,7 +315,7 @@ def test_the_error_carries_the_usage_report_with_by_how_much_each_limit_is_excee
     error = raised.value
     report = error.usage
     assert report is not None and not report.within_limits
-    assert report.controllers[0].processors[0].ops == 7
+    assert report.controllers[0].processors[0].op_count == 7
     label = "processors[0] of controllers[0] (box.a)"
     exceeded = {(e.where, e.limit): (e.value, e.most, e.over, e.unit) for e in report.exceeded}
     assert exceeded[(label, "max_ops_total")] == (7, 6, 1, "operations")
