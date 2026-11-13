@@ -200,7 +200,7 @@ def simulate(
     handlers: Mapping[str, Callable[..., Any]] | None = None,
     readout: str = "ideal",
     latency_branching: bool = False,
-    plant: Any = None,
+    quantum_system: Any = None,
     branches: BranchCoverage | str = BranchCoverage.ALL,
 ) -> SimulationResult:
     """Simulate one kernel call on the target it is compiled for.
@@ -290,7 +290,7 @@ def simulate(
         ``"model_with_decay"``, relaxation during the window too); it needs
         ``shots_count``, and each shot from the call on is simulated as its own
         trajectory.
-    plant:
+    quantum_system:
         A device description to simulate instead of the device the program
         was compiled for: its qubits' frequencies, T1, T2, thermal
         populations, drive strength and readout parameters apply, while the
@@ -349,7 +349,7 @@ def simulate(
         handlers=handlers,
         readout=readout,
         latency_branching=latency_branching,
-        plant=plant,
+        quantum_system=quantum_system,
         branches=branches,
     )
 
@@ -370,7 +370,7 @@ def _simulate_lowered(
     handlers: Mapping[str, Callable[..., Any]] | None = None,
     readout: str = "ideal",
     latency_branching: bool = False,
-    plant: Any = None,
+    quantum_system: Any = None,
     branches: BranchCoverage | str = BranchCoverage.ALL,
 ) -> SimulationResult:
     if shots_count is not None and (shots_count.__class__ is not int or shots_count < 1):
@@ -402,7 +402,11 @@ def _simulate_lowered(
             "simulate(program, 0.5), or lower the kernel with them"
         )
     compiled_for = lowered.quantum_system
-    target = compiled_for._description if plant is None else _check_plant(lowered, plant)
+    target = (
+        compiled_for._description
+        if quantum_system is None
+        else _check_quantum_system(lowered, quantum_system)
+    )
     try:
         step = _STEPS.get(
             (
@@ -438,7 +442,7 @@ def _simulate_lowered(
             handlers=handlers,
             readout=readout,
             latency_branching=latency_branching,
-            plant=plant is not None,
+            overridden=quantum_system is not None,
             sampled=branches == "sampled",
         )
     except _DivergedError as e:
@@ -539,16 +543,26 @@ def _simulation_model(target: Any) -> Callable[..., SimulationResult]:
     return model._simulate
 
 
-def _check_plant(lowered: Lowered, plant: Any) -> Any:
-    """*plant*, a device description that defines every qudit of *lowered*."""
+def _check_quantum_system(lowered: Lowered, quantum_system: Any) -> Any:
+    """The description of *quantum_system*, a quantum system or a device
+    description, which defines every qudit of *lowered*."""
     from ..targets import DeviceDescription
 
-    if not isinstance(plant, DeviceDescription):
-        raise InvalidTypeError(f"plant must be a DeviceDescription, got {type(plant).__name__}")
-    missing = [q for q in lowered.qudits if q not in plant.qudits]
+    if not isinstance(quantum_system, DeviceDescription):
+        from .._device import QuantumSystem
+
+        if not isinstance(quantum_system, QuantumSystem):
+            raise InvalidTypeError(
+                "quantum_system must be a QuantumSystem or a DeviceDescription, "
+                f"got {type(quantum_system).__name__}"
+            )
+        quantum_system = quantum_system._description
+    missing = [q for q in lowered.qudits if q not in quantum_system.qudits]
     if missing:
-        raise InvalidValueError(f"the plant does not define qudits {missing} that the program uses")
-    return plant
+        raise InvalidValueError(
+            f"the quantum system does not define qudits {missing} that the program uses"
+        )
+    return quantum_system
 
 
 _DEFAULT_STEP_NS = 0.05
@@ -770,7 +784,7 @@ def _simulate_compiled(
     handlers: Mapping[str, Callable[..., Any]] | None = None,
     readout: str = "ideal",
     latency_branching: bool = False,
-    plant: bool = False,
+    overridden: bool = False,
     sampled: bool = False,
 ) -> SimulationResult:
     # A cached specialization's module is shared by every call of it, from
@@ -815,7 +829,7 @@ def _simulate_compiled(
     dims, extra = _level_attributes(target, qudits, levels)
     base = _target_attributes(target, qudits, integrator=integrator, dephasing=dephasing)
     base += ", " + extra
-    if plant:
+    if overridden:
         frequencies = [math.nan] * (max(qudits) + 1)
         for q in qudits:
             frequencies[q] = float(target.qudits[q].frequency_hz)

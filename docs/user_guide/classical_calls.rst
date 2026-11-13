@@ -387,7 +387,7 @@ A whole program with unanswered calls does not lower to LLVM:
 ``Lowered.mlir("llvm")`` points to ``pulse.simulate``, which lowers each
 segment with its answers bound, on the CPU or the GPU.
 
-``plant=`` simulates another device description than the device the program
+``quantum_system=`` simulates another device description than the device the program
 was compiled for, keeping the program as compiled: its qubits' frequencies,
 T1, T2, drive strength and readout parameters apply. That is how a drifting
 device is simulated (see below).
@@ -547,8 +547,8 @@ when it is known.
 **A drifting device.** ``cudaq_pulse.runtime.drift.DriftingPlant`` moves one
 qubit's T1 (``TelegraphT1``, switching between two values), frequency and
 drive amplitude (``OrnsteinUhlenbeck``) as time advances, and records every
-state in ``plant.truth``. ``plant.now()`` is the device now, for
-``pulse.simulate(..., plant=...)``; ``p_survive``, ``p_ramsey`` and
+state in ``drifting.truth``. ``drifting.now()`` is the device now, for
+``pulse.simulate(..., quantum_system=...)``; ``p_survive``, ``p_ramsey`` and
 ``p_rabi`` give the standard experiments' outcome probabilities directly, for
 loops of many iterations.
 

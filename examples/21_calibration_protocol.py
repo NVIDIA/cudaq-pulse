@@ -444,32 +444,32 @@ def binary_search(q, rounds: int):
 # ── Devices ─────────────────────────────────────────────────────────────────
 
 
-def chain_plant(target, t1_us=18.3, offset_hz=60e3, amplitude_scale=1.015):
+def chain_system(target, t1_us=18.3, offset_hz=60e3, amplitude_scale=1.015):
     """Qubit 0 of *target* as the chain's device: its T1, a detuning from
     the drive, a drive-amplitude error and small readout errors."""
     qudit = target.qudits[0]
     scale = target.drive_amplitude_scale(0) * amplitude_scale
-    plant = qudit.replace(
+    true_system = qudit.replace(
         t1_us=t1_us,
         frequency_hz=qudit.frequency_hz + offset_hz,
         drive=qudit.drive.replace(amplitude_scale_rad_per_ns=scale),
         readout=qudit.readout.replace(error_1to0=0.03, error_0to1=0.02),
     )
-    return dataclasses.replace(target, qudits={**target.qudits, 0: plant})
+    return dataclasses.replace(target, qudits={**target.qudits, 0: true_system})
 
 
-def search_plant(target, offset_hz):
+def search_system(target, offset_hz):
     """A device like the binary-search paper's: T2* 12 us, T1 80 us, and
     readout errors that give its fringe contrast of 0.6 between shots."""
     qudit = target.qudits[0]
-    plant = qudit.replace(
+    true_system = qudit.replace(
         t1_us=80.0,
         t2_star_us=12.0,
         thermal_population=0.0,
         frequency_hz=qudit.frequency_hz + offset_hz,
         readout=qudit.readout.replace(error_1to0=0.115, error_0to1=0.105),
     )
-    return dataclasses.replace(target, qudits={**target.qudits, 0: plant})
+    return dataclasses.replace(target, qudits={**target.qudits, 0: true_system})
 
 
 def chain_results(branch):
@@ -494,7 +494,7 @@ if __name__ == "__main__":
     target = transmon_17q()
     qs = pulse.quantum_system(target)
     q = qs.qudits[0]
-    plant = chain_plant(target)
+    true_system = chain_system(target)
 
     print("=== 1. The calibration chain, on the controller ===")
     start = time.perf_counter()
@@ -514,7 +514,12 @@ if __name__ == "__main__":
     print(f"  the static schedule (every variable wait at its least) is {end_cycles / 2e3:.0f} us")
     start = time.perf_counter()
     result = pulse.simulate(
-        lowered, plant=plant, shots_count=1, seed=7, branches="sampled", readout="model"
+        lowered,
+        quantum_system=true_system,
+        shots_count=1,
+        seed=7,
+        branches="sampled",
+        readout="model",
     )
     print(f"  one shot of the chain simulated in {time.perf_counter() - start:.1f} s")
     for name, value in chain_results(result.branches[0]).items():
@@ -535,7 +540,7 @@ if __name__ == "__main__":
         offset = (seed - 1.5) * 300e3
         found = pulse.simulate(
             lowered,
-            plant=search_plant(target, offset),
+            quantum_system=search_system(target, offset),
             shots_count=1,
             seed=seed,
             branches="sampled",

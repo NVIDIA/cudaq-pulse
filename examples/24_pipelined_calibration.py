@@ -147,13 +147,13 @@ def prepare(setting):
 qpu_state: dict[str, DeviceDescription] = {}
 
 
-def power_on(plant):
-    qpu_state["plant"] = plant
+def power_on(true_system):
+    qpu_state["true_system"] = true_system
 
 
-def excited_population(program, plant):
-    """P(1) at the end of *program*, simulated against *plant* with three levels."""
-    result = pulse.simulate(program, levels=3, dt_ns=0.25, plant=plant)
+def excited_population(program, true_system):
+    """P(1) at the end of *program*, simulated against *true_system* with three levels."""
+    result = pulse.simulate(program, levels=3, dt_ns=0.25, quantum_system=true_system)
     return min(max(result.level_population(1), 0.0), 1.0)
 
 
@@ -165,7 +165,7 @@ def run_batch(prepared, seed):
     for program, controller_program in prepared:
         assert controller_program["events"], "a controller would load these events"
         counts.append(
-            int(rng.binomial(shots_count, excited_population(program, qpu_state["plant"])))
+            int(rng.binomial(shots_count, excited_population(program, qpu_state["true_system"])))
         )
     ends = start + len(prepared) * shots_count * (shot_time / pulse.s)
     overran = time.monotonic() - ends
@@ -222,16 +222,16 @@ def calibrate(pool, qpu, pipelined):
     }
 
 
-def true_p1(program, plant, index):
-    """P(1) of grid setting *index*, simulated exactly against *plant*."""
-    return excited_population(program.bind(list(settings[index])), plant)
+def true_p1(program, true_system, index):
+    """P(1) of grid setting *index*, simulated exactly against *true_system*."""
+    return excited_population(program.bind(list(settings[index])), true_system)
 
 
 if __name__ == "__main__":
     quantum_system = pulse.quantum_system(target)
     nominal = target.qudits[0]
     true_qudit = nominal.replace(frequency_hz=nominal.frequency_hz + hidden_offset_hz)
-    plant = dataclasses.replace(target, qudits={**target.qudits, 0: true_qudit})
+    true_system = dataclasses.replace(target, qudits={**target.qudits, 0: true_qudit})
 
     print("=== The program, compiled once ===")
     started = time.perf_counter()
@@ -259,7 +259,7 @@ if __name__ == "__main__":
         workers, mp_context=spawn, initializer=receive_program, initargs=(program,)
     )
     qpu = concurrent.futures.ProcessPoolExecutor(
-        1, mp_context=spawn, initializer=power_on, initargs=(plant,)
+        1, mp_context=spawn, initializer=power_on, initargs=(true_system,)
     )
     results = {}
     with pool, qpu:
@@ -291,11 +291,11 @@ if __name__ == "__main__":
         amplitude, detuning_hz = settings[r["best"]]
         print(
             f"  best setting: amplitude {amplitude / pi_amplitude:.3f} x nominal, detuning "
-            f"{detuning_hz / 1e6:+.2f} MHz, true P(1) {true_p1(program, plant, r['best']):.4f}"
+            f"{detuning_hz / 1e6:+.2f} MHz, true P(1) {true_p1(program, true_system, r['best']):.4f}"
         )
 
     print("\n=== Comparison ===")
-    exact = [true_p1(program, plant, i) for i in range(len(settings))]
+    exact = [true_p1(program, true_system, i) for i in range(len(settings))]
     amplitude, detuning_hz = settings[int(np.argmax(exact))]
     print(
         f"  best on the whole grid (simulated exactly): P(1) {max(exact):.4f} at "

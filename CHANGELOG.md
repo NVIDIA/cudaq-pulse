@@ -559,7 +559,7 @@ behavior may change in any 0.x release.
 - **Simulating and emulating calls.** `pulse.simulate` binds answers per
   measurement path, with timeouts from the latency model, assignment errors
   and relaxation during readout, IQ points from a dispersive readout model,
-  and `plant=` to simulate a drifted device without compiling again.
+  and `quantum_system=` to simulate a drifted device without compiling again.
   `Lowered.export_emulation()` writes the schedule, segments and call manifest
   for a controller; `classical.emulation.emulate` runs a program in virtual
   time against real services, in process or over UDP. Requests and answers

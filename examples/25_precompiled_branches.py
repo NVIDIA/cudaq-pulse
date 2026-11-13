@@ -114,10 +114,12 @@ def drifted(factors):
     return dataclasses.replace(target, qudits=qudits)
 
 
-def populations(program, plant):
+def populations(program, true_system):
     """P(1) of each qudit where the readouts start."""
     drives_end = repetitions * pulse_duration
-    result = pulse.simulate(program, levels=2, dt_ns=1.0, plant=plant, t_end=drives_end)
+    result = pulse.simulate(
+        program, levels=2, dt_ns=1.0, quantum_system=true_system, t_end=drives_end
+    )
     return [result.level_population(1, qudit=q) for q in qudit_indices]
 
 
@@ -192,8 +194,10 @@ if __name__ == "__main__":
     check = table[tuple(range(len(qudit_indices)))][len(scales) // 2][0]  # every train, scale 1
     for round_ in range(1, rounds + 1):
         factors = 1 + 0.02 * rng.standard_normal(len(qudit_indices))
-        plant = drifted(factors)
-        measured = [rng.binomial(shots_count, p) / shots_count for p in populations(check, plant)]
+        true_system = drifted(factors)
+        measured = [
+            rng.binomial(shots_count, p) / shots_count for p in populations(check, true_system)
+        ]
         outcome = tuple(i for i, p in enumerate(measured) if p < spec)
         sweep = table.get(outcome)
         shown = " ".join(f"{p:.3f}" for p in measured)
@@ -206,7 +210,7 @@ if __name__ == "__main__":
             f"{len(sweep[0][1]['events'])} controller events each"
         )
         p1 = (
-            rng.binomial(shots_count, [populations(bound, plant) for bound, _ in sweep])
+            rng.binomial(shots_count, [populations(bound, true_system) for bound, _ in sweep])
             / shots_count
         )
         for i in outcome:

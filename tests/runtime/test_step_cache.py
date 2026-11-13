@@ -77,10 +77,10 @@ def test_a_recalibrated_plant_changes_the_step_and_the_warning(steps):
     lowered = on(_target(), _flip, Q[0])
     calibrated, recalibrated = _target(), _target(alpha_hz=-400.0e6)
     for plant in (calibrated, recalibrated, calibrated, recalibrated):
-        pulse.simulate(lowered, levels=5, plant=plant)
+        pulse.simulate(lowered, levels=5, quantum_system=plant)
         assert steps[-1] == _STEP_5[plant.qudits[0].anharmonicity_hz]
     spreads = [
-        _coarse(lambda p=plant: pulse.simulate(lowered, levels=3, dt_ns=0.25, plant=p))
+        _coarse(lambda p=plant: pulse.simulate(lowered, levels=3, dt_ns=0.25, quantum_system=p))
         for plant in (calibrated, recalibrated, calibrated, recalibrated)
     ]
     assert spreads == [[], ["400 MHz"], [], ["400 MHz"]]
@@ -214,7 +214,7 @@ def test_a_step_by_qudit_levels_is_resolved_like_one_for_all(steps):
     lowered = on(_target(), _flip, Q[0])
     before = dict(simulate_module._STEPS)
     pulse.simulate(lowered, levels={0: 5})
-    pulse.simulate(lowered, levels={0: 5}, plant=_target(alpha_hz=-400.0e6))
+    pulse.simulate(lowered, levels={0: 5}, quantum_system=_target(alpha_hz=-400.0e6))
     assert steps == [0.5 / 12, 0.5 / 24]
     assert simulate_module._STEPS.keys() <= before.keys()
 
@@ -223,7 +223,7 @@ def test_kept_steps_hold_no_target_and_go_with_it(steps):
     target, plant = _target(), _target(alpha_hz=-400.0e6)
     lowered = on(target, _flip, Q[0])
     pulse.simulate(lowered, levels=5)
-    pulse.simulate(lowered, levels=5, plant=plant)
+    pulse.simulate(lowered, levels=5, quantum_system=plant)
     ids = {id(target), id(plant)}
     assert len([k for k in simulate_module._STEPS if ids & set(k[:2])]) == 2
     assert ids <= simulate_module._WATCHED.keys()
@@ -264,7 +264,7 @@ def test_threads_sharing_kept_steps_each_get_their_target_s(monkeypatch):
     def run(first):
         start.wait()
         for i in range(40):
-            pulse.simulate(lowered, levels=5, plant=plants[(first + i) % 2])
+            pulse.simulate(lowered, levels=5, quantum_system=plants[(first + i) % 2])
 
     threads = [threading.Thread(target=run, args=(n % 2,)) for n in range(4)]
     for t in threads:

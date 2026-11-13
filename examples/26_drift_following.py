@@ -22,8 +22,8 @@ turns it away from |1>, so 1 - P(1) measures how well the calibration
 follows the drift.
 
 What is simulated: the simulator plays the QPU. Each batch's error is
-``pulse.simulate`` of the program in use against the drifting plant's true
-parameters, and the Ramsey shots are drawn from the plant's analytic
+``pulse.simulate`` of the program in use against the drifting system's true
+parameters, and the Ramsey shots are drawn from the true system's analytic
 surrogate (ideal pulses, no decay). The drift is far faster than a real
 device's, so the run fits in seconds; the batches are real 20 ms waits, and
 the worker, the pickling and the compiles are real.
@@ -120,13 +120,13 @@ def calibration_worker(records_in, updates_out):
 # ── The loop ─────────────────────────────────────────────────────────────────
 
 
-def error_against(program, plant):
-    result = pulse.simulate(program, levels=3, dt_ns=0.25, plant=plant.now())
+def error_against(program, drifting):
+    result = pulse.simulate(program, levels=3, dt_ns=0.25, quantum_system=drifting.now())
     return 1 - result.level_population(1)
 
 
 def follow(swapping, seed=5):
-    plant = DriftingPlant(target, qudit_index, frequency=drift, seed=seed)
+    drifting = DriftingPlant(target, qudit_index, frequency=drift, seed=seed)
     in_use_hz = 0.0
     program = fringe_top.lower(calibrated_system(0.0).qudits[qudit_index])
     mean_hz, sigma_hz = 0.0, prior_sigma_hz
@@ -149,14 +149,16 @@ def follow(swapping, seed=5):
                 in_use_hz, program = fresh
                 swaps += 1
                 lags.append(batch - sent)
-        trace.append((plant.state.frequency_offset_hz, in_use_hz, error_against(program, plant)))
+        trace.append(
+            (drifting.state.frequency_offset_hz, in_use_hz, error_against(program, drifting))
+        )
         records = []
         for _ in range(ramsey_shots):
             wait_ns, phase = cal.ramsey_setting(mean_hz, sigma_hz, max_wait_ns=2000.0)
-            records.append((wait_ns, phase, plant.sample(plant.p_ramsey(wait_ns, phase))))
+            records.append((wait_ns, phase, drifting.sample(drifting.p_ramsey(wait_ns, phase))))
         records_in.put((batch, records))
         time.sleep(max(0.0, started + batch_time / pulse.s - time.monotonic()))
-        plant.advance(batch_time / pulse.s)
+        drifting.advance(batch_time / pulse.s)
     records_in.put(None)
     while not isinstance(counts := updates_out.get(), dict):
         pass

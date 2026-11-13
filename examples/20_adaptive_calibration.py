@@ -11,10 +11,10 @@ twin (``transmon_17q``), this example:
 2. Tracks a drifting device between shots: T1 switches between two values
    and the frequency wanders. A parameter store holds what the programs run
    with, an estimate log records each estimate with the truth, and the
-   kernel is compiled once for the whole loop. The loop uses the plant's
+   kernel is compiled once for the whole loop. The loop uses the true system's
    surrogates for speed and checks one iteration against full simulation.
 
-The estimators come from ``cudaq_pulse.classical.calibration``; the plant
+The estimators come from ``cudaq_pulse.classical.calibration``; the true system
 from ``cudaq_pulse.runtime.drift``.
 
 NOTE: Requires cudaq-pulse native C++ bindings (see README for build
@@ -128,7 +128,7 @@ if __name__ == "__main__":
     lowered = pulse.compile(binary_search, quantum_system=qs, control_system=control_system).lower(
         q, 2
     )
-    result = pulse.simulate(lowered, plant=detuned, dt_ns=0.25)
+    result = pulse.simulate(lowered, quantum_system=detuned, dt_ns=0.25)
     print(f"  true detuning {offset_hz / 1e3:.0f} kHz; prior 0 +- {initial_sigma_hz / 1e6:.0f} MHz")
     for branch in sorted(result.branches, key=lambda branch: -branch.probability):
         mean, sigma, _, _ = branch.answers("frequency_estimator")[-1]
@@ -144,7 +144,7 @@ if __name__ == "__main__":
 
     print("\n=== 2. Tracking a drifting device between shots ===")
     telegraph = TelegraphT1(qudit.t1_us / 4, qudit.t1_us, rate_hz=0.5)
-    plant = DriftingPlant(
+    drifting = DriftingPlant(
         target,
         t1=telegraph,
         frequency=OrnsteinUhlenbeck(100e3, correlation_s=5.0),
@@ -159,19 +159,23 @@ if __name__ == "__main__":
         # T1: excite, wait, measure.
         wait_ns = cal.t1_wait(alpha, beta)
         alpha, beta = cal.t1_update(
-            alpha, beta, bool(plant.sample(plant.p_survive(wait_ns))), wait_ns
+            alpha, beta, bool(drifting.sample(drifting.p_survive(wait_ns))), wait_ns
         )
         # Frequency: one Ramsey shot.
         t, phase = cal.ramsey_setting(mean, sigma, max_wait_ns=2000.0)
         mean, sigma = cal.frequency_update(
-            mean, sigma, plant.sample(plant.p_ramsey(t, phase)), t, phase
+            mean, sigma, drifting.sample(drifting.p_ramsey(t, phase)), t, phase
         )
         if (i + 1) % block == 0:
             log.record(
-                i, "t1_us", beta / alpha / 1e3, truth=plant.state.t1_us, time_s=plant.state.time_s
+                i,
+                "t1_us",
+                beta / alpha / 1e3,
+                truth=drifting.state.t1_us,
+                time_s=drifting.state.time_s,
             )
             log.record(
-                i, "offset_hz", mean, uncertainty=sigma, truth=plant.state.frequency_offset_hz
+                i, "offset_hz", mean, uncertainty=sigma, truth=drifting.state.frequency_offset_hz
             )
             # Forget, to follow the drift.
             alpha, beta = 2.0, 2.0 * beta / alpha
@@ -179,7 +183,7 @@ if __name__ == "__main__":
         store.update(
             {"alpha": alpha, "beta": beta, "mean_hz": mean, "sigma_hz": sigma}, iteration=i
         )
-        plant.advance(1e-3)
+        drifting.advance(1e-3)
     for e in log.series("t1_us")[:6]:
         print(f"  t = {e.time_s:5.2f} s  T1 estimate {e.value:5.1f} us  true {e.truth:5.1f} us")
     split = (telegraph.low_us + telegraph.high_us) / 2
@@ -189,13 +193,13 @@ if __name__ == "__main__":
     print(f"  frequency tracking error (rms): {log.tracking_error('offset_hz') / 1e3:.1f} kHz")
     print(f"  store version {store.version} after {iterations} iterations")
 
-    # One iteration against full simulation of the plant as it is now; they
+    # One iteration against full simulation of the true system as it is now; they
     # differ by the qubit's thermal population, which the surrogate leaves out.
     wait_ns = 8000
     p_full = pulse.simulate(
-        compiled.lower(q, wait_ns), plant=plant.now(), dt_ns=0.25
+        compiled.lower(q, wait_ns), quantum_system=drifting.now(), dt_ns=0.25
     ).level_population(1)
     print(
         f"  check at {wait_ns / 1e3:.0f} us: simulated P(1) = {p_full:.3f}, "
-        f"surrogate {plant.p_survive(wait_ns + 20):.3f}"
+        f"surrogate {drifting.p_survive(wait_ns + 20):.3f}"
     )

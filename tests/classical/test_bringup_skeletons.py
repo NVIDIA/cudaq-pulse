@@ -175,7 +175,7 @@ def test_k12_frequency_binary_search_follows_a_detuned_plant(target):
     lowered = pulse.compile(binary_search, quantum_system=dev, control_system=MACHINE).lower(
         dev.qudits[0], 1
     )
-    result = pulse.simulate(lowered, plant=detuned, dt_ns=1.0, levels=2)
+    result = pulse.simulate(lowered, quantum_system=detuned, dt_ns=1.0, levels=2)
     # The first shot's outcome follows the surrogate's fringe (decay lowers
     # the contrast a little).
     plant.state = dataclasses.replace(plant.state, frequency_offset_hz=offset)
@@ -237,7 +237,9 @@ def test_k13_three_point_decay_and_phase_recover_the_device(target):
     # The simulated fringe is a - b cos(theta + e) at kernel phase pi - theta.
     p = [
         pulse.simulate(
-            ramsey.lower(q, wait_cycles, math.pi - (theta + k * delta)), plant=detuned, levels=2
+            ramsey.lower(q, wait_cycles, math.pi - (theta + k * delta)),
+            quantum_system=detuned,
+            levels=2,
         )
         .density_matrix[1, 1]
         .real
@@ -274,7 +276,7 @@ def test_k14_golden_section_finds_the_qudit_frequency(target):
     x, done, steps = state.next_point(), False, 0
     while not done:
         p1 = (
-            pulse.simulate(compiled.lower(q, x), plant=detuned, dt_ns=1.0, levels=2)
+            pulse.simulate(compiled.lower(q, x), quantum_system=detuned, dt_ns=1.0, levels=2)
             .density_matrix[1, 1]
             .real
         )
@@ -555,7 +557,9 @@ def test_k19_pauli_benchmarking_returns_to_zero_unless_miscalibrated(target):
     assert ideal.density_matrix[0, 0].real == pytest.approx(1.0, abs=0.01)
     plant = DriftingPlant(target, amplitude=OrnsteinUhlenbeck(1e-9, 1.0), seed=1)
     plant.state = dataclasses.replace(plant.state, amplitude_scale=1.1)
-    drifted = pulse.simulate(lowered, initial_state=[1, 0], dt_ns=1.0, plant=plant.now(), levels=2)
+    drifted = pulse.simulate(
+        lowered, initial_state=[1, 0], dt_ns=1.0, quantum_system=plant.now(), levels=2
+    )
     assert drifted.density_matrix[0, 0].real < ideal.density_matrix[0, 0].real - 0.01
     shots_count = pulse.simulate(
         lowered, initial_state=[1, 0], dt_ns=1.0, shots_count=200, seed=3, levels=2

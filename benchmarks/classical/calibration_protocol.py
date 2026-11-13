@@ -186,7 +186,7 @@ def binary_search(n, seed):
         offset = float(rng.normal(0.0, 1e6))
         result = pulse.simulate(
             lowered,
-            plant=P["search_plant"](target, offset),
+            quantum_system=P["search_system"](target, offset),
             shots_count=1,
             seed=seed * 100_003 + k,
             branches="sampled",
@@ -214,13 +214,13 @@ def chain(n, seed):
     lowered = pulse.compile(
         P["calibration_chain"], quantum_system=dev, control_system=P["control_system"]
     ).lower(dev.qudits[0], 20_000.0 * CLOCK)
-    plant = P["chain_plant"](target)
+    true_system = P["chain_system"](target)
     rows = []
     start = time.perf_counter()
     for k in range(n):
         result = pulse.simulate(
             lowered,
-            plant=plant,
+            quantum_system=true_system,
             shots_count=1,
             seed=seed * 7919 + k,
             branches="sampled",
@@ -248,7 +248,7 @@ def chain(n, seed):
         }
     errors = np.array([row["readout errors"] for row in rows])
     out["readout errors"] = {
-        "plant": [0.03, 0.02],
+        "true_system": [0.03, 0.02],
         "mean": errors.mean(axis=0).tolist(),
         "note": "measured with a passive reset, as the adaptive tracker uses",
     }
@@ -260,7 +260,7 @@ def steps(seed):
     target = transmon_17q()
     dev = pulse.quantum_system(target)
     q = dev.qudits[0]
-    plant = P["chain_plant"](target)
+    true_system = P["chain_system"](target)
     shots_per_step = {
         "readout errors": (step_assignment, 2 * P["shots_per_setting"] + 1),
         "Ramsey frequency": (step_ramsey, 3 * P["shots_per_setting"]),
@@ -279,7 +279,7 @@ def steps(seed):
         start = time.perf_counter()
         result = pulse.simulate(
             lowered,
-            plant=plant,
+            quantum_system=true_system,
             shots_count=1,
             seed=seed,
             branches="sampled",
@@ -293,7 +293,7 @@ def steps(seed):
         tracemalloc.start()
         pulse.simulate(
             lowered,
-            plant=plant,
+            quantum_system=true_system,
             shots_count=1,
             seed=seed,
             branches="sampled",

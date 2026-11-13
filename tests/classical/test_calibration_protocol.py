@@ -56,9 +56,9 @@ def test_the_pi_train_corrects_a_drive_amplitude_error():
     lowered = pulse.compile(_pi_step, quantum_system=dev, control_system=P["control_system"]).lower(
         q
     )
-    plant = P["chain_plant"](target, amplitude_scale=1.02)
+    plant = P["chain_system"](target, amplitude_scale=1.02)
     result = pulse.simulate(
-        lowered, plant=plant, shots_count=2, seed=3, branches="sampled", readout="model"
+        lowered, quantum_system=plant, shots_count=2, seed=3, branches="sampled", readout="model"
     )
     for branch in result.branches:
         corrected, relative_sigma = branch.calls[-1].answer
@@ -109,7 +109,7 @@ def test_the_binary_search_narrows_on_the_controller():
     for seed, offset in enumerate((-200e3, 120e3)):
         result = pulse.simulate(
             lowered,
-            plant=P["search_plant"](target, offset),
+            quantum_system=P["search_system"](target, offset),
             shots_count=1,
             seed=seed,
             branches="sampled",

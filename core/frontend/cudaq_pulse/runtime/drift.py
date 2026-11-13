@@ -11,9 +11,9 @@ parameters as time advances:
   time, for the qubit's frequency offset (Hz) and its drive amplitude scale
   (relative, around 1).
 
-``plant.now()`` is the device description at the current time; simulate
-a compiled program on it with ``pulse.simulate(lowered, plant=...)``, which
-keeps the program as compiled. ``plant.truth`` records every state the plant
+``drifting.now()`` is the device description at the current time; simulate
+a compiled program on it with ``pulse.simulate(lowered, quantum_system=...)``, which
+keeps the program as compiled. ``drifting.truth`` records every state the system
 has been in, for checking what a tracker estimated against what was true.
 
 For loops of many iterations the surrogates give the outcome probabilities
@@ -61,7 +61,7 @@ class OrnsteinUhlenbeck:
 
 @dataclass(frozen=True)
 class PlantState:
-    """The true parameters of the plant's qudit at ``time_s``."""
+    """The true parameters of the drifting system's qudit at ``time_s``."""
 
     time_s: float
     t1_us: float
@@ -158,7 +158,7 @@ class DriftingPlant:
     def p_ramsey(self, wait_ns: float, phase: float, detuning_hz: float = 0.0) -> float:
         """P(1) of a Ramsey shot: pi/2, a wait, then pi/2 advanced by *phase*,
         with the drive detuned by *detuning_hz* from the compiled frequency;
-        the plant's frequency offset adds to it. Ideal pulses, no decay."""
+        the system's frequency offset adds to it. Ideal pulses, no decay."""
         total = detuning_hz + self.state.frequency_offset_hz
         return 0.5 * (1 - math.cos(2 * math.pi * total * wait_ns * 1e-9 + phase))
 
@@ -168,5 +168,5 @@ class DriftingPlant:
         return math.sin(self.state.amplitude_scale * angle / 2) ** 2
 
     def sample(self, p: float) -> int:
-        """One outcome with P(1) = *p*, from the plant's generator."""
+        """One outcome with P(1) = *p*, from the system's generator."""
         return int(self._rng.random() < p)
