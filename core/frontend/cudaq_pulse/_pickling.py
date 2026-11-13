@@ -140,10 +140,10 @@ def device_reduce(device: Any) -> tuple[Any, ...]:
         }
         if device.control_system is not None:
             inputs["clock_ghz"] = device.clock_ghz
-        parts: tuple[Any, ...] = (type(device), device.description, inputs)
+        parts: tuple[Any, ...] = (type(device), device._description, inputs)
         # What as_dict writes that the inputs do not give: the registered
         # target and the target before its calibration and program clock.
-        if device._spec is not None or device._base_target is not device.description:
+        if device._spec is not None or device._base_target is not device._description:
             parts += ({"_spec": device._spec, "_base_target": device._base_target},)
         description = pickle.dumps(parts, pickle.HIGHEST_PROTOCOL)
         device._pickled = description

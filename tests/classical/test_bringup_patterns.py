@@ -176,7 +176,7 @@ def test_depletion_defaults_from_kappa():
         readout=DispersiveReadout(linewidth_hz=1e6),
     )
     assert qudit.depletion_ns == pytest.approx(math.log(100) / (2 * math.pi * 1e-3))
-    assert _device().description.qudits[0].depletion_ns == 0.0
+    assert _device().physical_qudits[0].depletion_ns == 0.0
 
 
 # The converged pattern: the trip count is fixed; the estimator carries a

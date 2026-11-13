@@ -19,7 +19,7 @@ _TRANSMON_17Q = pulse.device("transmon_17q")
 def _slice(indices):
     """A device of the transmon_17q qudits *indices*, renumbered 0, 1, ... in
     increasing order, with the couplings and residual ZZ between them."""
-    target = _TRANSMON_17Q.description
+    target = _TRANSMON_17Q._description
     new = {q: i for i, q in enumerate(sorted(indices))}
 
     def renumbered(entries):

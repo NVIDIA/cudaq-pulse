@@ -413,7 +413,7 @@ def test_device_values_are_read_only():
     assert dev.transition_freq[1, 0, 1] == dev.qudit_freq[1] == 5.1e9
     assert dev.transition_freq[1, 1, 2] == pytest.approx(5.1e9 - 300e6)
     with pytest.raises(AttributeError):
-        dev.description.name = "other"
+        dev._description.name = "other"
 
 
 def test_a_device_from_a_system_file(tmp_path: Path):
@@ -477,7 +477,7 @@ def test_calling_a_kernel_runs_it_and_returns_none_without_a_return():
 def test_a_returned_measurement_is_its_outcome():
     # A call samples its outcome unseeded. On three levels this pi pulse
     # leaves 0.5% outside level 1; on two, outcome 1 is certain.
-    target = dataclasses.replace(_device().description, model=TransmonModel(levels={0: 2}))
+    target = dataclasses.replace(_device()._description, model=TransmonModel(levels={0: 2}))
     q = pulse.device(target).qudits[0]
     assert [b.levels for b in pulse.simulate(flip_and_measure.lower(q)).branches] == [(1,)]
     assert flip_and_measure(q) == 1

@@ -402,10 +402,10 @@ def _simulate_lowered(
             "simulate(program, 0.5), or lower the kernel with them"
         )
     device = lowered.device
-    target = device.description if plant is None else _check_plant(lowered, plant)
+    target = device._description if plant is None else _check_plant(lowered, plant)
     try:
         step = _STEPS.get(
-            (id(device.description), id(target), device.clock_ghz, lowered.qudits, levels, dt_ns)
+            (id(device._description), id(target), device.clock_ghz, lowered.qudits, levels, dt_ns)
         )
     except TypeError:  # levels by qudit, a dict: unhashable, and never kept
         step = None
@@ -460,7 +460,7 @@ def _step(
             _warn_coarse_step(target, source, fastest, step, lowered.device.clock_ghz)
             return step
     if levels.__class__ is not dict and target.model.__class__ in _read_only_models():
-        compiled = lowered.device.description
+        compiled = lowered.device._description
         key = (id(compiled), id(target), lowered.device.clock_ghz, lowered.qudits, levels, dt_ns)
         _remember(key, step, compiled, target)
     return step
@@ -550,7 +550,7 @@ def _default_step(
 
     Couplings turn at the detuning of the compiled device's qudits; levels
     at the spread of the simulated *target*'s (the compiled one by default)."""
-    compiled = lowered.device.description
+    compiled = lowered.device._description
     active = lowered.qudits
     fastest = _level_spread(compiled if target is None else target, active, levels)[0]
     if len(active) > 1:

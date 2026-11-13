@@ -191,7 +191,7 @@ if __name__ == "__main__":
     # differ by the qubit's thermal population, which the surrogate leaves out.
     wait_ns = 8000
     p_full = pulse.simulate(
-        compiled.lower(q, wait_ns), plant=plant.description(), dt_ns=0.25
+        compiled.lower(q, wait_ns), plant=plant.now(), dt_ns=0.25
     ).level_population(1)
     print(
         f"  check at {wait_ns / 1e3:.0f} us: simulated P(1) = {p_full:.3f}, "

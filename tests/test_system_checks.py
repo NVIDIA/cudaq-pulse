@@ -231,8 +231,8 @@ def test_a_system_file_holds_couplings_gates_and_residual_zz():
     assert system["residual_zz"] == [{"qudits": [0, 2], "rate_hz": 1.5e4}]
     assert "crosstalk" not in system
     back = pulse.Device.from_dict(json.loads(json.dumps(dev.as_dict())))
-    assert back == dev and back.description == target
-    assert back.description.couplings[0].qudits == (1, 0)
+    assert back == dev and back._description == target
+    assert back.couplings[0].qudits == (1, 0)
 
 
 def test_a_key_that_is_no_field_is_an_unknown_key(tmp_path):

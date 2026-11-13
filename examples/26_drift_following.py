@@ -117,7 +117,7 @@ def calibration_worker(records_in, updates_out):
 
 
 def error_against(program, plant):
-    result = pulse.simulate(program, levels=3, dt_ns=0.25, plant=plant.description())
+    result = pulse.simulate(program, levels=3, dt_ns=0.25, plant=plant.now())
     return 1 - result.level_population(1)
 
 

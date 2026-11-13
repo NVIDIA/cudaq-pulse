@@ -194,7 +194,7 @@ def test_a_readout_line_plays_at_the_readout_frequency():
     # transmon_17q's resonators are about 3 GHz above its qubits.
     dev = pulse.device("transmon_17q")
     for handle in dev.qudits[[0, 9]]:
-        qudit = dev.description.qudits[handle.index]
+        qudit = dev.physical_qudits[handle.index]
         resonator = qudit.readout.frequency_hz
         assert abs(resonator - qudit.frequency_hz) > 1e9
         for kernel in (read_static, read_runtime):
@@ -214,9 +214,9 @@ def test_the_frequency_tables_hold_the_program_s_qudits_not_the_device_s():
     # highest; a later program on a higher qudit, static or runtime, extends
     # the tables, and one on a lower qudit reads them. New kernels, on a
     # device of its own: no compile is shared with another test.
-    dev = pulse.device(pulse.device("transmon_17q").description)
+    dev = pulse.device(pulse.device("transmon_17q")._description)
     static, runtime = (pulse.kernel(k.__wrapped__) for k in (read_static, read_runtime))
-    resonator = {i: dev.description.qudits[i].readout.frequency_hz for i in (0, 4, 9)}
+    resonator = {i: dev.physical_qudits[i].readout.frequency_hz for i in (0, 4, 9)}
     for kernel, index, count in (
         (static, 0, 1),
         (runtime, 4, 5),

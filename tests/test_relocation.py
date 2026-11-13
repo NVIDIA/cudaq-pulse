@@ -71,7 +71,7 @@ def _plain(export):
 
 
 def _recalibrated(device, carrier, shift_hz):
-    target = device.description
+    target = device._description
     qudits = dict(target.qudits)
     qudits[carrier] = qudits[carrier].replace(frequency_hz=qudits[carrier].frequency_hz + shift_hz)
     return Device(dataclasses.replace(target, qudits=qudits), name=device.name)
@@ -133,7 +133,7 @@ def test_a_readout_depends_on_the_slot_s_readout_frequency():
     def read_only(q: Qudit):
         readout(get_readout_line(q), square(100, 0.05))
 
-    qudit = DEV.description.qudits[DEV.layout[9]]
+    qudit = DEV.physical_qudits[DEV.layout[9]]
     for version in (1, 2):
         export = probe.lower(H[9], 0.2).export_controller(version=version)
         values = {s["symbol"]: s.get("value") for s in export["symbols"]}

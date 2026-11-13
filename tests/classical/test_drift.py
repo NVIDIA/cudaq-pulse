@@ -109,7 +109,7 @@ def _plant():
 def test_the_surrogates_match_simulating_the_plant():
     plant = _plant()
     state = plant.state
-    target = plant.description()
+    target = plant.now()
     assert target.qudits[0].t1_us == state.t1_us
     assert target.qudits[0].frequency_hz == pytest.approx(5e9 + state.frequency_offset_hz)
     dev = pulse.device(_target())
@@ -127,9 +127,7 @@ def test_the_surrogates_match_simulating_the_plant():
     resonant = DriftingPlant(_target(t1_us=0.0), amplitude=OrnsteinUhlenbeck(0.05, 1.0), seed=3)
     compiled_rabi = pulse.compile(rabi, device=dev)
     for scale in (0.5, 1.0):
-        result = pulse.simulate(
-            compiled_rabi.lower(q, scale), plant=resonant.description(), levels=2
-        )
+        result = pulse.simulate(compiled_rabi.lower(q, scale), plant=resonant.now(), levels=2)
         assert result.density_matrix[1, 1].real == pytest.approx(
             resonant.p_rabi(math.pi * scale), abs=1e-6
         )
@@ -139,9 +137,7 @@ def test_the_surrogates_match_simulating_the_plant():
     compiled_ramsey = pulse.compile(ramsey, device=dev)
     separation_ns = (400 + 40) / dev.clock_ghz
     for phase in (0.0, 1.0, 2.5):
-        result = pulse.simulate(
-            compiled_ramsey.lower(q, phase), plant=offset_only.description(), levels=2
-        )
+        result = pulse.simulate(compiled_ramsey.lower(q, phase), plant=offset_only.now(), levels=2)
         expected = offset_only.p_ramsey(separation_ns, math.pi - phase)
         assert result.density_matrix[1, 1].real == pytest.approx(expected, abs=0.03)
 

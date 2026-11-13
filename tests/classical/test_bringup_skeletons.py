@@ -549,9 +549,7 @@ def test_k19_pauli_benchmarking_returns_to_zero_unless_miscalibrated(target):
     assert ideal.density_matrix[0, 0].real == pytest.approx(1.0, abs=0.01)
     plant = DriftingPlant(target, amplitude=OrnsteinUhlenbeck(1e-9, 1.0), seed=1)
     plant.state = dataclasses.replace(plant.state, amplitude_scale=1.1)
-    drifted = pulse.simulate(
-        lowered, initial_state=[1, 0], dt_ns=1.0, plant=plant.description(), levels=2
-    )
+    drifted = pulse.simulate(lowered, initial_state=[1, 0], dt_ns=1.0, plant=plant.now(), levels=2)
     assert drifted.density_matrix[0, 0].real < ideal.density_matrix[0, 0].real - 0.01
     shots_count = pulse.simulate(
         lowered, initial_state=[1, 0], dt_ns=1.0, shots_count=200, seed=3, levels=2

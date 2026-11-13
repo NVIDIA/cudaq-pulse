@@ -547,7 +547,7 @@ when it is known.
 **A drifting device.** ``cudaq_pulse.runtime.drift.DriftingPlant`` moves one
 qubit's T1 (``TelegraphT1``, switching between two values), frequency and
 drive amplitude (``OrnsteinUhlenbeck``) as time advances, and records every
-state in ``plant.truth``. ``plant.description()`` is the device now, for
+state in ``plant.truth``. ``plant.now()`` is the device now, for
 ``pulse.simulate(..., plant=...)``; ``p_survive``, ``p_ramsey`` and
 ``p_rabi`` give the standard experiments' outcome probabilities directly, for
 loops of many iterations.

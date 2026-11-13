@@ -99,7 +99,7 @@ class _Exposure:
 
         self._bisect = bisect.bisect_right
         clock = lowered.device.clock_ghz
-        qudits = lowered.device.description.qudits
+        qudits = lowered.device._description.qudits
         ends: dict[int, list[int]] = {}
         starting: dict[int, list[int]] = {}
         readouts: list[tuple[int, int]] = []
@@ -151,7 +151,7 @@ class _LoopExposure:
 
     def __init__(self, lowered: "Lowered", nodes: Sequence[Any]) -> None:
         clock = lowered.device.clock_ghz
-        qudits = lowered.device.description.qudits
+        qudits = lowered.device._description.qudits
         holds: dict[int, int] = {}
 
         def hold(qudit: int) -> int:

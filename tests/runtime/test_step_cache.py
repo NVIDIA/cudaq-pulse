@@ -94,7 +94,7 @@ def test_a_recalibrated_device_changes_the_step_and_the_warning(steps):
     assert _coarse(lambda: pulse.simulate(lowered, levels=3, dt_ns=0.25)) == []
     # A device is read-only by contract, not enforced: a target set on it in
     # place is the one simulated, and the one its step is kept for.
-    lowered.device.description = _target(alpha_hz=-400.0e6)
+    lowered.device._description = _target(alpha_hz=-400.0e6)
     assert _coarse(lambda: pulse.simulate(lowered, levels=3, dt_ns=0.25)) == ["400 MHz"]
     pulse.simulate(lowered, levels=5)
     assert steps[-1] == _STEP_5[-400.0e6]

@@ -147,7 +147,7 @@ def test_flux_quanta_and_detuning_convert_both_ways(cal):
 def test_the_17_qudit_device_carries_the_shipped_calibration(cal):
     dev = pulse.device("transmon_17q")
     assert dev.calibration == cal
-    assert dev.description is transmon_17q()
+    assert dev._description is transmon_17q()
 
 
 def _index_entry(name):
@@ -221,12 +221,8 @@ def test_a_device_loads_a_calibration_from_its_config(tmp_path, cal):
     assert custom.calibration.name == "custom" and custom != base
 
     def x2_d4(dev):
-        labels = {q.index: q.label for q in dev.description.qudits.values()}
-        (c,) = (
-            c
-            for c in dev.description.couplings
-            if tuple(labels[q] for q in c.qudits) == ("X2", "D4")
-        )
+        labels = {q.index: q.label for q in dev.physical_qudits.values()}
+        (c,) = (c for c in dev.couplings if tuple(labels[q] for q in c.qudits) == ("X2", "D4"))
         return c.strength_hz
 
     assert x2_d4(custom) == pytest.approx(1.1 * x2_d4(base), rel=1e-9)

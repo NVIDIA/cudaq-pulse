@@ -11,7 +11,7 @@ parameters as time advances:
   time, for the qubit's frequency offset (Hz) and its drive amplitude scale
   (relative, around 1).
 
-``plant.description()`` is the device description at the current time; simulate
+``plant.now()`` is the device description at the current time; simulate
 a compiled program on it with ``pulse.simulate(lowered, plant=...)``, which
 keeps the program as compiled. ``plant.truth`` records every state the plant
 has been in, for checking what a tracker estimated against what was true.
@@ -123,7 +123,7 @@ class DriftingPlant:
         self.truth.append(self.state)
         return self.state
 
-    def description(self) -> Any:
+    def now(self) -> Any:
         """The device description with the qudit's current true parameters."""
         from ..targets.base import MicrowaveDrive
 

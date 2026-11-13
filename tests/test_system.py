@@ -927,7 +927,7 @@ def test_a_system_file_keeps_the_simulation_model():
     data = qpu.as_dict()
     assert data["quantum_system"]["model"] == {"kind": "generic", "levels": {"1": 3}}
     again = pulse.Device.from_dict(json.loads(json.dumps(data)))
-    assert again.description.model == target.model and again == qpu
+    assert again.model == target.model and again == qpu
 
     @pulse.kernel
     def nothing(q):
@@ -938,7 +938,7 @@ def test_a_system_file_keeps_the_simulation_model():
         pulse.simulate(pulse.compile(nothing).lower(again.qudits[0]))
 
     data["quantum_system"]["model"] = None
-    assert pulse.Device.from_dict(data).description.model is None
+    assert pulse.Device.from_dict(data).model is None
     data["quantum_system"]["model"] = {"kind": "fluxonium"}
     with pytest.raises(DeviceDefinitionError, match="model.kind: must be one of transmon, generic"):
         pulse.Device.from_dict(data)

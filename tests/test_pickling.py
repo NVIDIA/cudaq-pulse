@@ -168,8 +168,8 @@ def test_targets_and_their_parts_unpickle_equal_with_equal_hashes():
     cz = FluxCZ(duration_ns=40.0, interaction_frequency_hz=4.4e9)
     coupling = Coupling((3, 4), 5e6, calibrations={pulse.gates.CZ: cz})
     residual = ResidualZZ((3, 4), -1.5e4)
-    shipped = _SHIPPED_DEVICE.description
-    for value in (qudit, coupling, residual, LADDER.description, shipped):
+    shipped = _SHIPPED_DEVICE._description
+    for value in (qudit, coupling, residual, LADDER._description, shipped):
         back = _round_trip(value)
         assert back == value and hash(back) == hash(value)
     back = _round_trip(shipped)
@@ -207,7 +207,7 @@ def test_a_device_unpickles_equal_and_is_built_once_per_process(make, monkeypatc
     built = pickle.loads(data)
     assert built == device and built is not device
     assert built.layout == device.layout and built.clock_ghz == device.clock_ghz
-    assert built.description == device.description
+    assert built._description == device._description
     assert (built.calibration is None) == (device.calibration is None)
     assert pickle.loads(data) is built
 
@@ -586,7 +586,7 @@ def test_frames_that_persist_unpickle_declared_and_exported():
     assert program.options.machine.controller.persistent_frames is True
     flat, structured = program.export_controller(), program.export_controller(version=2)
     [frame] = flat["frame_state"]
-    assert frame["frequency_hz"] == LADDER.description.qudits[0].frequency_hz + 1.0e6
+    assert frame["frequency_hz"] == LADDER.physical_qudits[0].frequency_hz + 1.0e6
     assert structured["frame_state"] == flat["frame_state"]
     assert structured["controller"]["persistent_frames"] is True
     assert structured["controller"]["waveform_memory"] == "shared"

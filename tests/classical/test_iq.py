@@ -33,7 +33,7 @@ def _device(t1_us=0.0, **readout):
 
 
 def _centers(dev, amplitude=0.05, duration_ns=None):
-    model = IQModel(dev.description, (0,), decay=False)
+    model = IQModel(dev._description, (0,), decay=False)
     tau = duration_ns if duration_ns is not None else 1000 / dev.clock_ghz
     return [model.center(0, k, math.nan, amplitude, tau) for k in (0, 1)]
 
@@ -113,7 +113,7 @@ def test_iq_points_scale_with_the_readout_amplitude():
     mean_high = np.mean(seen[0.1])
     assert abs(mean_high / mean_low) == pytest.approx(2.0, rel=0.1)
     # Without an amplitude the reference is the amplitude played: 4 photons at any.
-    free = IQModel(_device().description, (0,), decay=False)
+    free = IQModel(_device()._description, (0,), decay=False)
     tau = 1000 / dev.clock_ghz
     assert abs(free.center(0, 0, math.nan, 0.1, tau)) == pytest.approx(
         abs(free.center(0, 0, math.nan, 0.05, tau))
@@ -177,9 +177,9 @@ def test_a_readout_the_model_cannot_evaluate_is_an_error():
     # Nor, without a readout frequency, does the frequency; with one, an unknown
     # frequency is an error.
     assert math.isfinite(
-        abs(IQModel(_device().description, (0,), False).center(0, 0, math.nan, 0.1, 500))
+        abs(IQModel(_device()._description, (0,), False).center(0, 0, math.nan, 0.1, 500))
     )
-    model = IQModel(_device(frequency_hz=7e9).description, (0,), decay=False)
+    model = IQModel(_device(frequency_hz=7e9)._description, (0,), decay=False)
     message = r"its tone's frequency, .*DispersiveReadout's frequency_hz"
     with pytest.raises(pulse.UnsupportedError, match=message):
         model.center(0, 0, math.nan, 0.1, 500)
@@ -187,7 +187,7 @@ def test_a_readout_the_model_cannot_evaluate_is_an_error():
 
 def test_the_centers_follow_the_readout_frequency():
     dev = _device(frequency_hz=7e9)
-    model = IQModel(dev.description, (0,), decay=False)
+    model = IQModel(dev._description, (0,), decay=False)
     tau = 500.0
     # On resonance with the resonator pulled by |1> (f_r + chi), |1> rings
     # up most; on resonance with |0> (f_r - chi), |0> does.
@@ -202,7 +202,7 @@ def test_relaxation_during_the_window_pulls_one_toward_zero():
     t1_us = 1.0
     dev = _device(t1_us=t1_us, integration_ns=500.0)
     tau, t1 = 500.0, t1_us * 1e3
-    model = IQModel(dev.description, (0,), decay=True)
+    model = IQModel(dev._description, (0,), decay=True)
     c0 = model.center(0, 0, math.nan, 0.05, tau)
     c1 = model.center(0, 1, math.nan, 0.05, tau)
     rng = np.random.default_rng(2)
@@ -226,7 +226,7 @@ def test_iq_calls_need_shots_and_are_seeded():
 
 def test_depletion_time_follows_kappa():
     dev = _device(linewidth_hz=1e6)
-    model = IQModel(dev.description, (0,), decay=False)
+    model = IQModel(dev._description, (0,), decay=False)
     kappa = 2 * math.pi * 1e6 * 1e-9
     assert model.depletion_ns(0) == pytest.approx(math.log(100) / kappa)
 
@@ -250,7 +250,7 @@ def test_the_17_qudit_twin_separates_its_readout_states():
 
     dev = pulse.device(transmon_17q())
     q = dev.qudits[0]
-    target = dev.description
+    target = dev._description
     model = IQModel(target, (0,), decay=False)
     given = target.qudits[0].readout
     tau = float(dev.qudits[0].get_calibration(pulse.gates.READOUT).integration_ns)

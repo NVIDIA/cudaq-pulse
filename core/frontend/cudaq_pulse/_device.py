@@ -54,7 +54,7 @@ if TYPE_CHECKING:
 
     from ._system import ControlSystem
     from .gates import Gate
-    from .targets.base import Coupling, DragPulse, ReadoutPulse
+    from .targets.base import Coupling, DragPulse, PhysicalQudit, ReadoutPulse, ResidualZZ
     from .targets.calibration import Calibration
 
 __all__ = [
@@ -197,7 +197,7 @@ class Qudit:
         ``get_drive_line(q).get_calibration(gate)`` (``X`` to ``Y90``) and
         ``get_readout_line(q).get_calibration(pulse.gates.READOUT)`` give it
         in a kernel; see ``PhysicalQudit.get_calibration``."""
-        return self.device.description.qudits[self.index].get_calibration(gate, transition)
+        return self.device._description.qudits[self.index].get_calibration(gate, transition)
 
 
 class Register(Sequence[Qudit]):
@@ -366,7 +366,7 @@ class Device:
         self.control_system = control_system
         # The target before its calibration was applied, as ``as_dict`` writes it.
         self._base_target = target
-        self.description = target
+        self._description = target
         self.name = name
         self.source = source
         # The Calibration the target's fitted values came from, if any.
@@ -391,7 +391,7 @@ class Device:
         if self._arrays is None:
             import numpy as np
 
-            target = self.description
+            target = self._description
             model = target.model if isinstance(target.model, SimulationModel) else SimulationModel()
             qudits = [target.qudits[p] for p in self.layout]
             levels = [model.levels_of(p) for p in self.layout]
@@ -409,7 +409,7 @@ class Device:
         """The default transition of carrier *index*, and the frequency of
         each transition its line has a tone for: every transition of a
         drive line, only the default of a readout line."""
-        target = self.description
+        target = self._description
         model = target.model if isinstance(target.model, SimulationModel) else SimulationModel()
         default = model.default_transition
         if index < 0:
@@ -433,7 +433,7 @@ class Device:
             return self._tables
         from array import array
 
-        frequencies, qudits = self.frequencies, self.description.qudits
+        frequencies, qudits = self.frequencies, self._description.qudits
         carriers: Sequence[int] = range(count)
         try:
             table = array("d", map(frequencies.__getitem__, carriers))
@@ -483,7 +483,7 @@ class Device:
     def qudit(self, label: str) -> Qudit:
         """The handle of the qudit labelled *label* (``PhysicalQudit.label``), as in
         ``dev.qudit("D1")``; a ``NotFoundError`` names the labels there are."""
-        qudits = self.description.qudits
+        qudits = self._description.qudits
         for handle in self.qudits:
             if qudits[handle.index].label == label:
                 return handle
@@ -491,7 +491,7 @@ class Device:
         carrier = next((q.index for q in qudits.values() if q.label == label), None)
         if carrier is not None:
             raise NotFoundError(
-                f"qudit {label!r} is carrier {carrier} of {self.description.name}, which the "
+                f"qudit {label!r} is carrier {carrier} of {self._description.name}, which the "
                 f"layout of device {self.name!r} leaves out"
             )
         close = _closest(str(label), labels)
@@ -513,7 +513,7 @@ class Device:
                 raise DeviceMismatchError(
                     f"{handle!r} is a qudit of {handle.device.name!r}, not of {self.name!r}"
                 )
-        return self.description.coupling(a.index, b.index)
+        return self._description.coupling(a.index, b.index)
 
     def _line_calibration(
         self, index: int, readout: bool, gate: Any, transition: Any
@@ -537,7 +537,7 @@ class Device:
                 f"a {line} line has the calibrations of {gates}, not {_gate_label(name)}; {fix}"
             )
         pulse: DragPulse | ReadoutPulse = _qudit_calibration(
-            self.description.qudits[index], name, transition
+            self._description.qudits[index], name, transition
         )
         return pulse
 
@@ -557,6 +557,60 @@ class Device:
         """The device of a system file's data, as ``as_dict`` returns it or
         ``json.load`` reads it; see ``load``."""
         return _from_data(data)
+
+    if TYPE_CHECKING:
+        # Read from the device's description by __getattr__.
+        @property
+        def physical_qudits(self) -> Mapping[int, PhysicalQudit]: ...
+        @property
+        def couplings(self) -> Sequence[Coupling]: ...
+        @property
+        def residual_zz(self) -> Sequence[ResidualZZ]: ...
+        @property
+        def model(self) -> SimulationModel | type[SimulationModel] | None: ...
+        @property
+        def attribution(self) -> str: ...
+        @property
+        def anharmonicities(self) -> dict[int, float]: ...
+        @property
+        def t1_times(self) -> dict[int, float]: ...
+        @property
+        def t2_times(self) -> dict[int, float]: ...
+        @property
+        def t2_echo_times(self) -> dict[int, float | None]: ...
+        @property
+        def thermal_populations(self) -> dict[int, float]: ...
+        @property
+        def coupling_map(self) -> list[tuple[int, ...]]: ...
+        def connectivity_graph(self) -> dict[int, list[int]]: ...
+        def drive_amplitude_scale(self, qudit_index: int) -> float: ...
+
+    def __getattr__(self, name: str) -> Any:
+        """The description's fields, properties and methods, read from the
+        description the device was built from when asked for:
+        ``physical_qudits`` (its ``qudits``; ``qudits`` are the handles),
+        ``couplings``, ``residual_zz``, ``model``, ``attribution``,
+        ``anharmonicities``, ``t1_times``, ``t2_times``, ``t2_echo_times``,
+        ``thermal_populations``, ``coupling_map``, ``connectivity_graph()`` and
+        ``drive_amplitude_scale(i)``."""
+        if name == "physical_qudits":
+            return self.__dict__["_description"].qudits
+        if name in {
+            "couplings",
+            "residual_zz",
+            "model",
+            "attribution",
+            "anharmonicities",
+            "t1_times",
+            "t2_times",
+            "t2_echo_times",
+            "thermal_populations",
+            "coupling_map",
+            "connectivity_graph",
+            "drive_amplitude_scale",
+        }:
+            return getattr(self.__dict__["_description"], name)
+        raise AttributeError(f"'Device' object has no attribute {name!r}", name=name, obj=self)
 
     def as_dict(self) -> dict[str, Any]:
         """The device as JSON-serializable data, which ``Device.from_dict``

@@ -156,7 +156,7 @@ def _structure(device: Device) -> str:
     bound per call."""
     import hashlib
 
-    content = repr((device.description.model, device.clock_ghz)).encode()
+    content = repr((device._description.model, device.clock_ghz)).encode()
     made = device._structure = hashlib.blake2b(content, digest_size=16).hexdigest()
     return made
 
