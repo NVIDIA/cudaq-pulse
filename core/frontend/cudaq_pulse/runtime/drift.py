@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """A drifting device to calibrate against, with its true parameters recorded.
 
-``DriftingPlant`` wraps one qubit of a target description and moves its
+``DriftingPlant`` wraps one qudit of a device description and moves its
 parameters as time advances:
 
 - ``TelegraphT1``: T1 switches between two values at random, at a rate, as
@@ -11,7 +11,7 @@ parameters as time advances:
   time, for the qubit's frequency offset (Hz) and its drive amplitude scale
   (relative, around 1).
 
-``plant.description()`` is the target description at the current time; simulate
+``plant.description()`` is the device description at the current time; simulate
 a compiled program on it with ``pulse.simulate(lowered, plant=...)``, which
 keeps the program as compiled. ``plant.truth`` records every state the plant
 has been in, for checking what a tracker estimated against what was true.
@@ -61,7 +61,7 @@ class OrnsteinUhlenbeck:
 
 @dataclass(frozen=True)
 class PlantState:
-    """The true parameters of the plant's qubit at ``time_s``."""
+    """The true parameters of the plant's qudit at ``time_s``."""
 
     time_s: float
     t1_us: float
@@ -70,7 +70,7 @@ class PlantState:
 
 
 class DriftingPlant:
-    """One qubit of *target* whose T1, frequency and drive amplitude drift."""
+    """One qudit of *target* whose T1, frequency and drive amplitude drift."""
 
     def __init__(
         self,
@@ -83,7 +83,7 @@ class DriftingPlant:
         seed: int | None = None,
     ) -> None:
         if qudit not in target.qudits:
-            raise InvalidValueError(f"the target has no qubit {qudit}")
+            raise InvalidValueError(f"the target has no qudit {qudit}")
         self._target = target
         self.qudit = qudit
         self.t1 = t1
@@ -124,7 +124,7 @@ class DriftingPlant:
         return self.state
 
     def description(self) -> Any:
-        """The target description with the qubit's current true parameters."""
+        """The device description with the qudit's current true parameters."""
         from ..targets.base import MicrowaveDrive
 
         base = self._target.qudits[self.qudit]

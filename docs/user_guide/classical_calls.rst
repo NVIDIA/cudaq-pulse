@@ -387,7 +387,7 @@ A whole program with unanswered calls does not lower to LLVM:
 ``Lowered.mlir("llvm")`` points to ``pulse.simulate``, which lowers each
 segment with its answers bound, on the CPU or the GPU.
 
-``plant=`` simulates another target description than the device the program
+``plant=`` simulates another device description than the device the program
 was compiled for, keeping the program as compiled: its qubits' frequencies,
 T1, T2, drive strength and readout parameters apply. That is how a drifting
 device is simulated (see below).

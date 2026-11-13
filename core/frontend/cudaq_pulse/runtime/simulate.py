@@ -291,7 +291,7 @@ def simulate(
         ``shots``, and each shot from the call on is simulated as its own
         trajectory.
     plant:
-        A target description to simulate instead of the device the program
+        A device description to simulate instead of the device the program
         was compiled for: its qubits' frequencies, T1, T2, thermal
         populations, drive strength and readout parameters apply, while the
         program (its tones and pulses) stays as compiled. This is how a
@@ -526,7 +526,7 @@ def _simulation_model(target: Any) -> Callable[..., SimulationResult]:
 
 
 def _check_plant(lowered: Lowered, plant: Any) -> Any:
-    """*plant*, a target description that defines every qudit of *lowered*."""
+    """*plant*, a device description that defines every qudit of *lowered*."""
     from ..targets import DeviceDescription
 
     if not isinstance(plant, DeviceDescription):

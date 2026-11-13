@@ -997,22 +997,22 @@ class DeviceDescription:
 
     @property
     def t1_times(self) -> dict[int, float]:
-        """T1 in microseconds, keyed by qubit index."""
+        """T1 in microseconds, keyed by qudit index."""
         return {q.index: q.t1_us for q in self.qudits.values()}
 
     @property
     def t2_times(self) -> dict[int, float]:
-        """T2* in microseconds, keyed by qubit index."""
+        """T2* in microseconds, keyed by qudit index."""
         return {q.index: q.t2_star_us for q in self.qudits.values()}
 
     @property
     def t2_echo_times(self) -> dict[int, float | None]:
-        """Hahn-echo T2 in microseconds, keyed by qubit index (None if unknown)."""
+        """Hahn-echo T2 in microseconds, keyed by qudit index (None if unknown)."""
         return {q.index: q.t2_echo_us for q in self.qudits.values()}
 
     @property
     def thermal_populations(self) -> dict[int, float]:
-        """Equilibrium excited-state population, keyed by qubit index."""
+        """Equilibrium excited-state population, keyed by qudit index."""
         return {q.index: q.thermal_population for q in self.qudits.values()}
 
     @property
@@ -1060,14 +1060,14 @@ class DeviceDescription:
             return 1.0
         if not isinstance(drive, MicrowaveDrive):
             raise UnsupportedError(
-                f"no drive model for {type(drive).__name__} (qubit {qudit_index}); the "
+                f"no drive model for {type(drive).__name__} (qudit {qudit_index}); the "
                 "simulator models a MicrowaveDrive"
             )
         explicit = drive.amplitude_scale_rad_per_ns
         if explicit is not None:
             if explicit <= 0:
                 raise InvalidValueError(
-                    f"amplitude_scale_rad_per_ns must be positive for qubit {qudit_index}"
+                    f"amplitude_scale_rad_per_ns must be positive for qudit {qudit_index}"
                 )
             return float(explicit)
         qudit = self.qudits[qudit_index]

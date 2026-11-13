@@ -7,8 +7,8 @@ Usage::
     import cudaq_pulse as pulse
 
     @pulse.kernel
-    def rabi(qubit, amplitude: float):
-        drive_line = get_drive_line(qubit)
+    def rabi(qudit, amplitude: float):
+        drive_line = get_drive_line(qudit)
         drive(drive_line, gaussian(64, amplitude, 16.0))
 
     dev = pulse.device("transmon_17q")
@@ -25,7 +25,7 @@ devices with different clocks. ``pulse.round_duration(line, n)`` rounds a
 length to whole timesteps of the line, for controllers that start
 operations only every few program cycles.
 Compiler types (``CompileMetrics``, ``ScheduledEvent``,
-``DEFAULT_PASSES``) are in ``cudaq_pulse.compiler``, target descriptions and
+``DEFAULT_PASSES``) are in ``cudaq_pulse.compiler``, device descriptions and
 calibrations in ``cudaq_pulse.targets``. ``pulse.classical`` declares the
 classical functions a kernel calls while the QPU runs; ``pulse.Bits`` and
 ``pulse.Length`` (``typing.Annotated``, for a fixed list length) type their

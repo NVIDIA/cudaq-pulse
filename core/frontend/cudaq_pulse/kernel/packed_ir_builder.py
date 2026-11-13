@@ -1535,7 +1535,7 @@ class PackedIRBuilder:
         return self._buf[: self._cur]
 
     def get_freq_array(self) -> array[float]:
-        """Return qubit frequencies as float64 values indexed by qubit."""
+        """Return qudit frequencies as float64 values indexed by qudit."""
         n = self.qudit_count
         freq = self._freq_hz or {}
         arr = array("d", bytes(8 * n))

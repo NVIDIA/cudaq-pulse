@@ -212,11 +212,11 @@ def transmon_generic(
     Parameters
     ----------
     qudit_count : int
-        Number of qubits.
+        Number of qudits.
     base_frequency_hz : float
-        Frequency of qubit 0.
+        Frequency of qudit 0.
     frequency_spread_hz : float
-        Frequency spacing between adjacent qubits.
+        Frequency spacing between adjacent qudits.
     anharmonicity_hz : float
         Uniform anharmonicity (negative for transmon).
     coupling_strength_hz : float

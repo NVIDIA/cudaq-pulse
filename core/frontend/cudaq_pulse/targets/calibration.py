@@ -185,7 +185,7 @@ class Calibration:
 
     @property
     def flux_qudits(self) -> tuple[str, ...]:
-        """The qubits whose circuit, including d, is calibrated."""
+        """The qudits whose circuit, including d, is calibrated."""
         return tuple(
             label for label, q in self._data["qudits"].items() if q.get("flux_quanta_capable")
         )
@@ -195,7 +195,7 @@ class Calibration:
         from .transmon_model import TransmonCircuit
 
         if qudit not in self.flux_qudits:
-            raise NotFoundError(f"calibration {self.name!r} has no circuit for qubit {qudit!r}")
+            raise NotFoundError(f"calibration {self.name!r} has no circuit for qudit {qudit!r}")
         q = self._data["qudits"][qudit]
         return TransmonCircuit(
             q["ec"]["value"], q["ej_max"]["value"], q["asymmetry_d"]["value"], qudit
