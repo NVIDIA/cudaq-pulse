@@ -214,7 +214,7 @@ def test_a_link_belongs_to_one_processor_of_the_system():
 def test_a_body_records_its_loops_unrolled_size_and_where_it_uses_each_operation():
     cost = analyze_callable(_parity, {"bits": 4})
     # Rolled: the xor and the load, then the counter and the jump.
-    assert cost.size == 4 and cost.iterations == 4 and cost.unrolled_size == 8
+    assert cost.size == 4 and cost.iteration_count == 4 and cost.unrolled_size == 8
     assert cost.ops == OpCounts(add=8, branch=4, load=4)
     line = _parity.__code__.co_firstlineno
     assert cost.uses == {"add": f"_parity line {line + 3}", "load": f"_parity line {line + 3}"} | {

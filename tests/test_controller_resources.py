@@ -87,7 +87,7 @@ def test_a_loop_multiplies_its_body_by_its_trip_count():
     # the branch back.
     assert cost.ops["mul"] == N and cost.ops["load"] == N
     assert cost.ops["branch"] == N and cost.ops["add"] == 2 * N
-    assert cost.loops == 1 and cost.runs_on_processor
+    assert cost.loop_count == 1 and cost.runs_on_processor
 
 
 def test_a_branch_costs_its_longer_arm_and_holds_both():

@@ -109,12 +109,12 @@ class FunctionCost:
     ``ops`` counts the operations of the longest path through the body by
     class (``OpCounts``: what one call executes at most); ``size`` counts every operation
     of the body, both arms of each branch (what the controller stores).
-    ``locals`` is how many scalars the body and its helpers hold at once at
+    ``local_count`` is how many scalars the body and its helpers hold at once at
     most, beyond the arguments and results. ``violations`` lists what keeps
     the body out of controller form; empty when it is in it. ``helpers``
     names the functions it calls whose bodies were counted too.
 
-    For a ``Processor``: ``iterations`` counts the loop iterations on the
+    For a ``Processor``: ``iteration_count`` counts the loop iterations on the
     longest path (each also counted in ``ops`` as an ``add`` and a
     ``branch``, the loop's counter and jump); ``unrolled_size`` is ``size``
     with every loop unrolled; ``uses`` gives, by ``OpClass`` (``LOOP`` too),
@@ -124,11 +124,11 @@ class FunctionCost:
     name: str
     ops: OpCounts
     size: int
-    locals: int
-    loops: int
+    local_count: int
+    loop_count: int
     helpers: tuple[str, ...]
     violations: tuple[str, ...]
-    iterations: int = 0
+    iteration_count: int = 0
     unrolled_size: int = 0
     # Where each class is first used, by class name; ``uses`` by OpClass.
     _used: Mapping[str, str] = field(default_factory=dict)
@@ -155,7 +155,7 @@ class FunctionCost:
         iteration if the processor *loops*, else nothing (unrolled)."""
         from ._op_tables import _COUNTED
 
-        overhead = self.iterations
+        overhead = self.iteration_count
         ops = self.ops
         total = 0
         for kind in _COUNTED:
@@ -181,7 +181,7 @@ class _Cost:
     # Every class the body's own operations use, on any path.
     kinds: set[str] = field(default_factory=set)
     unrolled: int = 0
-    iterations: int = 0
+    iteration_count: int = 0
 
     @property
     def weight(self) -> int:
@@ -201,7 +201,7 @@ class _Cost:
             self.placed[kind] += n * times
         self.size += other.size
         self.unrolled += other.unrolled * times
-        self.iterations += other.iterations * times
+        self.iteration_count += other.iteration_count * times
         self.kinds |= other.kinds
 
 
@@ -233,7 +233,7 @@ class _Walker:
         self.violations: list[str] = []
         self.helpers: list[str] = []
         self.names: set[str] = set()
-        self.loops = 0
+        self.loop_count = 0
         self.uses: dict[str, str] = {}
         self.extra_locals = 0
         self.constants: dict[str, Any] = {}
@@ -455,14 +455,14 @@ class _Walker:
             trips = 1
         if node.orelse:
             self.flag(node, "a for-else")
-        self.loops += 1
+        self.loop_count += 1
         self.bind(node.target, None)
         body = self.body(node.body)
         # The counter and the jump back.
         body.placed["add"] += 1
         body.placed["branch"] += 1
         body.size += 2
-        body.iterations += 1
+        body.iteration_count += 1
         self.uses.setdefault("loop", self.where(node))
         # A controller stores a loop's body once.
         cost.extend(body, trips)
@@ -663,8 +663,8 @@ class _Walker:
         self.helpers.append(f"{target.__module__}.{target.__qualname__}")
         self.helpers.extend(helper.helpers)
         self.violations.extend(helper.violations)
-        self.loops += helper.loops
-        self.extra_locals = max(self.extra_locals, helper.locals + len(parameters))
+        self.loop_count += helper.loop_count
+        self.extra_locals = max(self.extra_locals, helper.local_count + len(parameters))
         for kind, where in helper._used.items():
             self.uses.setdefault(kind, where)
         cost.placed["branch"] += 1  # the call, inlined
@@ -674,7 +674,7 @@ class _Walker:
             cost.placed[kind] += n
         cost.size += helper.size
         cost.unrolled += helper.unrolled_size
-        cost.iterations += helper.iterations
+        cost.iteration_count += helper.iteration_count
         return cost
 
 
@@ -695,7 +695,7 @@ def _branch(test: _Cost, then: _Cost, other: _Cost) -> _Cost:
         out.ops[kind] += n
     for kind, n in longer.placed.items():
         out.placed[kind] += n
-    out.iterations += longer.iterations
+    out.iteration_count += longer.iteration_count
     out.size += then.size + other.size
     out.unrolled += then.unrolled + other.unrolled
     out.kinds |= then.kinds | other.kinds
@@ -741,10 +741,10 @@ def analyze_callable(
         OpCounts(**ops),
         cost.size,
         local_count,
-        walker.loops,
+        walker.loop_count,
         tuple(dict.fromkeys(walker.helpers)),
         tuple(dict.fromkeys(walker.violations)),
-        cost.iterations,
+        cost.iteration_count,
         cost.unrolled,
         walker.uses,
     )
@@ -900,7 +900,7 @@ def _function_resources(
         cost = analyze_callable(function.implementation, _value_lengths(function))
     args_bytes = _payload_bytes(function.args)
     results_bytes = _payload_bytes(function.results)
-    state = args_bytes + results_bytes + register_bytes(cost.locals)
+    state = args_bytes + results_bytes + register_bytes(cost.local_count)
     cycles = compute_ns = None
     if on is not None:
         processor, clock = on
@@ -1275,7 +1275,7 @@ def _function_usage(
 ) -> FunctionUsage:
     base = _function_resources(fn)
     cost = base.cost
-    unrolled = not processor.loops and cost.loops > 0
+    unrolled = not processor.loops and cost.loop_count > 0
     ops = cost.unrolled_size if unrolled else cost.size
     cycles = cost.processor_cycles(processor.cycles_per_op, processor.loops)
     row = FunctionUsage(
@@ -1319,7 +1319,7 @@ def _function_usage(
     if most is not None and row.state_bytes > most:
         found.over(
             f"{name} needs {row.state_bytes} bytes of state (arguments, results and "
-            f"{cost.locals} locals); {label} holds {most} per function "
+            f"{cost.local_count} locals); {label} holds {most} per function "
             "(max_state_bytes_per_function)",
             name,
             "max_state_bytes_per_function",
