@@ -463,7 +463,7 @@ def test_a_timeout_takes_a_time():
     with_units = timed.lower(Q[0], 0.3 * us)
     in_ns = timed.lower(Q[0], 300)
     assert with_units.mlir() == in_ns.mlir()
-    exports = (with_units.export_controller(), in_ns.export_controller())
+    exports = (with_units.export_to_controller(), in_ns.export_to_controller())
     answers = [next(e for e in p["events"] if e["kind"] == "answer") for p in exports]
     assert answers[0]["timeout_ns"] == answers[1]["timeout_ns"] == 300
 

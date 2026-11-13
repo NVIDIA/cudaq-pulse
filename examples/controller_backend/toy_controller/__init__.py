@@ -113,7 +113,7 @@ if __name__ == "__main__":
     compiled = pulse.compile(
         drive_and_measure, quantum_system=qs, control_system=backend.control_system()
     )
-    program = backend.emit(compiled.lower(qs.qudits[0]).export_controller())
+    program = backend.emit(compiled.lower(qs.qudits[0]).export_to_controller())
     print(program, end="")
     print(backend.run(program, shots_count=2))
     backends.unregister("toy")

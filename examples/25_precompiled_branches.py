@@ -95,7 +95,7 @@ def compile_branch(kernel: pulse.Kernel[...], qudits: pulse.Register, trained: t
     sweep = []
     for scale in scales:
         bound = program.bind([scale])
-        sweep.append((bound, bound.export_controller(sample_rate_ghz=sample_rate_ghz)))
+        sweep.append((bound, bound.export_to_controller(sample_rate_ghz=sample_rate_ghz)))
     return trained, sweep
 
 
@@ -170,7 +170,7 @@ if __name__ == "__main__":
     points = sum(len(sweep) for sweep in table.values())
     print(f"  table: {len(table)} outcomes, {points} bound and exported programs")
     same = all(
-        a.export_controller() == b.export_controller()
+        a.export_to_controller() == b.export_to_controller()
         for t in outcomes
         for (a, _), (b, _) in zip(table[t], serial[t], strict=True)
     )

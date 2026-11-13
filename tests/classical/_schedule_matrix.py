@@ -178,13 +178,13 @@ def segment_after(low: Any) -> list[int | None]:
     """The segment each segment follows, from the export: the one its barrier
     ends, on the lines it holds back (``None`` for the first). The export
     names it only where it is not the one before."""
-    segments = low.export_emulation()["segments"]
+    segments = low.export_to_emulator()["segments"]
     return [e.get("after", k - 1 if k else None) for k, e in enumerate(segments)]
 
 
 def event_segments(low: Any) -> list[int]:
     """The segment of each event of ``low.schedule``, from the export."""
-    return [e["segment"] for e in low.export_emulation()["events"]]
+    return [e["segment"] for e in low.export_to_emulator()["events"]]
 
 
 def _follows(after: Sequence[int | None], segment: int | None, k: int) -> bool:
@@ -690,7 +690,7 @@ def check_callee_shape(low: Any, own: Any) -> None:
 
 
 def export_text(low: Any) -> str:
-    program = low.export_controller()
+    program = low.export_to_controller()
     text = json.dumps(program, sort_keys=True)
     assert json.loads(text) == program
     return text
@@ -735,7 +735,7 @@ def explicit_reference(low: Any, shifts: Sequence[int]) -> Any:
 
     *shifts* is how much later each segment starts at run time.
     """
-    exported = low.export_controller()
+    exported = low.export_to_controller()
     events = exported["events"]
     lines = {line["line"]: line["qudit"] for line in exported["lines"]}
     qudits = sorted(set(lines.values()))
@@ -871,7 +871,7 @@ def _hoist(nodes: list[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
 
 def pulses(low: Any, shifts: Sequence[int] = ()) -> list[tuple[str, int, int, int]]:
     """The drives and readouts, by qudit, with their timing at run time."""
-    exported = low.export_controller()
+    exported = low.export_to_controller()
     lines = {line["line"]: line["qudit"] for line in exported["lines"]}
     found = []
     for event in exported["events"]:

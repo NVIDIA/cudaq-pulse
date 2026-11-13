@@ -55,7 +55,7 @@ def test_the_manifest_and_artifact_carry_link_names():
     (entry,) = emulation.manifest(low)["functions"]
     assert entry["link"] == 1 and entry["link_name"] == "controller"
     assert entry["slots"] == 4
-    assert low.export_emulation()["links"]["1"]["name"] == "controller"
+    assert low.export_to_emulator()["links"]["1"]["name"] == "controller"
 
 
 def test_transport_may_be_given_per_link_name():

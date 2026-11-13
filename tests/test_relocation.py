@@ -85,7 +85,7 @@ def test_runtime_qudits_match_static_compiles(schedule):
     calls = [(H[3], H[[5, 7]], [0.2, 0.4], _f12(H[3])), (H[9], H[[0, 16]], [0.1, 0.3], _f12(H[9]))]
     for args in calls:
         a, b = static.lower(*args), runtime.lower(*args)
-        assert _plain(a.export_controller()) == _plain(b.export_controller())
+        assert _plain(a.export_to_controller()) == _plain(b.export_to_controller())
         assert a.qudits == b.qudits
         assert a.schedule == b.schedule
     assert static.cache_info().compiled == 2
@@ -99,16 +99,16 @@ def test_recalibration_reuses_the_compile():
     a = runtime.lower(H[3], H[[5]], [0.2, 0.4], _f12(H[3]))
     b = runtime.lower(other.qudits[3], other.qudits[[5]], [0.2, 0.4], _f12(other.qudits[3]))
     assert runtime.cache_info().compiled == 1
-    fa = {e["frequency_hz"] for e in a.export_controller()["events"] if e["kind"] == "drive"}
-    fb = {e["frequency_hz"] for e in b.export_controller()["events"] if e["kind"] == "drive"}
+    fa = {e["frequency_hz"] for e in a.export_to_controller()["events"] if e["kind"] == "drive"}
+    fb = {e["frequency_hz"] for e in b.export_to_controller()["events"] if e["kind"] == "drive"}
     assert fa != fb
     static = static_k.lower(other.qudits[3], other.qudits[[5]], [0.2, 0.4], _f12(other.qudits[3]))
-    assert _plain(static.export_controller()) == _plain(b.export_controller())
+    assert _plain(static.export_to_controller()) == _plain(b.export_to_controller())
 
 
 def test_program_id_is_stable_and_symbols_bind():
-    a = runtime_k.lower(H[3], H[[5, 7]], [0.2, 0.4], _f12(H[3])).export_controller()
-    b = runtime_k.lower(H[9], H[[0, 16]], [0.1, 0.3], _f12(H[9])).export_controller()
+    a = runtime_k.lower(H[3], H[[5, 7]], [0.2, 0.4], _f12(H[3])).export_to_controller()
+    b = runtime_k.lower(H[9], H[[0, 16]], [0.1, 0.3], _f12(H[9])).export_to_controller()
     assert a["program_id"] == b["program_id"]
     symbols = {s["symbol"]: s for s in b["symbols"]}
     assert symbols["s0"]["value"] == DEV.layout[9]
@@ -135,14 +135,14 @@ def test_a_readout_depends_on_the_slot_s_readout_frequency():
 
     qudit = DEV.physical_qudits[DEV.layout[9]]
     for version in (1, 2):
-        export = probe.lower(H[9], 0.2).export_controller(version=version)
+        export = probe.lower(H[9], 0.2).export_to_controller(version=version)
         values = {s["symbol"]: s.get("value") for s in export["symbols"]}
         assert values["s0.f01"] == qudit.frequency_hz
         assert values["s0.f_ro"] == qudit.readout.frequency_hz
         played = [e["symbols"]["frequency_hz"] for e in export["events"] if "symbols" in e]
         # The drive, the readout, and the drive on the readout line's tone.
         assert played == [["s0.f01"], ["s0.f_ro"], ["s0.f_ro"]]
-        symbols = read_only.lower(H[9]).export_controller(version=version)["symbols"]
+        symbols = read_only.lower(H[9]).export_to_controller(version=version)["symbols"]
         assert [s["symbol"] for s in symbols] == ["s0", "s0.f_ro"]
 
 
@@ -159,7 +159,7 @@ def looped_k(q: Qudit, a: float, step: float):
 def test_format_2_names_the_symbols_format_1_names(kernel):
     args = (H[9], H[[0, 16]], [0.1, 0.3], _f12(H[9])) if kernel is runtime_k else (H[9], 0.2, 0.4)
     lowered = kernel.lower(*args)
-    flat, structured = lowered.export_controller(), lowered.export_controller(version=2)
+    flat, structured = lowered.export_to_controller(), lowered.export_to_controller(version=2)
     assert structured["program_id"] == flat["program_id"]
     assert structured["symbols"] == flat["symbols"]
     # An event of a loop's body names what any of its iterations depends on.
@@ -197,7 +197,7 @@ def test_a_frame_update_names_the_symbols_its_frame_depends_on():
     lowered = last_shift.lower(H[9], 0.2, 0.4)
     expected = {"qudit": "s0", "frequency_hz": ["s0.f01"], "phase_rad": ["step"]}
     for version in (1, 2):
-        events = lowered.export_controller(version=version)["events"]
+        events = lowered.export_to_controller(version=version)["events"]
         (update,) = [e for e in events if e["kind"] == "frame_update"]
         assert update["symbols"] == expected
 
@@ -207,7 +207,7 @@ def test_static_qudit_exports_have_no_symbols():
         d = get_drive_line(q)
         drive(d, square(20, a))
 
-    export = pulse.kernel(k).lower(H[3], 0.1).export_controller()
+    export = pulse.kernel(k).lower(H[3], 0.1).export_to_controller()
     assert "symbols" not in export and "program_id" not in export
     assert all("symbols" not in e for e in export["events"])
 
@@ -289,7 +289,7 @@ def test_any_placement_matches_static(indices, amp):
     q, *rest = indices
     args = (H[q], H[rest], [amp, amp / 2], _f12(H[q]))
     a, b = static_k.lower(*args), runtime_k.lower(*args)
-    assert _plain(a.export_controller()) == _plain(b.export_controller())
+    assert _plain(a.export_to_controller()) == _plain(b.export_to_controller())
 
 
 @pulse.kernel
@@ -376,7 +376,7 @@ def test_a_runtime_qudit_frequency_is_one_tone_until_its_line_is_retuned():
         drive(d, square(20, 0.1))
         drive(d, square(20, 0.2), tone=shift_frequency(d.tone, 1e6))
 
-    assert pulse.compile(native, control_system=machine).lower(H[3]).export_controller()
+    assert pulse.compile(native, control_system=machine).lower(H[3]).export_to_controller()
     with pytest.raises(ControllerLimitError, match="2 tone frequencies"):
         pulse.compile(retuned, control_system=machine).lower(H[3])
 
@@ -444,8 +444,8 @@ def test_a_runtime_qudit_export_adds_calls_that_do_not_grow_with_the_program():
         def placed(q: Qudit):
             drives(q)
 
-        runtime = _calls(pulse.kernel(placed).lower(H[0]).export_controller)
-        fixed = _calls(pulse.kernel(drives).lower(H[0]).export_controller)
+        runtime = _calls(pulse.kernel(placed).lower(H[0]).export_to_controller)
+        fixed = _calls(pulse.kernel(drives).lower(H[0]).export_to_controller)
         # Beyond each event's own copy of its symbols, a fixed few calls.
         gaps.append((runtime[0] - fixed[0], runtime[1] - fixed[1] - n))
     assert all(python <= 8 and native <= 16 for python, native in gaps), gaps

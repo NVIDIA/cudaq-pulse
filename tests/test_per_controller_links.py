@@ -129,7 +129,7 @@ def test_each_controller_has_its_own_slots_of_a_per_controller_link(schedule):
 def test_each_controller_exports_the_calls_of_its_own_instance():
     lowered = _lower(two_rounds, _device(True))
     for index in (0, 1):
-        program = lowered.export_controller(controller=index)
+        program = lowered.export_to_controller(controller=index)
         assert [c["controller"] for c in program["calls"]] == [index]
         calls = [e for e in program["events"] if e["kind"] in ("submit", "answer")]
         assert [e["controller"] for e in calls] == [index, index]
@@ -144,7 +144,7 @@ def test_each_controller_exports_the_calls_of_its_own_instance():
 
 
 def test_a_shared_link_exports_without_an_instance():
-    program = _lower(two_rounds, _device(False)).export_controller(controller=0)
+    program = _lower(two_rounds, _device(False)).export_to_controller(controller=0)
     assert all("controller" not in c for c in program["calls"])
     assert all("controller" not in e for e in program["events"])
     assert [u.controller for u in resources(_lower(two_rounds, _device(False))).links] == [None]
@@ -166,7 +166,7 @@ def test_a_call_whose_controller_is_not_known_keeps_the_link_shared():
     assert [c.submit_cycles for c in report] == [c.submit_cycles for c in shared]
     # No call crosses between controllers, so none waits out their alignment.
     assert all(a.due_cycles <= b.due_cycles for a, b in zip(report, shared, strict=True))
-    calls = _lower(with_unread_call, _device(True)).export_controller(controller=1)["calls"]
+    calls = _lower(with_unread_call, _device(True)).export_to_controller(controller=1)["calls"]
     assert [c["function"] for c in calls] == ["_decode", "_decode"]
 
 
@@ -234,21 +234,21 @@ def _three():
 def test_a_controller_the_program_does_not_use_exports_an_empty_program():
     qpu = _three()
     lowered = pulse.compile(driven, quantum_system=qpu).lower(qpu.qudits[0])
-    used = lowered.export_controller(controller=0)
+    used = lowered.export_to_controller(controller=0)
     for index in (1, 2):
-        program = lowered.export_controller(controller=index)
+        program = lowered.export_to_controller(controller=index)
         assert program.keys() == used.keys()
         assert program["lines"] == program["events"] == program["calls"] == []
         assert program["qudits"] == [] and program["schedule"] == used["schedule"]
         json.dumps(program)
-        emulation = lowered.export_emulation(controller=index)
+        emulation = lowered.export_to_emulator(controller=index)
         assert emulation["calls"] == [] and emulation["events"] == []
 
 
 def test_a_program_of_calls_only_is_exported_by_the_controller_making_them():
     qpu = _three()
     lowered = pulse.compile(calls_only, quantum_system=qpu).lower(qpu.qudits[0])
-    program = lowered.export_controller()
+    program = lowered.export_to_controller()
     assert [c["function"] for c in program["calls"]] == ["gain"]
     assert [e["kind"] for e in program["events"]] == ["submit", "answer"]
-    assert lowered.export_controller(controller=1)["calls"] == []
+    assert lowered.export_to_controller(controller=1)["calls"] == []

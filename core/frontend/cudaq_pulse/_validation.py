@@ -461,7 +461,7 @@ def validate(
         for fmt in formats:
             version = 1 if fmt == FORMAT else 2
             name = f"{kind} (/{version})" if tagged else str(kind)
-            program = lowered.export_controller(version=version)
+            program = lowered.export_to_controller(version=version)
             first = first or program
             emitted += _emit(
                 report, backend, name, program, lowered, _one(system), shots_count, tolerance

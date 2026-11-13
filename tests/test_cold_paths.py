@@ -87,8 +87,8 @@ def test_exports_load_no_heavy_module(tmp_path):
     code = (
         _PROGRAM
         + "from cudaq_pulse.controller import evaluate_expression, unroll\n"
-        + "low.export_controller(); low.export_emulation()\n"
-        + "unroll(low.export_controller(version=2))\n"
+        + "low.export_to_controller(); low.export_to_emulator()\n"
+        + "unroll(low.export_to_controller(version=2))\n"
         + "evaluate_expression({'op': 'ne', 'type': 'int', 'of': [{'readout': 0}, {'const': 0}]},"
         + " readouts={0: 1})\n"
     )
@@ -101,8 +101,8 @@ def test_sampled_exports_load_no_heavy_module(tmp_path):
     code = (
         _PROGRAM
         + "rate = 2 * dev.clock_ghz\n"
-        + "low.export_controller(sample_rate_ghz=rate)\n"
-        + "low.export_controller(sample_rate_ghz=rate, version=2)\n"
+        + "low.export_to_controller(sample_rate_ghz=rate)\n"
+        + "low.export_to_controller(sample_rate_ghz=rate, version=2)\n"
     )
     assert _loaded(code, tmp_path) == []
     sample = code + "from cudaq_pulse.controller import sample_waveform\n"
@@ -159,7 +159,7 @@ _REPORTS = (
 def test_a_program_in_cycles_loads_no_fractions(tmp_path):
     # Importing fractions compiles two regular expressions; only a clock
     # ratio of a control system, or reading a time's exact_ns, needs it.
-    code = _PLAIN + "low.schedule; low.export_controller(); low.export_emulation()\n"
+    code = _PLAIN + "low.schedule; low.export_to_controller(); low.export_to_emulator()\n"
     assert _loaded(code, tmp_path, ("fractions", "decimal")) == []
 
 
@@ -180,9 +180,9 @@ def test_times_load_no_fractions(tmp_path):
 
 
 def test_exports_build_no_report(tmp_path):
-    code = _PLAIN + "low.export_controller(); low.export_emulation()\n"
+    code = _PLAIN + "low.export_to_controller(); low.export_to_emulator()\n"
     assert _loaded(code, tmp_path, _REPORTS) == []
-    calls = _PROGRAM + "low.export_controller(); low.export_emulation()\n"
+    calls = _PROGRAM + "low.export_to_controller(); low.export_to_emulator()\n"
     assert _loaded(calls, tmp_path, _REPORTS) == [
         "cudaq_pulse._classical_report",
         "cudaq_pulse.classical._link",
@@ -196,7 +196,7 @@ def test_exporting_an_emulated_program_loads_no_module(tmp_path):
     code = (
         _PROGRAM + "from cudaq_pulse.classical import emulation\n"
         "emulation.emulate(low, shots_count=2, seed=1)\nbefore = set(sys.modules)\n"
-        "low.export_controller(); low.export_emulation()\n"
+        "low.export_to_controller(); low.export_to_emulator()\n"
         "new = [m for m in set(sys.modules) - before if m.startswith('cudaq_pulse.classical')]\n"
         "assert not new, new\n"
     )
@@ -410,7 +410,7 @@ def test_classes_most_programs_never_use_are_made_when_used():
     unmade = sorted(["ResidualZZ", "Problem", *usage])
     code = (
         _PLAIN + "import cudaq_pulse.controller as c\n"
-        "low.schedule; low.export_controller(); low.export_emulation(); c.resources(low)\n"
+        "low.schedule; low.export_to_controller(); low.export_to_emulator(); c.resources(low)\n"
         f"names = [(n, getattr(c, n)) for n in {usage!r}]\n"
         "names += [('ResidualZZ', p.quantum_systems.ResidualZZ), ('Problem', p.Problem)]\n"
         "def unmade():\n"

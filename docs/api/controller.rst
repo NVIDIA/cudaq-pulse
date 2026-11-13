@@ -12,7 +12,7 @@ the ``BackendError`` exceptions.
 Export and limits
 -----------------
 
-.. automethod:: cudaq_pulse.Lowered.export_controller
+.. automethod:: cudaq_pulse.Lowered.export_to_controller
    :no-index:
 
 .. autodata:: cudaq_pulse.controller.FORMAT

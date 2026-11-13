@@ -113,7 +113,7 @@ def test_the_op_given_a_choice_is_emitted_in_each_arm():
     assert _amplitudes(chosen) == [0.3, 0.1]
     compiled = _lower(chosen)
     compiled._module.run_passes(["pulse-verify"])
-    for export in (compiled.export_controller, compiled.export_emulation):
+    for export in (compiled.export_to_controller, compiled.export_to_emulator):
         assert export()["events"]
 
 
@@ -720,8 +720,8 @@ def test_run_time_values_do_not_grow_with_the_uses(at_runtime, uses):
     arms, kept = _both(kernel, at_runtime, passes=_UNFUSED)
     assert arms.mlir().count("scf.if") == uses
     assert kept.mlir().count("scf.if") == 0
-    assert len(kept.export_controller()["events"]) == uses + 1
-    assert len(arms.export_controller()["events"]) == 2 * uses + 1
+    assert len(kept.export_to_controller()["events"]) == uses + 1
+    assert len(arms.export_to_controller()["events"]) == 2 * uses + 1
 
 
 @pytest.mark.parametrize("schedule", ["asap", "alap"])

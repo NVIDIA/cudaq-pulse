@@ -161,7 +161,7 @@ def print_report(lowered):
 
 
 def export(lowered, name, directory):
-    artifact = lowered.export_emulation()
+    artifact = lowered.export_to_emulator()
     path = Path(directory) / f"{name}.json"
     path.write_text(json.dumps(artifact, indent=1))
     print(

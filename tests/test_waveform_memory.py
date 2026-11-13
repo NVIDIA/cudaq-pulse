@@ -54,9 +54,9 @@ def _ids(program):
 
 def test_waveform_ids_depend_on_content_alone():
     compiled = pulse.compile(tuned)
-    first = compiled.lower(Q[0], 0.25, 0.1, 0.0).export_controller(version=2)
-    again = pulse.compile(tuned).lower(Q[0], 0.25, 0.1, 0.0).export_controller(version=2)
-    other = compiled.lower(Q[1], 0.25, 0.1, 0.0).export_controller(version=2)
+    first = compiled.lower(Q[0], 0.25, 0.1, 0.0).export_to_controller(version=2)
+    again = pulse.compile(tuned).lower(Q[0], 0.25, 0.1, 0.0).export_to_controller(version=2)
+    other = compiled.lower(Q[1], 0.25, 0.1, 0.0).export_to_controller(version=2)
     assert _ids(first) == _ids(again) == _ids(other)
     ids = [w["id"] for w in first["waveforms"]]
     assert len(set(ids)) == len(ids) == 4
@@ -65,8 +65,8 @@ def test_waveform_ids_depend_on_content_alone():
 
 def test_a_new_amplitude_keeps_the_shape_id_and_changes_the_id():
     compiled = pulse.compile(tuned)
-    a = compiled.lower(Q[0], 0.25, 0.1, 0.0).export_controller(version=2)["waveforms"]
-    b = compiled.lower(Q[0], 0.75, 0.3, 0.0).export_controller(version=2)["waveforms"]
+    a = compiled.lower(Q[0], 0.25, 0.1, 0.0).export_to_controller(version=2)["waveforms"]
+    b = compiled.lower(Q[0], 0.75, 0.3, 0.0).export_to_controller(version=2)["waveforms"]
     assert [w["shape_id"] for w in a] == [w["shape_id"] for w in b]
     # The waveforms amp scales change; the others do not.
     assert [x["id"] == y["id"] for x, y in zip(a, b, strict=True)] == [False, True, False, True]
@@ -75,7 +75,7 @@ def test_a_new_amplitude_keeps_the_shape_id_and_changes_the_id():
 
 
 def test_unrolling_drops_the_ids():
-    program = pulse.compile(tuned).lower(Q[0], 0.25, 0.1, 0.0).export_controller(version=2)
+    program = pulse.compile(tuned).lower(Q[0], 0.25, 0.1, 0.0).export_to_controller(version=2)
     flat = unroll(program)
     assert "parameters" not in flat
     assert all(
@@ -89,13 +89,13 @@ def test_unrolling_drops_the_ids():
 
 
 def test_the_export_says_what_each_float_parameter_reaches():
-    program = pulse.compile(tuned).lower(Q[0], 0.25, 0.1, 0.0).export_controller(version=2)
+    program = pulse.compile(tuned).lower(Q[0], 0.25, 0.1, 0.0).export_to_controller(version=2)
     assert program["parameters"] == {
         "amp": {"value": 0.25, "reaches": ["amplitude"]},
         "phi": {"value": 0.1, "reaches": ["phase"]},
         "df": {"value": 0.0, "reaches": ["frequency"]},
     }
-    program = pulse.compile(widths).lower(Q[0], 8.0, 12.0).export_controller(version=2)
+    program = pulse.compile(widths).lower(Q[0], 8.0, 12.0).export_to_controller(version=2)
     assert {k: v["reaches"] for k, v in program["parameters"].items()} == {
         "sigma": ["shape"],
         "wait_cycles": ["timing"],
@@ -103,7 +103,7 @@ def test_the_export_says_what_each_float_parameter_reaches():
 
 
 def test_a_program_without_float_parameters_lists_none():
-    program = pulse.compile(two_lines).lower(Q[0], Q[1]).export_controller(version=2)
+    program = pulse.compile(two_lines).lower(Q[0], Q[1]).export_to_controller(version=2)
     assert "parameters" not in program
 
 
@@ -140,10 +140,10 @@ def test_the_memory_reaches_the_export_only_when_shared():
     lowered = pulse.compile(two_lines, control_system=ControlSystem(controllers=[shared])).lower(
         Q[0], Q[1]
     )
-    program = lowered.export_controller(version=2)
+    program = lowered.export_to_controller(version=2)
     assert program["controller"]["waveform_memory_samples"] == 4096
     assert program["controller"]["waveform_memory"] == "shared"
-    assert lowered.export_controller()["limits"]["waveform_memory"] == "shared"
+    assert lowered.export_to_controller()["limits"]["waveform_memory"] == "shared"
     assert unroll(program)["limits"] == shared.as_dict()
     json.dumps(program)
     per_line = Controller(waveform_memory_samples=4096)
@@ -151,8 +151,8 @@ def test_the_memory_reaches_the_export_only_when_shared():
     plain = pulse.compile(two_lines, control_system=ControlSystem(controllers=[per_line])).lower(
         Q[0], Q[1]
     )
-    assert "waveform_memory" not in plain.export_controller(version=2)["controller"]
-    assert unroll(plain.export_controller(version=2))["limits"] == per_line.as_dict()
+    assert "waveform_memory" not in plain.export_to_controller(version=2)["controller"]
+    assert unroll(plain.export_to_controller(version=2))["limits"] == per_line.as_dict()
 
 
 def test_the_memory_takes_its_strings_or_its_members():
@@ -195,7 +195,7 @@ def test_the_structured_format_writes_the_controller_and_names_its_links_anew():
     links = {"ctl": Link(fixed_ns=4, bytes_per_ns=2.0, feedback_ns=8, slots=4)}
     machine = ControlSystem(controllers=[limits], links=links)
     lowered = pulse.compile(feedback, control_system=machine).lower(Q[0])
-    program = lowered.export_controller(version=2)
+    program = lowered.export_to_controller(version=2)
     assert "limits" not in program
     controller = program["controller"]
     assert controller["instruction_cycles"] == 1
@@ -215,14 +215,16 @@ def test_the_structured_format_writes_the_controller_and_names_its_links_anew():
     (link,) = program["links"].values()
     assert link["send_ns"] == 4 and link["bandwidth_bytes_per_ns"] == 2.0
     assert link["answer_delay_ns"] == 8 and link["slots"] == 4 and link["slot_bytes"] == 1024
-    flat = lowered.export_controller()
+    flat = lowered.export_to_controller()
     back = unroll(program)
     assert back["limits"] == flat["limits"] and list(back["limits"]) == list(flat["limits"])
     assert back["links"] == flat["links"]
     assert back["quantum_system"] == flat["quantum_system"] and list(back) == list(flat)
     # A controller without processors lists none.
     plain = ControlSystem(controllers=[Controller()], links=links)
-    program = pulse.compile(feedback, control_system=plain).lower(Q[0]).export_controller(version=2)
+    program = (
+        pulse.compile(feedback, control_system=plain).lower(Q[0]).export_to_controller(version=2)
+    )
     assert program["controller"]["processors"] == []
     assert unroll(program)["limits"] == Controller().as_dict()
 

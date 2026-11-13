@@ -55,7 +55,7 @@ def adaptive(q):
 def test_export_and_manifest_are_json():
     machine = ControlSystem(links={"host": Link(slot_bytes=256, slots=8)})
     low = pulse.compile(adaptive, control_system=machine).lower(Q[0])
-    artifact = json.loads(json.dumps(low.export_emulation()))
+    artifact = json.loads(json.dumps(low.export_to_emulator()))
     assert artifact["format"] == emulation.FORMAT
     assert [e["opened_by"] for e in artifact["segments"]] == ["start", "wait"]
     after = [e for e in artifact["events"] if e["segment"] == 1]
@@ -385,7 +385,7 @@ def test_the_realtime_channel_and_device_call_export_are_seams():
     with pytest.raises(NotImplementedError, match="InProcess"):
         emulation.RealtimeChannel("libcudaq-realtime.so")
     low = pulse.compile(feedback).lower(Q[0])
-    with pytest.raises(NotImplementedError, match="export_emulation"):
+    with pytest.raises(NotImplementedError, match="export_to_emulator"):
         emulation.device_call_text(low)
 
 
@@ -405,6 +405,6 @@ def test_exports_with_calls_in_loops_are_json_data():
                 drive(d, square(40, 0.1))
 
     low = pulse.compile(k, unroll_threshold=0).lower(Q[0])
-    for program in (low.export_emulation(), low.export_controller()):
+    for program in (low.export_to_emulator(), low.export_to_controller()):
         assert json.loads(json.dumps(program)) == program
         assert [c["iteration"] for c in program["calls"]] == [[0], [1]]

@@ -536,7 +536,7 @@ def asks_and_reads(q, amp: float):
 @pytest.mark.parametrize("kernel", [asks, asks_and_reads])
 def test_a_kernel_that_returns_an_answer_compiles_and_only_its_call_fails(kernel):
     q = _device().qudits[0]
-    submitted = kernel.lower(q, 0.1).export_controller()["events"]
+    submitted = kernel.lower(q, 0.1).export_to_controller()["events"]
     assert [e["operands"] for e in submitted if e["kind"] == "submit"] == [[{"const": 0.1}]]
     with pytest.raises(CompilationError, match="returns the answer of a classical call"):
         kernel(q, 0.1)
@@ -627,13 +627,13 @@ def test_simulating_new_float_values_shares_the_module():
 def test_lowering_the_same_values_again_specializes_once_they_recur():
     q = _device().qudits[0]
     first = rabi.lower(q, 0.3125)
-    program = first.export_controller()
+    program = first.export_to_controller()
     second = rabi.lower(q, 0.3125)
     assert second is not first
     assert second._concrete() is not first._concrete()
     again = rabi.lower(q, 0.3125)
     assert again._concrete() is second._concrete()
-    assert again.export_controller() == program
+    assert again.export_to_controller() == program
     assert rabi.lower(q, 0.4125)._concrete() is not again._concrete()
 
 

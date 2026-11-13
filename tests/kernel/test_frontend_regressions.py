@@ -201,7 +201,7 @@ def test_a_sync_over_a_thousand_lines_compiles_schedules_and_exports():
     drives = lowered.schedule
     assert len(drives) == n + 1
     assert {e.start_cycles for e in drives[1:]} == {40}
-    (barrier,) = [e for e in lowered.export_controller()["events"] if e["kind"] == "sync"]
+    (barrier,) = [e for e in lowered.export_to_controller()["events"] if e["kind"] == "sync"]
     assert barrier["lines"] == list(range(n)) and barrier["start_cycles"] == 40
 
 

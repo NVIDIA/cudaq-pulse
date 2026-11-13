@@ -16,7 +16,7 @@ them, and ``get(name)`` loads one. A backend follows the ``Backend``
 protocol: ``control_system()`` is the control system to compile for (a
 ``ControlSystem``, or its one ``Controller``), so that programs the
 controller cannot play fail at compile time;
-``emit(program)`` takes ``Lowered.export_controller()`` and returns the
+``emit(program)`` takes ``Lowered.export_to_controller()`` and returns the
 controller's program; ``run(artifact, shots_count=...)`` runs it::
 
     from cudaq_pulse import backends
@@ -24,12 +24,12 @@ controller's program; ``run(artifact, shots_count=...)`` runs it::
     backend = backends.get("toy")
     system = backend.control_system()
     lowered = pulse.compile(kernel, quantum_system=dev, control_system=system).lower(q)
-    artifact = backend.emit(lowered.export_controller())
+    artifact = backend.emit(lowered.export_to_controller())
     result = backend.run(artifact, shots_count=100)
 
 A backend may also list the export formats it reads in ``formats``
 (``"cudaq-pulse.controller/1"``, ``cudaq_pulse.controller.FORMAT``, and the
-structured ``"cudaq-pulse.controller/2"`` of ``export_controller(version=2)``);
+structured ``"cudaq-pulse.controller/2"`` of ``export_to_controller(version=2)``);
 ``get`` refuses one that reads none of them.
 ``register(name, factory)`` adds a backend in this process, without a
 distribution. Nothing here runs until it is called: importing cudaq-pulse
@@ -78,7 +78,7 @@ class Backend(Protocol):
         ...
 
     def emit(self, program: Mapping[str, Any]) -> Any:
-        """The controller's program for ``Lowered.export_controller()``."""
+        """The controller's program for ``Lowered.export_to_controller()``."""
         ...
 
     def run(self, artifact: Any, *, shots_count: int = 1) -> Any:

@@ -416,7 +416,7 @@ emulation; ``serve_udp`` keeps one per decoder. Its ``min_latency_ns``,
 Emulation
 ---------
 
-``Lowered.export_emulation()`` writes what a controller or an emulator runs
+``Lowered.export_to_emulator()`` writes what a controller or an emulator runs
 the program from, as JSON-ready data: the static schedule, each event's
 segment, the segments, the calls, the links and the call manifest (every
 function's dispatch key, link, payload sizes, latency and slots).

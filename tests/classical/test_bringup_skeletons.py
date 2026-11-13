@@ -117,7 +117,7 @@ def test_k11_adaptive_t1_tracks_its_posterior_per_path(target):
     t1_ns = target.qudits[0].t1_us * 1e3
     survived = sum(b.probability for b in result.branches if b.levels[0] == 1)
     assert survived == pytest.approx(math.exp(-(5000 + 200) / t1_ns), abs=0.02)
-    artifact = json.loads(json.dumps(lowered.export_emulation()))
+    artifact = json.loads(json.dumps(lowered.export_to_emulator()))
     assert len(artifact["segments"]) == 3
     assert artifact["manifest"]["functions"][0]["link_name"] == "controller"
 

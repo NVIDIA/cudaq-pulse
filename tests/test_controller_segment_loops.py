@@ -184,12 +184,12 @@ def test_the_structured_export_keeps_an_segment_loop_rolled_and_unrolls_to_every
     name, schedule
 ):
     lowered = _lowered(_rounds(80)[name], schedule)
-    structured = lowered.export_controller(version=2)
+    structured = lowered.export_to_controller(version=2)
     loops = _loops(structured["events"])
     assert any(loop["trips"] > 2 for loop in loops)
     stepped = [e for loop in loops for e in loop["body"] if "segment_step" in e]
     assert stepped and all(len(e["segment_step"]) >= 1 for e in stepped)
-    assert unroll(structured)["events"] == lowered.export_controller()["events"]
+    assert unroll(structured)["events"] == lowered.export_to_controller()["events"]
 
 
 _PROGRAM = """
@@ -220,7 +220,7 @@ print(json.dumps({"ops": lowered.metrics.op_count}))
 """
 _EXPORTED = """
 lowered = pulse.compile(rounds, unroll_threshold=0).lower(Q[0])
-program = lowered.export_controller(version=2)
+program = lowered.export_to_controller(version=2)
 print(json.dumps({"events": len(program["events"])}))
 """
 

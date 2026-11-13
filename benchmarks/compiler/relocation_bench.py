@@ -58,7 +58,7 @@ def _median_ms(call: Callable[[], object], iterations: int) -> float:
 def _sweep(count: int, relocatable: bool) -> None:
     compiled = pulse.compile(_drives(count, relocatable))
     for q in _HANDLES:
-        compiled.lower(q, 0.1).export_controller()
+        compiled.lower(q, 0.1).export_to_controller()
 
 
 def main() -> int:

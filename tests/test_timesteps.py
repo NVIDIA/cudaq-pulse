@@ -91,7 +91,7 @@ def test_the_export_counts_whole_steps_of_the_controllers_own_cycles():
     lowered = pulse.compile(stepped, schedule="asap", control_system=machine).lower(Q[0], Q[1])
     timed = [e for e in lowered.schedule if e.kind in TIMED]
     assert all(e.start % 4 == 0 and e.duration_cycles % 4 == 0 for e in timed)
-    program = lowered.export_controller()
+    program = lowered.export_to_controller()
     assert program["clock_ghz"] == 1.0 and program["program_clock_ghz"] == 2.0
     events = [e for e in program["events"] if e["kind"] in TIMED]
     assert all(e["start_cycles"] % 2 == 0 and e["duration_cycles"] % 2 == 0 for e in events)
@@ -100,7 +100,7 @@ def test_the_export_counts_whole_steps_of_the_controllers_own_cycles():
 
 def test_on_the_program_clock_the_export_keeps_its_clock():
     lowered = pulse.compile(stepped, schedule="asap", control_system=_steps(4)).lower(Q[0], Q[1])
-    program = lowered.export_controller()
+    program = lowered.export_to_controller()
     assert program["clock_ghz"] == lowered.quantum_system.clock_ghz
     assert "program_clock_ghz" not in program
     starts = [e["start_cycles"] for e in program["events"] if e["kind"] in TIMED]
@@ -140,8 +140,8 @@ def rolled(q):
 @pytest.mark.parametrize("kernel", [paced, rolled])
 def test_format_2_on_the_program_clock_in_timesteps_unrolls_to_format_1(kernel, limits):
     lowered = pulse.compile(kernel, control_system=ControlSystem(controllers=[limits])).lower(Q[0])
-    flat = lowered.export_controller(version=1)
-    structured = lowered.export_controller(version=2)
+    flat = lowered.export_to_controller(version=1)
+    structured = lowered.export_to_controller(version=2)
     assert structured["clock_ghz"] == flat["clock_ghz"] == lowered.quantum_system.clock_ghz
     assert controller.unroll(structured)["events"] == flat["events"]
     if kernel is rolled:
@@ -158,9 +158,9 @@ def test_format_2_on_the_program_clock_in_timesteps_unrolls_to_format_1(kernel, 
 def test_format_2_refuses_a_controller_on_its_own_clock():
     machine = ControlSystem(controllers=[Controller(clock_ghz=1.0)])
     lowered = pulse.compile(paced, control_system=machine).lower(Q[0])
-    assert lowered.export_controller(version=1)["clock_ghz"] == 1.0
+    assert lowered.export_to_controller(version=1)["clock_ghz"] == 1.0
     with pytest.raises(pulse.UnsupportedError, match="export version 1 for this machine"):
-        lowered.export_controller(version=2)
+        lowered.export_to_controller(version=2)
 
 
 def test_one_cycle_per_timestep_changes_nothing():
@@ -177,7 +177,7 @@ def test_a_line_delay_moves_a_line_by_whole_timesteps():
     lowered = pulse.compile(stepped, schedule="asap", control_system=machine).lower(Q[0], Q[1])
     first = [e.start for e in lowered.schedule if e.kind == "drive" and e.qudit == 0]
     assert first == [4]
-    lines = {(x["role"], x["qudit"]): x for x in lowered.export_controller()["lines"]}
+    lines = {(x["role"], x["qudit"]): x for x in lowered.export_to_controller()["lines"]}
     assert lines[("drive", 0)]["fine_delay_ns"] == pytest.approx(1.0)
     # Without fine delay, the 1 ns left over is 2 cycles past a timestep.
     exact = _delayed_steps(4)
@@ -224,7 +224,7 @@ def test_a_fractional_sample_rate_puts_lines_on_whole_samples():
 
 def test_custom_is_sampled_at_a_fractional_rate():
     lowered = pulse.compile(shaped, control_system=ControlSystem(controllers=[AWG])).lower(Q[0])
-    (drive,) = [e for e in lowered.export_controller()["events"] if e["kind"] == "drive"]
+    (drive,) = [e for e in lowered.export_to_controller()["events"] if e["kind"] == "drive"]
     # 20 program cycles are 10 of the controller's, 24 samples.
     assert drive["duration_cycles"] == 10
     assert len(drive["waveform"]["samples"]) == 24

@@ -700,9 +700,9 @@ def test_a_call_is_dispatched_by_the_hash_of_its_compiled_name():
         "first__1",
         classical.dispatch_key("first__1"),
     )
-    (entry,) = low.export_emulation()["manifest"]["functions"]
+    (entry,) = low.export_to_emulator()["manifest"]["functions"]
     assert entry["dispatch_key"] == call.dispatch_key and "dispatch_key_fixed_by" not in entry
-    assert "dispatch_key" not in low.export_emulation()["calls"][0]
+    assert "dispatch_key" not in low.export_to_emulator()["calls"][0]
 
 
 def test_a_function_on_a_processor_that_fixes_keys_must_be_listed():
@@ -761,7 +761,7 @@ def test_a_processor_fixes_the_keys_of_the_functions_it_runs():
         ("table", 5),
         ("decode", classical.dispatch_key("decode")),
     ]
-    entries = {e["name"]: e for e in low.export_emulation()["manifest"]["functions"]}
+    entries = {e["name"]: e for e in low.export_to_emulator()["manifest"]["functions"]}
     assert entries["table"]["dispatch_key_fixed_by"] == "controllers[0] (vendor.fpga).processors[0]"
     with pytest.raises(pulse.CompilationError, match="processors\\[0\\]"):
         _program(_one("vote"), machine=system)
@@ -883,7 +883,7 @@ def test_an_external_of_unsized_inputs_has_a_version_per_length():
         ("_syndromes", "_syndromes__3"),
         ("_decode_surface", "_decode_surface__4"),
     ]
-    entries = {e["name"]: e for e in low.export_emulation()["manifest"]["functions"]}
+    entries = {e["name"]: e for e in low.export_to_emulator()["manifest"]["functions"]}
     assert set(entries) == {"_syndromes__2", "_syndromes__3", "_decode_surface__4"}
     assert entries["_syndromes__3"]["dispatch_key"] == classical.dispatch_key("_syndromes__3")
     assert entries["_syndromes__3"]["schema"] == wire.schema(_syndromes.specialize(syndrome=3))

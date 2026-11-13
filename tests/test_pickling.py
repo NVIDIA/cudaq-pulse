@@ -145,8 +145,8 @@ def _views(program):
         "classical": program.classical_report(),
     }
     if not program.parameters:
-        shown["controller"] = program.export_controller()
-        shown["emulation"] = program.export_emulation()
+        shown["controller"] = program.export_to_controller()
+        shown["emulation"] = program.export_to_emulator()
     return shown
 
 
@@ -564,8 +564,8 @@ def _exported():
 def test_a_program_unpickles_with_its_controller_exports_in_both_formats(name, monkeypatch):
     program = _exported()[name]
     expected = (
-        program.export_controller(),
-        program.export_controller(version=2),
+        program.export_to_controller(),
+        program.export_to_controller(version=2),
         program._concrete().drive_frames([]),
     )
     data = pickle.dumps(program)
@@ -574,8 +574,8 @@ def test_a_program_unpickles_with_its_controller_exports_in_both_formats(name, m
     back = pickle.loads(data)
     assert type(back) is type(program) and type(back.generic) is type(program.generic)
     assert (
-        back.export_controller(),
-        back.export_controller(version=2),
+        back.export_to_controller(),
+        back.export_to_controller(version=2),
         back._concrete().drive_frames([]),
     ) == expected
 
@@ -584,7 +584,7 @@ def test_frames_that_persist_unpickle_declared_and_exported():
     program = _round_trip(_exported()["persistent_frames"])
     assert program.options.machine == _PERSISTENT._machine
     assert program.options.machine.controller.persistent_frames is True
-    flat, structured = program.export_controller(), program.export_controller(version=2)
+    flat, structured = program.export_to_controller(), program.export_to_controller(version=2)
     [frame] = flat["frame_state"]
     assert frame["frequency_hz"] == LADDER.physical_qudits[0].frequency_hz + 1.0e6
     assert structured["frame_state"] == flat["frame_state"]
@@ -597,7 +597,7 @@ def test_an_unpickled_module_checks_each_calls_values_against_the_controller(mon
     back = _round_trip(generic)
     monkeypatch.setattr(_kernel, "build", _refuse_compile)
     assert type(back) is type(generic)
-    assert back.bind([0.3]).export_controller() == generic.bind([0.3]).export_controller()
+    assert back.bind([0.3]).export_to_controller() == generic.bind([0.3]).export_to_controller()
     with pytest.raises(ControllerLimitError, match=r"peaks at amplitude 0\.9; .* at most 0\.6"):
         back.bind([0.9])
     with pytest.raises(ControllerLimitError, match="Controller.max_amplitude"):
@@ -763,8 +763,8 @@ def _per_controller(program):
     """Each controller's programs, as the bytes a backend reads."""
     return [
         (
-            json.dumps(program.export_controller(controller=k)),
-            json.dumps(program.export_emulation(controller=k)),
+            json.dumps(program.export_to_controller(controller=k)),
+            json.dumps(program.export_to_emulator(controller=k)),
         )
         for k in range(len(program.quantum_system.control_system.controllers))
     ]
@@ -984,7 +984,7 @@ def test_branches_level_populations_and_branch_coverage_pickle_on_their_own():
 def _run_in_worker(program):
     build, _kernel.build = _kernel.build, _refuse_compile
     try:
-        return program.schedule, program.export_controller()
+        return program.schedule, program.export_to_controller()
     finally:
         _kernel.build = build
 
@@ -1004,7 +1004,7 @@ def _over_the_limit():
 def test_a_process_pool_sweep_runs_programs_compiled_in_the_parent():
     compiled = pulse.compile(rabi, quantum_system=LADDER)
     programs = [compiled.lower(Q[0], amp) for amp in (0.1, 0.2, 0.3, 0.4)]
-    expected = [(p.schedule, p.export_controller()) for p in programs]
+    expected = [(p.schedule, p.export_to_controller()) for p in programs]
     context = multiprocessing.get_context("spawn")
     with concurrent.futures.ProcessPoolExecutor(2, mp_context=context) as pool:
         assert list(pool.map(_run_in_worker, programs)) == expected

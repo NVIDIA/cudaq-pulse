@@ -66,7 +66,9 @@ def ideal(monkeypatch):
 
 def _readouts(lowered):
     return sum(
-        1 for e in unroll(lowered.export_controller(version=2))["events"] if e["kind"] == "readout"
+        1
+        for e in unroll(lowered.export_to_controller(version=2))["events"]
+        if e["kind"] == "readout"
     )
 
 
@@ -87,7 +89,7 @@ def test_the_corpus_tells_where_a_run_time_frequency_change_is_made():
     dev = _validation._device(ControlSystem())
     compiled = pulse.compile(_validation._corpus()["runtime_frequency"], quantum_system=dev)
     lowered = compiled.lower(*dev.qudits[:2])
-    events = lowered.export_controller()["events"]
+    events = lowered.export_to_controller()["events"]
     first, second = (e for e in events if e["kind"] == "drive")
     [change] = second["frame_updates"]
     # An emulator that took the change at the second pulse would miss the

@@ -138,7 +138,7 @@ Kernels can also call classical functions while the QPU runs
 calibration updates whose answers the same shot uses, scheduled with their
 latency budget and simulated or emulated in virtual time. A compiled kernel
 exports to an out-of-tree controller backend with
-`Lowered.export_controller()`, and `cudaq_pulse.backends` finds the backends
+`Lowered.export_to_controller()`, and `cudaq_pulse.backends` finds the backends
 installed beside cudaq-pulse; see the "Classical Calls at QPU Runtime" and
 "Writing a Controller Backend" guides.
 

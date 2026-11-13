@@ -256,7 +256,7 @@ def test_one_controller_on_its_own_clock_is_timed_alike_in_a_system_of_several()
     by_model = pulse.compile(drive_and_branch, control_system=machine).lower(
         qpu.qudits[0], qpu.qudits[1]
     )
-    system, model = by_system.export_controller(), by_model.export_controller()
+    system, model = by_system.export_to_controller(), by_model.export_to_controller()
     assert system["clock_ghz"] == 1.0 and system["program_clock_ghz"] == qpu.clock_ghz
     assert system["events"] == model["events"]
 
@@ -272,8 +272,8 @@ def test_one_controller_on_its_own_clock_is_timed_alike_in_a_system_of_several()
 def _outputs(lowered):
     return (
         lowered.mlir(),
-        json.dumps(lowered.export_controller(), sort_keys=True),
-        json.dumps(lowered.export_emulation(), sort_keys=True),
+        json.dumps(lowered.export_to_controller(), sort_keys=True),
+        json.dumps(lowered.export_to_emulator(), sort_keys=True),
     )
 
 
@@ -301,8 +301,10 @@ def test_line_delays_and_a_reference_clock_are_the_control_systems():
         timed.qudits[0], timed.qudits[1]
     )
     assert _outputs(by_system) == _outputs(by_model)
-    assert by_system.export_controller()["reference_clock_ghz"] == 0.5
-    lines = {(line["role"], line["qudit"]): line for line in by_system.export_controller()["lines"]}
+    assert by_system.export_to_controller()["reference_clock_ghz"] == 0.5
+    lines = {
+        (line["role"], line["qudit"]): line for line in by_system.export_to_controller()["lines"]
+    }
     assert lines[("drive", 0)]["fine_delay_ns"] == pytest.approx(0.3)
 
 
@@ -504,7 +506,7 @@ def test_a_controller_lacking_only_one_capability_rejects_what_needs_it(capabili
     )
     if capability == pulse.Capability.LOOP:
         # Without it, the controller plays the loop unrolled.
-        assert pulse.compile(kernel, quantum_system=qpu).lower(*qudits).export_controller()
+        assert pulse.compile(kernel, quantum_system=qpu).lower(*qudits).export_to_controller()
         return
     with pytest.raises(ControllerLimitError, match=f"controllers\\[0\\]: .* needs '{capability}'"):
         pulse.compile(kernel, quantum_system=qpu).lower(*qudits)
@@ -514,7 +516,9 @@ def test_a_tone_a_parameter_sets_needs_no_runtime_frame_update():
     others = [c for c in pulse.Capability if c != pulse.Capability.RUNTIME_FRAME_UPDATE]
     qpu = _qpu(pulse.Controller(drive_lines=[0, 1], readout_lines=[0, 1], supports=others))
     compiled = pulse.compile(turns_by_a_parameter, quantum_system=qpu)
-    assert compiled.lower(qpu.qudits[0], 0.3).export_controller()["events"][0]["phase_rad"] == 0.3
+    assert (
+        compiled.lower(qpu.qudits[0], 0.3).export_to_controller()["events"][0]["phase_rad"] == 0.3
+    )
 
 
 @pulse.kernel(unroll_threshold=0)
@@ -648,7 +652,7 @@ def _controller_events(kernel, qpu, schedule):
     return lowered, [
         [
             (e["kind"], e["start_cycles"], e["duration_cycles"], len(e["conditions"]))
-            for e in lowered.export_controller(controller=c)["events"]
+            for e in lowered.export_to_controller(controller=c)["events"]
         ]
         for c in (0, 1)
     ]

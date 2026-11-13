@@ -193,7 +193,7 @@ def test_simulation_takes_the_branch_python_would(condition):
     "condition", ["(n > 3) == (x > 0.1)", "(n > 3) & (x > 0.1)", "(n > 3) | (x > 0.1)"]
 )
 def test_the_export_tests_a_comparison_of_conditions_on_both_answers(condition):
-    events = pulse.compile(_kernel(condition)).lower(Q[0]).export_controller()["events"]
+    events = pulse.compile(_kernel(condition)).lower(Q[0]).export_to_controller()["events"]
     answers = [e["index"] for e in events if e["kind"] == "answer"]
     [pi] = (e for e in events if e["kind"] == "drive")
     [condition] = pi["conditions"]

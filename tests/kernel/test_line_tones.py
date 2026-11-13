@@ -33,8 +33,8 @@ def _same_program(a, b, *args):
         return mlir
 
     assert text(one) == text(two)
-    export_one = json.dumps(one.export_controller(), sort_keys=True)
-    export_two = json.dumps(two.export_controller(), sort_keys=True)
+    export_one = json.dumps(one.export_to_controller(), sort_keys=True)
+    export_two = json.dumps(two.export_to_controller(), sort_keys=True)
     assert export_one.replace(a.__name__, "k") == export_two.replace(b.__name__, "k")
 
 
@@ -170,7 +170,9 @@ def test_a_missing_transition_is_a_key_error_listing_the_qudit_s():
 
 def _readout_frequencies(lowered):
     return [
-        e["frequency_hz"] for e in lowered.export_controller()["events"] if e["kind"] == "readout"
+        e["frequency_hz"]
+        for e in lowered.export_to_controller()["events"]
+        if e["kind"] == "readout"
     ]
 
 

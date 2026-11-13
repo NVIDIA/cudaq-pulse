@@ -17,7 +17,7 @@ installable distribution.
 Exporting a program
 -------------------
 
-``Lowered.export_controller()`` returns a compiled kernel as JSON-serializable
+``Lowered.export_to_controller()`` returns a compiled kernel as JSON-serializable
 data. Its ``format`` is ``"cudaq-pulse.controller/1"``
 (``cudaq_pulse.controller.FORMAT``): the schema's name and, after the slash,
 its major version. Within one version keys and event kinds may be added, but
@@ -33,7 +33,7 @@ see below), and ``limits`` the controller limits it was
 checked against (``null`` without). ``events`` lists every drive, readout,
 wait, sync, classical call and frame update in program order, once per loop
 iteration and both arms of a branch. ``segments``, ``calls``, ``links`` and
-``manifest`` are those of ``Lowered.export_emulation()`` (see
+``manifest`` are those of ``Lowered.export_to_emulator()`` (see
 :doc:`classical_calls`).
 
 A kernel with list or qudit parameters compiles once for every call, and
@@ -89,7 +89,7 @@ Drives and readouts also have:
     ``sample_rate_ghz``); and its overall complex amplitude,
     ``{"re": ..., "im": ...}``. Times in parameters are in cycles.
 ``samples``
-    With ``export_controller(sample_rate_ghz=...)``, a whole multiple of the
+    With ``export_to_controller(sample_rate_ghz=...)``, a whole multiple of the
     clock, the envelope sampled at that rate, ``{"re": [...], "im":
     [...]}``. ``cudaq_pulse.controller.sample_waveform`` computes the same
     samples for one waveform.
@@ -284,7 +284,7 @@ of NaN and ``x > 0.1`` does not. There is no JSON schema; this section and
 The structured format
 ---------------------
 
-``export_controller(version=2)`` gives format
+``export_to_controller(version=2)`` gives format
 ``"cudaq-pulse.controller/2"``, which grows with a program's operations
 rather than with its executions, as a sequencer runs it. It is written for a
 controller on the program clock, in :ref:`timesteps <timestep>` of any
@@ -472,7 +472,7 @@ plays it, the waveforms made from it too; samples given to
 on a runtime qudit's line, whose rate depends on the call, ``custom()`` is
 a compile error when the controllers' rates differ.
 
-Each controller gets its own program: ``lowered.export_controller(controller=k)``
+Each controller gets its own program: ``lowered.export_to_controller(controller=k)``
 is controller ``k``'s part, in its own cycles, with ``"controller": k``,
 its ``lines`` and ``limits``, and the events it takes part in: those on its
 lines, a sync with only its lines, the submit of a call whose measurements
@@ -483,7 +483,7 @@ program that plays the lines of more than one controller needs
 ``controller=``; one on a single controller exports it without, and one
 that plays no lines is exported by the controller that makes its calls.
 A controller the program does not use exports a valid empty program: no
-lines, events or calls. ``export_emulation(controller=k)`` gives the same
+lines, events or calls. ``export_to_emulator(controller=k)`` gives the same
 part for an emulator.
 
 A link is shared by default: every controller it reaches sends its
@@ -760,7 +760,7 @@ same name:
 
 
    compiled = pulse.compile(drive_and_measure, quantum_system=qs, control_system=backend.control_system())
-   program = compiled.lower(qs.qudits[0]).export_controller()
+   program = compiled.lower(qs.qudits[0]).export_to_controller()
    print(backend.run(backend.emit(program), shots_count=1))
    # [['0 drive line 0 gaussian at 5e+09 Hz', '40 readout line 1 square at 5e+09 Hz']]
 

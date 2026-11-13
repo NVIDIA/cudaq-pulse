@@ -148,7 +148,7 @@
         "c_calls": 2682.4
       }
     },
-    "export_controller": {
+    "export_to_controller": {
       "export_bytes": 87718,
       "instructions": 4679225,
       "estimated_cycles": 7237926,
@@ -158,7 +158,7 @@
         "c_calls": 70.667
       }
     },
-    "export_controller_sampled": {
+    "export_to_controller_sampled": {
       "export_bytes": 49373,
       "instructions": 1501399,
       "estimated_cycles": 2361905,
@@ -168,7 +168,7 @@
         "c_calls": 157.667
       }
     },
-    "export_emulation": {
+    "export_to_emulator": {
       "export_bytes": 39736,
       "instructions": 5765137,
       "estimated_cycles": 8649082,

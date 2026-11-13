@@ -189,9 +189,9 @@ def _can_select_at_runtime(target: QuantumSystem, parameter_kind: str) -> bool:
     once the measurement is in. Everywhere else, each op that uses the value
     runs in both arms of an if on the measurement, with that arm's value.
     Simulation gives the same result either way. No target takes any kind
-    at run time: ``export_controller`` gives a kept value as ``null`` with
+    at run time: ``export_to_controller`` gives a kept value as ``null`` with
     its expression beside it (the select on the measurement), and
-    ``export_emulation`` carries no parameters.
+    ``export_to_emulator`` carries no parameters.
     """
     return parameter_kind in _SELECTED_AT_RUNTIME
 
@@ -961,7 +961,7 @@ class Lowered:
         """
         return (_report or _load_report())(self)
 
-    def export_emulation(self, *, controller: int | None = None) -> dict[str, Any]:
+    def export_to_emulator(self, *, controller: int | None = None) -> dict[str, Any]:
         """The program for a controller emulator: its schedule by segment, its
         calls and the manifest of its classical functions (see
         ``cudaq_pulse.classical.emulation``). On a control system of several
@@ -970,7 +970,7 @@ class Lowered:
 
         return export(self, controller)
 
-    def export_controller(
+    def export_to_controller(
         self,
         sample_rate_ghz: float | None = None,
         *,

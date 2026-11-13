@@ -2,14 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """A compiled kernel for a controller, and what a controller can play.
 
-``Lowered.export_controller()`` (``export`` here) writes a scheduled kernel in
+``Lowered.export_to_controller()`` (``export`` here) writes a scheduled kernel in
 the form an out-of-tree controller backend lowers to its own instructions,
 format ``FORMAT`` (``cudaq-pulse.controller/1``): the lines and the qudits
 they belong to, and every drive, readout, wait, sync and classical call with
 its exact start and end, its waveform (the shape and its parameters, and
 optionally its samples), its tone's frequency and frame phase, the
 measurement-conditioned branches it lies in, and the segments and calls of
-``Lowered.export_emulation()``. The schedule is final: a backend places each
+``Lowered.export_to_emulator()``. The schedule is final: a backend places each
 event at its ``start_cycles`` and does not schedule again.
 
 Times count the controller's own clock cycles, at ``clock_ghz``. When the
@@ -135,7 +135,7 @@ __all__ = [
 ]
 
 FORMAT = "cudaq-pulse.controller/1"
-# The structured format, ``export_controller(version=2)``.
+# The structured format, ``export_to_controller(version=2)``.
 _STRUCTURED = "cudaq-pulse.controller/2"
 # Every format this cudaq-pulse writes.
 _FORMATS = (FORMAT, _STRUCTURED)

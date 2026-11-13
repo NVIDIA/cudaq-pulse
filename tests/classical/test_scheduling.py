@@ -100,7 +100,7 @@ def answered_before_a_loop(q):
 @pytest.mark.parametrize("schedule", POLICIES)
 def test_an_answer_taken_before_a_loop_is_taken_before_its_first_iteration_tests_it(schedule):
     lowered = pulse.compile(answered_before_a_loop, schedule=schedule).lower(Q[0])
-    events = lowered.export_controller()["events"]
+    events = lowered.export_to_controller()["events"]
     # Every iteration branches on the answer, the first at its due time.
     [answer] = [e for e in events if e["kind"] == "answer"]
     tested = [e for e in events if any(c["answers"] for c in e["conditions"])]
@@ -458,7 +458,7 @@ def decoded(q, r):
 def test_a_correction_from_decoder_state_waits_for_every_syndrome_it_holds(schedule):
     machine = ControlSystem(links={"decoder": Link(fixed_ns=10)})
     lowered = pulse.compile(decoded, schedule=schedule, control_system=machine).lower(Q[0], Q[1])
-    events = lowered.export_controller()["events"]
+    events = lowered.export_to_controller()["events"]
     corrections = [e for e in events if e["kind"] == "drive" and e["conditions"]]
     assert len(corrections) == 2
     for drive in corrections:
@@ -764,8 +764,8 @@ def test_blocking_on_calls_is_exported_and_kept_in_system_files():
     assert "blocks_on_calls" not in pulse.Controller().as_dict()
     assert pulse.Controller(**blocking.as_dict()) == blocking
     low = pulse.compile(_blocked_shots, control_system=blocking).lower(Q[0])
-    assert low.export_controller()["limits"]["blocks_on_calls"] is True
-    assert low.export_controller(version=2)["controller"]["blocks_on_calls"] is True
+    assert low.export_to_controller()["limits"]["blocks_on_calls"] is True
+    assert low.export_to_controller(version=2)["controller"]["blocks_on_calls"] is True
     with pytest.raises(pulse.InvalidValueError, match="blocks_on_calls must be a bool"):
         pulse.Controller(blocks_on_calls=1)  # type: ignore[arg-type]
 

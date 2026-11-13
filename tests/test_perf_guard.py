@@ -386,7 +386,7 @@ def test_a_long_program_is_exported_and_checked_in_linear_time():
         return compiled.lower(Q[0])
 
     # Eight times the events: about 8x the time when linear, 64x when not.
-    runs = {n: program(n).export_controller for n in (500, 4000)}
+    runs = {n: program(n).export_to_controller for n in (500, 4000)}
     _assert_linear("export", runs, 8 * TOLERANCE)
 
 
@@ -449,8 +449,8 @@ def test_a_rolled_loop_is_checked_and_exported_rolled_in_constant_time():
         kernel = program(n)
         compiles[n] = lambda k=kernel: pulse.compile(k, control_system=machine).lower(Q[0])
         lowered = compiles[n]()
-        exports[n] = lambda m=lowered: m.export_controller(version=2)
-        size[n] = len(json.dumps(lowered.export_controller(version=2)))
+        exports[n] = lambda m=lowered: m.export_to_controller(version=2)
+        size[n] = len(json.dumps(lowered.export_to_controller(version=2)))
     # The same cost at any trip count when the loop stays rolled.
     _assert_flat("compile", compiles)
     _assert_flat("export", exports)
@@ -530,8 +530,8 @@ def test_exporting_a_call_again_does_not_specialize_again():
 
     compiled = pulse.compile(pulses, unroll_threshold=100_000)
     values = iter(1e-3 * k for k in range(1, 10**6))
-    new = _best(lambda: compiled.lower(Q[0], next(values)).export_controller(), 20)
-    again = _best(lambda: compiled.lower(Q[0], 0.5).export_controller(), 20)
+    new = _best(lambda: compiled.lower(Q[0], next(values)).export_to_controller(), 20)
+    again = _best(lambda: compiled.lower(Q[0], 0.5).export_to_controller(), 20)
     assert compiled.lower(Q[0], 0.5)._concrete() is compiled.lower(Q[0], 0.5)._concrete()
     # Specializing is most of an export of new values: about 3x the time.
     assert again < new / 1.5, (again, new)
@@ -703,7 +703,7 @@ def test_walking_a_long_program_along_a_path_is_linear():
         lowered = _measured_line(n)
         module = lowered._concrete().simulation_module(*lowered.options.schedule_args())
         walks[n] = lambda m=module: m.next_measurement([])
-        exports[n] = lowered.export_controller
+        exports[n] = lowered.export_to_controller
     # 8x the ops: linear is 8x, quadratic 64x.
     _assert_linear("walk", walks, 16)
     _assert_linear("export", exports, 16)

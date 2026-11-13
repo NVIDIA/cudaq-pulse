@@ -115,7 +115,7 @@ def test_a_coupling_not_measured_yet_compiles_schedules_and_exports():
     dev = pulse.quantum_system(_unmeasured_system())
     lowered = pulse.compile(_pair_program).lower(*dev.qudits[:2])
     assert [e.start_cycles for e in lowered.schedule] == [0, 8]
-    assert lowered.export_controller() and lowered.export_emulation()
+    assert lowered.export_to_controller() and lowered.export_to_emulator()
     assert "pulse.coupling" not in lowered.mlir()
     data = dev.as_dict()
     assert [c["strength_hz"] for c in data["quantum_system"]["couplings"]] == [None, 3.0e6, None]

@@ -139,7 +139,7 @@ def prepare(setting):
     """One setting bound into the compiled program, and its controller export."""
     amplitude, detuning_hz = setting
     bound = worker_program["generic"].bind([amplitude, detuning_hz])
-    return bound, bound.export_controller(sample_rate_ghz=sample_rate_ghz)
+    return bound, bound.export_to_controller(sample_rate_ghz=sample_rate_ghz)
 
 
 # ── The stand-in QPU ─────────────────────────────────────────────────────────
@@ -244,7 +244,7 @@ if __name__ == "__main__":
     print(f"  sent to each worker as {len(pickle.dumps(program)):,} pickled bytes")
     started = time.perf_counter()
     for setting in settings[:50]:
-        program.bind(list(setting)).export_controller(sample_rate_ghz=sample_rate_ghz)
+        program.bind(list(setting)).export_to_controller(sample_rate_ghz=sample_rate_ghz)
     print(
         f"  binding and exporting one setting: {1e3 * (time.perf_counter() - started) / 50:.3f} ms"
     )

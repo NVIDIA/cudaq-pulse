@@ -279,11 +279,11 @@ class RealtimeChannel:
 def device_call_text(lowered: Any) -> str:
     """CUDA-Q kernel text that makes a compiled program's calls as
     ``cc.device_call`` operations. Not available yet: export the program
-    with ``export`` (or ``Lowered.export_emulation()``), whose manifest holds
+    with ``export`` (or ``Lowered.export_to_emulator()``), whose manifest holds
     each function's dispatch key, payload types and link."""
     raise UnsupportedError(
         "exporting calls as CUDA-Q cc.device_call operations is not available yet; "
-        "use Lowered.export_emulation(), whose manifest lists every call"
+        "use Lowered.export_to_emulator(), whose manifest lists every call"
     )
 
 

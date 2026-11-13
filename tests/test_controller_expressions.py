@@ -122,7 +122,7 @@ def _folded(body, x, n, machine=None):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         compiled = pulse.compile(_kernel(body, bound=True), control_system=machine)
-        return _value(compiled.lower(Q[0], x, n).export_controller())
+        return _value(compiled.lower(Q[0], x, n).export_to_controller())
 
 
 @pytest.mark.parametrize(
@@ -131,7 +131,7 @@ def _folded(body, x, n, machine=None):
 )
 def test_each_term_computes_what_the_compiler_computes(term, body):
     lowered = pulse.compile(_kernel(body)).lower(Q[0])
-    program = lowered.export_controller()
+    program = lowered.export_to_controller()
     expression = _value(program)
     assert term.removeprefix("wait ") in _ops(expression), expression
     answer = _answer(program)
@@ -139,13 +139,13 @@ def test_each_term_computes_what_the_compiler_computes(term, body):
         got = evaluate_expression(expression, answers={answer: [x, n]})
         assert got == _folded(body, x, n), (x, n)
     # Format /2 exports the same expression.
-    assert _value(lowered.export_controller(version=2)) == expression
+    assert _value(lowered.export_to_controller(version=2)) == expression
 
 
 @pytest.mark.parametrize("term", sorted(_WAITS))
 def test_each_term_waits_as_long_as_the_emulated_program(term):
     lowered = pulse.compile(_kernel(_WAITS[term])).lower(Q[0])
-    expression = _value(program := lowered.export_controller())
+    expression = _value(program := lowered.export_to_controller())
     args = lowered.options.schedule_args()
     module = lowered._concrete().simulation_module(*args)
     readout, iteration = module.next_measurement([])[:2]
@@ -157,7 +157,7 @@ def test_each_term_waits_as_long_as_the_emulated_program(term):
 
 
 def test_a_readout_is_set_when_it_observed_any_level_but_0():
-    program = pulse.compile(_kernel(_if("m", "0.3", "0.1"))).lower(Q[0]).export_controller()
+    program = pulse.compile(_kernel(_if("m", "0.3", "0.1"))).lower(Q[0]).export_to_controller()
     readout = next(e["index"] for e in program["events"] if e["kind"] == "readout")
     expression = _value(program)
     assert expression["of"][0] == {
@@ -173,7 +173,9 @@ def test_a_readout_is_set_when_it_observed_any_level_but_0():
 def test_a_controller_clock_clamps_and_converts_a_run_time_length():
     machine = ControlSystem(controllers=[Controller(clock_ghz=2.0, cycles_per_timestep=4)])
     body = ["wait(d, n * 4, bounds=(8, 400))"]
-    program = pulse.compile(_kernel(body), control_system=machine).lower(Q[0]).export_controller()
+    program = (
+        pulse.compile(_kernel(body), control_system=machine).lower(Q[0]).export_to_controller()
+    )
     expression = _value(program)
     assert {"controller_cycles", "max", "min"} <= _ops(expression)
     answer = _answer(program)
@@ -188,7 +190,7 @@ def test_a_controller_clock_clamps_and_converts_a_run_time_length():
 def test_every_term_is_exercised():
     exported = set()
     for body in (*_PHASES.values(), *_WAITS.values()):
-        exported |= _ops(_value(pulse.compile(_kernel(body)).lower(Q[0]).export_controller()))
+        exported |= _ops(_value(pulse.compile(_kernel(body)).lower(Q[0]).export_to_controller()))
     # The controller's cycles come from a controller clock, tested above.
     assert exported | {"controller_cycles"} == set(ExpressionTerm)
 
@@ -207,7 +209,7 @@ def test_every_term_is_exercised():
     ids=["float max", "float min", "mul", "readout"],
 )
 def test_an_expression_written_in_equivalent_ways_exports_the_same(forms):
-    exported = [_value(pulse.compile(_kernel(f)).lower(Q[0]).export_controller()) for f in forms]
+    exported = [_value(pulse.compile(_kernel(f)).lower(Q[0]).export_to_controller()) for f in forms]
     assert all(e == exported[0] for e in exported), exported
     assert _ops(exported[0]) & {"max", "min", "mul", "select"}
 
@@ -228,7 +230,7 @@ def _computing(form):
     )
     module = MLIRPipeline().parse_to_module(text.replace(line, computed))
     object.__setattr__(lowered, "_module", module)
-    return lowered.export_controller()
+    return lowered.export_to_controller()
 
 
 @pytest.mark.parametrize(
@@ -270,7 +272,7 @@ def test_the_integer_max_and_min_export_the_same_however_computed(extremum, form
 
 def test_a_float_max_keeps_the_order_of_its_operands_which_nan_tells_apart():
     def exported(form):
-        program = pulse.compile(_kernel(form)).lower(Q[0]).export_controller()
+        program = pulse.compile(_kernel(form)).lower(Q[0]).export_to_controller()
         return _value(program), _answer(program)
 
     (one, answer), (other, _) = (
@@ -368,9 +370,9 @@ _BRANCH_INPUTS = [
 @pytest.mark.parametrize("form", _CONDITIONS.values(), ids=_CONDITIONS)
 def test_a_branch_condition_runs_the_arm_the_emulation_runs(form):
     lowered = _branching(form)
-    condition = _condition(lowered.export_controller())
+    condition = _condition(lowered.export_to_controller())
     assert condition["test"] == "expression"
-    assert _condition(lowered.export_controller(version=2)) == condition
+    assert _condition(lowered.export_to_controller(version=2)) == condition
     args = lowered.options.schedule_args()
     module = lowered._concrete().simulation_module(*args)
     readout, iteration = module.next_measurement([])[:2]
@@ -412,10 +414,10 @@ def test_a_condition_in_a_rolled_loop_computes_from_the_readout_of_its_iteration
     )
     module = MLIRPipeline().parse_to_module(text.replace(line, level))
     object.__setattr__(lowered, "_module", module)
-    structured = lowered.export_controller(version=2)
+    structured = lowered.export_to_controller(version=2)
     [loop] = (e for e in structured["events"] if e["kind"] == "loop")
     assert loop["trips"] == 4
-    flat = lowered.export_controller()
+    flat = lowered.export_to_controller()
     assert [e["conditions"] for e in unroll(structured)["events"]] == [
         e["conditions"] for e in flat["events"]
     ]
@@ -431,7 +433,7 @@ def test_a_condition_in_a_rolled_loop_computes_from_the_readout_of_its_iteration
 
 def test_a_condition_of_the_kernel_exports_its_expression():
     lowered = pulse.compile(_kernel(["if (n * 3 - 4) // 2 >= n % 2 + 1:", *_BRANCH[1:]]))
-    condition = _condition(lowered.lower(Q[0]).export_controller())
+    condition = _condition(lowered.lower(Q[0]).export_to_controller())
     assert condition["test"] == "expression"
     assert {"ge", "floor_div", "rem", "mul", "sub"} <= _ops(condition["expression"])
     answers = {a: [0.0, 4] for a in condition["answers"]}
@@ -470,7 +472,7 @@ def test_a_condition_of_the_kernel_exports_its_expression():
     ids=["integer", "float", "readout", "and true"],
 )
 def test_a_condition_written_in_equivalent_ways_exports_the_same(forms):
-    exported = [_condition(_branching(form).export_controller()) for form in forms]
+    exported = [_condition(_branching(form).export_to_controller()) for form in forms]
     assert all(e == exported[0] for e in exported), exported
 
 
@@ -479,9 +481,11 @@ def test_a_float_condition_negated_keeps_what_nan_tells_apart():
     negated = _condition(
         _branching(
             "%le = arith.cmpf ole, %x, %tenth : f64; %cond = arith.xori %le, %true : i1"
-        ).export_controller()
+        ).export_to_controller()
     )
-    greater = _condition(_branching("%cond = arith.cmpf ogt, %x, %tenth : f64").export_controller())
+    greater = _condition(
+        _branching("%cond = arith.cmpf ogt, %x, %tenth : f64").export_to_controller()
+    )
     assert negated["expression"] != greater["expression"]
     answers = {a: [math.nan, 0] for a in negated["answers"]}
     assert evaluate_expression(negated["expression"], answers=answers) is True
@@ -490,7 +494,7 @@ def test_a_float_condition_negated_keeps_what_nan_tells_apart():
 
 def test_a_condition_a_plain_test_names_has_no_expression():
     branch = ["if m:", *_BRANCH[1:]]
-    program = pulse.compile(_kernel(branch)).lower(Q[0]).export_controller()
+    program = pulse.compile(_kernel(branch)).lower(Q[0]).export_to_controller()
     assert _condition(program) == {
         "branch": 0,
         "arm": True,
@@ -521,7 +525,7 @@ _TRACED = [
 
 def _traced_events(condition: str, version: int) -> list[dict]:
     lowered = pulse.compile(_traced(condition)).lower(Q[0])
-    return lowered.export_controller(version=version)["events"]
+    return lowered.export_to_controller(version=version)["events"]
 
 
 def _traced_condition(condition: str, version: int) -> dict:
@@ -598,7 +602,7 @@ def test_no_export_of_the_corpus_names_an_operation_of_the_compiler(version):
     dev = _validation._device(ControlSystem())
     for kernel in _validation._corpus().values():
         lowered = pulse.compile(kernel, quantum_system=dev).lower(*dev.qudits[:2])
-        _no_dialect(lowered.export_controller(version=version))
+        _no_dialect(lowered.export_to_controller(version=version))
     # Format /2 is for controllers on the program clock.
     clocks = [Controller(clock_ghz=2.0, cycles_per_timestep=4)] if version == 1 else []
     machine = ControlSystem(controllers=clocks)
@@ -610,7 +614,7 @@ def test_no_export_of_the_corpus_names_an_operation_of_the_compiler(version):
         ["if (n * 3 - 4) // 2 >= n % 2 + 1:", *_BRANCH[1:]],
     ):
         lowered = pulse.compile(_kernel(body), control_system=machine).lower(Q[0])
-        _no_dialect(lowered.export_controller(version=version))
+        _no_dialect(lowered.export_to_controller(version=version))
 
 
 def _computed(events):
@@ -667,7 +671,7 @@ def test_an_operation_outside_the_vocabulary_is_an_export_error(version):
         lowered, "_module", MLIRPipeline().parse_to_module(text.replace("arith.divf", "arith.remf"))
     )
     with pytest.raises(UnsupportedError, match="'arith.remf'.*expression vocabulary"):
-        lowered.export_controller(version=version)
+        lowered.export_to_controller(version=version)
 
 
 # ── The terms' semantics ─────────────────────────────────────────────────────

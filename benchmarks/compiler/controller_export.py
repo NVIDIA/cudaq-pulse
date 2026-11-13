@@ -95,7 +95,7 @@ t0 = time.perf_counter()
 lowered = pulse.compile(kernel, control_system=system, unroll_threshold=threshold).lower(handles)
 compile_s = time.perf_counter() - t0
 t0 = time.perf_counter()
-program = lowered.export_controller()
+program = lowered.export_to_controller()
 export_s = time.perf_counter() - t0
 events = len(program["events"])
 default_bytes = len(json.dumps(program))
@@ -104,9 +104,9 @@ out = {
     "program": name, "events": events, "compile_s": compile_s,
     "export_s": export_s, "export_bytes": default_bytes,
 }
-if "version" in inspect.signature(lowered.export_controller).parameters:
+if "version" in inspect.signature(lowered.export_to_controller).parameters:
     t0 = time.perf_counter()
-    rolled = lowered.export_controller(version=2)
+    rolled = lowered.export_to_controller(version=2)
     out["rolled_export_s"] = time.perf_counter() - t0
     out["rolled_export_bytes"] = len(json.dumps(rolled))
 scale = 1 if sys.platform == "darwin" else 1024

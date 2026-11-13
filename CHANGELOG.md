@@ -114,7 +114,7 @@ behavior may change in any 0.x release.
   controller's limits, line delays and `rcp` readout latency count its own
   cycles, and `custom()` samples an envelope at the rate of the line that
   plays it, while samples given at another rate fail to compile.
-  `export_controller(controller=k)` and `export_emulation(controller=k)`
+  `export_to_controller(controller=k)` and `export_to_emulator(controller=k)`
   export controller `k`'s part of the program in its own cycles: its
   lines, the events it plays, submits or takes the answer of, its calls and
   its limits, with the program's event and line ids. A program that plays
@@ -560,7 +560,7 @@ behavior may change in any 0.x release.
   measurement path, with timeouts from the latency model, assignment errors
   and relaxation during readout, IQ points from a dispersive readout model,
   and `quantum_system=` to simulate a drifted quantum system without compiling again.
-  `Lowered.export_emulation()` writes the schedule, segments and call manifest
+  `Lowered.export_to_emulator()` writes the schedule, segments and call manifest
   for a controller; `classical.emulation.emulate` runs a program in virtual
   time against real services, in process or over UDP. Requests and answers
   use the CUDA-Q real-time wire format (`classical.wire`);
@@ -577,7 +577,7 @@ behavior may change in any 0.x release.
   controller nothing. Examples
   `19_classical_calls.py` and `20_adaptive_calibration.py`, and the
   "Classical Calls at QPU Runtime" guide.
-- **Controller backends.** `Lowered.export_controller()` exports a
+- **Controller backends.** `Lowered.export_to_controller()` exports a
   scheduled kernel for an out-of-tree controller backend, format
   `cudaq-pulse.controller/1` (`cudaq_pulse.controller.FORMAT`): the lines
   with their roles, and every drive, readout, wait, sync and classical call
@@ -610,7 +610,7 @@ behavior may change in any 0.x release.
   both `BackendError`s. `examples/controller_backend/` is a toy backend, and
   the "Writing a Controller Backend" guide walks through one.
 - **Controller programs that keep their loops.**
-  `export_controller(version=2)` exports format `cudaq-pulse.controller/2`,
+  `export_to_controller(version=2)` exports format `cudaq-pulse.controller/2`,
   which grows with a program's operations rather than its executions: a
   loop whose iterations repeat is one `loop` event holding its body, with
   its trip count, period and each tone's phase step per iteration; each

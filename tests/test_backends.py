@@ -73,7 +73,7 @@ def test_an_installed_backend_compiles_emits_and_runs(installed):
     compiled = pulse.compile(
         drive_and_measure, quantum_system=dev, control_system=backend.control_system()
     )
-    artifact = backend.emit(compiled.lower(dev.qudits[0]).export_controller())
+    artifact = backend.emit(compiled.lower(dev.qudits[0]).export_to_controller())
     assert artifact == [(0, 0, "drive", "gaussian"), (40, 1, "readout", "square")]
     assert backend.run(artifact, shots_count=3)["outcomes"] == [[0], [0], [0]]
 

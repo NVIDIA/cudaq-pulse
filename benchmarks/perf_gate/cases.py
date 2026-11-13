@@ -285,22 +285,22 @@ def _submit() -> Op:
     return lambda i: _SUBMIT.submit([1], 0.1, 0.2, 0.3, 0.4, 0.5).result()
 
 
-def _export_controller() -> Op:
+def _export_to_controller() -> Op:
     lowered = _feedback_program(64)
-    return lambda i: lowered.export_controller()
+    return lambda i: lowered.export_to_controller()
 
 
-def _export_controller_sampled() -> Op:
+def _export_to_controller_sampled() -> Op:
     lowered = _feedback_program(16)
     rate = 2 * lowered.quantum_system.clock_ghz
-    return lambda i: lowered.export_controller(rate)
+    return lambda i: lowered.export_to_controller(rate)
 
 
-def _export_emulation() -> Op:
+def _export_to_emulator() -> Op:
     lowered = pulse.compile(
         _calls.many_calls(64, 4), quantum_system=_DEVICE, schedule="asap"
     ).lower(Q[0])
-    return lambda i: lowered.export_emulation()
+    return lambda i: lowered.export_to_emulator()
 
 
 def _simulate_setup() -> Op:
@@ -407,23 +407,23 @@ CASES: tuple[Case, ...] = (
         sizes=_call_size,
     ),
     Case(
-        "export_controller",
+        "export_to_controller",
         "controller program of 64 readouts with feedback",
-        _export_controller,
+        _export_to_controller,
         3,
         sizes=_json_bytes,
     ),
     Case(
-        "export_controller_sampled",
+        "export_to_controller_sampled",
         "controller program of 16 readouts with feedback, with envelope samples",
-        _export_controller_sampled,
+        _export_to_controller_sampled,
         3,
         sizes=_json_bytes,
     ),
     Case(
-        "export_emulation",
+        "export_to_emulator",
         "emulator program of 64 classical calls on 4 links",
-        _export_emulation,
+        _export_to_emulator,
         3,
         sizes=_json_bytes,
     ),

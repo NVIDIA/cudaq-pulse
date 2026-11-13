@@ -63,7 +63,7 @@ def _starts(lowered, kind="drive"):
 
 
 def _lines(lowered):
-    return {(line["role"], line["qudit"]): line for line in lowered.export_controller()["lines"]}
+    return {(line["role"], line["qudit"]): line for line in lowered.export_to_controller()["lines"]}
 
 
 def test_whole_cycles_of_a_delay_move_the_lines_operations():
@@ -82,7 +82,7 @@ def test_whole_cycles_of_a_delay_move_the_lines_operations():
 def test_without_delays_nothing_changes():
     lowered = pulse.compile(two_lines).lower(Q[0], Q[1])
     assert "line_delays" not in lowered.mlir()
-    assert all("fine_delay_ns" not in line for line in lowered.export_controller()["lines"])
+    assert all("fine_delay_ns" not in line for line in lowered.export_to_controller()["lines"])
     # A delay of no whole cycle moves nothing and adds no attribute.
     machine = _delayed({("drive", 0): 0.25}, max_fine_delay_ns=0.5)
     lowered = pulse.compile(two_lines, control_system=machine).lower(Q[0], Q[1])
@@ -100,7 +100,7 @@ def test_the_rest_of_a_delay_is_the_lines_fine_delay():
     assert lines[("drive", 1)]["fine_delay_ns"] == pytest.approx(0.3)
     assert lines[("drive", 0)]["fine_delay_ns"] == 0.0
     # The export counts the controller's own cycles.
-    program = lowered.export_controller()
+    program = lowered.export_to_controller()
     starts = [e["start_cycles"] for e in program["events"] if e["kind"] == "drive"]
     assert starts == [0, 2, 4]
     json.dumps(program)
@@ -198,8 +198,8 @@ def _fresh(kernel):
 def _outputs(lowered):
     return (
         lowered.mlir(),
-        json.dumps(lowered.export_controller(), sort_keys=True),
-        json.dumps(lowered.export_emulation(), sort_keys=True),
+        json.dumps(lowered.export_to_controller(), sort_keys=True),
+        json.dumps(lowered.export_to_emulator(), sort_keys=True),
     )
 
 
