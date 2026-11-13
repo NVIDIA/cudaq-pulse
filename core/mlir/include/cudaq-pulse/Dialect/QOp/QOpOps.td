@@ -216,12 +216,34 @@ def QOP_LindbladOp : QOpOp<"lindblad", [Pure]> {
     The Lindblad generator of a Hamiltonian and collapse operators `L_k`:
     `-i [H, rho] + sum_k (L_k rho L_k^dagger - {L_k^dagger L_k, rho} / 2)`.
     `pulse-to-qop` builds one per program from the drives, couplings and
-    the target's T1 and T2, and `qop-to-cudm` lowers it to a cuDensityMat
-    operator and `cudm.evolve`.
+    the target's T1 and T2, for `qop.evolve` to evolve the state with, and
+    `qop-to-cudm` lowers it to a cuDensityMat operator.
   }];
   let arguments = (ins QOP_OpType:$hamiltonian, Variadic<QOP_OpType>:$collapse_ops);
   let results = (outs QOP_SuperOpType:$result);
   let assemblyFormat = "`(` $hamiltonian `,` $collapse_ops `)` attr-dict `:` type($result)";
+}
+
+def QOP_EvolveOp : QOpOp<"evolve", [MemoryEffects<[MemWrite]>]> {
+  let summary = "Evolve the quantum system's state under a generator";
+  let description = [{
+    Evolves the state of the quantum system under the super-operator
+    `generator` over the program's window: from `qop.t_start` to
+    `qop.t_end` ns in `qop.step_count` steps of the `qop.integrator`, all
+    module attributes. It is the program's root: the operator ops are pure
+    and are kept because it uses them, so standard passes such as `cse`,
+    `canonicalize` and `inline` keep the program.
+
+    `pulse-to-qop` ends each program with one, of its `qop.lindblad`, and
+    `qop-to-cudm` lowers it to `cudm.evolve`.
+
+    ```mlir
+    %L = qop.lindblad(%H, %collapse) : !qop.super_op
+    qop.evolve %L : !qop.super_op
+    ```
+  }];
+  let arguments = (ins QOP_SuperOpType:$generator);
+  let assemblyFormat = "$generator attr-dict `:` type($generator)";
 }
 
 def QOP_SuperLeftOp : QOpOp<"super_left", [Pure]> {

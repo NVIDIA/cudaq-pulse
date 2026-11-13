@@ -820,6 +820,9 @@ behavior may change in any 0.x release.
   also loads out-of-tree pass plugins and whose `--version` prints the
   cudaq-pulse version and the LLVM it was built with; `python -m cudaq_pulse.doctor`, which
   reports what an installation contains and whether GPU execution works.
+  A program in the dialects keeps its meaning through MLIR's standard
+  passes, such as `cse`, `canonicalize` and `inline`: an operator program
+  ends in `qop.evolve`, which evolves the state, so the passes keep it.
 - **Packaging.** One abi3 wheel per platform for CPython 3.12 and newer:
   Linux x86_64 and aarch64 (manylinux_2_28) with the CUDA 12 and CUDA 13
   GPU runtimes, selected by the `[cu12]` or `[cu13]` extra, and macOS arm64

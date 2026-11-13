@@ -23,5 +23,10 @@ func.func @test_qop_basic() {
 
   // CHECK: qop.dagger
   %Hd = qop.dagger %H : !qop.op
+
+  // CHECK: %[[L:.*]] = qop.lindblad
+  // CHECK: qop.evolve %[[L]] : !qop.super_op
+  %L = qop.lindblad(%H, %Hd) : !qop.super_op
+  qop.evolve %L : !qop.super_op
   return
 }

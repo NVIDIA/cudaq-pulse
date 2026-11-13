@@ -169,6 +169,9 @@ Backend-agnostic quantum operator algebra. ``pulse-to-qop`` builds one
 coefficient, and the collapse operators of the quantum system's T1 and T2. The
 bosonic, fermionic, commutator and super-operator ops are planned surface for
 later backends; nothing produces or lowers them yet.
+A ``qop.evolve`` of the Lindbladian ends the program: the operator ops are
+pure, and it is the op that writes the state, so standard passes such as
+``cse``, ``canonicalize`` and ``inline`` keep everything it uses.
 
 CuDensityMat
 ------------

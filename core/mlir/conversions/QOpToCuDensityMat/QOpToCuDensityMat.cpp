@@ -125,13 +125,19 @@ struct QOpToCuDensityMatPass
     // 1. cudm.init_handle
     auto handle = cudm::InitHandleOp::create(b, loc, handleTy);
 
-    SmallVector<qop::LindbladOp> lindbladOps;
-    module.walk([&](qop::LindbladOp op) { lindbladOps.push_back(op); });
-    if (lindbladOps.size() != 1) {
-      module.emitError("qop-to-cudm requires exactly one qop.lindblad op");
+    SmallVector<qop::EvolveOp> evolveOps;
+    module.walk([&](qop::EvolveOp op) { evolveOps.push_back(op); });
+    if (evolveOps.size() != 1) {
+      module.emitError("qop-to-cudm requires exactly one qop.evolve op");
       return signalPassFailure();
     }
-    const bool hasDissipation = !lindbladOps.front().getCollapseOps().empty() ||
+    auto lindblad =
+        evolveOps.front().getGenerator().getDefiningOp<qop::LindbladOp>();
+    if (!lindblad) {
+      evolveOps.front().emitError("generator must be a qop.lindblad");
+      return signalPassFailure();
+    }
+    const bool hasDissipation = !lindblad.getCollapseOps().empty() ||
                                 module->hasAttr("qop.mixed_state");
 
     // 2. cudm.create_state (|0...0>). Open-system evolution requires a
@@ -378,10 +384,9 @@ struct QOpToCuDensityMatPass
     // 7. Build -i[H,rho]. A pure-state evolution only needs the ket action;
     // a mixed-state evolution also needs the opposite-sign bra action.
     auto hamiltonian =
-        lindbladOps.front().getHamiltonian().getDefiningOp<qop::MakeSumOp>();
+        lindblad.getHamiltonian().getDefiningOp<qop::MakeSumOp>();
     if (!hamiltonian) {
-      lindbladOps.front().emitError(
-          "Hamiltonian must be represented by qop.make_sum");
+      lindblad.emitError("Hamiltonian must be represented by qop.make_sum");
       return signalPassFailure();
     }
     for (Value product : hamiltonian.getTerms()) {
@@ -404,18 +409,17 @@ struct QOpToCuDensityMatPass
     //                         - 1/2 {C^dagger C, rho}.
     // Pulse-generated collapse operators contain one product each. Reject a
     // sum here rather than silently dropping the required cross terms.
-    for (Value collapse : lindbladOps.front().getCollapseOps()) {
+    for (Value collapse : lindblad.getCollapseOps()) {
       auto sum = collapse.getDefiningOp<qop::MakeSumOp>();
       if (!sum || sum.getTerms().size() != 1) {
-        lindbladOps.front().emitError(
+        lindblad.emitError(
             "each collapse operator must contain exactly one product");
         return signalPassFailure();
       }
       auto product = sum.getTerms().front().getDefiningOp();
       auto found = productData.find(product);
       if (found == productData.end() || found->second.hasCallback) {
-        lindbladOps.front().emitError(
-            "collapse products must have constant coefficients");
+        lindblad.emitError("collapse products must have constant coefficients");
         return signalPassFailure();
       }
       const ProductData &data = found->second;
@@ -433,8 +437,7 @@ struct QOpToCuDensityMatPass
            llvm::reverse(llvm::zip(data.factors, data.modes))) {
         auto dagger = spinToDaggerCudmElem.find(factor);
         if (dagger == spinToDaggerCudmElem.end()) {
-          lindbladOps.front().emitError(
-              "could not form the adjoint of a collapse factor");
+          lindblad.emitError("could not form the adjoint of a collapse factor");
           return signalPassFailure();
         }
         jumpOps.push_back(dagger->second);

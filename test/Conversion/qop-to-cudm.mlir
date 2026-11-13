@@ -27,6 +27,7 @@ func.func @main() {
 
   %H = qop.make_sum(%term_z, %term_x) : !qop.op
   %L = qop.lindblad(%H, %collapse) : !qop.super_op
+  qop.evolve %L : !qop.super_op
 
   // CHECK: cudm.init_handle
   // CHECK: cudm.create_state {{.*}}purity = #cudm<purity mixed>

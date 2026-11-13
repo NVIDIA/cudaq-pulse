@@ -1111,8 +1111,10 @@ struct PulseToQOpPass
       }
     }
 
-    // 5. Construct Lindblad super-operator
-    qop::LindbladOp::create(b, loc, superOpTy, hamiltonian, collapseOps);
+    // 5. Construct Lindblad super-operator and evolve the state under it
+    auto lindblad =
+        qop::LindbladOp::create(b, loc, superOpTy, hamiltonian, collapseOps);
+    qop::EvolveOp::create(b, loc, lindblad);
     if (auto qudit = ops.unsimulated()) {
       module.emitError("an operator acts on qudit ")
           << *qudit << ", which is not one of pulse.modes";

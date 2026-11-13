@@ -12,6 +12,7 @@
 // FULL: llvm.call @cudm_state_capture
 // FULL-NOT: pulse.drive
 // FULL-NOT: qop.lindblad
+// FULL-NOT: qop.evolve
 // FULL-NOT: cudm.evolve
 
 // CHECK-LABEL: func @main
@@ -33,6 +34,8 @@ func.func @main() {
   // CHECK: qop.make_product
   // CHECK: qop.callback_scalar
   // CHECK: qop.make_sum
-  // CHECK: qop.lindblad
+  // CHECK: %[[L:.*]] = qop.lindblad
+  // CHECK-NEXT: qop.evolve %[[L]] : !qop.super_op
+  // CHECK-NEXT: return
   return
 }

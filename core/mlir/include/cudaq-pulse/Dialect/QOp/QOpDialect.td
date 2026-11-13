@@ -19,6 +19,8 @@ def QOpDialect : Dialect {
     - **Products**: Tensor products of handlers with scalar coefficients
     - **Sums**: Linear combinations of products (the general operator)
     - **Super-operators**: Left/right action pairs for master equations
+    - **Evolution**: `qop.evolve`, the program's root, evolves the state
+      under a super-operator
   }];
   let cppNamespace = "::qop";
   let useDefaultTypePrinterParser = 1;

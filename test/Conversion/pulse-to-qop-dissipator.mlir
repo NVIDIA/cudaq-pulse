@@ -24,7 +24,8 @@ func.func @main() {
 
   // CHECK: qop.spin{{.*}}spin_lowering
   // CHECK: qop.spin{{.*}}spin_z
-  // CHECK: qop.lindblad
+  // CHECK: %[[L:.*]] = qop.lindblad
+  // CHECK-NEXT: qop.evolve %[[L]] : !qop.super_op
   return
 }
 

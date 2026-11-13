@@ -4429,11 +4429,12 @@ private:
 
     mlir::Operation *lindblad = nullptr;
     lowered->walk([&](mlir::Operation *op) {
-      if (op->getName().getStringRef() == "qop.lindblad")
-        lindblad = op;
+      if (op->getName().getStringRef() == "qop.evolve")
+        lindblad = op->getOperand(0).getDefiningOp();
     });
-    if (!lindblad)
-      throw std::runtime_error("pulse-to-qop produced no qop.lindblad");
+    if (!lindblad || lindblad->getName().getStringRef() != "qop.lindblad")
+      throw std::runtime_error("pulse-to-qop produced no qop.evolve of a "
+                               "qop.lindblad");
     auto sumTerms = [&](mlir::Value sum, std::vector<TermTemplate> &terms) {
       for (mlir::Value product : sum.getDefiningOp()->getOperands())
         terms.push_back(term(product));
