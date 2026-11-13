@@ -679,7 +679,9 @@ struct PulseToQOpPass
     SmallVector<Operation *> readouts;
     Operation *notIq = nullptr;
     module.walk([&](Operation *op) {
-      if (isa<pulse::GetDriveLineOp>(op)) {
+      // A drive line nothing uses is dead, and standard passes erase it: its
+      // frequency is not the qudit's.
+      if (isa<pulse::GetDriveLineOp>(op) && !op->use_empty()) {
         if (int64_t qi = pulse::quditOf(op); qi >= 0)
           if (auto freqAttr = op->getAttrOfType<FloatAttr>("frequency_hz"))
             quditFreqHz.try_emplace(qi, freqAttr.getValueAsDouble());

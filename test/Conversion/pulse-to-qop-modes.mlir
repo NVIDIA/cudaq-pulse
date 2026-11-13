@@ -6,6 +6,7 @@
 // is not simulated, so its anharmonicity is left out.
 // RUN: cudaq-pulse-opt --pulse-to-qop %s | FileCheck %s
 // RUN: cudaq-pulse-opt --pulse-to-qop --qop-to-cudm %s | FileCheck %s --check-prefix=CUDM
+// RUN: cudaq-pulse-opt --canonicalize --pulse-to-qop %s | FileCheck %s
 
 // CHECK: qop.mode_extents = array<i64: 3, 3>
 // CHECK-NOT: targets = array<i64: {{[2-9]|1[0-9]}}>
@@ -23,7 +24,7 @@
 // CHECK: qop.matrix_leaf({{.*}}) {dimensions = array<i64: 3>, targets = array<i64: 1>}
 // CHECK-NOT: targets = array<i64: {{[2-9]|1[0-9]}}>
 // CUDM: mode_extents = array<i64: 3, 3>
-module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>, pulse.modes = array<i64: 3, 13>, pulse.quantum_system = #pulse.quantum_system<level_counts = [2, 2, 2, 3, 2, 3, 2, 2, 2, 2, 2, 2, 2, 3], anharmonicity_hz = [0.0, 0.0, 0.0, -2.000000e+08, 0.0, -1.900000e+08, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.800000e+08]>, pulse.coupling_pairs = array<i64: 13, 3>, pulse.coupling_strength_hz = array<f64: 5.000000e+06>} {
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>, pulse.modes = array<i64: 3, 13>, pulse.quantum_system = #pulse.quantum_system<qudit_frequency_hz = [5.000000e+09, 5.000000e+09, 5.000000e+09, 5.000000e+09, 5.000000e+09, 5.000000e+09, 5.000000e+09, 5.000000e+09, 5.000000e+09, 5.000000e+09, 5.000000e+09, 5.000000e+09, 5.000000e+09, 5.100000e+09], level_counts = [2, 2, 2, 3, 2, 3, 2, 2, 2, 2, 2, 2, 2, 3], anharmonicity_hz = [0.0, 0.0, 0.0, -2.000000e+08, 0.0, -1.900000e+08, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.800000e+08]>, pulse.coupling_pairs = array<i64: 13, 3>, pulse.coupling_strength_hz = array<f64: 5.000000e+06>} {
   func.func @main() {
     %q13 = pulse.qudit_alloc {qudit = 13 : i64} : !pulse.qudit
     %q3 = pulse.qudit_alloc {qudit = 3 : i64} : !pulse.qudit
