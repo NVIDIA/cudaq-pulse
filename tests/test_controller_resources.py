@@ -72,7 +72,7 @@ def _counted(bits: pulse.Length[pulse.Bits, 50]) -> float:
 def test_operations_are_counted_by_class():
     cost = analyze(_arithmetic).cost
     assert cost.ops == OpCounts(add=2, div=1, mul=1, sqrt=1)
-    assert cost.in_controller_form and cost.size == cost.total == 5
+    assert cost.runs_on_processor and cost.size == cost.total == 5
 
 
 def test_constants_fold_and_dividing_by_a_constant_is_a_multiply():
@@ -87,7 +87,7 @@ def test_a_loop_multiplies_its_body_by_its_trip_count():
     # the branch back.
     assert cost.ops["mul"] == N and cost.ops["load"] == N
     assert cost.ops["branch"] == N and cost.ops["add"] == 2 * N
-    assert cost.loops == 1 and cost.in_controller_form
+    assert cost.loops == 1 and cost.runs_on_processor
 
 
 def test_a_branch_costs_its_longer_arm_and_holds_both():
@@ -104,7 +104,7 @@ def test_helpers_are_inlined():
 
 def test_counting_measurement_bits_is_by_word():
     cost = analyze(_counted).cost
-    assert cost.ops["popcount"] == 2 and cost.in_controller_form
+    assert cost.ops["popcount"] == 2 and cost.runs_on_processor
 
 
 def test_a_function_of_call_lengths_is_analyzed_per_version():
@@ -200,7 +200,7 @@ def _bad(source_kind):
 )
 def test_what_keeps_a_body_out_of_controller_form_is_named(kind, message):
     cost = analyze(_bad(kind)).cost
-    assert not cost.in_controller_form
+    assert not cost.runs_on_processor
     assert any(message in v for v in cost.violations), cost.violations
 
 
@@ -217,9 +217,9 @@ def test_the_protocol_estimators_are_in_controller_form():
         cal.ramsey_detuning,
     ):
         cost = _controller_cost.analyze_callable(helper, {})
-        assert cost.in_controller_form, (helper.__name__, cost.violations)
+        assert cost.runs_on_processor, (helper.__name__, cost.violations)
     # The estimators of the previous release raise on bad input.
-    assert not _controller_cost.analyze_callable(cal.t1_update, {}).in_controller_form
+    assert not _controller_cost.analyze_callable(cal.t1_update, {}).runs_on_processor
 
 
 def test_compute_time_follows_the_cycle_costs():
@@ -295,7 +295,7 @@ def test_only_functions_on_a_processor_are_checked():
     report = resources(_lower(_machine({"fixed_cost_only": True})))
     remote = next(row for row in report.functions if row.compiled_name == "_remote__1")
     assert remote.function == "_remote"
-    assert not remote.on_controller and not remote.cost.in_controller_form
+    assert not remote.on_controller and not remote.cost.runs_on_processor
     assert remote.compute_ns is None
     assert report.violations == ()
     with pytest.raises(ControllerLimitError, match="_remote__1 is not fixed-cost"):

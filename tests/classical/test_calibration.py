@@ -63,7 +63,7 @@ def test_converting_a_time_costs_a_controller_nothing():
         return t * 2.0
 
     cost = _controller_cost.analyze_callable(converts, {})
-    assert cost.in_controller_form, cost.violations
+    assert cost.runs_on_processor, cost.violations
     assert cost.ops == _controller_cost.analyze_callable(takes, {}).ops
 
 

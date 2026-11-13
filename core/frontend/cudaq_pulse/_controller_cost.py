@@ -146,7 +146,7 @@ class FunctionCost:
         return self.ops.total
 
     @property
-    def in_controller_form(self) -> bool:
+    def runs_on_processor(self) -> bool:
         return not self.violations
 
     def processor_cycles(self, cycles_per_op: OpCycles, loops: bool) -> int:
@@ -1038,12 +1038,12 @@ def format_report(report: ResourceReport) -> str:
     lines = ["Classical functions"]
     header = (
         f"  {'function':<24} {'link':<11} {'ops':>5} {'size':>5} {'state B':>7} "
-        f"{'compute':>9} {'budget':>8} {'calls':>5}  form"
+        f"{'compute':>9} {'budget':>8} {'calls':>5}  processor"
     )
     lines.append(header)
     for row in report.functions:
         compute = "-" if row.compute_ns is None else f"{row.compute_ns:.0f} ns"
-        form = "ok" if row.cost.in_controller_form else "no"
+        form = "yes" if row.cost.runs_on_processor else "no"
         lines.append(
             f"  {row.compiled_name:<24} {str(row.link):<11} {row.cost.total:>5} {row.cost.size:>5} "
             f"{row.state_bytes:>7} {compute:>9} {row.max_latency_ns:>5.0f} ns "

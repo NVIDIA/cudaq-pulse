@@ -129,7 +129,7 @@ def test_the_chain_fits_the_declared_controller():
     lowered = compiled.lower(q, 20_000.0 * CLOCK)
     report = controller.resources(lowered)
     assert report.violations == ()
-    assert all(row.on_controller and row.cost.in_controller_form for row in report.functions)
+    assert all(row.on_controller and row.cost.runs_on_processor for row in report.functions)
     by_name = {row.compiled_name: row for row in report.functions}
     assert by_name["adaptive_t1__1"].calls_per_shot == P["tracker_shots"]
     assert by_name["adaptive_t1__1"].function == "adaptive_t1"
