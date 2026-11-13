@@ -20,7 +20,7 @@ import pytest
 from cudaq_pulse import Controller, ControlSystem, _validation
 from cudaq_pulse.compiler import DEFAULT_PASSES, Pass
 from cudaq_pulse.controller import unroll
-from cudaq_pulse.targets import DeviceDescription, Qubit
+from cudaq_pulse.targets import DeviceDescription, PhysicalQudit
 
 from tests import _child
 from tests._work import python_work
@@ -30,7 +30,7 @@ _CLOCK_GHZ = 2.0
 _TARGET = DeviceDescription(
     name="frames",
     clock_ghz=_CLOCK_GHZ,
-    qubits={i: Qubit(i, _FREQUENCY_HZ + 1.0e7 * i, -2.0e8, 50.0, 30.0) for i in range(2)},
+    qudits={i: PhysicalQudit(i, _FREQUENCY_HZ + 1.0e7 * i, -2.0e8, 50.0, 30.0) for i in range(2)},
 )
 _DEV = pulse.device(_TARGET)
 Q = _DEV.qudits

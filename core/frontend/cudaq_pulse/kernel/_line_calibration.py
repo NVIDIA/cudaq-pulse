@@ -26,7 +26,7 @@ class LineCalibrations:
         builder = emitter.b
         # line_tones is the device's own method.
         device = getattr(getattr(builder, "line_tones", None), "__self__", None)
-        qudit = getattr(builder, "_qref_to_qubit", {}).get(held.key[0])
+        qudit = getattr(builder, "_qref_to_qudit", {}).get(held.key[0])
         if device is None or qudit is None:
             raise CompilationError(
                 "line.get_calibration needs the device's calibrations; this trace has no device"

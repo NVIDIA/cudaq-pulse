@@ -75,22 +75,22 @@ class DriftingPlant:
     def __init__(
         self,
         target: Any,
-        qubit: int = 0,
+        qudit: int = 0,
         *,
         t1: TelegraphT1 | None = None,
         frequency: OrnsteinUhlenbeck | None = None,
         amplitude: OrnsteinUhlenbeck | None = None,
         seed: int | None = None,
     ) -> None:
-        if qubit not in target.qubits:
-            raise InvalidValueError(f"the target has no qubit {qubit}")
+        if qudit not in target.qudits:
+            raise InvalidValueError(f"the target has no qubit {qudit}")
         self._target = target
-        self.qubit = qubit
+        self.qudit = qudit
         self.t1 = t1
         self.frequency = frequency
         self.amplitude = amplitude
         self._rng = np.random.default_rng(seed)
-        base = target.qubits[qubit]
+        base = target.qudits[qudit]
         self._high = t1 is None or bool(self._rng.integers(2))
         self.state = PlantState(
             0.0,
@@ -127,17 +127,17 @@ class DriftingPlant:
         """The target description with the qubit's current true parameters."""
         from ..targets.base import MicrowaveDrive
 
-        base = self._target.qubits[self.qubit]
-        scale = self._target.drive_amplitude_scale(self.qubit) * self.state.amplitude_scale
+        base = self._target.qudits[self.qudit]
+        scale = self._target.drive_amplitude_scale(self.qudit) * self.state.amplitude_scale
         drive = base.drive if base.drive is not None else MicrowaveDrive()
-        qubit = base.replace(
+        qudit = base.replace(
             t1_us=self.state.t1_us,
             frequency_hz=base.frequency_hz + self.state.frequency_offset_hz,
             drive=drive.replace(amplitude_scale_rad_per_ns=scale),
         )
-        qubits = dict(self._target.qubits)
-        qubits[self.qubit] = qubit
-        return dataclasses.replace(self._target, qubits=qubits)
+        qudits = dict(self._target.qudits)
+        qudits[self.qudit] = qudit
+        return dataclasses.replace(self._target, qudits=qudits)
 
     def truth_trace(self) -> dict[str, list[float]]:
         """Every recorded state, as columns (JSON-ready)."""

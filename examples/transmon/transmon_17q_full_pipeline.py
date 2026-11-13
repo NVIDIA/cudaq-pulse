@@ -39,9 +39,9 @@ cz_slot = cz.duration_ns * pulse.ns
 
 
 @pulse.kernel
-def cz_pair(qubit_aux, qubit_data):
-    drive_line_aux = get_drive_line(qubit_aux)
-    drive_line_data = get_drive_line(qubit_data)
+def cz_pair(qudit_aux, qudit_data):
+    drive_line_aux = get_drive_line(qudit_aux)
+    drive_line_data = get_drive_line(qudit_data)
     # The qudits' calibrated pulses: the published 40 ns, sigma = 10 ns DRAG,
     # amplitudes rates in rad/ns.
     x90 = drive_line_aux.get_calibration(pulse.gates.X90)

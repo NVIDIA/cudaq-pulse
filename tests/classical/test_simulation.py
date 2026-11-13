@@ -12,14 +12,14 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse.classical import emulation
-from cudaq_pulse.targets import DeviceDescription, DispersiveReadout, Qubit, ReadoutPulse
+from cudaq_pulse.targets import DeviceDescription, DispersiveReadout, PhysicalQudit, ReadoutPulse
 
 PI_AMP = math.pi / 20  # square(40, PI_AMP) is a pi pulse at 2 GHz
 
 
 def _device(t1_us=0.0, n=1, readout=None, calibrations=None):
-    qubits = {
-        i: Qubit(
+    qudits = {
+        i: PhysicalQudit(
             index=i,
             frequency_hz=5e9 + 1e8 * i,
             anharmonicity_hz=-2e8,
@@ -30,7 +30,7 @@ def _device(t1_us=0.0, n=1, readout=None, calibrations=None):
         )
         for i in range(n)
     }
-    return pulse.device(DeviceDescription(name="sim", qubits=qubits))
+    return pulse.device(DeviceDescription(name="sim", qudits=qudits))
 
 
 @pulse.classical(max_latency_ns=0)
@@ -567,7 +567,7 @@ def test_simulation_keeps_a_blocks_own_schedule():
 
     dev = _device(t1_us=1.0, n=2)
     low = pulse.compile(k, device=dev).lower(*dev.qudits)
-    pi = next(e for e in low.schedule if e.kind == "drive" and e.qubit == 0)
+    pi = next(e for e in low.schedule if e.kind == "drive" and e.qudit == 0)
     # The ASAP block ends with the program: its pi pulse ends 60 cycles
     # before the end, where a flattened ALAP schedule would end it at the end.
     end = max(e.end for e in low.schedule)

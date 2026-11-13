@@ -22,7 +22,7 @@ from .base import (
     DragPulse,
     FluxCZ,
     MicrowaveDrive,
-    Qubit,
+    PhysicalQudit,
     ReadoutPulse,
     _Calibrations,
 )
@@ -47,7 +47,7 @@ def transmon_17q(calibration: Any = "transmon_17q") -> DeviceDescription:
     """17-qubit surface-code device of Krinner et al., Nature 605, 669 (2022).
 
     Qudits 0-16 are D1-D9, X1-X4, Z1-Z4, the column order of the paper's
-    Tab. I; ``Qubit.label`` carries the name. The 24 couplings are the
+    Tab. I; ``PhysicalQudit.label`` carries the name. The 24 couplings are the
     auxiliary-data pairs of the stabilizers of Tab. II::
 
         Z1: D1 D4         X1: D2 D3
@@ -115,7 +115,7 @@ def _published_17q() -> DeviceDescription:
 
 
 def _build_published_17q() -> DeviceDescription:
-    qubits = {}
+    qudits = {}
     drive = MicrowaveDrive()
     x = DragPulse(duration_ns=_k.DRIVE_DURATION_NS, sigma_ns=_k.DRIVE_SIGMA_NS)
     # One calibration mapping per kind of qudit (data, X and Z auxiliaries),
@@ -133,8 +133,8 @@ def _build_published_17q() -> DeviceDescription:
         )
         for kind, duration_ns in _k.READOUT_DURATION_NS.items()
     }
-    for index, q in enumerate(_k.QUBITS):
-        qubits[index] = Qubit(
+    for index, q in enumerate(_k.QUDITS):
+        qudits[index] = PhysicalQudit(
             index=index,
             frequency_hz=q.idle_frequency_hz,
             anharmonicity_hz=q.anharmonicity_hz,
@@ -169,7 +169,7 @@ def _build_published_17q() -> DeviceDescription:
     ]
     return DeviceDescription(
         name="transmon_17q",
-        qubits=qubits,
+        qudits=qudits,
         couplings=couplings,
         attribution=_k.CITATION,
     )
@@ -232,9 +232,9 @@ def transmon_generic(
 
     import math as _math
 
-    qubits = {}
+    qudits = {}
     for i in range(qudit_count):
-        qubits[i] = Qubit(
+        qudits[i] = PhysicalQudit(
             index=i,
             frequency_hz=base_frequency_hz + i * frequency_spread_hz / max(qudit_count - 1, 1),
             anharmonicity_hz=anharmonicity_hz,
@@ -263,6 +263,6 @@ def transmon_generic(
 
     return DeviceDescription(
         name=f"transmon_generic_{qudit_count}q_{topology}",
-        qubits=qubits,
+        qudits=qudits,
         couplings=couplings,
     )

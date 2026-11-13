@@ -171,12 +171,12 @@ To execute on a GPU (requires cuDensityMat runtime):
 
    import math
    import cudaq_pulse as pulse
-   from cudaq_pulse.targets import MicrowaveDrive, Qubit, DeviceDescription
+   from cudaq_pulse.targets import MicrowaveDrive, PhysicalQudit, DeviceDescription
 
    target = DeviceDescription(
        name="one-qubit-demo",
-       qubits={
-           0: Qubit(
+       qudits={
+           0: PhysicalQudit(
                index=0,
                frequency_hz=5.0e9,
                anharmonicity_hz=-200.0e6,

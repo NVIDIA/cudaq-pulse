@@ -32,7 +32,7 @@ from cudaq_pulse.targets import (
     DragPulse,
     FluxCZ,
     MicrowaveDrive,
-    Qubit,
+    PhysicalQudit,
     Readout,
     ReadoutPulse,
     ResidualZZ,
@@ -240,7 +240,7 @@ x = DragPulse(duration_ns=40.0, sigma_ns=10.0)
 assert_type(x.amplitude, float | None)
 assert_type(x.replace(amplitude=0.1), DragPulse)
 DragPulse(duration_ns=40.0)  # type: ignore[call-arg]
-qudit = Qubit(
+qudit = PhysicalQudit(
     0,
     5.0e9,
     -2.0e8,
@@ -256,7 +256,7 @@ assert_type(qudit.metadata, Mapping[str, Any])
 assert_type(qudit.get_calibration(pulse.gates.X), DragPulse)
 assert_type(qudit.get_calibration(pulse.gates.Y90, transition=(1, 2)), DragPulse)
 assert_type(qudit.get_calibration(pulse.gates.READOUT), ReadoutPulse)
-assert_type(qudit.replace(label="Q0"), Qubit)
+assert_type(qudit.replace(label="Q0"), PhysicalQudit)
 assert_type(qpu.qudits[0].get_calibration(pulse.gates.X90), DragPulse)
 gate: pulse.gates.Gate = pulse.gates.CZ
 
@@ -281,7 +281,7 @@ assert_type(zz.rate_hz, float)
 ResidualZZ((0, 1), 1.5e4, zz_coupling=0.5)  # type: ignore[call-arg]
 pair = DeviceDescription(
     name="pair",
-    qubits={0: Qubit(0, 5.0e9, -2.5e8, 50.0, 30.0)},
+    qudits={0: PhysicalQudit(0, 5.0e9, -2.5e8, 50.0, 30.0)},
     couplings=[edge],
     residual_zz=[zz],
 )

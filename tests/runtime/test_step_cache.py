@@ -16,7 +16,7 @@ import weakref
 import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse.runtime import simulate as simulate_module
-from cudaq_pulse.targets import Coupling, DeviceDescription, Qubit
+from cudaq_pulse.targets import Coupling, DeviceDescription, PhysicalQudit
 from cudaq_pulse.targets._registry import _registry, _resolved, register_target
 from cudaq_pulse.targets.models import SimulationModel, TransmonModel
 
@@ -27,7 +27,7 @@ from tests.runtime._lowering import on
 def _target(alpha_hz=-200.0e6, couplings=()):
     return DeviceDescription(
         name="step-cache",
-        qubits={q: Qubit(q, 5.0e9 + 2.0e9 * q, alpha_hz, 0.0, 0.0) for q in range(2)},
+        qudits={q: PhysicalQudit(q, 5.0e9 + 2.0e9 * q, alpha_hz, 0.0, 0.0) for q in range(2)},
         couplings=list(couplings),
     )
 
@@ -78,7 +78,7 @@ def test_a_recalibrated_plant_changes_the_step_and_the_warning(steps):
     calibrated, recalibrated = _target(), _target(alpha_hz=-400.0e6)
     for plant in (calibrated, recalibrated, calibrated, recalibrated):
         pulse.simulate(lowered, levels=5, plant=plant)
-        assert steps[-1] == _STEP_5[plant.qubits[0].anharmonicity_hz]
+        assert steps[-1] == _STEP_5[plant.qudits[0].anharmonicity_hz]
     spreads = [
         _coarse(lambda p=plant: pulse.simulate(lowered, levels=3, dt_ns=0.25, plant=p))
         for plant in (calibrated, recalibrated, calibrated, recalibrated)
@@ -133,13 +133,13 @@ def test_a_target_registered_again_under_its_name_changes_the_step(steps):
 
 def test_what_a_kept_step_depends_on_cannot_change_in_place():
     target = _target()
-    qubit = target.qubits[0]
+    qudit = target.qudits[0]
     with pytest.raises(dataclasses.FrozenInstanceError):
-        qubit.anharmonicity_hz = -400.0e6
+        qudit.anharmonicity_hz = -400.0e6
     with pytest.raises(dataclasses.FrozenInstanceError):
         target.couplings = (Coupling((0, 1), 5.0e6),)
     with pytest.raises(TypeError):
-        target.qubits[0] = qubit.replace(anharmonicity_hz=-400.0e6)
+        target.qudits[0] = qudit.replace(anharmonicity_hz=-400.0e6)
     model = TransmonModel(levels={0: 4})
     with pytest.raises(TypeError):
         model._levels[0] = 6
@@ -152,7 +152,7 @@ def test_what_a_kept_step_depends_on_cannot_change_in_place():
             change()
     for change in (
         lambda: setattr(TransmonModel, "levels", 5),
-        lambda: setattr(TransmonModel, "energies_hz", lambda self, qubit, levels: []),
+        lambda: setattr(TransmonModel, "energies_hz", lambda self, qudit, levels: []),
         lambda: type.__setattr__(TransmonModel, "levels", 5),
         lambda: delattr(SimulationModel, "energies_hz"),
         lambda: setattr(SimulationModel, "__init__", lambda self: None),
@@ -197,8 +197,8 @@ def test_a_model_of_the_user_s_own_is_not_kept(steps):
             super().__init__()
             self.alpha_hz = alpha_hz
 
-        def energies_hz(self, qubit, levels):
-            return [k * qubit.frequency_hz + k * (k - 1) / 2 * self.alpha_hz for k in range(levels)]
+        def energies_hz(self, qudit, levels):
+            return [k * qudit.frequency_hz + k * (k - 1) / 2 * self.alpha_hz for k in range(levels)]
 
     model = Spread(-200.0e6)
     target = dataclasses.replace(_target(), model=model)
@@ -253,7 +253,7 @@ def test_threads_sharing_kept_steps_each_get_their_target_s(monkeypatch):
     real = simulate_module._simulate_compiled
 
     def spy(lowered, target, *args, **options):
-        taken.append((target.qubits[0].anharmonicity_hz, options["dt_ns"]))
+        taken.append((target.qudits[0].anharmonicity_hz, options["dt_ns"]))
         return real(lowered, target, *args, **options)
 
     monkeypatch.setattr(simulate_module, "_simulate_compiled", spy)

@@ -146,8 +146,8 @@ def test_every_operation_starts_and_ends_on_its_own_controllers_grid(schedule):
         qpu.qudits[0], qpu.qudits[2]
     )
     events = [e for e in lowered.schedule if e.kind in ("drive", "readout", "wait")]
-    assert {e.qubit for e in events} == {0, 2}
-    assert all(e.start % _grid(e.qubit) == 0 and e.end % _grid(e.qubit) == 0 for e in events)
+    assert {e.qudit for e in events} == {0, 2}
+    assert all(e.start % _grid(e.qudit) == 0 and e.end % _grid(e.qudit) == 0 for e in events)
     text = lowered.mlir()
     assert "pulse.drive_line_grid = array<i64: 2, 2, 4, 4>" in text
     assert "pulse.line_grid = 4 : i64" in text
@@ -168,7 +168,7 @@ def test_each_line_keeps_its_own_controllers_finer_grid():
     lowered = pulse.compile(back_to_back, schedule="asap", passes=[], device=qpu).lower(
         qpu.qudits[0], qpu.qudits[2]
     )
-    starts = {(e.qubit, e.start) for e in lowered.schedule if e.kind == "drive"}
+    starts = {(e.qudit, e.start) for e in lowered.schedule if e.kind == "drive"}
     assert starts == {(0, 0), (0, 2), (2, 0), (2, 4)}
 
 
@@ -212,7 +212,7 @@ def test_a_runtime_qudits_one_schedule_is_on_every_controllers_grid():
 def test_a_sync_meets_on_every_lines_grid():
     qpu = _mixed()
     lowered = pulse.compile(mixed, schedule="asap", device=qpu).lower(qpu.qudits[0], qpu.qudits[2])
-    drives = [e for e in lowered.schedule if e.kind == "drive" and e.qubit == 0]
+    drives = [e for e in lowered.schedule if e.kind == "drive" and e.qudit == 0]
     # Qudit 2's line is busy until 8 + 16 = 24 and qudit 0's until 40; the
     # sync meets at 40, a step of both grids.
     assert drives[1].start == 40
@@ -243,7 +243,7 @@ def test_a_kernel_with_its_own_schedule_is_placed_on_its_lines_grid(schedule):
         qpu.qudits[0], qpu.qudits[2]
     )
     drives = [e for e in lowered.schedule if e.kind == "drive"]
-    assert all(e.start % _grid(e.qubit) == 0 for e in drives)
+    assert all(e.start % _grid(e.qudit) == 0 for e in drives)
 
 
 @pulse.classical(max_latency_ns=60, link="controller")
@@ -492,7 +492,7 @@ def test_each_controller_exports_its_part_of_the_program_in_its_own_cycles():
             qudit
         }
         mine = [e for e in lowered.schedule if e.kind in ("drive", "readout", "wait")]
-        mine = [e for e in mine if e.qubit == qudit]
+        mine = [e for e in mine if e.qudit == qudit]
         assert [(e["start_cycles"], e["duration_cycles"]) for e in _timed(program)] == [
             (e.start // cycles, e.duration_cycles // cycles) for e in mine
         ]

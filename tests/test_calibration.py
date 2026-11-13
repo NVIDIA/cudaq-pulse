@@ -57,7 +57,7 @@ def test_the_shipped_file_holds_no_local_paths_or_working_notes():
 
 def test_cooldowns_and_provenance(cal):
     assert cal.cooldown == "2022-main" and "2025-flux-tuning" in cal.cooldowns
-    ec = cal.entry("qubits", "D4", "ec")
+    ec = cal.entry("qudits", "D4", "ec")
     assert ec["kind"] == "fitted" and ec["units"] == "Hz" and "Tab. I" in ec["source"]
     assert cal.value("coupling", "device_default", "g_11_20") == 7.0e6
     with pytest.raises(ValueError, match="no cooldown"):
@@ -73,22 +73,22 @@ def test_a_loaded_calibration_keeps_the_values_it_parsed():
     parsed = json.loads(_SHIPPED_17Q.read_text())
     for cal in (shipped, Calibration.load("transmon_17q", cooldown="2025-flux-tuning")):
         pair = cal.pairs[0]
-        qubit = cal.flux_qubits[0]
+        qudit = cal.flux_qudits[0]
         cal.cooldowns["2022-main"] = "changed"
-        cal.entry("qubits", qubit, "ec")["value"] = 0.0
+        cal.entry("qudits", qudit, "ec")["value"] = 0.0
         cal.entry("coupling", "device_default", "g_11_20")["uncertainty"] = None
         cal.value("coupling", "device_default", "g_11_20")
-        cal.circuit(qubit), cal.idle_flux(qubit), cal.charge_coupling_hz(pair)
+        cal.circuit(qudit), cal.idle_flux(qudit), cal.charge_coupling_hz(pair)
         cal.pair(pair), cal.exchange_hz(pair), cal.idle_zz_hz(pair)
-        cal.flux_for_detuning(qubit, cal.detuning_for_flux(qubit, 0.1))
+        cal.flux_for_detuning(qudit, cal.detuning_for_flux(qudit, 0.1))
         cal.apply(transmon_17q()), cal.fingerprint, cal.description
         assert cal._data == parsed
     assert shipped._data is not parsed
 
 
-def test_every_qubit_has_a_circuit_that_reproduces_its_idle_frequency(cal):
-    assert len(cal.flux_qubits) == 17
-    for q in _k.QUBITS:
+def test_every_qudit_has_a_circuit_that_reproduces_its_idle_frequency(cal):
+    assert len(cal.flux_qudits) == 17
+    for q in _k.QUDITS:
         circuit = cal.circuit(q.label)
         assert circuit.f01_hz(cal.idle_flux(q.label)) == pytest.approx(q.idle_frequency_hz, abs=1e3)
         assert circuit.anharmonicity_hz(cal.idle_flux(q.label)) == pytest.approx(
@@ -137,14 +137,14 @@ def test_idle_exchange_and_zz_are_frequency_dependent(cal):
 def test_flux_quanta_and_detuning_convert_both_ways(cal):
     # Hellings et al.: X2 moves by -738 MHz at about a quarter flux quantum.
     assert cal.flux_for_detuning("X2", -738e6) == pytest.approx(0.265, abs=0.005)
-    for qubit, flux in (("X2", 0.1), ("D4", 0.3)):
-        detuning = cal.detuning_for_flux(qubit, flux)
-        assert cal.flux_for_detuning(qubit, detuning) == pytest.approx(flux, abs=1e-8)
+    for qudit, flux in (("X2", 0.1), ("D4", 0.3)):
+        detuning = cal.detuning_for_flux(qudit, flux)
+        assert cal.flux_for_detuning(qudit, detuning) == pytest.approx(flux, abs=1e-8)
     # A data qubit idles at its lower sweet spot, so flux tunes it up.
     assert cal.detuning_for_flux("D4", 0.3) > 0
 
 
-def test_the_17_qubit_device_carries_the_shipped_calibration(cal):
+def test_the_17_qudit_device_carries_the_shipped_calibration(cal):
     dev = pulse.device("transmon_17q")
     assert dev.calibration == cal
     assert dev.description is transmon_17q()
@@ -200,7 +200,7 @@ def test_an_indexed_shipped_calibration_reads_its_file_for_other_values(monkeypa
     shipped = calibration.shipped_calibration("transmon_17q", "2022-a")
     assert "_data" not in vars(shipped)
     assert shipped.cooldown == "2022-a" and shipped.cooldowns == cal.cooldowns
-    assert shipped.value("qubits", "D4", "ec") == cal.value("qubits", "D4", "ec")
+    assert shipped.value("qudits", "D4", "ec") == cal.value("qudits", "D4", "ec")
     assert shipped.fingerprint == Calibration.load("transmon_17q", cooldown="2022-a").fingerprint
     with pytest.raises(pulse.InvalidValueError, match="no cooldown 'nope'"):
         calibration.shipped_calibration("transmon_17q", "nope")
@@ -221,7 +221,7 @@ def test_a_device_loads_a_calibration_from_its_config(tmp_path, cal):
     assert custom.calibration.name == "custom" and custom != base
 
     def x2_d4(dev):
-        labels = {q.index: q.label for q in dev.description.qubits.values()}
+        labels = {q.index: q.label for q in dev.description.qudits.values()}
         (c,) = (
             c
             for c in dev.description.couplings

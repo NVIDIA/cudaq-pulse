@@ -360,7 +360,7 @@ def traced_round_duration(builder: Any, args: list[Any], kwargs: dict[str, Any] 
     grid_of = getattr(builder, "line_grid", None)
     grid = 1
     if grid_of is not None:
-        qudit = getattr(builder, "_line_qubit", {}).get(line.vid, -1)
+        qudit = getattr(builder, "_line_qudit", {}).get(line.vid, -1)
         grid = grid_of(line.vtype.removesuffix("_line"), qudit)
     try:
         return _clocks.round_on_grid(n, grid, direction)
@@ -550,7 +550,7 @@ def for_line(em: Any, fname: str, operands: tuple[Any, ...]) -> tuple[Any, ...]:
     if record is None:
         return operands
     b = em.b
-    qudit = b._line_qubit.get(operands[0].vid, -1)
+    qudit = b._line_qudit.get(operands[0].vid, -1)
     if qudit < 0:
         raise CompilationError(
             f"{fname}(): plays samples on a runtime qudit's line, and the control "

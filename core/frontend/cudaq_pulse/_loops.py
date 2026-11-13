@@ -264,10 +264,10 @@ class Schedule(Sequence[Any]):
                 yield self._made(item, at)
 
     def _made(self, op: tuple[Any, ...], at: Sequence[int]) -> Any:
-        kind, line, qubit, start, duration, shifts = op
+        kind, line, qudit, start, duration, shifts = op
         if start is not None:
             start += sum(i * s for i, s in zip(at, shifts, strict=True) if s is not None)
-        return self._event(kind, line, qubit, start, duration)
+        return self._event(kind, line, qudit, start, duration)
 
     def latest_end(self) -> int | None:
         """The latest end of an event, or ``None`` when some event has no

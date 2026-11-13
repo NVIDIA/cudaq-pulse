@@ -68,16 +68,16 @@ def test_the_pi_train_corrects_a_drive_amplitude_error():
 @pytest.mark.slow
 def test_adaptive_t1_tracks_the_papers_device_on_the_controller():
     base = transmon_17q()
-    qubit = base.qubits[0]
-    device_qubit = qubit.replace(
+    qudit = base.qudits[0]
+    device_qudit = qudit.replace(
         frequency_hz=4.13e9,
         anharmonicity_hz=-210e6,
         t1_us=160.0,
         t2_star_us=100.0,
         thermal_population=0.0,
-        readout=qubit.readout.replace(error_1to0=0.11, error_0to1=0.14),
+        readout=qudit.readout.replace(error_1to0=0.11, error_0to1=0.14),
     )
-    target = dataclasses.replace(base, qubits={**base.qubits, 0: device_qubit})
+    target = dataclasses.replace(base, qudits={**base.qudits, 0: device_qudit})
     dev, q = _device(target)
     lowered = pulse.compile(_adaptive_t1, device=dev, control_system=P["control_system"]).lower(q)
     shots = 32
@@ -149,7 +149,7 @@ def test_a_slower_controller_rejects_the_chain_at_compile_time():
         slow.lower(q, 20_000.0 * CLOCK)
 
 
-def test_two_qubits_calibrate_side_by_side():
+def test_two_qudits_calibrate_side_by_side():
     chain, dev, _ = _chain()
     q, p = dev.qudits[:2]
     one = chain.lower(q, 20_000.0 * CLOCK)

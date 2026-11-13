@@ -12,7 +12,7 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.targets import Coupling, DeviceDescription, MicrowaveDrive, Qubit
+from cudaq_pulse.targets import Coupling, DeviceDescription, MicrowaveDrive, PhysicalQudit
 
 from tests._handles import Q
 from tests.runtime._lowering import evolve, on, pulse_mlir
@@ -20,8 +20,8 @@ from tests.runtime._lowering import evolve, on, pulse_mlir
 gpu = pytest.mark.gpu
 
 
-def _unitary_qubit(index, frequency_hz=5.0e9):
-    return Qubit(
+def _unitary_qudit(index, frequency_hz=5.0e9):
+    return PhysicalQudit(
         index=index,
         frequency_hz=frequency_hz,
         anharmonicity_hz=-200.0e6,
@@ -31,8 +31,8 @@ def _unitary_qubit(index, frequency_hz=5.0e9):
     )
 
 
-def _single_qubit_target():
-    return DeviceDescription(name="physics-1q", qubits={0: _unitary_qubit(0)})
+def _single_qudit_target():
+    return DeviceDescription(name="physics-1q", qudits={0: _unitary_qudit(0)})
 
 
 def test_physics_validation_mlir_structure():
@@ -43,7 +43,7 @@ def test_physics_validation_mlir_structure():
         d0 = get_drive_line(q0)
         drive(d0, square(40, math.pi / 20.0))
 
-    mlir = pulse_mlir((rabi, Q[0]), clock_ghz=2.0, qubit_freq_hz={0: 5.0e9})
+    mlir = pulse_mlir((rabi, Q[0]), clock_ghz=2.0, qudit_freq_hz={0: 5.0e9})
     assert "pulse.square" in mlir
 
 
@@ -57,7 +57,7 @@ def test_free_drift_stays_ground():
         wait(d0, 40)  # 20 ns free evolution
 
     result = evolve(
-        on(_single_qubit_target(), idle, Q[0]),
+        on(_single_qudit_target(), idle, Q[0]),
         t_start=0.0,
         t_end=20.0,
         step_count=200,
@@ -78,7 +78,7 @@ def test_rabi_half_pi_pulse():
         drive(d0, square(40, math.pi / 40.0))  # angle = pi/2
 
     result = evolve(
-        on(_single_qubit_target(), half_pi, Q[0]),
+        on(_single_qudit_target(), half_pi, Q[0]),
         t_start=0.0,
         t_end=20.0,
         step_count=200,
@@ -98,7 +98,7 @@ def test_rabi_pi_pulse():
         drive(d0, square(40, math.pi / 20.0))  # angle = pi
 
     result = evolve(
-        on(_single_qubit_target(), pi_pulse, Q[0]),
+        on(_single_qudit_target(), pi_pulse, Q[0]),
         t_start=0.0,
         t_end=20.0,
         step_count=200,
@@ -109,11 +109,11 @@ def test_rabi_pi_pulse():
 
 
 @gpu
-def test_two_qubit_selective_drive():
+def test_two_qudit_selective_drive():
     """Driving q0 excites only q0; q1 remains in its ground state."""
     target = DeviceDescription(
         name="physics-2q",
-        qubits={0: _unitary_qubit(0), 1: _unitary_qubit(1, 5.2e9)},
+        qudits={0: _unitary_qudit(0), 1: _unitary_qudit(1, 5.2e9)},
     )
 
     @pulse.kernel
@@ -147,7 +147,7 @@ def test_xx_coupling_transfers_excitation():
     """An XX coupling exchanges excitation between neighboring qubits."""
     target = DeviceDescription(
         name="physics-xx",
-        qubits={0: _unitary_qubit(0), 1: _unitary_qubit(1, 5.0e9)},
+        qudits={0: _unitary_qudit(0), 1: _unitary_qudit(1, 5.0e9)},
         couplings=[Coupling((0, 1), strength_hz=25.0e6)],
     )
 

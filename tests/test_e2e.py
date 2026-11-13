@@ -11,7 +11,7 @@ import cudaq_pulse as pulse
 from tests._handles import Q
 
 
-def test_single_qubit_full_pipeline():
+def test_single_qudit_full_pipeline():
     """Single qubit: kernel -> compile -> verify scheduled MLIR output."""
 
     @pulse.kernel
@@ -53,7 +53,7 @@ def test_full_lowering_reaches_llvm_dialect():
     assert "llvm.call" not in ck.mlir()
 
 
-def test_two_qubit_full_pipeline():
+def test_two_qudit_full_pipeline():
     """Two qubits with sync: full compilation pipeline via compile()."""
 
     @pulse.kernel

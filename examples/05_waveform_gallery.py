@@ -32,9 +32,9 @@ def sine_envelope(t):
 
 
 @pulse.kernel
-def waveform_showcase(qubit):
+def waveform_showcase(qudit):
     """Drive a qubit with each built-in waveform type sequentially."""
-    drive_line = get_drive_line(qubit)
+    drive_line = get_drive_line(qudit)
     duration, sigma = cal["duration"], cal["sigma"]
 
     # Gaussian — the workhorse of single-qubit gates
@@ -67,9 +67,9 @@ def waveform_showcase(qubit):
 
 
 @pulse.kernel
-def waveform_algebra(qubit):
+def waveform_algebra(qudit):
     """Combine waveforms using the built-in algebraic operations."""
-    drive_line = get_drive_line(qubit)
+    drive_line = get_drive_line(qudit)
 
     gaussian_envelope = gaussian(cal["duration"], 0.3, cal["sigma"])
     square_envelope = square(cal["duration"], 0.1)
@@ -121,7 +121,7 @@ derivative_samples = gaussian_derivative_samples(
 
 
 @pulse.kernel
-def derivative_pulse(qubit, beta: float):
+def derivative_pulse(qudit, beta: float):
     """A Gaussian plus beta times its time derivative, built by hand.
 
     The derivative is sampled in Python and enters the kernel through
@@ -129,7 +129,7 @@ def derivative_pulse(qubit, beta: float):
     The sampled correction is in phase with the Gaussian; ``drag()`` puts
     the same correction on the quadrature, as the DRAG scheme needs.
     """
-    drive_line = get_drive_line(qubit)
+    drive_line = get_drive_line(qudit)
 
     base = gaussian(derivative_duration, derivative_amplitude, derivative_sigma)
     correction = wf_scale(custom_samples(derivative_samples), beta)

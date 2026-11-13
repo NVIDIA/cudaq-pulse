@@ -59,7 +59,7 @@ def _delayed(delays=None, links=None, **controller):
 
 
 def _starts(lowered, kind="drive"):
-    return [(e.qubit, e.start) for e in lowered.schedule if e.kind == kind]
+    return [(e.qudit, e.start) for e in lowered.schedule if e.kind == kind]
 
 
 def _lines(lowered):

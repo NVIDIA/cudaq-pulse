@@ -30,7 +30,7 @@ from cudaq_pulse.targets import (
     DragPulse,
     FluxCZ,
     MicrowaveDrive,
-    Qubit,
+    PhysicalQudit,
     ResidualZZ,
     calibration,
 )
@@ -154,7 +154,7 @@ def _views(program):
 
 
 def test_targets_and_their_parts_unpickle_equal_with_equal_hashes():
-    qubit = Qubit(
+    qudit = PhysicalQudit(
         3,
         5.1e9,
         -300e6,
@@ -169,20 +169,20 @@ def test_targets_and_their_parts_unpickle_equal_with_equal_hashes():
     coupling = Coupling((3, 4), 5e6, calibrations={pulse.gates.CZ: cz})
     residual = ResidualZZ((3, 4), -1.5e4)
     shipped = _SHIPPED_DEVICE.description
-    for value in (qubit, coupling, residual, LADDER.description, shipped):
+    for value in (qudit, coupling, residual, LADDER.description, shipped):
         back = _round_trip(value)
         assert back == value and hash(back) == hash(value)
     back = _round_trip(shipped)
-    assert back.qubits[0].drive == shipped.qubits[0].drive
-    assert back.qubits[0].readout == shipped.qubits[0].readout
+    assert back.qudits[0].drive == shipped.qudits[0].drive
+    assert back.qudits[0].readout == shipped.qudits[0].readout
     assert back.couplings == shipped.couplings and back.residual_zz == shipped.residual_zz
-    assert back.qubits[0].calibrations == shipped.qubits[0].calibrations
+    assert back.qudits[0].calibrations == shipped.qudits[0].calibrations
 
 
 def test_targets_compare_by_content():
-    a = DeviceDescription(name="t", qubits={0: Qubit(0, 5e9, -3e8, 50.0, 30.0)})
-    b = DeviceDescription(name="t", qubits={0: Qubit(0, 5e9, -3e8, 50.0, 30.0)})
-    c = DeviceDescription(name="t", qubits={0: Qubit(0, 5.1e9, -3e8, 50.0, 30.0)})
+    a = DeviceDescription(name="t", qudits={0: PhysicalQudit(0, 5e9, -3e8, 50.0, 30.0)})
+    b = DeviceDescription(name="t", qudits={0: PhysicalQudit(0, 5e9, -3e8, 50.0, 30.0)})
+    c = DeviceDescription(name="t", qudits={0: PhysicalQudit(0, 5.1e9, -3e8, 50.0, 30.0)})
     assert a == b and hash(a) == hash(b)
     assert a != c and a != "t"
 
@@ -586,7 +586,7 @@ def test_frames_that_persist_unpickle_declared_and_exported():
     assert program.options.machine.controller.persistent_frames is True
     flat, structured = program.export_controller(), program.export_controller(version=2)
     [frame] = flat["frame_state"]
-    assert frame["frequency_hz"] == LADDER.description.qubits[0].frequency_hz + 1.0e6
+    assert frame["frequency_hz"] == LADDER.description.qudits[0].frequency_hz + 1.0e6
     assert structured["frame_state"] == flat["frame_state"]
     assert structured["controller"]["persistent_frames"] is True
     assert structured["controller"]["waveform_memory"] == "shared"

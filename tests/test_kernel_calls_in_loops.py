@@ -23,7 +23,7 @@ import numpy as np
 import pytest
 from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline
 from cudaq_pulse.kernel.ir_builder import CompilationError
-from cudaq_pulse.targets import DeviceDescription, MicrowaveDrive, Qubit
+from cudaq_pulse.targets import DeviceDescription, MicrowaveDrive, PhysicalQudit
 
 from tests._handles import Q
 from tests._ir import python_ir
@@ -41,7 +41,7 @@ ROLLED = 0
 # ── Call mechanics ───────────────────────────────────────────────────
 
 
-def _qubits(n, qvec, dev=None):
+def _qudits(n, qvec, dev=None):
     handles = Q if dev is None else dev.qudits
     return [handles[0:n]] if qvec else [handles[i] for i in range(n)]
 
@@ -52,14 +52,14 @@ def _device(n):
 
 def _trace(kernel, n=1, qvec=False, args=()):
     """The kernel's IR, as a list of ops."""
-    return python_ir(kernel, *_qubits(n, qvec), *args, unroll_threshold=ROLLED).ops
+    return python_ir(kernel, *_qudits(n, qvec), *args, unroll_threshold=ROLLED).ops
 
 
 def _compile(kernel, n=1, qvec=False, passes=None, args=()):
     """The compiled, scheduled kernel; *args* follow the qudits."""
     dev = _device(n)
     compiled = pulse.compile(kernel, passes=passes, device=dev, unroll_threshold=ROLLED)
-    return compiled.lower(*_qubits(n, qvec, dev), *args)
+    return compiled.lower(*_qudits(n, qvec, dev), *args)
 
 
 def _compile_symbolic(kernel):
@@ -85,8 +85,8 @@ def _simulate(kernel, n=1, qvec=False, args=(), levels=2, **kwargs):
 def _target(n):
     return DeviceDescription(
         name="loop-calls",
-        qubits={
-            q: Qubit(
+        qudits={
+            q: PhysicalQudit(
                 index=q,
                 frequency_hz=FREQ_HZ + 0.1e9 * q,
                 anharmonicity_hz=-200.0e6,
@@ -120,7 +120,7 @@ def _loop_bodies(ops):
 
 def _schedule(compiled):
     """``(kind, qubit, start, duration)`` of each event, in time order."""
-    events = [(e.kind, e.qubit, e.start_cycles, e.duration_cycles) for e in compiled.schedule]
+    events = [(e.kind, e.qudit, e.start_cycles, e.duration_cycles) for e in compiled.schedule]
     return sorted(events, key=lambda e: (e[2], e[1], e[0]))
 
 
@@ -207,7 +207,7 @@ def retune(d, freq):
 
 
 @pulse.kernel
-def on_qubit(q):
+def on_qudit(q):
     d = get_drive_line(q)
     drive(d, square(16, AMP))
 
@@ -338,7 +338,7 @@ def test_qudit_indexed_by_the_loop_variable_unrolls():
     @pulse.kernel
     def looped(qs):
         for i in range(len(qs)):
-            on_qubit(qs[i])
+            on_qudit(qs[i])
 
     @pulse.kernel
     def unrolled(qs):
@@ -358,15 +358,15 @@ def test_iterating_a_list_or_tuple_of_qudits():
     @pulse.kernel
     def over_list(q0, q1, q2):
         for q in [q0, q2]:
-            on_qubit(q)
+            on_qudit(q)
         for q in (q1,):
-            on_qubit(q)
+            on_qudit(q)
 
     @pulse.kernel
     def unrolled(q0, q1, q2):
-        on_qubit(q0)
-        on_qubit(q2)
-        on_qubit(q1)
+        on_qudit(q0)
+        on_qudit(q2)
+        on_qudit(q1)
 
     _, compiled = check(over_list, unrolled, loops=0, n=3)
     assert sorted(e[1] for e in _schedule(compiled)) == [0, 1, 2]

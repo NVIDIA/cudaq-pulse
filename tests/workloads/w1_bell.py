@@ -12,7 +12,7 @@ import math
 import cudaq_pulse as pulse
 
 NAME = "bell"
-NUM_QUBITS = 2
+NUM_QUDITS = 2
 
 
 @pulse.kernel

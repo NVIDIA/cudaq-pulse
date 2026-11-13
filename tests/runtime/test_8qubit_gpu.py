@@ -15,7 +15,7 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.targets import Coupling, DeviceDescription, MicrowaveDrive, Qubit
+from cudaq_pulse.targets import Coupling, DeviceDescription, MicrowaveDrive, PhysicalQudit
 
 from tests._handles import Q
 from tests.runtime._lowering import evolve, on
@@ -29,8 +29,8 @@ gpu = pytest.mark.gpu
 
 
 def _ladder_8q_target(coupling_hz=1.0e6):
-    qubits = {
-        i: Qubit(
+    qudits = {
+        i: PhysicalQudit(
             index=i,
             frequency_hz=(5.0 + 0.02 * i) * 1.0e9,
             anharmonicity_hz=-200.0e6,
@@ -41,7 +41,7 @@ def _ladder_8q_target(coupling_hz=1.0e6):
         for i in range(8)
     }
     couplings = [Coupling((a, b), strength_hz=coupling_hz) for a, b in _LADDER_EDGES]
-    return DeviceDescription(name="ladder-8q", qubits=qubits, couplings=couplings)
+    return DeviceDescription(name="ladder-8q", qudits=qudits, couplings=couplings)
 
 
 def test_ladder_topology_structure():
@@ -72,7 +72,7 @@ def test_ladder_neighbor_degrees():
 
 
 @gpu
-def test_8qubit_single_qubit_excitation():
+def test_8qudit_single_qudit_excitation():
     """A pi pulse on q0 excites it within the full 256-dimensional register."""
     target = _ladder_8q_target()
 

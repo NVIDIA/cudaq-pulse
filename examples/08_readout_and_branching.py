@@ -20,14 +20,14 @@ cal = {
 
 
 @pulse.kernel
-def measure_single_qubit(qubit):
+def measure_single_qudit(qudit):
     """Prepare |1> and measure.
 
     Demonstrates the readout channel: get_readout_line returns the readout
     line, and readout() acquires IQ data at the line's own tone.
     """
-    drive_line = get_drive_line(qubit)
-    readout_line = get_readout_line(qubit)
+    drive_line = get_drive_line(qudit)
+    readout_line = get_readout_line(qudit)
 
     x_pulse = drag(cal["x_duration"], 0.5, cal["x_sigma"], cal["drag_beta"])
     drive(drive_line, x_pulse)
@@ -39,14 +39,14 @@ def measure_single_qubit(qubit):
 
 
 @pulse.kernel
-def active_reset(qubit):
+def active_reset(qudit):
     """Active reset: measure, and if excited, apply an X pulse.
 
     The ``if`` becomes an scf.if region: compiling keeps it as a branch on
     pulse.is_set and schedules it for the longer arm.
     """
-    drive_line = get_drive_line(qubit)
-    readout_line = get_readout_line(qubit)
+    drive_line = get_drive_line(qudit)
+    readout_line = get_readout_line(qudit)
 
     readout_envelope = square(cal["readout_duration"], 0.05)
     result = readout(readout_line, readout_envelope)
@@ -61,13 +61,13 @@ def active_reset(qubit):
 
 
 @pulse.kernel
-def repeated_measurement(qubit, shot_count):
+def repeated_measurement(qudit, shot_count):
     """Repeated preparation and measurement in a single kernel.
 
     A for loop wrapping prepare-measure cycles.
     """
-    drive_line = get_drive_line(qubit)
-    readout_line = get_readout_line(qubit)
+    drive_line = get_drive_line(qudit)
+    readout_line = get_readout_line(qudit)
 
     x_half = drag(cal["x_duration"], 0.25, cal["x_sigma"], cal["drag_beta"])
 
@@ -82,13 +82,13 @@ def repeated_measurement(qubit, shot_count):
 
 
 @pulse.kernel
-def ramsey_with_readout(qubit, tau):
+def ramsey_with_readout(qudit, tau):
     """Ramsey experiment: pi/2 - tau - pi/2 - measure.
 
     Demonstrates the full single-qubit characterization loop with readout.
     """
-    drive_line = get_drive_line(qubit)
-    readout_line = get_readout_line(qubit)
+    drive_line = get_drive_line(qudit)
+    readout_line = get_readout_line(qudit)
 
     half_pi = drag(cal["x_duration"], 0.25, cal["x_sigma"], cal["drag_beta"])
 
@@ -105,7 +105,7 @@ def ramsey_with_readout(qubit, tau):
 if __name__ == "__main__":
     dev = pulse.device("transmon_17q")
     print("=== Measure single qubit ===")
-    compiled_kernel = pulse.compile(measure_single_qubit, device=dev).lower(dev.qudits[0])
+    compiled_kernel = pulse.compile(measure_single_qudit, device=dev).lower(dev.qudits[0])
     print(compiled_kernel.mlir())
 
     print("\n=== Active reset (measurement-conditioned branch) ===")
@@ -113,12 +113,14 @@ if __name__ == "__main__":
     print(compiled_kernel.mlir())
 
     print("\n=== Simulating it (CPU reference) ===")
-    from cudaq_pulse.targets import DeviceDescription, Qubit
+    from cudaq_pulse.targets import DeviceDescription, PhysicalQudit
 
     target = DeviceDescription(
         name="reset-demo",
-        qubits={
-            0: Qubit(index=0, frequency_hz=5e9, anharmonicity_hz=-2e8, t1_us=0.0, t2_star_us=0.0)
+        qudits={
+            0: PhysicalQudit(
+                index=0, frequency_hz=5e9, anharmonicity_hz=-2e8, t1_us=0.0, t2_star_us=0.0
+            )
         },
     )
     # Start in (|0> + |1>) / sqrt(2): each outcome is equally likely, and

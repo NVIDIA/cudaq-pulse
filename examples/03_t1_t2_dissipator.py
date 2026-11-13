@@ -26,13 +26,13 @@ cal = {
 
 
 @pulse.kernel
-def t1_experiment(qubit, wait_time):
+def t1_experiment(qudit, wait_time):
     """T1 measurement: X pulse -> wait -> readout.
 
     The wait duration is parameterized to sweep T1 decay.
     """
-    drive_line = get_drive_line(qubit)
-    readout_line = get_readout_line(qubit)
+    drive_line = get_drive_line(qudit)
+    readout_line = get_readout_line(qudit)
 
     x_pulse = drag(cal["x_duration"], cal["pi_amp"], cal["x_sigma"], cal["drag_beta"])
     drive(drive_line, x_pulse)
@@ -44,10 +44,10 @@ def t1_experiment(qubit, wait_time):
 
 
 @pulse.kernel
-def t2_ramsey(qubit, tau):
+def t2_ramsey(qudit, tau):
     """T2* (Ramsey) measurement: pi/2 -> tau -> pi/2 -> readout."""
-    drive_line = get_drive_line(qubit)
-    readout_line = get_readout_line(qubit)
+    drive_line = get_drive_line(qudit)
+    readout_line = get_readout_line(qudit)
 
     half_pi = drag(cal["x_duration"], cal["half_pi_amp"], cal["x_sigma"], cal["drag_beta"])
 
@@ -60,10 +60,10 @@ def t2_ramsey(qubit, tau):
 
 
 @pulse.kernel
-def t2_echo(qubit, tau):
+def t2_echo(qudit, tau):
     """T2 (Hahn echo) measurement: pi/2 -> tau/2 -> pi -> tau/2 -> pi/2 -> readout."""
-    drive_line = get_drive_line(qubit)
-    readout_line = get_readout_line(qubit)
+    drive_line = get_drive_line(qudit)
+    readout_line = get_readout_line(qudit)
 
     half_pi = drag(cal["x_duration"], cal["half_pi_amp"], cal["x_sigma"], cal["drag_beta"])
     pi_pulse = drag(cal["x_duration"], cal["pi_amp"], cal["x_sigma"], cal["drag_beta"])
@@ -81,8 +81,8 @@ def t2_echo(qubit, tau):
 
 if __name__ == "__main__":
     dev = pulse.device("transmon_17q")
-    qubit = dev.qudits[0]
-    spec = dev.description.qubits[0]
+    qudit = dev.qudits[0]
+    spec = dev.description.qudits[0]
     t1_ns = spec.t1_us * 1e3
     print(f"=== T1 experiment on {spec.label} (T1 = {spec.t1_us:.1f} us), CPU simulation ===")
     t1 = pulse.compile(t1_experiment, device=dev)
@@ -90,7 +90,7 @@ if __name__ == "__main__":
     for wait_time in [0 * pulse.ns, 2 * pulse.us, 5 * pulse.us, 10 * pulse.us]:
         # A 0.25 ns step (two per clock cycle) resolves these pulses and the
         # third level's anharmonicity, and keeps the long waits fast.
-        result = pulse.simulate(t1.lower(qubit, wait_time), dt_ns=0.25)
+        result = pulse.simulate(t1.lower(qudit, wait_time), dt_ns=0.25)
         p1 = result.level_population(1)
         readout_ns = result.measurements[0].start_ns
         if first is None:
@@ -104,10 +104,10 @@ if __name__ == "__main__":
 
     print("\n=== T2* Ramsey (tau=500) ===")
     ramsey_tau = 250 * pulse.ns
-    compiled_kernel = pulse.compile(t2_ramsey, device=dev).lower(qubit, ramsey_tau)
+    compiled_kernel = pulse.compile(t2_ramsey, device=dev).lower(qudit, ramsey_tau)
     print(compiled_kernel.mlir())
 
     print("\n=== T2 Echo (tau=1000) ===")
     echo_tau = 500 * pulse.ns
-    compiled_kernel = pulse.compile(t2_echo, device=dev).lower(qubit, echo_tau)
+    compiled_kernel = pulse.compile(t2_echo, device=dev).lower(qudit, echo_tau)
     print(compiled_kernel.mlir())

@@ -110,7 +110,7 @@ def test_results_of_a_partial_value_are_rejected():
         _run(b"\0" * 24, qudit_count=0)
 
 
-def test_the_state_dimension_overrides_the_qubit_count():
+def test_the_state_dimension_overrides_the_qudit_count():
     (result,) = _run(np.zeros(9 * 9, dtype=np.complex128).tobytes(), qudit_count=2, state_dim=9)
     assert result.shape == (9, 9)
     (result,) = _run(np.zeros(3, dtype=np.complex128).tobytes(), qudit_count=2, state_dim=3)

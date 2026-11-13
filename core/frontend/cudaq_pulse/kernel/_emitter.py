@@ -1306,7 +1306,7 @@ class _Tones(Mapping[tuple[int, int], IRValue]):
     def __init__(self, emitter: PulseIREmitter, held: _Held) -> None:
         builder = emitter.b
         line_tones = getattr(builder, "line_tones", None)
-        qudit = getattr(builder, "_qref_to_qubit", {}).get(held.key[0])
+        qudit = getattr(builder, "_qref_to_qudit", {}).get(held.key[0])
         if line_tones is None or qudit is None:
             raise CompilationError(
                 "line.tones needs the transitions of the system's model; this trace "

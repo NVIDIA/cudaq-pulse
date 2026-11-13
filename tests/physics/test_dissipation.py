@@ -30,7 +30,7 @@ def _decay(entry_id, levels, initial, dt_ns, t_ns=None):
     ).density_matrix
 
 
-def test_t1_of_a_qubit():
+def test_t1_of_a_qudit():
     entry = ref("t1_qubit")
     rho = _decay("t1_qubit", 2, basis(2, 1), entry["tolerance"]["dt_ns"])
     assert rho[1, 1].real == pytest.approx(
@@ -38,7 +38,7 @@ def test_t1_of_a_qubit():
     )
 
 
-def test_t2_of_a_qubit():
+def test_t2_of_a_qudit():
     entry = ref("t2_qubit")
     plus = (basis(2, 0) + basis(2, 1)) / math.sqrt(2.0)
     rho = _decay("t2_qubit", 2, plus, entry["tolerance"]["dt_ns"])

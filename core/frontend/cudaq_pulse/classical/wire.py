@@ -423,7 +423,7 @@ def _export(lowered: Any, with_events: bool, part: _Part | None = None) -> dict[
                 "kind": event.kind,
                 "line": event.line,
                 "link": event.link,
-                "qubit": event.qubit,
+                "qudit": event.qudit,
                 "start_cycles": event.start_cycles,
                 "duration_cycles": event.duration_cycles,
                 "segment": (

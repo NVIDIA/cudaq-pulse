@@ -531,7 +531,7 @@ def _check_plant(lowered: Lowered, plant: Any) -> Any:
 
     if not isinstance(plant, DeviceDescription):
         raise InvalidTypeError(f"plant must be a DeviceDescription, got {type(plant).__name__}")
-    missing = [q for q in lowered.qudits if q not in plant.qubits]
+    missing = [q for q in lowered.qudits if q not in plant.qudits]
     if missing:
         raise InvalidValueError(f"the plant does not define qudits {missing} that the program uses")
     return plant
@@ -554,11 +554,11 @@ def _default_step(
     active = lowered.qudits
     fastest = _level_spread(compiled if target is None else target, active, levels)[0]
     if len(active) > 1:
-        qubits = compiled.qubits
+        qudits = compiled.qudits
         for c in compiled.couplings:
             a, b = c.qudits
             if a in active and b in active:
-                detuning = abs(qubits[a].frequency_hz - qubits[b].frequency_hz)
+                detuning = abs(qudits[a].frequency_hz - qudits[b].frequency_hz)
                 if detuning > fastest:
                     fastest = detuning
     step = _DEFAULT_STEP_NS
@@ -585,7 +585,7 @@ def _level_spread(
         else:
             d = int(levels)
         if d > 2:
-            offsets = _level_offsets_hz(model, target.qubits[q], d)
+            offsets = _level_offsets_hz(model, target.qudits[q], d)
             width = max(offsets) - min(offsets)
             if width > spread:
                 spread, qudit, count = width, q, d
@@ -608,11 +608,11 @@ def _fastest(
     if levels.__class__ is not int or levels > 2:
         fastest, q, d = _level_spread(target, active, levels)
         source = ("levels", q, d)
-    qubits = target.qubits
+    qudits = target.qudits
     for c in target.couplings:
         a, b = c.qudits
         if a in active and b in active:
-            detuning = abs(qubits[a].frequency_hz - qubits[b].frequency_hz)
+            detuning = abs(qudits[a].frequency_hz - qudits[b].frequency_hz)
             if detuning > fastest:
                 fastest, source = detuning, ("coupling", a, b)
     return fastest, source
@@ -622,11 +622,11 @@ def _fastest(
 _MAX_HZ_NS = 1e9 / _STEPS_PER_PERIOD * (1 + 1e-9)
 
 
-def _level_offsets_hz(model: Any, qubit: Any, levels: int) -> list[float]:
+def _level_offsets_hz(model: Any, qudit: Any, levels: int) -> list[float]:
     """Each level's energy less that of evenly spaced levels at the 0-1
     frequency: the frequency it turns at in the qudit's frame."""
-    f01 = qubit.frequency_hz
-    return [e - k * f01 for k, e in enumerate(model.energies_hz(qubit, levels))]
+    f01 = qudit.frequency_hz
+    return [e - k * f01 for k, e in enumerate(model.energies_hz(qudit, levels))]
 
 
 def _hz(frequency: float) -> str:
@@ -639,7 +639,7 @@ def _cause(target: Any, source: tuple[str, int, int], fastest: float) -> str:
     """What turns at *fastest*, from ``_fastest``'s *source*."""
     kind, a, b = source
     if kind == "levels":
-        offsets = _level_offsets_hz(target.model, target.qubits[a], b)
+        offsets = _level_offsets_hz(target.model, target.qudits[a], b)
         low, high = sorted((offsets.index(min(offsets)), offsets.index(max(offsets))))
         return (
             f"qudit {a} has {b} levels, and in its frame the coherence of levels "
@@ -804,7 +804,7 @@ def _simulate_compiled(
     if plant:
         frequencies = [math.nan] * (max(qudits) + 1)
         for q in qudits:
-            frequencies[q] = float(target.qubits[q].frequency_hz)
+            frequencies[q] = float(target.qudits[q].frequency_hz)
         base += (
             ", pulse.plant_qubit_freq_hz = array<f64: "
             + ", ".join("0x7FF8000000000000" if math.isnan(f) else repr(f) for f in frequencies)
@@ -1043,7 +1043,7 @@ def _thermal_state(
 ) -> npt.NDArray[np.complex128]:
     """The product of the thermal mixtures of *qudits* (*dims* levels each),
     or *cold* if none is hot."""
-    populations = [float(target.qubits[q].thermal_population) for q in qudits]
+    populations = [float(target.qudits[q].thermal_population) for q in qudits]
     if not any(populations):
         return cold
     diagonal: npt.NDArray[Any] = np.ones(1)

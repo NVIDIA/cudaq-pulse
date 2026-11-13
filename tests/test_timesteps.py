@@ -175,7 +175,7 @@ def test_a_line_delay_moves_a_line_by_whole_timesteps():
     # 3 ns is 6 cycles of the 2 GHz clock: one timestep of 4, and 1 ns of fine delay.
     machine = _delayed_steps(4, max_fine_delay_ns=1.5)
     lowered = pulse.compile(stepped, schedule="asap", control_system=machine).lower(Q[0], Q[1])
-    first = [e.start for e in lowered.schedule if e.kind == "drive" and e.qubit == 0]
+    first = [e.start for e in lowered.schedule if e.kind == "drive" and e.qudit == 0]
     assert first == [4]
     lines = {(x["role"], x["qudit"]): x for x in lowered.export_controller()["lines"]}
     assert lines[("drive", 0)]["fine_delay_ns"] == pytest.approx(1.0)

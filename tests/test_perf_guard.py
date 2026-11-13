@@ -148,7 +148,7 @@ def _packed_trace(kernel, n: int) -> Callable[[], object]:
     fn = kernel.__wrapped__
 
     def run():
-        builder = PackedIRBuilder(name="k", clock_ghz=2.0, qubit_freq_hz=freq)
+        builder = PackedIRBuilder(name="k", clock_ghz=2.0, qudit_freq_hz=freq)
         _trace_kernel_with_builder(fn, builder, [Q[0:n]])
 
     return run
@@ -174,7 +174,7 @@ def _cases() -> dict[str, Callable[[], object]]:
     cases["parametric_compile"] = lambda: pulse.compile(parametric).lower(Q[0], 0.5, 2)
     cases["parametric_trace"] = lambda: _trace_kernel_with_builder(
         parametric.__wrapped__,
-        PackedIRBuilder(name="p", clock_ghz=2.0, qubit_freq_hz={0: 5e9}),
+        PackedIRBuilder(name="p", clock_ghz=2.0, qudit_freq_hz={0: 5e9}),
         [Q[0], Parameter("amp", 0, "f64"), Parameter("n", 1, "i64")],
     )
     return cases
@@ -255,9 +255,9 @@ def test_retained_loop_compile_work_is_flat():
 
 def _half_unused(qudit_count: int):
     @pulse.kernel
-    def kernel(qubits):
+    def kernel(qudits):
         for q in range(qudit_count):
-            line = get_drive_line(qubits[q])
+            line = get_drive_line(qudits[q])
             if q % 2 == 0:
                 drive(line, square(20, 0.1))
 
@@ -323,8 +323,8 @@ def test_a_wide_sync_traces_in_linear_time():
 
     def program(n: int):
         @pulse.kernel
-        def kernel(qubits):
-            lines = [get_drive_line(q) for q in qubits]
+        def kernel(qudits):
+            lines = [get_drive_line(q) for q in qudits]
             sync(*lines)
             for line in lines:
                 drive(line, square(8, 0.1))

@@ -9,7 +9,7 @@ qudit:
 
     TransmonModel(levels={0: 4, 2: 2})
 
-keyed by the target's qudit index, the key of ``DeviceDescription.qubits``
+keyed by the target's qudit index, the key of ``DeviceDescription.qudits``
 and of ``simulate(levels=...)``.
 """
 
@@ -23,7 +23,7 @@ from .._errors import InvalidTypeError, InvalidValueError, UnsupportedError
 
 if TYPE_CHECKING:
     from ..runtime.simulate import SimulationResult
-    from .base import Qubit
+    from .base import PhysicalQudit
 
 __all__ = ["SimulationModel", "TransmonModel"]
 
@@ -89,15 +89,15 @@ class SimulationModel:
         """The levels of qudit *qudit*: its own, else the model's."""
         return self._levels.get(qudit, self.levels)
 
-    def energies_hz(self, qubit: Qubit, levels: int) -> list[float]:
-        """The energies of *qubit*'s first *levels* levels, in Hz from its ground
+    def energies_hz(self, qudit: PhysicalQudit, levels: int) -> list[float]:
+        """The energies of *qudit*'s first *levels* levels, in Hz from its ground
         level: evenly spaced by its 0-1 frequency."""
-        return [k * qubit.frequency_hz for k in range(levels)]
+        return [k * qudit.frequency_hz for k in range(levels)]
 
-    def transitions_hz(self, qubit: Qubit, levels: int) -> dict[tuple[int, int], float]:
-        """The frequency in Hz of each transition between *qubit*'s first
+    def transitions_hz(self, qudit: PhysicalQudit, levels: int) -> dict[tuple[int, int], float]:
+        """The frequency in Hz of each transition between *qudit*'s first
         *levels* levels, by ``(lower, upper)`` level, ordered by level."""
-        energies = self.energies_hz(qubit, levels)
+        energies = self.energies_hz(qudit, levels)
         return {
             (lower, upper): abs(energies[upper] - energies[lower])
             for lower in range(levels)
@@ -130,8 +130,8 @@ class TransmonModel(SimulationModel):
 
     __slots__ = ()
 
-    def energies_hz(self, qubit: Qubit, levels: int) -> list[float]:
-        f01, alpha = qubit.frequency_hz, qubit.anharmonicity_hz
+    def energies_hz(self, qudit: PhysicalQudit, levels: int) -> list[float]:
+        f01, alpha = qudit.frequency_hz, qudit.anharmonicity_hz
         return [k * f01 + k * (k - 1) / 2 * alpha for k in range(levels)]
 
     def _simulate(self, *args: Any, **options: Any) -> SimulationResult:

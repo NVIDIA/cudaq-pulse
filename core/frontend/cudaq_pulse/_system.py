@@ -2070,7 +2070,7 @@ def _placement(system: ControlSystem) -> dict[int, dict[int, int]]:
 
 def _wiring_problems(system: ControlSystem, target: DeviceDescription) -> list[Problem]:
     """The lines and detectors of *system* that name carriers *target* lacks."""
-    carriers = set(target.qubits)
+    carriers = set(target.qudits)
     problems: list[Problem] = []
     for index, controller in enumerate(system.controllers):
         path = f"control_system.controllers[{index}]"
@@ -2416,7 +2416,7 @@ def _quantum_data(target: DeviceDescription) -> dict[str, Any]:
         "model": _model_data(target.model),
         "attribution": target.attribution,
         "clock_ghz": target.clock_ghz,
-        "qudits": [_qudit_data(q) for q in sorted(target.qubits.values(), key=lambda q: q.index)],
+        "qudits": [_qudit_data(q) for q in sorted(target.qudits.values(), key=lambda q: q.index)],
         "couplings": [
             {"qudits": list(c.qudits), "strength_hz": c.strength_hz}
             | ({"calibrations": _calibration_data(c.calibrations)} if c.calibrations else {})
@@ -2546,7 +2546,7 @@ class _Reader:
             return None
 
     def quantum_system(self, data: Any, path: str) -> DeviceDescription | None:
-        from .targets.base import Coupling, DeviceDescription, Qubit, ResidualZZ
+        from .targets.base import Coupling, DeviceDescription, PhysicalQudit, ResidualZZ
 
         system = self.mapping(data, path, _SYSTEM_KEYS)
         if system is None:
@@ -2564,7 +2564,7 @@ class _Reader:
                     else value
                     for key, value in entry.items()
                 }
-                qudit = self.build(f"{path}.qudits[{i}]", Qubit, **entry)
+                qudit = self.build(f"{path}.qudits[{i}]", PhysicalQudit, **entry)
                 if qudit is not None:
                     qudits[qudit.index] = qudit
         # The entries read, each with its index in the file.
@@ -2600,7 +2600,7 @@ class _Reader:
         try:
             return DeviceDescription(
                 name=system["name"],
-                qubits=qudits,
+                qudits=qudits,
                 couplings=[c for _, c in entries["couplings"]],
                 residual_zz=[x for _, x in entries["residual_zz"]],
                 **rest,

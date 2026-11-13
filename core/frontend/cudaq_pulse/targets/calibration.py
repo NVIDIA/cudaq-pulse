@@ -123,7 +123,7 @@ class Calibration:
         return dict(self._data["cooldowns"])
 
     def entry(self, *path: str) -> Mapping[str, Any]:
-        """The leaf at *path* with its provenance, e.g. ``entry("qubits", "D4", "ec")``."""
+        """The leaf at *path* with its provenance, e.g. ``entry("qudits", "D4", "ec")``."""
         node: Any = self._data
         for key in path:
             node = node[key]
@@ -184,26 +184,26 @@ class Calibration:
     # ── Circuits and couplings ──────────────────────────────────────────
 
     @property
-    def flux_qubits(self) -> tuple[str, ...]:
+    def flux_qudits(self) -> tuple[str, ...]:
         """The qubits whose circuit, including d, is calibrated."""
         return tuple(
-            label for label, q in self._data["qubits"].items() if q.get("flux_quanta_capable")
+            label for label, q in self._data["qudits"].items() if q.get("flux_quanta_capable")
         )
 
-    def circuit(self, qubit: str) -> TransmonCircuit:
-        """The circuit of *qubit*, for flux in flux quanta."""
+    def circuit(self, qudit: str) -> TransmonCircuit:
+        """The circuit of *qudit*, for flux in flux quanta."""
         from .transmon_model import TransmonCircuit
 
-        if qubit not in self.flux_qubits:
-            raise NotFoundError(f"calibration {self.name!r} has no circuit for qubit {qubit!r}")
-        q = self._data["qubits"][qubit]
+        if qudit not in self.flux_qudits:
+            raise NotFoundError(f"calibration {self.name!r} has no circuit for qubit {qudit!r}")
+        q = self._data["qudits"][qudit]
         return TransmonCircuit(
-            q["ec"]["value"], q["ej_max"]["value"], q["asymmetry_d"]["value"], qubit
+            q["ec"]["value"], q["ej_max"]["value"], q["asymmetry_d"]["value"], qudit
         )
 
-    def idle_flux(self, qubit: str) -> float:
-        """The flux at which *qubit* idles: its calibrated sweet spot."""
-        return _SWEET_SPOT_FLUX[self._data["qubits"][qubit]["sweet_spot_idle"]]
+    def idle_flux(self, qudit: str) -> float:
+        """The flux at which *qudit* idles: its calibrated sweet spot."""
+        return _SWEET_SPOT_FLUX[self._data["qudits"][qudit]["sweet_spot_idle"]]
 
     @property
     def pairs(self) -> tuple[str, ...]:
@@ -251,17 +251,17 @@ class Calibration:
 
     # ── Flux quanta ─────────────────────────────────────────────────────
 
-    def detuning_for_flux(self, qubit: str, flux: float) -> float:
+    def detuning_for_flux(self, qudit: str, flux: float) -> float:
         """The 0-1 detuning (Hz) from the idle point that a flux of *flux*
-        flux quanta tunes *qubit* to."""
-        circuit = self.circuit(qubit)
-        return circuit.f01_hz(flux) - circuit.f01_hz(self.idle_flux(qubit))
+        flux quanta tunes *qudit* to."""
+        circuit = self.circuit(qudit)
+        return circuit.f01_hz(flux) - circuit.f01_hz(self.idle_flux(qudit))
 
-    def flux_for_detuning(self, qubit: str, detuning_hz: float) -> float:
-        """The flux (flux quanta, in [0, 1/2]) that detunes *qubit* by
+    def flux_for_detuning(self, qudit: str, detuning_hz: float) -> float:
+        """The flux (flux quanta, in [0, 1/2]) that detunes *qudit* by
         *detuning_hz* from its idle point."""
-        circuit = self.circuit(qubit)
-        return circuit.flux_for_f01(circuit.f01_hz(self.idle_flux(qubit)) + detuning_hz)
+        circuit = self.circuit(qudit)
+        return circuit.flux_for_f01(circuit.f01_hz(self.idle_flux(qudit)) + detuning_hz)
 
     # ── Targets ─────────────────────────────────────────────────────────
 
@@ -273,19 +273,19 @@ class Calibration:
         A pair whose qubits sit at the idle frequencies its entry records
         takes the exchange stored with it, computed when the file was built.
         """
-        qubits = target.qubits
+        qudits = target.qudits
         idle_exchange = self._idle_exchange
         couplings = []
         for c in target.couplings:
             a, b = c.qudits
-            name = f"{qubits[a].label}-{qubits[b].label}"
+            name = f"{qudits[a].label}-{qudits[b].label}"
             found = idle_exchange.get(name)
             if found is None:
-                name = f"{qubits[b].label}-{qubits[a].label}"
+                name = f"{qudits[b].label}-{qudits[a].label}"
                 found = idle_exchange.get(name)
                 a, b = b, a
             if found is not None:
-                at = (qubits[a].frequency_hz, qubits[b].frequency_hz)
+                at = (qudits[a].frequency_hz, qudits[b].frequency_hz)
                 value, stored = found
                 if stored is not None and all(
                     abs(f - g) < 1e3 for f, g in zip(at, stored, strict=False)

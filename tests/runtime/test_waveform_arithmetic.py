@@ -14,7 +14,7 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse.kernel.ir_builder import CompilationError
-from cudaq_pulse.targets import DeviceDescription, MicrowaveDrive, Qubit
+from cudaq_pulse.targets import DeviceDescription, MicrowaveDrive, PhysicalQudit
 
 from tests._handles import Q
 from tests.runtime._lowering import on
@@ -25,8 +25,8 @@ CLOCK_GHZ = 2.0
 def _target():
     return DeviceDescription(
         name="waveform-arithmetic",
-        qubits={
-            0: Qubit(
+        qudits={
+            0: PhysicalQudit(
                 index=0,
                 frequency_hz=5.0e9,
                 anharmonicity_hz=-200.0e6,

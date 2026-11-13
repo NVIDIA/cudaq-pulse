@@ -25,12 +25,12 @@ import tracemalloc
 import warnings
 
 import cudaq_pulse as pulse
-from cudaq_pulse.targets import DeviceDescription, MicrowaveDrive, Qubit
+from cudaq_pulse.targets import DeviceDescription, MicrowaveDrive, PhysicalQudit
 
 _TARGET = DeviceDescription(
     name="wait-sweep",
-    qubits={
-        0: Qubit(
+    qudits={
+        0: PhysicalQudit(
             index=0,
             frequency_hz=5.0e9,
             anharmonicity_hz=-200.0e6,
@@ -40,7 +40,7 @@ _TARGET = DeviceDescription(
         )
     },
 )
-_QUBIT = pulse.device(_TARGET).qudits[0]
+_QUDIT = pulse.device(_TARGET).qudits[0]
 
 
 @pulse.kernel
@@ -76,18 +76,18 @@ def main() -> int:
     tracemalloc.start()
     start = time.perf_counter()
     for tau in taus:
-        compiled.lower(_QUBIT, tau)
+        compiled.lower(_QUDIT, tau)
     sweep_ms = (time.perf_counter() - start) * 1e3
     _, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
     compiles = compiled.cache_info().compiled
 
     fresh = iter(float(4 * i + 3) for i in range(10**6))
-    new_us = _median_us([lambda: compiled.lower(_QUBIT, next(fresh))] * 400)
-    cached_us = _median_us([lambda: compiled.lower(_QUBIT, taus[0])] * 400)
+    new_us = _median_us([lambda: compiled.lower(_QUDIT, next(fresh))] * 400)
+    cached_us = _median_us([lambda: compiled.lower(_QUDIT, taus[0])] * 400)
 
     def simulate(tau: float) -> None:
-        pulse.simulate(compiled.lower(_QUBIT, tau), levels=2, dt_ns=0.25)
+        pulse.simulate(compiled.lower(_QUDIT, tau), levels=2, dt_ns=0.25)
 
     # New lengths within a few cycles of the repeated one, so that both
     # integrate about as many steps.

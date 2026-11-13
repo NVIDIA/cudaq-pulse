@@ -13,13 +13,13 @@ import cudaq_pulse as pulse
 
 
 @pulse.kernel
-def xy4(qubit, sigma, amplitude_pi, tau, cycle_count):
+def xy4(qudit, sigma, amplitude_pi, tau, cycle_count):
     """XY4 dynamical decoupling: [X - tau - Y - tau - X - tau - Y - tau]^n.
 
     Suppresses both dephasing and amplitude noise by alternating X and Y
     refocusing axes.
     """
-    drive_line = get_drive_line(qubit)
+    drive_line = get_drive_line(qudit)
 
     pi_x = gaussian(4 * sigma, amplitude_pi, sigma)
 
@@ -46,7 +46,7 @@ def xy4(qubit, sigma, amplitude_pi, tau, cycle_count):
 
 
 @pulse.kernel
-def uhrig_dd(qubit, sigma, amplitude_pi, total_cycles, pulse_count):
+def uhrig_dd(qudit, sigma, amplitude_pi, total_cycles, pulse_count):
     """Uhrig dynamical decoupling (UDD).
 
     Places n refocusing pulses at non-uniform intervals:
@@ -56,7 +56,7 @@ def uhrig_dd(qubit, sigma, amplitude_pi, total_cycles, pulse_count):
     The intervals are computed at compile time from pulse_count, in whole
     clock cycles of a sequence *total_cycles* long.
     """
-    drive_line = get_drive_line(qubit)
+    drive_line = get_drive_line(qudit)
 
     pi_pulse = gaussian(4 * sigma, amplitude_pi, sigma)
     dur_pi = pulse.round_duration(drive_line, 4 * sigma)
@@ -77,12 +77,12 @@ def uhrig_dd(qubit, sigma, amplitude_pi, total_cycles, pulse_count):
 
 
 @pulse.kernel
-def cpmg(qubit, sigma, amplitude_half_pi, amplitude_pi, tau, refocus_count):
+def cpmg(qudit, sigma, amplitude_half_pi, amplitude_pi, tau, refocus_count):
     """Carr-Purcell-Meiboom-Gill: pi/2_X - [tau - pi_Y - tau]^n - pi/2_X.
 
     The standard multi-pulse echo for dephasing suppression.
     """
-    drive_line = get_drive_line(qubit)
+    drive_line = get_drive_line(qudit)
 
     half_pi_pulse = gaussian(4 * sigma, amplitude_half_pi, sigma)
     pi_pulse = gaussian(4 * sigma, amplitude_pi, sigma)
@@ -100,14 +100,14 @@ def cpmg(qubit, sigma, amplitude_half_pi, amplitude_pi, tau, refocus_count):
 
 
 @pulse.kernel
-def knill_dd(qubit, sigma, amplitude_pi, tau):
+def knill_dd(qudit, sigma, amplitude_pi, tau):
     """Knill dynamical decoupling (KDD): a composite-pulse sequence.
 
     Uses 5 pi-pulses with carefully chosen phases to suppress both
     systematic over/under-rotation and dephasing.
     Phases: [pi/6, 0, pi/2, 0, pi/6]
     """
-    drive_line = get_drive_line(qubit)
+    drive_line = get_drive_line(qudit)
 
     pi_pulse = gaussian(4 * sigma, amplitude_pi, sigma)
 

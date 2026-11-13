@@ -11,7 +11,7 @@ import math
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse.targets import DeviceDescription, MicrowaveDrive, Qubit
+from cudaq_pulse.targets import DeviceDescription, MicrowaveDrive, PhysicalQudit
 
 from tests._handles import Q
 from tests.runtime._lowering import evolve, on, pulse_mlir
@@ -19,8 +19,8 @@ from tests.runtime._lowering import evolve, on, pulse_mlir
 gpu = pytest.mark.gpu
 
 
-def _unitary_qubit(index, frequency_hz):
-    return Qubit(
+def _unitary_qudit(index, frequency_hz):
+    return PhysicalQudit(
         index=index,
         frequency_hz=frequency_hz,
         anharmonicity_hz=-200.0e6,
@@ -30,13 +30,13 @@ def _unitary_qubit(index, frequency_hz):
     )
 
 
-def _single_qubit_target():
-    return DeviceDescription(name="algo-1q", qubits={0: _unitary_qubit(0, 5.0e9)})
+def _single_qudit_target():
+    return DeviceDescription(name="algo-1q", qudits={0: _unitary_qudit(0, 5.0e9)})
 
 
 def _evolve_1q(kernel):
     return evolve(
-        on(_single_qubit_target(), kernel, Q[0]),
+        on(_single_qudit_target(), kernel, Q[0]),
         t_start=0.0,
         t_end=40.0,
         step_count=400,
@@ -61,7 +61,7 @@ def test_bell_schedule_mlir_structure():
     mlir = pulse_mlir(
         (bell, Q[0], Q[1]),
         clock_ghz=2.0,
-        qubit_freq_hz={0: 5.0e9, 1: 5.1e9},
+        qudit_freq_hz={0: 5.0e9, 1: 5.1e9},
     )
     assert mlir.count("pulse.qudit_alloc") == 2
     assert "pulse.sync" in mlir
@@ -84,13 +84,13 @@ def test_ghz_schedule_mlir_structure():
     mlir = pulse_mlir(
         (ghz, Q[0], Q[1], Q[2]),
         clock_ghz=2.0,
-        qubit_freq_hz={0: 5.0e9, 1: 5.1e9, 2: 5.2e9},
+        qudit_freq_hz={0: 5.0e9, 1: 5.1e9, 2: 5.2e9},
     )
     assert mlir.count("pulse.qudit_alloc") == 3
 
 
 @gpu
-def test_single_qubit_x_rotation():
+def test_single_qudit_x_rotation():
     """An X(pi) rotation flips |0> -> |1>."""
 
     @pulse.kernel
@@ -102,7 +102,7 @@ def test_single_qubit_x_rotation():
 
 
 @gpu
-def test_single_qubit_y_rotation():
+def test_single_qudit_y_rotation():
     """A Y(pi) rotation (phase pi/2) flips |0> -> |1>."""
 
     @pulse.kernel

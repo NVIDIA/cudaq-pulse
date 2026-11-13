@@ -739,12 +739,12 @@ same name:
 
    import cudaq_pulse as pulse
    from cudaq_pulse import backends
-   from cudaq_pulse.targets import Qubit, DeviceDescription
+   from cudaq_pulse.targets import PhysicalQudit, DeviceDescription
 
    backends.register("text", TextBackend)
    backend = backends.get("text")
    dev = pulse.device(
-       DeviceDescription(name="one-qubit", qubits={0: Qubit(0, 5.0e9, -2.0e8, 50.0, 30.0)}),
+       DeviceDescription(name="one-qubit", qudits={0: PhysicalQudit(0, 5.0e9, -2.0e8, 50.0, 30.0)}),
        clock_ghz=1.0,
    )
    cal = {"x_duration": 40 * pulse.ns, "x_sigma": 10 * pulse.ns, "readout_duration": 200 * pulse.ns}

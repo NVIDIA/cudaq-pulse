@@ -13,7 +13,7 @@ cal = {"base_duration": 20 * pulse.ns, "duration_step": 10 * pulse.ns, "sigma": 
 
 
 @pulse.kernel
-def four_qubit(qs):
+def four_qudit(qs):
     lines, tones = [], []
     for i in range(4):
         line = get_drive_line(qs[i])
@@ -43,7 +43,7 @@ def main():
     totals = {}
     for policy in ("asap", "alap", "rcp"):
         compiled = pulse.compile(
-            four_qubit, schedule=policy, control_system=control_system, device=dev
+            four_qudit, schedule=policy, control_system=control_system, device=dev
         ).lower(*args)
         label = policy.upper()
         if policy == "rcp":

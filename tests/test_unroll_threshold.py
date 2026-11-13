@@ -10,12 +10,12 @@ from cudaq_pulse import ControlSystem
 from cudaq_pulse.classical import Link
 from cudaq_pulse.kernel._unroll import DEFAULT_UNROLL_THRESHOLD
 from cudaq_pulse.kernel.bytecode_bridge import compile_kernel_bytecode
-from cudaq_pulse.targets import Coupling, DeviceDescription, MicrowaveDrive, Qubit
+from cudaq_pulse.targets import Coupling, DeviceDescription, MicrowaveDrive, PhysicalQudit
 
 TARGET = DeviceDescription(
     name="unroll-pair",
-    qubits={
-        i: Qubit(
+    qudits={
+        i: PhysicalQudit(
             i,
             5.0e9 + 0.2e9 * i,
             -300e6,

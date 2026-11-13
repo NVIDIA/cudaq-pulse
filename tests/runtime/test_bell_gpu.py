@@ -7,7 +7,7 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.targets import Coupling, DeviceDescription, Qubit
+from cudaq_pulse.targets import Coupling, DeviceDescription, PhysicalQudit
 
 from tests._handles import Q
 from tests.runtime._lowering import evolve, on, pulse_mlir
@@ -34,7 +34,7 @@ def test_bell_mlir_structure():
         drive(d1, x90)
 
     ir = (bell_cr, Q[0], Q[1])
-    mlir = pulse_mlir(ir, clock_ghz=2.0, qubit_freq_hz={0: 5.0e9, 1: 5.1e9})
+    mlir = pulse_mlir(ir, clock_ghz=2.0, qudit_freq_hz={0: 5.0e9, 1: 5.1e9})
 
     assert mlir.count("pulse.qudit_alloc") == 2
     assert mlir.count("pulse.get_drive_line") == 2
@@ -47,8 +47,8 @@ def test_bell_mlir_structure():
 def test_bell_gpu_execution():
     """Resonant exchange takes |10> to (|10> - i|01>) / sqrt(2) in pi / (4 g)."""
 
-    qubits = {
-        index: Qubit(
+    qudits = {
+        index: PhysicalQudit(
             index=index,
             frequency_hz=5.0e9,
             anharmonicity_hz=-200.0e6,
@@ -59,7 +59,7 @@ def test_bell_gpu_execution():
     }
     target = DeviceDescription(
         name="xx-bell-test",
-        qubits=qubits,
+        qudits=qudits,
         couplings=[Coupling((0, 1), strength_hz=5.0e6)],
     )
 

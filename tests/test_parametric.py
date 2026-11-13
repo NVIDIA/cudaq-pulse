@@ -444,7 +444,7 @@ class TestStrictScheduling:
         assert drives[0] == (0, 40)
         assert drives[1] == (40, 60)
 
-    def test_two_qubit_sync_param_duration(self):
+    def test_two_qudit_sync_param_duration(self):
 
         @pulse.kernel
         def k(q0, q1, dur: int):
@@ -655,7 +655,7 @@ class TestE2ESweeps:
 class TestConcreteKernels:
     """Kernels with only concrete arguments compile as before parameters."""
 
-    def test_existing_single_qubit(self):
+    def test_existing_single_qudit(self):
 
         @pulse.kernel
         def k(q):
@@ -668,7 +668,7 @@ class TestConcreteKernels:
         assert "start_cycles = 0" in ck.mlir()
         assert "duration_cycles = 40" in ck.mlir()
 
-    def test_existing_two_qubit_sync(self):
+    def test_existing_two_qudit_sync(self):
 
         @pulse.kernel
         def k(q0, q1):

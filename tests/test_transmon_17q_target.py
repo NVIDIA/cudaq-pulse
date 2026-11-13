@@ -14,7 +14,7 @@ import pytest
 from cudaq_pulse.targets import (
     Coupling,
     DeviceDescription,
-    Qubit,
+    PhysicalQudit,
     transmon_17q,
     transmon_generic,
 )
@@ -46,7 +46,7 @@ def target():
 
 
 def _label(target, index):
-    return target.qubits[index].label
+    return target.qudits[index].label
 
 
 def test_qudits_are_in_the_order_of_table_one(target):
@@ -58,14 +58,14 @@ def test_qudits_are_in_the_order_of_table_one(target):
 
 
 def test_frequency_bands_and_anharmonicities(target):
-    for q in target.qubits.values():
+    for q in target.qudits.values():
         band = (3.7e9, 4.15e9) if q.label.startswith("D") else (5.88e9, 6.33e9)
         assert band[0] <= q.frequency_hz <= band[1]
         assert -186e6 <= q.anharmonicity_hz <= -163e6
         assert q.t1_us > 0 and q.t2_star_us > 0
     # Data qubits about 2 GHz below the auxiliary qubits (Methods A).
-    assert max(q.frequency_hz for q in target.qubits.values() if q.label[0] == "D") < min(
-        q.frequency_hz for q in target.qubits.values() if q.label[0] != "D"
+    assert max(q.frequency_hz for q in target.qudits.values() if q.label[0] == "D") < min(
+        q.frequency_hz for q in target.qudits.values() if q.label[0] != "D"
     )
 
 
@@ -142,16 +142,16 @@ def test_idle_zz_is_a_few_kilohertz(target):
 @pytest.mark.slow
 @pytest.mark.parametrize("pair", [("X2", "D2"), ("Z1", "D1"), ("X2", "D4")])
 def test_a_coupled_pair_idles_with_its_dispersive_zz(target, pair):
-    index = {q.label: i for i, q in target.qubits.items()}
+    index = {q.label: i for i, q in target.qudits.items()}
     a, d = (index[label] for label in pair)
-    qubits = {
-        k: Qubit(k, q.frequency_hz, q.anharmonicity_hz, 0.0, 0.0)
-        for k, q in enumerate((target.qubits[a], target.qubits[d]))
+    qudits = {
+        k: PhysicalQudit(k, q.frequency_hz, q.anharmonicity_hz, 0.0, 0.0)
+        for k, q in enumerate((target.qudits[a], target.qudits[d]))
     }
     (g_hz,) = (c.strength_hz for c in target.couplings if c.qudits == (a, d))
     pair_target = DeviceDescription(
         name="transmon-17q-pair",
-        qubits=qubits,
+        qudits=qudits,
         couplings=[Coupling((0, 1), strength_hz=g_hz)],
     )
 
@@ -179,8 +179,8 @@ def test_a_coupled_pair_idles_with_its_dispersive_zz(target, pair):
     # second-order zeta = 2 J^2 (a_a + a_d) / ((D + a_d)(D - a_a)), and the
     # charge model within its n_12 / n_01 and counter-rotating corrections
     # (2-6 % on these pairs).
-    alpha_a, alpha_d = (target.qubits[i].anharmonicity_hz for i in (a, d))
-    detuning = target.qubits[d].frequency_hz - target.qubits[a].frequency_hz
+    alpha_a, alpha_d = (target.qudits[i].anharmonicity_hz for i in (a, d))
+    detuning = target.qudits[d].frequency_hz - target.qudits[a].frequency_hz
     second_order = 2 * g_hz**2 * (alpha_a + alpha_d) / ((detuning + alpha_d) * (detuning - alpha_a))
     assert zeta == pytest.approx(second_order, rel=2e-2)
     assert zeta == pytest.approx(transmon_17q_idle_zz_hz()[(a, d)], rel=7e-2)
@@ -192,21 +192,21 @@ def test_echo_t2_and_thermal_populations_are_on_the_target():
     thermal = target.thermal_populations
     assert all(t is not None and t > 0 for t in echo.values())
     assert all(0.0 <= p < 0.1 for p in thermal.values())
-    assert echo[0] == _k.QUBITS[0].t2_echo_us
-    assert thermal[0] == _k.QUBITS[0].thermal_population
+    assert echo[0] == _k.QUDITS[0].t2_echo_us
+    assert thermal[0] == _k.QUDITS[0].thermal_population
 
 
 def test_the_time_step_resolves_the_fastest_coupled_detuning():
     from cudaq_pulse.runtime.simulate import _default_step
 
     # X1 and D2 with their published frequencies and coupling, as qudits 0 and 1.
-    x1, d2 = _k.QUBITS[_k.INDEX["X1"]], _k.QUBITS[_k.INDEX["D2"]]
+    x1, d2 = _k.QUDITS[_k.INDEX["X1"]], _k.QUDITS[_k.INDEX["D2"]]
     detuning = x1.idle_frequency_hz - d2.idle_frequency_hz
     assert detuning > 2.0e9
     pair = DeviceDescription(
         name="x1-d2",
-        qubits={
-            i: Qubit(i, q.idle_frequency_hz, q.anharmonicity_hz, 0.0, 0.0)
+        qudits={
+            i: PhysicalQudit(i, q.idle_frequency_hz, q.anharmonicity_hz, 0.0, 0.0)
             for i, q in enumerate((x1, d2))
         },
         couplings=[Coupling((0, 1), _k.COUPLING_11_20_HZ / math.sqrt(2.0))],

@@ -12,7 +12,7 @@ import math
 import cudaq_pulse as pulse
 
 NAME = "vqe_hea"
-NUM_QUBITS = 4
+NUM_QUDITS = 4
 
 
 def _cr_cnot(d_ctrl, d_tgt):

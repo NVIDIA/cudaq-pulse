@@ -8,7 +8,7 @@ import pytest
 from cudaq_pulse import _build_config
 from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline
 from cudaq_pulse.runtime import gpu
-from cudaq_pulse.targets.base import DeviceDescription, Qubit
+from cudaq_pulse.targets.base import DeviceDescription, PhysicalQudit
 
 from tests._handles import Q
 from tests.runtime._lowering import evolve, on
@@ -47,8 +47,8 @@ def test_evolve_on_compiler_only_build_raises_not_built():
 
     target = DeviceDescription(
         name="guard",
-        qubits={
-            0: Qubit(
+        qudits={
+            0: PhysicalQudit(
                 index=0, frequency_hz=5.0e9, anharmonicity_hz=-200.0e6, t1_us=0.0, t2_star_us=0.0
             )
         },

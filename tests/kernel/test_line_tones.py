@@ -13,7 +13,7 @@ import pytest
 from cudaq_pulse.targets import (
     DeviceDescription,
     MicrowaveDrive,
-    Qubit,
+    PhysicalQudit,
     SimulationModel,
     TransmonModel,
 )
@@ -142,7 +142,7 @@ def test_tones_lists_the_transitions_of_the_qudit_s_levels():
 def _target(model):
     return DeviceDescription(
         name="tones-test",
-        qubits={0: Qubit(0, 5.0e9, -200e6, 50.0, 30.0)},
+        qudits={0: PhysicalQudit(0, 5.0e9, -200e6, 50.0, 30.0)},
         model=model,
     )
 
@@ -194,9 +194,9 @@ def test_a_readout_line_plays_at_the_readout_frequency():
     # transmon_17q's resonators are about 3 GHz above its qubits.
     dev = pulse.device("transmon_17q")
     for handle in dev.qudits[[0, 9]]:
-        qubit = dev.description.qubits[handle.index]
-        resonator = qubit.readout.frequency_hz
-        assert abs(resonator - qubit.frequency_hz) > 1e9
+        qudit = dev.description.qudits[handle.index]
+        resonator = qudit.readout.frequency_hz
+        assert abs(resonator - qudit.frequency_hz) > 1e9
         for kernel in (read_static, read_runtime):
             lowered = kernel.lower(handle, 2e6)
             assert _readout_frequencies(lowered) == [resonator, resonator + 2e6]
@@ -216,7 +216,7 @@ def test_the_frequency_tables_hold_the_program_s_qudits_not_the_device_s():
     # device of its own: no compile is shared with another test.
     dev = pulse.device(pulse.device("transmon_17q").description)
     static, runtime = (pulse.kernel(k.__wrapped__) for k in (read_static, read_runtime))
-    resonator = {i: dev.description.qubits[i].readout.frequency_hz for i in (0, 4, 9)}
+    resonator = {i: dev.description.qudits[i].readout.frequency_hz for i in (0, 4, 9)}
     for kernel, index, count in (
         (static, 0, 1),
         (runtime, 4, 5),
@@ -246,7 +246,7 @@ def test_the_tones_of_a_line_are_read_only():
         pulse.compile(attribute).lower(Q[0])
 
 
-class _UpperQubit(SimulationModel):
+class _UpperQudit(SimulationModel):
     """A model whose lines' own tones drive levels 1 and 2."""
 
     levels: ClassVar[int] = 3
@@ -260,7 +260,7 @@ def test_the_default_transition_comes_from_the_model():
         drive(d, square(40, 0.1), tone=d.tones[(1, 2)])
         drive(d, square(40, 0.1), tone=d.tones[(0, 1)])
 
-    dev = pulse.device(_target(_UpperQubit))
+    dev = pulse.device(_target(_UpperQudit))
     lowered = pulse.compile(both).lower(dev.qudits[0])
     # (1, 2) is the line's own tone; (0, 1) is made, at the model's evenly
     # spaced 0-1 frequency.
@@ -286,8 +286,8 @@ def test_driving_the_second_transition_moves_the_qudit_to_level_two():
     # and 1-2, whose matrix element is sqrt(2), by sqrt(2) times that.
     target = DeviceDescription(
         name="tones-test",
-        qubits={
-            0: Qubit(
+        qudits={
+            0: PhysicalQudit(
                 0,
                 5.0e9,
                 -200e6,

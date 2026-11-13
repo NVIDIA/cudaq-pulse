@@ -18,10 +18,10 @@ cal = {
 
 
 @pulse.kernel
-def echoed_cr(qubit_ctrl, qubit_tgt):
-    """Echoed cross-resonance CNOT from *qubit_ctrl* to *qubit_tgt*."""
-    drive_line_ctrl = get_drive_line(qubit_ctrl)
-    drive_line_tgt = get_drive_line(qubit_tgt)
+def echoed_cr(qudit_ctrl, qudit_tgt):
+    """Echoed cross-resonance CNOT from *qudit_ctrl* to *qudit_tgt*."""
+    drive_line_ctrl = get_drive_line(qudit_ctrl)
+    drive_line_tgt = get_drive_line(qudit_tgt)
 
     sync(drive_line_ctrl, drive_line_tgt)
 

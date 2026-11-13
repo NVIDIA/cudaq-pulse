@@ -12,7 +12,7 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.targets import DeviceDescription, MicrowaveDrive, Qubit
+from cudaq_pulse.targets import DeviceDescription, MicrowaveDrive, PhysicalQudit
 
 from tests._handles import Q
 from tests.runtime._lowering import evolve, on, pulse_mlir
@@ -20,11 +20,11 @@ from tests.runtime._lowering import evolve, on, pulse_mlir
 gpu = pytest.mark.gpu
 
 
-def _single_qubit_target(*, t1_us, t2_star_us=0.0, frequency_hz=5.0e9):
+def _single_qudit_target(*, t1_us, t2_star_us=0.0, frequency_hz=5.0e9):
     return DeviceDescription(
         name="decoherence-test",
-        qubits={
-            0: Qubit(
+        qudits={
+            0: PhysicalQudit(
                 index=0,
                 frequency_hz=frequency_hz,
                 anharmonicity_hz=-200.0e6,
@@ -52,7 +52,7 @@ def _pi_pulse_then_wait(wait_cycles):
 def test_decoherence_mlir_structure():
     """A pi-pulse-plus-wait kernel lowers to structurally valid MLIR."""
     ir = (_pi_pulse_then_wait(1000), Q[0])
-    mlir = pulse_mlir(ir, clock_ghz=2.0, qubit_freq_hz={0: 5.0e9})
+    mlir = pulse_mlir(ir, clock_ghz=2.0, qudit_freq_hz={0: 5.0e9})
 
     assert "pulse.square" in mlir
     assert "pulse.wait" in mlir
@@ -61,7 +61,7 @@ def test_decoherence_mlir_structure():
 @gpu
 def test_t1_excited_state_decays():
     """After a pi pulse and a wait, the excited population damps toward |0>."""
-    target = _single_qubit_target(t1_us=0.2)
+    target = _single_qudit_target(t1_us=0.2)
     ir = (_pi_pulse_then_wait(1000), Q[0])
     result = evolve(on(target, *ir), t_start=0.0, t_end=520.0, step_count=520, integrator="rk4")
 
@@ -77,7 +77,7 @@ def test_t1_excited_state_decays():
 @gpu
 def test_t1_longer_wait_more_decay():
     """Longer idle time produces strictly more T1 decay."""
-    target = _single_qubit_target(t1_us=0.2)
+    target = _single_qudit_target(t1_us=0.2)
 
     def _run(wait_cycles, t_end):
         ir = (_pi_pulse_then_wait(wait_cycles), Q[0])
@@ -95,7 +95,7 @@ def test_t1_longer_wait_more_decay():
 @gpu
 def test_ground_state_stable_under_decoherence():
     """The ground state is the fixed point of T1 damping."""
-    target = _single_qubit_target(t1_us=0.2)
+    target = _single_qudit_target(t1_us=0.2)
 
     @pulse.kernel
     def idle(q0):
@@ -112,7 +112,7 @@ def test_ground_state_stable_under_decoherence():
 @gpu
 def test_decoherence_preserves_trace():
     """Lindblad evolution conserves the density-matrix trace."""
-    target = _single_qubit_target(t1_us=0.2)
+    target = _single_qudit_target(t1_us=0.2)
     ir = (_pi_pulse_then_wait(4000), Q[0])
     result = evolve(on(target, *ir), t_start=0.0, t_end=2020.0, step_count=2020, integrator="rk4")
     rho = result.final_state
@@ -120,12 +120,12 @@ def test_decoherence_preserves_trace():
 
 
 @gpu
-def test_multiqubit_independent_decay():
+def test_multiqudit_independent_decay():
     """Two qubits with distinct T1 both damp; the whole state stays physical."""
     target = DeviceDescription(
         name="two-qubit-decoherence",
-        qubits={
-            0: Qubit(
+        qudits={
+            0: PhysicalQudit(
                 index=0,
                 frequency_hz=5.0e9,
                 anharmonicity_hz=-200.0e6,
@@ -133,7 +133,7 @@ def test_multiqubit_independent_decay():
                 t2_star_us=0.0,
                 drive=MicrowaveDrive(amplitude_scale_rad_per_ns=1.0),
             ),
-            1: Qubit(
+            1: PhysicalQudit(
                 index=1,
                 frequency_hz=5.2e9,
                 anharmonicity_hz=-200.0e6,

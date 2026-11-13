@@ -81,7 +81,7 @@ def test_pass_failures_carry_the_diagnostics():
 def test_a_pass_by_name_takes_its_options():
     from tests.workloads import w4_syndrome
 
-    text = pulse.compile(w4_syndrome.build).lower(*Q[: w4_syndrome.NUM_QUBITS]).mlir()
+    text = pulse.compile(w4_syndrome.build).lower(*Q[: w4_syndrome.NUM_QUDITS]).mlir()
     pipeline = native.MLIRPipeline()
     scheduled = pipeline.parse_to_module(text)
     scheduled.schedule("alap_rcp", 1, 1, 3, 2)

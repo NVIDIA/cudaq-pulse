@@ -23,9 +23,9 @@ read-only.
    pair = chip.qudits[0:2]     # a Register: carriers 4 and 5
    some = chip.qudits[[0, 2]]  # carriers 4 and 6
 
-   chip.qubit_freq[0]                 # 0-1 frequency of qudit 0, in Hz
+   chip.qudit_freq[0]                 # 0-1 frequency of qudit 0, in Hz
    chip.transition_freq[0, 1, 2]      # 1-2 frequency of qudit 0
-   chip.qubit_freq[0] = 5.01e9        # ValueError: assignment destination is read-only
+   chip.qudit_freq[0] = 5.01e9        # ValueError: assignment destination is read-only
 
 ``pulse.device`` takes the quantum system, a registered target name or a
 ``cudaq_pulse.targets.DeviceDescription``, and optionally ``layout=``,
@@ -40,12 +40,12 @@ couplings, for transmons the exchange g (a^dagger b + a b^dagger):
 
 .. code-block:: python
 
-   from cudaq_pulse.targets import Coupling, FluxCZ, Qubit, DeviceDescription
+   from cudaq_pulse.targets import Coupling, FluxCZ, PhysicalQudit, DeviceDescription
 
    cz = FluxCZ(duration_ns=98.0)
    pair = DeviceDescription(
        name="pair",
-       qubits={i: Qubit(i, f, -2.0e8, 50.0, 30.0) for i, f in enumerate([4.8e9, 6.9e9])},
+       qudits={i: PhysicalQudit(i, f, -2.0e8, 50.0, 30.0) for i, f in enumerate([4.8e9, 6.9e9])},
        couplings=[Coupling((0, 1), strength_hz=5.7e6, calibrations={pulse.gates.CZ: cz})],
    )
    qpu = pulse.device(pair)
@@ -150,7 +150,7 @@ Registered names are ``transmon_17q`` and ``transmon_generic:N``;
 
 ``transmon_17q`` is the distance-three surface-code device of
 Krinner et al., Nature 605, 669 (2022), built from the values the paper
-publishes. Its qudits 0-16 are D1-D9, X1-X4 and Z1-Z4 (``Qubit.label``), and
+publishes. Its qudits 0-16 are D1-D9, X1-X4 and Z1-Z4 (``PhysicalQudit.label``), and
 its 24 couplings are the auxiliary-data pairs of the stabilizers, each with
 its CZ's duration, buffers and interaction frequency (its ``CZ``
 calibration, below).
@@ -189,7 +189,7 @@ defect bands and feedline groups. Every value records its
 
    dev = pulse.device("transmon_17q", calibration="transmon_17q", cooldown="2022-main")
    cal = dev.calibration
-   cal.entry("qubits", "D4", "ec")        # value with its provenance
+   cal.entry("qudits", "D4", "ec")        # value with its provenance
    cal.exchange_hz("X2-D4")               # J_qq at the idle points
    cal.exchange_hz("X2-D4", data_hz=4.4e9)  # ... with D4 tuned to 4.4 GHz
    cal.idle_zz_hz("X2-D4")
@@ -200,7 +200,7 @@ defect bands and feedline groups. Every value records its
 ``cudaq_pulse.targets.Calibration``; the ``transmon_17q`` target uses the
 ``transmon_17q`` calibration by default. Its couplings replace the target's, so devices with different
 calibrations compile separately. Detunings are in Hz; for qubits whose
-circuit, including d, is calibrated (``Calibration.flux_qubits``, all 17
+circuit, including d, is calibrated (``Calibration.flux_qudits``, all 17
 here) ``flux_for_detuning`` and ``detuning_for_flux`` convert to and from
 flux quanta. Every value in the shipped file is published, digitized from a
 published figure, or fitted, and cites its source; fitted values also name

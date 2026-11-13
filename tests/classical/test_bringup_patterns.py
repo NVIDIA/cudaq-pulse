@@ -12,13 +12,13 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse.classical import emulation, random_index
-from cudaq_pulse.targets import DeviceDescription, DispersiveReadout, Qubit
+from cudaq_pulse.targets import DeviceDescription, DispersiveReadout, PhysicalQudit
 
 PI_AMP = math.pi / 20
 
 
 def _device(**readout):
-    qubit = Qubit(
+    qudit = PhysicalQudit(
         index=0,
         frequency_hz=5e9,
         anharmonicity_hz=-2e8,
@@ -26,7 +26,7 @@ def _device(**readout):
         t2_star_us=0.0,
         readout=DispersiveReadout(**readout),
     )
-    return pulse.device(DeviceDescription(name="sim", qubits={0: qubit}))
+    return pulse.device(DeviceDescription(name="sim", qudits={0: qudit}))
 
 
 @pulse.classical(max_latency_ns=100)
@@ -167,7 +167,7 @@ def test_latency_within_the_depletion_time_is_hidden(depletion_ns):
 
 
 def test_depletion_defaults_from_kappa():
-    qubit = Qubit(
+    qudit = PhysicalQudit(
         index=0,
         frequency_hz=5e9,
         anharmonicity_hz=-2e8,
@@ -175,8 +175,8 @@ def test_depletion_defaults_from_kappa():
         t2_star_us=0.0,
         readout=DispersiveReadout(linewidth_hz=1e6),
     )
-    assert qubit.depletion_ns == pytest.approx(math.log(100) / (2 * math.pi * 1e-3))
-    assert _device().description.qubits[0].depletion_ns == 0.0
+    assert qudit.depletion_ns == pytest.approx(math.log(100) / (2 * math.pi * 1e-3))
+    assert _device().description.qudits[0].depletion_ns == 0.0
 
 
 # The converged pattern: the trip count is fixed; the estimator carries a

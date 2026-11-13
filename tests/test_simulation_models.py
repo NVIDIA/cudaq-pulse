@@ -11,7 +11,7 @@ import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse.targets import (
     DeviceDescription,
-    Qubit,
+    PhysicalQudit,
     SimulationModel,
     TransmonModel,
     transmon_generic,
@@ -21,8 +21,9 @@ from cudaq_pulse.targets import (
 def _target(model=TransmonModel, n=3):
     return DeviceDescription(
         name="models",
-        qubits={
-            q: Qubit(q, 5.0e9 + 0.1e9 * q, -300.0e6, t1_us=0.0, t2_star_us=0.0) for q in range(n)
+        qudits={
+            q: PhysicalQudit(q, 5.0e9 + 0.1e9 * q, -300.0e6, t1_us=0.0, t2_star_us=0.0)
+            for q in range(n)
         },
         model=model,
     )

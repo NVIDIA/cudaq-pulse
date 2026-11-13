@@ -58,7 +58,7 @@ def _own(low, k=0):
     return [
         (e.kind, e.start_cycles, e.duration_cycles)
         for e in low.schedule
-        if e.link is None and e.qubit == qudit
+        if e.link is None and e.qudit == qudit
     ]
 
 
@@ -86,7 +86,7 @@ def _lower(kernel, *args, **options):
 
 @pytest.mark.parametrize("take", TAKES)
 @pytest.mark.parametrize("policy", POLICIES)
-def test_two_qubits_with_their_own_waits_do_not_stall_each_other(policy, take):
+def test_two_qudits_with_their_own_waits_do_not_stall_each_other(policy, take):
     def pair(length):
         @pulse.kernel
         def k(q, p):

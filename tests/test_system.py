@@ -27,7 +27,7 @@ from cudaq_pulse.targets.base import (
     DeviceDescription,
     DispersiveReadout,
     MicrowaveDrive,
-    Qubit,
+    PhysicalQudit,
 )
 from cudaq_pulse.targets.models import SimulationModel
 
@@ -705,8 +705,8 @@ def test_a_qpu_round_trips_through_its_system_file():
 
 def test_a_qudit_s_drive_and_readout_round_trip_through_the_system_file():
     readout = DispersiveReadout(frequency_hz=7.1e9, linewidth_hz=1e6, error_1to0=0.02)
-    qubits = {
-        0: Qubit(
+    qudits = {
+        0: PhysicalQudit(
             0,
             5.0e9,
             -2e8,
@@ -715,22 +715,22 @@ def test_a_qudit_s_drive_and_readout_round_trip_through_the_system_file():
             drive=MicrowaveDrive(amplitude_scale_rad_per_ns=0.3),
             readout=readout,
         ),
-        1: Qubit(1, 5.1e9, -2e8, 50.0, 30.0),
+        1: PhysicalQudit(1, 5.1e9, -2e8, 50.0, 30.0),
     }
-    dev = pulse.device(DeviceDescription(name="ro", qubits=qubits))
-    qudits = _round_trip(dev)["quantum_system"]["qudits"]
-    assert qudits[0]["readout"]["kind"] == "dispersive"
-    assert qudits[0]["readout"]["frequency_hz"] == 7.1e9
-    assert qudits[0]["drive"] == {"kind": "microwave", "amplitude_scale_rad_per_ns": 0.3}
-    assert qudits[1]["readout"] is None and qudits[1]["drive"] is None
-    other = Qubit(0, 5.0e9, -2e8, 50.0, 30.0, readout=readout.replace(linewidth_hz=2e6))
-    moved = pulse.device(DeviceDescription(name="ro", qubits={**qubits, 0: other}))
+    dev = pulse.device(DeviceDescription(name="ro", qudits=qudits))
+    written = _round_trip(dev)["quantum_system"]["qudits"]
+    assert written[0]["readout"]["kind"] == "dispersive"
+    assert written[0]["readout"]["frequency_hz"] == 7.1e9
+    assert written[0]["drive"] == {"kind": "microwave", "amplitude_scale_rad_per_ns": 0.3}
+    assert written[1]["readout"] is None and written[1]["drive"] is None
+    other = PhysicalQudit(0, 5.0e9, -2e8, 50.0, 30.0, readout=readout.replace(linewidth_hz=2e6))
+    moved = pulse.device(DeviceDescription(name="ro", qudits={**qudits, 0: other}))
     assert moved.fingerprint != dev.fingerprint
 
 
 def test_a_system_file_refuses_an_unknown_component_kind_or_field():
     data = pulse.device(
-        DeviceDescription(name="ro", qubits={0: Qubit(0, 5.0e9, -2e8, 50.0, 30.0)})
+        DeviceDescription(name="ro", qudits={0: PhysicalQudit(0, 5.0e9, -2e8, 50.0, 30.0)})
     ).as_dict()
     qudit = data["quantum_system"]["qudits"][0]
     qudit["readout"] = {"kind": "fluorescence"}
@@ -774,7 +774,7 @@ def test_a_program_clock_round_trips_through_the_system_file():
 def test_a_custom_quantum_system_is_written_inline_with_the_new_key_names():
     target = DeviceDescription(
         name="pair",
-        qubits={i: Qubit(i, 5e9 + i * 1e8, -2.5e8, 50.0, 40.0) for i in range(2)},
+        qudits={i: PhysicalQudit(i, 5e9 + i * 1e8, -2.5e8, 50.0, 40.0) for i in range(2)},
         couplings=[Coupling((0, 1), 3e6)],
     )
     qpu = pulse.device(target)
@@ -920,7 +920,7 @@ def test_doctor_checks_a_system_file(tmp_path):
 def test_a_system_file_keeps_the_simulation_model():
     target = DeviceDescription(
         name="other-pair",
-        qubits={i: Qubit(i, 5e9 + i * 1e8, 0.0, 50.0, 40.0) for i in range(2)},
+        qudits={i: PhysicalQudit(i, 5e9 + i * 1e8, 0.0, 50.0, 40.0) for i in range(2)},
         model=SimulationModel(levels={1: 3}),
     )
     qpu = pulse.device(target)
@@ -950,7 +950,7 @@ def test_a_system_file_names_a_model_it_cannot_hold():
 
     target = DeviceDescription(
         name="custom-pair",
-        qubits={i: Qubit(i, 5e9 + i * 1e8, 0.0, 50.0, 40.0) for i in range(2)},
+        qudits={i: PhysicalQudit(i, 5e9 + i * 1e8, 0.0, 50.0, 40.0) for i in range(2)},
         model=Custom,
     )
     with pytest.raises(InvalidValueError, match="Custom is not one"):

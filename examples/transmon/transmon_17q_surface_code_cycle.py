@@ -24,9 +24,9 @@ from cudaq_pulse.targets.transmon import CZ_LAYERS
 dev = pulse.device("transmon_17q")
 target = dev.description
 clock_ghz = dev.clock_ghz  # the program clock the schedule counts cycles of
-labels = {q.index: q.label for q in target.qubits.values()}
+labels = {q.index: q.label for q in target.qudits.values()}
 qudit_count = target.qudit_count
-data_qubits = [i for i in range(qudit_count) if labels[i].startswith("D")]
+data_qudits = [i for i in range(qudit_count) if labels[i].startswith("D")]
 z_auxiliaries = [i for i in range(qudit_count) if labels[i].startswith("Z")]
 x_auxiliaries = [i for i in range(qudit_count) if labels[i].startswith("X")]
 
@@ -40,7 +40,7 @@ for s, layer in enumerate(CZ_LAYERS, 1):
 
 
 @pulse.kernel
-def surface_code_cycle(qubits):
+def surface_code_cycle(qudits):
     # Each qudit's calibrated pi and pi/2 pulses: the published 40 ns,
     # sigma = 10 ns DRAG, amplitudes rates in rad/ns.
     lines = []
@@ -48,7 +48,7 @@ def surface_code_cycle(qubits):
     pi_pulses = []
     half_pi_pulses = []
     for i in range(qudit_count):
-        line = get_drive_line(qubits[i])
+        line = get_drive_line(qudits[i])
         lines.append(line)
         tones.append(line.tone)
         pi_pulses.append(line.get_calibration(pulse.gates.X))
@@ -56,7 +56,7 @@ def surface_code_cycle(qubits):
 
     for auxiliaries, basis_change, halves in (
         (z_auxiliaries, [], z_steps),
-        (x_auxiliaries, data_qubits, x_steps),
+        (x_auxiliaries, data_qudits, x_steps),
     ):
         for i in auxiliaries:
             drive(lines[i], half_pi_pulses[i], tone=tones[i])
@@ -78,7 +78,7 @@ def surface_code_cycle(qubits):
                 sync(lines[qudit_count - 2 - i], lines[qudit_count - 1 - i])
             if h == 0:
                 # The echo between the second and third step of each half.
-                for i in data_qubits:
+                for i in data_qudits:
                     drive(lines[i], pi_pulses[i], tone=tones[i])
         for i in auxiliaries:
             drive(lines[i], half_pi_pulses[i], tone=tones[i])

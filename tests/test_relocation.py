@@ -72,9 +72,9 @@ def _plain(export):
 
 def _recalibrated(device, carrier, shift_hz):
     target = device.description
-    qubits = dict(target.qubits)
-    qubits[carrier] = qubits[carrier].replace(frequency_hz=qubits[carrier].frequency_hz + shift_hz)
-    return Device(dataclasses.replace(target, qubits=qubits), name=device.name)
+    qudits = dict(target.qudits)
+    qudits[carrier] = qudits[carrier].replace(frequency_hz=qudits[carrier].frequency_hz + shift_hz)
+    return Device(dataclasses.replace(target, qudits=qudits), name=device.name)
 
 
 @pytest.mark.parametrize("schedule", ["alap", "asap"])
@@ -133,12 +133,12 @@ def test_a_readout_depends_on_the_slot_s_readout_frequency():
     def read_only(q: Qudit):
         readout(get_readout_line(q), square(100, 0.05))
 
-    qubit = DEV.description.qubits[DEV.layout[9]]
+    qudit = DEV.description.qudits[DEV.layout[9]]
     for version in (1, 2):
         export = probe.lower(H[9], 0.2).export_controller(version=version)
         values = {s["symbol"]: s.get("value") for s in export["symbols"]}
-        assert values["s0.f01"] == qubit.frequency_hz
-        assert values["s0.f_ro"] == qubit.readout.frequency_hz
+        assert values["s0.f01"] == qudit.frequency_hz
+        assert values["s0.f_ro"] == qudit.readout.frequency_hz
         played = [e["symbols"]["frequency_hz"] for e in export["events"] if "symbols" in e]
         # The drive, the readout, and the drive on the readout line's tone.
         assert played == [["s0.f01"], ["s0.f_ro"], ["s0.f_ro"]]
@@ -237,7 +237,7 @@ def test_a_runtime_qudits_line_has_only_its_own_tone():
         d = get_drive_line(q)
         drive(d, square(20, 0.1), tone=d.tones[(1, 2)])
 
-    assert [(e.kind, e.qubit) for e in own.lower(H[2]).schedule] == [("drive", 2)]
+    assert [(e.kind, e.qudit) for e in own.lower(H[2]).schedule] == [("drive", 2)]
     with pytest.raises(pulse.NotFoundError, match="runtime parameter.*f12_hz: float"):
         other.lower(H[2])
 

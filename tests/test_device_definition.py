@@ -9,17 +9,19 @@ from pathlib import Path
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse.targets import Calibration, DeviceDescription, Qubit
+from cudaq_pulse.targets import Calibration, DeviceDescription, PhysicalQudit
 
 TRANSMON_17Q = "transmon_17q"
 
 
 def _pair():
-    qubits = {
-        i: Qubit(index=i, frequency_hz=5e9, anharmonicity_hz=-2e8, t1_us=0.0, t2_star_us=0.0)
+    qudits = {
+        i: PhysicalQudit(
+            index=i, frequency_hz=5e9, anharmonicity_hz=-2e8, t1_us=0.0, t2_star_us=0.0
+        )
         for i in (0, 1)
     }
-    return DeviceDescription(name="pair", qubits=qubits)
+    return DeviceDescription(name="pair", qudits=qudits)
 
 
 def _problems(given):

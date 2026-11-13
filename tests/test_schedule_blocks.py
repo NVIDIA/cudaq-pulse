@@ -29,7 +29,7 @@ def _starts(compiled):
     return [e.start_cycles for e in compiled.schedule]
 
 
-def _qubits(n):
+def _qudits(n):
     return [Q[i] for i in range(n)]
 
 
@@ -114,8 +114,8 @@ def test_resource_constrained_schedules_are_for_whole_programs(policy):
 
 def test_asap_block_keeps_its_shape_in_an_alap_program():
     top = _after_long_drive(asap_pair)
-    blocked = top.lower(*_qubits(3))
-    flat = pulse.compile(top, flatten_schedules=True).lower(*_qubits(3))
+    blocked = top.lower(*_qudits(3))
+    flat = pulse.compile(top, flatten_schedules=True).lower(*_qudits(3))
     # The block ends with line a; inside it, both lines start together.
     assert _timeline(blocked) == [
         ("drive", 0, 0, 200),
@@ -128,7 +128,7 @@ def test_asap_block_keeps_its_shape_in_an_alap_program():
 
 def test_compile_schedule_sets_only_the_compiled_kernels_policy():
     top = _after_long_drive(alap_pair)
-    compiled = pulse.compile(top, schedule="asap").lower(*_qubits(3))
+    compiled = pulse.compile(top, schedule="asap").lower(*_qudits(3))
     # The ALAP block right-aligns line c inside it even in an ASAP program.
     assert _timeline(compiled) == [
         ("drive", 0, 0, 200),
@@ -145,9 +145,9 @@ def test_compiled_kernel_defaults_to_its_own_schedule():
         drive(da, square(200, 0.1))
         drive(db, square(40, 0.1))
 
-    qubits = _qubits(2)
-    assert _starts(top.lower(*qubits)) == [0, 0]
-    assert _starts(pulse.compile(top, schedule="alap").lower(*qubits)) == [0, 160]
+    qudits = _qudits(2)
+    assert _starts(top.lower(*qudits)) == [0, 0]
+    assert _starts(pulse.compile(top, schedule="alap").lower(*qudits)) == [0, 160]
 
 
 def test_kernel_without_schedule_is_scheduled_with_its_caller():
@@ -155,21 +155,21 @@ def test_kernel_without_schedule_is_scheduled_with_its_caller():
         drive(db, square(100, 0.1), tone=tb)
         drive(dc, square(40, 0.1), tone=tc)
 
-    qubits = _qubits(3)
-    as_kernel = _after_long_drive(plain_pair).lower(*qubits)
-    as_helper = _after_long_drive(helper).lower(*qubits)
+    qudits = _qudits(3)
+    as_kernel = _after_long_drive(plain_pair).lower(*qudits)
+    as_helper = _after_long_drive(helper).lower(*qudits)
     assert as_kernel.mlir() == as_helper.mlir()
     assert "schedule_block" not in as_kernel.mlir()
 
 
 @pytest.mark.parametrize("policy", ["asap", "alap"])
 def test_flatten_schedules_ignores_called_kernels_policies(policy):
-    qubits = _qubits(3)
+    qudits = _qudits(3)
     for pair in (asap_pair, alap_pair):
         flat = pulse.compile(
             _after_long_drive(pair), schedule=policy, flatten_schedules=True
-        ).lower(*qubits)
-        plain = pulse.compile(_after_long_drive(plain_pair), schedule=policy).lower(*qubits)
+        ).lower(*qudits)
+        plain = pulse.compile(_after_long_drive(plain_pair), schedule=policy).lower(*qudits)
         assert _timeline(flat) == _timeline(plain)
 
 
@@ -197,7 +197,7 @@ def test_three_levels_of_blocks_compose():
         drive(z, square(300, 0.1))
         outer(x, x.tone, y, y.tone)
 
-    compiled = top.lower(*_qubits(3))
+    compiled = top.lower(*_qudits(3))
     # Same placement as the three_levels lit test.
     assert sorted((e.line, e.start_cycles, e.duration_cycles) for e in compiled.schedule) == [
         (0, 160, 100),
@@ -249,7 +249,7 @@ def test_measurement_from_a_block_controls_the_caller():
         if m:
             drive(db, square(40, 0.1))
 
-    events = top.lower(*_qubits(2)).schedule
+    events = top.lower(*_qudits(2)).schedule
     readout_event = next(e for e in events if e.kind == "readout")
     feedback = events[-1]
     assert readout_event.start_cycles == 100
@@ -268,7 +268,7 @@ def test_tone_threaded_into_a_block_waits_for_its_pulse():
         drive(da, square(300, 0.1), tone=db.tone)  # cross-resonance at qubit b's tone
         on_target(db)
 
-    assert _starts(top.lower(*_qubits(2))) == [0, 300]
+    assert _starts(top.lower(*_qudits(2))) == [0, 300]
 
 
 # ── Parametric kernels and resource limits ───────────────────────────
@@ -288,14 +288,14 @@ def test_a_float_parameter_does_not_change_a_blocks_schedule():
         drive(da, square(200, 0.1))
         pulse_pair(db, dc, amp)
 
-    qubits = _qubits(3)
+    qudits = _qudits(3)
     compiled = pulse.compile(top)
-    first = compiled.lower(*qubits, 0.2)
+    first = compiled.lower(*qudits, 0.2)
     # The module is scheduled, blocks placed and inlined, with amp symbolic.
     assert "%arg0: f64" in first.generic.mlir()
     assert "schedule_block" not in first.generic.mlir()
     assert _starts(first) == [0, 100, 100]
-    assert _timeline(compiled.lower(*qubits, 0.5)) == _timeline(first)
+    assert _timeline(compiled.lower(*qudits, 0.5)) == _timeline(first)
     assert compiled.cache_info().compiled == 1
 
 
@@ -303,8 +303,8 @@ def test_a_float_parameter_does_not_change_a_blocks_schedule():
 def test_resource_constrained_programs_reject_blocks(policy):
     top = _after_long_drive(asap_pair)
     with pytest.raises(pulse.CompilationError, match="flatten_schedules=True"):
-        pulse.compile(top, schedule=policy).lower(*_qubits(3))
-    flat = pulse.compile(top, schedule=policy, flatten_schedules=True).lower(*_qubits(3))
+        pulse.compile(top, schedule=policy).lower(*_qudits(3))
+    flat = pulse.compile(top, schedule=policy, flatten_schedules=True).lower(*_qudits(3))
     assert len(flat.schedule) == 3
 
 
@@ -314,7 +314,7 @@ def test_native_scheduler_rejects_resource_limits_with_blocks():
     from cudaq_pulse.kernel.packed_ir_builder import PackedIRBuilder
 
     builder = PackedIRBuilder()
-    _trace_kernel_with_builder(_after_long_drive(asap_pair).__wrapped__, builder, _qubits(3))
+    _trace_kernel_with_builder(_after_long_drive(asap_pair).__wrapped__, builder, _qudits(3))
     module = PulseModuleBuilder().build_from_packed(
         builder.get_buffer(), 2.0, builder.qudit_count, builder.get_freq_array()
     )
@@ -339,7 +339,7 @@ def _compile_time_workloads():
 @pytest.mark.parametrize("policy", ["asap", "alap", "rcp"])
 def test_programs_without_blocks_schedule_as_before(policy):
     for _name, kernel_fn, qudit_count, _freq in _compile_time_workloads():
-        args = _qubits(qudit_count)
+        args = _qudits(qudit_count)
         default = pulse.compile(kernel_fn, schedule=policy).lower(*args)
         flat = pulse.compile(kernel_fn, schedule=policy, flatten_schedules=True).lower(*args)
         assert "schedule_block" not in default.mlir()
@@ -369,10 +369,10 @@ def test_a_block_in_a_rolled_loop_keeps_its_timing_each_iteration():
         d1 = get_drive_line(q1)
         asap_layer(d0, d1)
 
-    qubits = _qubits(2)
-    single = _timeline(once.lower(*qubits))
+    qudits = _qudits(2)
+    single = _timeline(once.lower(*qudits))
     for n in (2, 8):
-        lowered = repeated.lower(*qubits, n)
+        lowered = repeated.lower(*qudits, n)
         assert lowered.mlir().count("scf.for") == 1
         timeline = _timeline(lowered)
         assert len(timeline) == 2 * n
@@ -397,7 +397,7 @@ def test_a_callee_that_acquires_its_lines_in_a_rolled_loop_stays_rolled():
         for _ in range(n):
             layer(q0, q1)
 
-    lowered = repeated.lower(*_qubits(2), 4)
+    lowered = repeated.lower(*_qudits(2), 4)
     assert lowered.mlir().count("scf.for") == 1
     starts = sorted(e.start_cycles for e in lowered.schedule if e.line == 0)
     assert starts == [0, 40, 80, 120]
@@ -424,7 +424,7 @@ def test_a_block_with_a_float_length_wait_keeps_its_shape_when_called():
         drive(dc, square(1000, 0.1))
         delayed(da, db, tau)
 
-    events = top.lower(*_qubits(3), 37.0).schedule
+    events = top.lower(*_qudits(3), 37.0).schedule
     # Placed whole at the end of the ALAP program, the ASAP block still
     # starts both of its lines together.
     assert [(e.kind, e.line, e.start_cycles) for e in events] == [

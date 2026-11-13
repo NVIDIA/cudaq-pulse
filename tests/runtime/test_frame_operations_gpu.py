@@ -10,7 +10,7 @@ import math
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse.targets import DeviceDescription, MicrowaveDrive, Qubit
+from cudaq_pulse.targets import DeviceDescription, MicrowaveDrive, PhysicalQudit
 
 from tests._handles import Q
 from tests.runtime._lowering import evolve, on, pulse_mlir
@@ -21,8 +21,8 @@ gpu = pytest.mark.gpu
 def _target():
     return DeviceDescription(
         name="frame-ops",
-        qubits={
-            0: Qubit(
+        qudits={
+            0: PhysicalQudit(
                 index=0,
                 frequency_hz=5.0e9,
                 anharmonicity_hz=-200.0e6,
@@ -53,7 +53,7 @@ def test_frame_operations_mlir_structure():
         shift_phase(d0.tone, math.pi / 2)
         drive(d0, square(40, math.pi / 20.0))
 
-    mlir = pulse_mlir((phased, Q[0]), clock_ghz=2.0, qubit_freq_hz={0: 5.0e9})
+    mlir = pulse_mlir((phased, Q[0]), clock_ghz=2.0, qudit_freq_hz={0: 5.0e9})
     assert "pulse.shift_phase" in mlir or "phase" in mlir
 
 

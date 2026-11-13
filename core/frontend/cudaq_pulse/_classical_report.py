@@ -41,7 +41,7 @@ class ClassicalCall:
     ``exposed_cycles`` is how long the first use waits for the answer beyond
     when it could start without the call: after its line is free and after
     the readout resonator of the last readout before the call has depleted
-    (``Qubit.depletion_ns``), when pulses must wait anyway. The rest of the
+    (``PhysicalQudit.depletion_ns``), when pulses must wait anyway. The rest of the
     budget, ``hidden_cycles``, overlaps that work. A latency within the
     depletion time is hidden entirely.
     """
@@ -99,23 +99,23 @@ class _Exposure:
 
         self._bisect = bisect.bisect_right
         clock = lowered.device.clock_ghz
-        qubits = lowered.device.description.qubits
+        qudits = lowered.device.description.qudits
         ends: dict[int, list[int]] = {}
         starting: dict[int, list[int]] = {}
         readouts: list[tuple[int, int]] = []
         holds: dict[int, int] = {}
-        for kind, line, qubit, start, duration in events:
+        for kind, line, qudit, start, duration in events:
             if (kind != "drive" and kind != "readout") or start is None or duration is None:
                 continue
             end = start + duration
             ends.setdefault(line, []).append(end)
             starting.setdefault(start, []).append(line)
             if kind == "readout":
-                hold = holds.get(qubit)
+                hold = holds.get(qudit)
                 if hold is None:
-                    q = qubits.get(qubit)
+                    q = qudits.get(qudit)
                     hold = math.ceil(q.depletion_ns * clock) if q is not None else 0
-                    holds[qubit] = hold
+                    holds[qudit] = hold
                 readouts.append((end, end + hold))
         for values in ends.values():
             values.sort()
@@ -151,14 +151,14 @@ class _LoopExposure:
 
     def __init__(self, lowered: "Lowered", nodes: Sequence[Any]) -> None:
         clock = lowered.device.clock_ghz
-        qubits = lowered.device.description.qubits
+        qudits = lowered.device.description.qudits
         holds: dict[int, int] = {}
 
-        def hold(qubit: int) -> int:
-            if qubit not in holds:
-                q = qubits.get(qubit)
-                holds[qubit] = math.ceil(q.depletion_ns * clock) if q is not None else 0
-            return holds[qubit]
+        def hold(qudit: int) -> int:
+            if qudit not in holds:
+                q = qudits.get(qudit)
+                holds[qudit] = math.ceil(q.depletion_ns * clock) if q is not None else 0
+            return holds[qudit]
 
         def build(items: Sequence[Any], trips: tuple[int, ...]) -> tuple[list[Any], list[Any]]:
             # (the block's items, every op under it). An op is (readout,
@@ -173,7 +173,7 @@ class _LoopExposure:
                         block.append((item[0], inner, ops))
                         under += ops
                     continue
-                kind, line, qubit, start, duration, shifts = item
+                kind, line, qudit, start, duration, shifts = item
                 if (kind != "drive" and kind != "readout") or start is None or duration is None:
                     continue
                 if any(s is None for s in shifts):
@@ -192,7 +192,7 @@ class _LoopExposure:
                     start,
                     duration,
                     tuple(shifts),
-                    hold(qubit) if kind == "readout" else 0,
+                    hold(qudit) if kind == "readout" else 0,
                     extents,
                 )
                 block.append(op)

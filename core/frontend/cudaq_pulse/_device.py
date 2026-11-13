@@ -95,7 +95,7 @@ def _read_only(array: Any) -> Any:
 def _fingerprint(target: DeviceDescription, layout: tuple[int, ...], calibration: Any) -> str:
     """Content hash of everything a compiled kernel depends on, and of the
     calibration the device holds: devices of one fingerprint are one device."""
-    qubits = [
+    qudits = [
         (
             q.index,
             q.frequency_hz,
@@ -108,7 +108,7 @@ def _fingerprint(target: DeviceDescription, layout: tuple[int, ...], calibration
             None if (readout := q.readout) is None else (type(readout).__name__, readout._values),
             q.calibrations._content,  # type: ignore[attr-defined]
         )
-        for q in sorted(target.qubits.values(), key=lambda q: q.index)
+        for q in sorted(target.qudits.values(), key=lambda q: q.index)
     ]
     couplings = [
         (c.qudits, c.strength_hz, c.calibrations._content)  # type: ignore[attr-defined]
@@ -118,7 +118,7 @@ def _fingerprint(target: DeviceDescription, layout: tuple[int, ...], calibration
     content: tuple[Any, ...] = (
         target.model,
         target.clock_ghz,
-        qubits,
+        qudits,
         couplings,
         residual_zz,
         layout,
@@ -191,8 +191,8 @@ class Qudit:
         """The calibrated pulse of *gate* on this qudit of its device, as
         ``get_drive_line(q).get_calibration(gate)`` (``X`` to ``Y90``) and
         ``get_readout_line(q).get_calibration(pulse.gates.READOUT)`` give it
-        in a kernel; see ``Qubit.get_calibration``."""
-        return self.device.description.qubits[self.index].get_calibration(gate, transition)
+        in a kernel; see ``PhysicalQudit.get_calibration``."""
+        return self.device.description.qudits[self.index].get_calibration(gate, transition)
 
 
 class Register(Sequence[Qudit]):
@@ -305,7 +305,7 @@ class Device:
     controller may run its own clock, a whole-cycle ratio of it (see
     ``cudaq_pulse.controller``).
 
-    ``qubit_freq[q]`` is the 0-1 transition frequency of qudit ``q`` (Hz) and
+    ``qudit_freq[q]`` is the 0-1 transition frequency of qudit ``q`` (Hz) and
     ``transition_freq[q, i, j]`` that of levels ``i`` and ``j``, over the
     levels the target's model gives each qudit (NaN past a qudit's last
     level); both are indexed by the user's qudit numbering and are read-only
@@ -348,7 +348,7 @@ class Device:
             if clock != target.clock_ghz:
                 target = dataclasses.replace(target, clock_ghz=clock)
         layout = (
-            tuple(sorted(target.qubits))
+            tuple(sorted(target.qudits))
             if layout is None
             else _layout(layout, target, name, problems)
         )
@@ -388,12 +388,12 @@ class Device:
 
             target = self.description
             model = target.model if isinstance(target.model, SimulationModel) else SimulationModel()
-            qubits = [target.qubits[p] for p in self.layout]
+            qudits = [target.qudits[p] for p in self.layout]
             levels = [model.levels_of(p) for p in self.layout]
-            f01 = np.array([q.frequency_hz for q in qubits], dtype=float)
-            energies = np.full((len(qubits), max(levels, default=model.levels)), np.nan)
-            for row, qubit, n in zip(energies, qubits, levels, strict=False):
-                row[:n] = model.energies_hz(qubit, n)
+            f01 = np.array([q.frequency_hz for q in qudits], dtype=float)
+            energies = np.full((len(qudits), max(levels, default=model.levels)), np.nan)
+            for row, qudit, n in zip(energies, qudits, levels, strict=False):
+                row[:n] = model.energies_hz(qudit, n)
             transitions = np.abs(energies[:, None, :] - energies[:, :, None])
             self._arrays = (_read_only(f01), _read_only(transitions))
         return self._arrays
@@ -410,10 +410,10 @@ class Device:
         if index < 0:
             # A runtime qudit: its own tone is bound per call, and no other.
             return default, {}
-        qubit = target.qubits[index]
+        qudit = target.qudits[index]
         if readout:
             return default, {default: self._frequency_tables(index + 1)[2][index]}
-        return default, model.transitions_hz(qubit, model.levels_of(index))
+        return default, model.transitions_hz(qudit, model.levels_of(index))
 
     def _frequency_tables(self, count: int) -> tuple[int, array[float], array[float]]:
         """The 0-1 frequency of carriers 0 to *count* - 1 (or more), and the
@@ -428,7 +428,7 @@ class Device:
             return self._tables
         from array import array
 
-        frequencies, qubits = self.frequencies, self.description.qubits
+        frequencies, qudits = self.frequencies, self.description.qudits
         carriers: Sequence[int] = range(count)
         try:
             table = array("d", map(frequencies.__getitem__, carriers))
@@ -444,7 +444,7 @@ class Device:
             # The first carrier the target lacks.
             count = next((i for i, carrier in enumerate(carriers) if i != carrier), len(carriers))
         for carrier in carriers:
-            if qubits[carrier].readout is not None:
+            if qudits[carrier].readout is not None:
                 break
         else:
             # Without a readout, a readout line plays at the 0-1 frequency.
@@ -452,7 +452,7 @@ class Device:
             return self._tables
         from operator import attrgetter
 
-        components = list(map(attrgetter("readout"), map(qubits.__getitem__, carriers)))
+        components = list(map(attrgetter("readout"), map(qudits.__getitem__, carriers)))
         try:
             given = list(map(attrgetter("frequency_hz"), components))
         except AttributeError:
@@ -468,7 +468,7 @@ class Device:
         return self._tables
 
     @property
-    def qubit_freq(self) -> Any:
+    def qudit_freq(self) -> Any:
         return self._frequency_arrays()[0]
 
     @property
@@ -476,14 +476,14 @@ class Device:
         return self._frequency_arrays()[1]
 
     def qudit(self, label: str) -> Qudit:
-        """The handle of the qudit labelled *label* (``Qubit.label``), as in
+        """The handle of the qudit labelled *label* (``PhysicalQudit.label``), as in
         ``dev.qudit("D1")``; a ``NotFoundError`` names the labels there are."""
-        qubits = self.description.qubits
+        qudits = self.description.qudits
         for handle in self.qudits:
-            if qubits[handle.index].label == label:
+            if qudits[handle.index].label == label:
                 return handle
-        labels = [qubits[p].label for p in self.layout if qubits[p].label]
-        carrier = next((q.index for q in qubits.values() if q.label == label), None)
+        labels = [qudits[p].label for p in self.layout if qudits[p].label]
+        carrier = next((q.index for q in qudits.values() if q.label == label), None)
         if carrier is not None:
             raise NotFoundError(
                 f"qudit {label!r} is carrier {carrier} of {self.description.name}, which the "
@@ -532,7 +532,7 @@ class Device:
                 f"a {line} line has the calibrations of {gates}, not {_gate_label(name)}; {fix}"
             )
         pulse: DragPulse | ReadoutPulse = _qudit_calibration(
-            self.description.qubits[index], name, transition
+            self.description.qudits[index], name, transition
         )
         return pulse
 
@@ -683,7 +683,7 @@ def _layout(
     k = 0
     carriers: list[int] = []
     first: dict[int, int] = {}
-    known = target.qubits if target is not None else None
+    known = target.qudits if target is not None else None
     for k, entry in enumerate(layout):
         path = f"layout[{k}]"
         index = getattr(type(entry), "__index__", None)

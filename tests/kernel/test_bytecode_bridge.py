@@ -80,11 +80,11 @@ class TestBasicCompilation:
 
     def test_multiple_args(self):
 
-        def two_qubit(q0, q1):
+        def two_qudit(q0, q1):
             _d0 = get_drive_line(q0)
             _d1 = get_drive_line(q1)
 
-        ir = compile_kernel_bytecode(two_qubit)(Q[0], Q[1])
+        ir = compile_kernel_bytecode(two_qudit)(Q[0], Q[1])
         arg_ops = [op for op in ir.ops if op.kind == "pulse.qudit_arg"]
         assert len(arg_ops) == 2
 

@@ -12,7 +12,7 @@ from tests._ir import python_ir
 from tests.workloads.bug_corpus import CORRECT, BugCase
 
 
-def _make_qubits(n):
+def _make_qudits(n):
     return [Q[i] for i in range(n)]
 
 
@@ -31,8 +31,8 @@ def test_workload_compiles_and_schedules(name):
     import importlib
 
     module = importlib.import_module(f"tests.workloads.{name}")
-    n = module.NUM_QUBITS
-    compiled = pulse.compile(module.build, schedule="asap").lower(*_make_qubits(n))
+    n = module.NUM_QUDITS
+    compiled = pulse.compile(module.build, schedule="asap").lower(*_make_qudits(n))
     events = compiled.schedule
     assert compiled.metrics.op_count > 0
     assert max(e.start_cycles + e.duration_cycles for e in events) > 0
@@ -46,7 +46,7 @@ def test_workload_compiles_and_schedules(name):
 def test_cross_resonance_pulses_wait_for_the_target_tone(policy):
     from tests.workloads import w1_bell
 
-    compiled = pulse.compile(w1_bell.build, schedule=policy).lower(*_make_qubits(2))
+    compiled = pulse.compile(w1_bell.build, schedule=policy).lower(*_make_qudits(2))
     drives = [e for e in compiled.schedule if e.kind == "drive"]
     # Program order: sx on q0, then sx(q1), CR, x(q0), CR-, sx(q1). The CR
     # pulses play on line 0 at q1's tone, between the two pulses on line 1.
@@ -80,7 +80,7 @@ def test_correct_corpus_compiles(case: BugCase):
     assert isinstance(kernel, pulse.Kernel), f"{case.name}: build_fn() returned {kernel!r}"
 
     nargs = kernel.__wrapped__.__code__.co_argcount
-    compiled = pulse.compile(kernel, unroll_threshold=0).lower(*_make_qubits(nargs))
+    compiled = pulse.compile(kernel, unroll_threshold=0).lower(*_make_qudits(nargs))
     assert compiled.metrics.op_count > 0
 
 
@@ -92,9 +92,9 @@ def test_workload_compiles_on_the_packed_path(name):
     import importlib
 
     module = importlib.import_module(f"tests.workloads.{name}")
-    n = module.NUM_QUBITS
-    ir = python_ir(module.build, *_make_qubits(n))
-    compiled = module.build.lower(*_make_qubits(n))
+    n = module.NUM_QUDITS
+    ir = python_ir(module.build, *_make_qudits(n))
+    compiled = module.build.lower(*_make_qudits(n))
     assert compiled.metrics.op_count == ir.op_count()
 
 
@@ -108,7 +108,7 @@ def test_list_amplitude_packs_like_complex():
             d0 = get_drive_line(q0)
             drive(d0, square(40, amplitude))
 
-        builder = PackedIRBuilder(name="k", qubit_freq_hz={0: 5e9})
+        builder = PackedIRBuilder(name="k", qudit_freq_hz={0: 5e9})
         _trace_kernel_with_builder(k.__wrapped__, builder, [Q[0]])
         return builder.get_buffer().tolist()
 

@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 from cudaq_pulse.runtime import _jit as jit
 from cudaq_pulse.runtime import simulate as simulate_module
-from cudaq_pulse.targets import DeviceDescription, MicrowaveDrive, Qubit
+from cudaq_pulse.targets import DeviceDescription, MicrowaveDrive, PhysicalQudit
 
 from tests._handles import Q
 from tests.runtime._lowering import evolve, on
@@ -57,8 +57,8 @@ def gpu_on_cpu(monkeypatch):
 def _target(n, t1_us=0.0):
     return DeviceDescription(
         name="gpu-logic",
-        qubits={
-            q: Qubit(
+        qudits={
+            q: PhysicalQudit(
                 index=q,
                 frequency_hz=5.0e9 + 0.1e9 * q,
                 anharmonicity_hz=-200.0e6,

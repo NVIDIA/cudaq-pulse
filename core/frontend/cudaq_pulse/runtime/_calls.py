@@ -169,7 +169,7 @@ class IQModel:
         self._params: dict[int, dict[str, float]] = {}
         nan = math.nan
         for qudit in qudits:
-            q = target.qubits[qudit]
+            q = target.qudits[qudit]
             r = q.readout
             if not isinstance(r, DispersiveReadout):
                 from .._errors import UnsupportedError

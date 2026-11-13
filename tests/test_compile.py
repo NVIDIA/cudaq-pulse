@@ -77,7 +77,7 @@ def test_compile_no_passes():
     assert "pulse.drive" in ck.mlir()
 
 
-def test_compile_single_qubit():
+def test_compile_single_qudit():
 
     @pulse.kernel
     def k(q):
@@ -90,10 +90,10 @@ def test_compile_single_qubit():
 
 
 def _sparse_device():
-    from cudaq_pulse.targets import DeviceDescription, Qubit
+    from cudaq_pulse.targets import DeviceDescription, PhysicalQudit
 
-    qubits = {i: Qubit(i, 5.0e9 + 1e8 * i, -300e6, 50.0, 30.0) for i in (0, 2)}
-    return pulse.device(DeviceDescription(name="sparse", qubits=qubits))
+    qudits = {i: PhysicalQudit(i, 5.0e9 + 1e8 * i, -300e6, 50.0, 30.0) for i in (0, 2)}
+    return pulse.device(DeviceDescription(name="sparse", qudits=qudits))
 
 
 @pulse.kernel
@@ -331,7 +331,7 @@ def test_packed_ir_builder_basic():
     """PackedIRBuilder produces valid int64 buffer."""
     from cudaq_pulse.kernel.packed_ir_builder import PackedIRBuilder
 
-    b = PackedIRBuilder(clock_ghz=2.0, qubit_freq_hz={0: 5e9})
+    b = PackedIRBuilder(clock_ghz=2.0, qudit_freq_hz={0: 5e9})
     (q,) = b.emit("pulse.qudit_alloc", (), ("qref",))
     (dl, t) = b.emit("pulse.get_drive_line", (q,), ("drive_line", "tone"))
     (wf,) = b.emit(
@@ -350,7 +350,7 @@ def test_packed_ir_builder_readout():
     """PackedIRBuilder encodes readout ops."""
     from cudaq_pulse.kernel.packed_ir_builder import PackedIRBuilder
 
-    b = PackedIRBuilder(clock_ghz=2.0, qubit_freq_hz={0: 5e9})
+    b = PackedIRBuilder(clock_ghz=2.0, qudit_freq_hz={0: 5e9})
     (q,) = b.emit("pulse.qudit_alloc", (), ("qref",))
     (rl, t) = b.emit("pulse.get_readout_line", (q,), ("readout_line", "tone"))
     (wf,) = b.emit("pulse.square", (), ("waveform",), {"duration": 400, "amplitude": 0.1})
@@ -365,7 +365,7 @@ def test_packed_ir_builder_sync():
     """PackedIRBuilder encodes variable-length sync ops."""
     from cudaq_pulse.kernel.packed_ir_builder import PackedIRBuilder
 
-    b = PackedIRBuilder(clock_ghz=2.0, qubit_freq_hz={0: 5e9, 1: 5.1e9})
+    b = PackedIRBuilder(clock_ghz=2.0, qudit_freq_hz={0: 5e9, 1: 5.1e9})
     (q0,) = b.emit("pulse.qudit_alloc", (), ("qref",))
     (q1,) = b.emit("pulse.qudit_alloc", (), ("qref",))
     (d0, t0) = b.emit("pulse.get_drive_line", (q0,), ("drive_line", "tone"))

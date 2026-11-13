@@ -19,7 +19,7 @@ from cudaq_pulse.targets import (
     DragPulse,
     Drive,
     MicrowaveDrive,
-    Qubit,
+    PhysicalQudit,
     Readout,
     transmon_17q,
 )
@@ -45,7 +45,9 @@ class _Optical(Drive):
 
 
 def _target(**members):
-    return DeviceDescription(name="c", qubits={0: Qubit(0, 5e9, -2e8, 10.0, 5.0, **members)})
+    return DeviceDescription(
+        name="c", qudits={0: PhysicalQudit(0, 5e9, -2e8, 10.0, 5.0, **members)}
+    )
 
 
 def test_a_component_is_a_read_only_value():
@@ -94,20 +96,20 @@ def test_the_components_hold_physics_and_not_tuned_pulses():
 
 
 def test_the_depletion_comes_from_the_readout():
-    explicit = Qubit(0, 5e9, -2e8, 1, 1, readout=DispersiveReadout(depletion_ns=250.0))
-    from_kappa = Qubit(0, 5e9, -2e8, 1, 1, readout=DispersiveReadout(linewidth_hz=1e6))
+    explicit = PhysicalQudit(0, 5e9, -2e8, 1, 1, readout=DispersiveReadout(depletion_ns=250.0))
+    from_kappa = PhysicalQudit(0, 5e9, -2e8, 1, 1, readout=DispersiveReadout(linewidth_hz=1e6))
     assert explicit.depletion_ns == 250.0
     assert from_kappa.depletion_ns == pytest.approx(math.log(100) / (2 * math.pi * 1e-3))
-    assert Qubit(0, 5e9, -2e8, 1, 1).depletion_ns == 0.0
-    assert Qubit(0, 5e9, -2e8, 1, 1, readout=_Fluorescence()).depletion_ns == 0.0
+    assert PhysicalQudit(0, 5e9, -2e8, 1, 1).depletion_ns == 0.0
+    assert PhysicalQudit(0, 5e9, -2e8, 1, 1, readout=_Fluorescence()).depletion_ns == 0.0
 
 
 def test_the_shipped_target_describes_its_drive_and_readout():
-    qubit = transmon_17q().qubits[0]
-    assert isinstance(qubit.drive, MicrowaveDrive) and isinstance(qubit.readout, DispersiveReadout)
-    x = qubit.calibrations[pulse.gates.X]
+    qudit = transmon_17q().qudits[0]
+    assert isinstance(qudit.drive, MicrowaveDrive) and isinstance(qudit.readout, DispersiveReadout)
+    x = qudit.calibrations[pulse.gates.X]
     assert (x.duration_ns, x.sigma_ns, x.amplitude) == (40.0, 10.0, None)
-    assert qubit.readout.frequency_hz > 6e9 and qubit.readout.linewidth_hz > 0
+    assert qudit.readout.frequency_hz > 6e9 and qudit.readout.linewidth_hz > 0
 
 
 def test_the_drive_strength_comes_from_the_drive():

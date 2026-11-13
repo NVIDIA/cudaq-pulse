@@ -64,7 +64,7 @@ _READOUT_FREQUENCY_GHZ = (
     6.769, 6.979, 6.88, 7.12, 7.18, 7.032, 6.91, 7.075, 6.868,
     7.372, 7.554, 7.258, 7.461, 7.316, 7.502, 7.2, 7.412,
 )  # fmt: skip
-_READOUT_QUBIT_FREQUENCY_GHZ = (
+_READOUT_QUDIT_FREQUENCY_GHZ = (
     5.321, 4.75, 5.275, 4.25, 4.42, 5.13, 4.395, 3.993, 5.0,
     5.9, 5.885, 6.022, 6.049, 6.328, 6.191, 5.956, 5.687,
 )  # fmt: skip
@@ -175,7 +175,7 @@ CYCLE_NS = 1100.0
 
 # Plain classes, not dataclasses: every program on the default target loads
 # them, and nothing compares, prints or copies a row.
-class QubitData:
+class QuditData:
     """One column of Tab. I. Frequencies in Hz, times in us, errors and
     populations as fractions. Data qubits idle at their lower flux sweet spot
     and auxiliary qubits at their upper one (Methods A, p. 8)."""
@@ -189,7 +189,7 @@ class QubitData:
         "t2_echo_us",
         "rb_error_1q",
         "readout_frequency_hz",
-        "readout_qubit_frequency_hz",
+        "readout_qudit_frequency_hz",
         "dispersive_shift_hz",
         "readout_dispersive_shift_hz",
         "kappa_eff_hz",
@@ -209,7 +209,7 @@ class QubitData:
         t2_echo_us: float,
         rb_error_1q: float,
         readout_frequency_hz: float,
-        readout_qubit_frequency_hz: float,
+        readout_qudit_frequency_hz: float,
         dispersive_shift_hz: float,
         readout_dispersive_shift_hz: float,
         kappa_eff_hz: float,
@@ -226,7 +226,7 @@ class QubitData:
         self.t2_echo_us = t2_echo_us
         self.rb_error_1q = rb_error_1q
         self.readout_frequency_hz = readout_frequency_hz
-        self.readout_qubit_frequency_hz = readout_qubit_frequency_hz
+        self.readout_qudit_frequency_hz = readout_qudit_frequency_hz
         self.dispersive_shift_hz = dispersive_shift_hz
         self.readout_dispersive_shift_hz = readout_dispersive_shift_hz
         self.kappa_eff_hz = kappa_eff_hz
@@ -261,8 +261,8 @@ class EdgeData:
         self.cz_error = cz_error
 
 
-QUBITS = tuple(
-    QubitData(
+QUDITS = tuple(
+    QuditData(
         label=label,
         idle_frequency_hz=_IDLE_FREQUENCY_GHZ[i] * 1e9,
         anharmonicity_hz=_ANHARMONICITY_MHZ[i] * 1e6,
@@ -271,7 +271,7 @@ QUBITS = tuple(
         t2_echo_us=_T2_ECHO_US[i],
         rb_error_1q=_RB_ERROR_1Q_PCT[i] / 100,
         readout_frequency_hz=_READOUT_FREQUENCY_GHZ[i] * 1e9,
-        readout_qubit_frequency_hz=_READOUT_QUBIT_FREQUENCY_GHZ[i] * 1e9,
+        readout_qudit_frequency_hz=_READOUT_QUDIT_FREQUENCY_GHZ[i] * 1e9,
         dispersive_shift_hz=_DISPERSIVE_SHIFT_MHZ[i] * 1e6,
         readout_dispersive_shift_hz=_READOUT_DISPERSIVE_SHIFT_MHZ[i] * 1e6,
         kappa_eff_hz=_KAPPA_EFF_MHZ[i] * 1e6,

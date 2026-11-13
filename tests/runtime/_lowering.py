@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import cudaq_pulse as pulse
 import numpy as np
 from cudaq_pulse.runtime.simulate import _simulate_lowered
-from cudaq_pulse.targets import DeviceDescription, Qubit
+from cudaq_pulse.targets import DeviceDescription, PhysicalQudit
 
 EVOLVE_PASSES = (
     "verify",
@@ -61,14 +61,14 @@ def evolve(lowered, *, t_start, t_end, step_count, integrator="rk4", levels=2, i
     return SimpleNamespace(final_state=state, times=np.linspace(t_start, t_end, step_count + 1))
 
 
-def frequency_target(qubit_freq_hz, clock_ghz=2.0):
+def frequency_target(qudit_freq_hz, clock_ghz=2.0):
     return DeviceDescription(
         name="frequencies",
-        qubits={q: Qubit(q, f, -300e6, 50.0, 30.0) for q, f in qubit_freq_hz.items()},
+        qudits={q: PhysicalQudit(q, f, -300e6, 50.0, 30.0) for q, f in qudit_freq_hz.items()},
         clock_ghz=clock_ghz,
     )
 
 
-def pulse_mlir(ir, *, qubit_freq_hz, clock_ghz=2.0):
+def pulse_mlir(ir, *, qudit_freq_hz, clock_ghz=2.0):
     """The pulse MLIR a GPU run of ``ir = (kernel, *args)`` lowers."""
-    return on(frequency_target(qubit_freq_hz, clock_ghz), *ir).mlir()
+    return on(frequency_target(qudit_freq_hz, clock_ghz), *ir).mlir()

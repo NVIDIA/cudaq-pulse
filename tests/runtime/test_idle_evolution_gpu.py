@@ -12,7 +12,7 @@ import math
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse.targets import DeviceDescription, MicrowaveDrive, Qubit
+from cudaq_pulse.targets import DeviceDescription, MicrowaveDrive, PhysicalQudit
 
 from tests._handles import Q
 from tests.runtime._lowering import evolve, on, pulse_mlir
@@ -29,8 +29,8 @@ _CLOCK_GHZ = 2.0  # 2 clock cycles per nanosecond
 def _target():
     return DeviceDescription(
         name="idle-evolution-test",
-        qubits={
-            0: Qubit(
+        qudits={
+            0: PhysicalQudit(
                 index=0,
                 frequency_hz=5.0e9,
                 anharmonicity_hz=-200.0e6,
@@ -80,7 +80,7 @@ def test_idle_evolution_mlir_structure():
         drive(d0, square(40, math.pi / 20.0))
         wait(d0, 1000)
 
-    mlir = pulse_mlir((kernel, Q[0]), clock_ghz=_CLOCK_GHZ, qubit_freq_hz={0: 5.0e9})
+    mlir = pulse_mlir((kernel, Q[0]), clock_ghz=_CLOCK_GHZ, qudit_freq_hz={0: 5.0e9})
     assert "pulse.wait" in mlir
 
 

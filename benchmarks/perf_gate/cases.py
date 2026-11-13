@@ -46,7 +46,7 @@ if str(_ROOT) not in sys.path:
 import cudaq_pulse as pulse  # noqa: E402
 from cudaq_pulse import Controller, ControlSystem  # noqa: E402
 from cudaq_pulse.kernel import packed_ir_builder  # noqa: E402
-from cudaq_pulse.targets import DeviceDescription, Qubit  # noqa: E402
+from cudaq_pulse.targets import DeviceDescription, PhysicalQudit  # noqa: E402
 
 Op = Callable[[int], object]
 
@@ -69,7 +69,7 @@ _WORKLOADS = {name: (kernel, n) for name, kernel, n, _ in _workloads.WORKLOADS}
 _DEVICE = pulse.device(
     DeviceDescription(
         name="perf-gate",
-        qubits={i: Qubit(i, 5.0e9 + 1.0e8 * i, -300e6, 50.0, 30.0) for i in range(64)},
+        qudits={i: PhysicalQudit(i, 5.0e9 + 1.0e8 * i, -300e6, 50.0, 30.0) for i in range(64)},
     )
 )
 Q = _DEVICE.qudits
@@ -173,11 +173,11 @@ def _surface(d: int) -> tuple[Any, int]:
     total_count = data_count + ancilla_count
 
     @pulse.kernel
-    def round_(qubits):
+    def round_(qudits):
         lines = []
         tones = []
         for i in range(total_count):
-            line = get_drive_line(qubits[i])
+            line = get_drive_line(qudits[i])
             lines.append(line)
             tones.append(line.tone)
         h = drag(40, 0.25, 10.0, 0.5)

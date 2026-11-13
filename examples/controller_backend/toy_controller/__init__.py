@@ -81,7 +81,7 @@ class ToyBackend:
 if __name__ == "__main__":
     import cudaq_pulse as pulse
     from cudaq_pulse import backends
-    from cudaq_pulse.targets import DeviceDescription, Qubit
+    from cudaq_pulse.targets import DeviceDescription, PhysicalQudit
 
     # Installed, the backend is found by its entry point; here it is
     # registered in the process.
@@ -89,7 +89,11 @@ if __name__ == "__main__":
     backend = backends.get("toy")
     target = DeviceDescription(
         name="toy-device",
-        qubits={0: Qubit(index=0, frequency_hz=5e9, anharmonicity_hz=-2e8, t1_us=0, t2_star_us=0)},
+        qudits={
+            0: PhysicalQudit(
+                index=0, frequency_hz=5e9, anharmonicity_hz=-2e8, t1_us=0, t2_star_us=0
+            )
+        },
     )
     dev = pulse.device(target, clock_ghz=1.0)
     cal = {

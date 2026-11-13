@@ -12,7 +12,7 @@ A target describes a device's qudits, couplings and decoherence; a device
 .. autoclass:: cudaq_pulse.targets.DeviceDescription
    :members:
 
-.. autoclass:: cudaq_pulse.targets.Qubit
+.. autoclass:: cudaq_pulse.targets.PhysicalQudit
    :members:
    :undoc-members:
 
@@ -64,9 +64,9 @@ reads them, deriving what is not published:
 .. code-block:: python
 
    import cudaq_pulse as pulse
-   from cudaq_pulse.targets import DragPulse, Qubit, ReadoutPulse
+   from cudaq_pulse.targets import DragPulse, PhysicalQudit, ReadoutPulse
 
-   qubit = Qubit(
+   qubit = PhysicalQudit(
        0, 5.0e9, -2.0e8, 50.0, 30.0,
        calibrations={
            pulse.gates.X: DragPulse(duration_ns=40.0, sigma_ns=10.0),
@@ -102,14 +102,14 @@ qudit's own, keyed by the target's qudit index:
 
 .. code-block:: python
 
-   from cudaq_pulse.targets import Qubit, DeviceDescription, TransmonModel
+   from cudaq_pulse.targets import PhysicalQudit, DeviceDescription, TransmonModel
 
    qubits = {
-       i: Qubit(index=i, frequency_hz=f, anharmonicity_hz=-2.0e8, t1_us=50.0, t2_star_us=30.0)
+       i: PhysicalQudit(index=i, frequency_hz=f, anharmonicity_hz=-2.0e8, t1_us=50.0, t2_star_us=30.0)
        for i, f in enumerate([5.0e9, 5.2e9])
    }
    # Qudit 0 has four levels; qudit 1 has the model's default.
-   chip = DeviceDescription(name="chip", qubits=qubits, model=TransmonModel(levels={0: 4}))
+   chip = DeviceDescription(name="chip", qudits=qubits, model=TransmonModel(levels={0: 4}))
 
 The model also gives a drive line its transitions: ``line.tones`` has a tone
 for each ``(lower, upper)`` pair of the qudit's levels, at the frequency

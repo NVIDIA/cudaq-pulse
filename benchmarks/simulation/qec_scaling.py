@@ -22,10 +22,10 @@ import cudaq_pulse as pulse
 
 def _device(frequencies: dict[int, float]) -> pulse.Device:
     """A device with these drive frequencies, indexed by qudit."""
-    from cudaq_pulse.targets import DeviceDescription, Qubit
+    from cudaq_pulse.targets import DeviceDescription, PhysicalQudit
 
-    qubits = {q: Qubit(q, f, -300e6, 50.0, 30.0) for q, f in frequencies.items()}
-    return pulse.device(DeviceDescription(name="bench", qubits=qubits))
+    qudits = {q: PhysicalQudit(q, f, -300e6, 50.0, 30.0) for q, f in frequencies.items()}
+    return pulse.device(DeviceDescription(name="bench", qudits=qudits))
 
 
 _STAGES = ("trace_ms", "ffi_ms", "passes_ms", "schedule_ms", "total_ms")
@@ -56,11 +56,11 @@ def surface_code_cycle(d: int):
         )
 
     @pulse.kernel
-    def surface(qubits):
+    def surface(qudits):
         lines = []
         tones = []
         for q in range(total_count):
-            dl = get_drive_line(qubits[q])
+            dl = get_drive_line(qudits[q])
             lines.append(dl)
             tones.append(dl.tone)
         for anc_idx in range(ancilla_count):

@@ -23,7 +23,7 @@ from cudaq_pulse.targets import (
     Coupling,
     DeviceDescription,
     MicrowaveDrive,
-    Qubit,
+    PhysicalQudit,
     ResidualZZ,
     SimulationModel,
 )
@@ -37,8 +37,10 @@ _TWO_PI_GHZ = 2.0 * math.pi * 1.0e-9
 def _pair(f0, f1, *, g_hz=0.0, zz_hz=0.0, alphas=(-200.0e6, -180.0e6)):
     return DeviceDescription(
         name="coupled-pair",
-        qubits={
-            q: Qubit(q, f, a, 0.0, 0.0, drive=MicrowaveDrive(amplitude_scale_rad_per_ns=1.0))
+        qudits={
+            q: PhysicalQudit(
+                q, f, a, 0.0, 0.0, drive=MicrowaveDrive(amplitude_scale_rad_per_ns=1.0)
+            )
             for q, (f, a) in enumerate(zip((f0, f1), alphas, strict=True))
         },
         couplings=[Coupling((0, 1), strength_hz=g_hz)] if g_hz else [],

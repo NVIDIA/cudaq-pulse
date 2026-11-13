@@ -100,14 +100,14 @@ def compile_branch(kernel: pulse.Kernel[...], qudits: pulse.Register, trained: t
 
 def drifted(factors):
     """The target with each qudit's drive strength multiplied by its factor."""
-    qubits = dict(target.qubits)
+    qudits = dict(target.qudits)
     for q, factor in zip(qudit_indices, factors, strict=True):
         strength = target.drive_amplitude_scale(q) * factor
-        given = qubits[q].drive
+        given = qudits[q].drive
         assert isinstance(given, MicrowaveDrive)
         stronger = given.replace(amplitude_scale_rad_per_ns=strength)
-        qubits[q] = qubits[q].replace(drive=stronger)
-    return dataclasses.replace(target, qubits=qubits)
+        qudits[q] = qudits[q].replace(drive=stronger)
+    return dataclasses.replace(target, qudits=qudits)
 
 
 def populations(program, plant):

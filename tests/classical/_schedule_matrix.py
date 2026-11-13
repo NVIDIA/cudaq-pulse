@@ -675,7 +675,7 @@ def callee_slices(low: Any, callee_count: int) -> list[list[Any]]:
     events of ``q`` and of the link after the program's own drive and
     readout of ``q`` (``p`` plays only the program's own pulses)."""
     spectator = low.qudits[1]
-    events = [e for e in low.schedule if e.qubit != spectator][2:]
+    events = [e for e in low.schedule if e.qudit != spectator][2:]
     return [events[k : k + callee_count] for k in range(0, len(events), callee_count)]
 
 

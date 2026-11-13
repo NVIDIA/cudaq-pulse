@@ -12,14 +12,16 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse.runtime.drift import DriftingPlant, OrnsteinUhlenbeck, TelegraphT1
-from cudaq_pulse.targets import DeviceDescription, Qubit
+from cudaq_pulse.targets import DeviceDescription, PhysicalQudit
 
 PI_AMP = math.pi / 20
 
 
 def _target(t1_us=20.0):
-    qubit = Qubit(index=0, frequency_hz=5e9, anharmonicity_hz=-2e8, t1_us=t1_us, t2_star_us=0.0)
-    return DeviceDescription(name="sim", qubits={0: qubit})
+    qudit = PhysicalQudit(
+        index=0, frequency_hz=5e9, anharmonicity_hz=-2e8, t1_us=t1_us, t2_star_us=0.0
+    )
+    return DeviceDescription(name="sim", qudits={0: qudit})
 
 
 def test_telegraph_t1_switches_at_its_rate_and_spends_half_its_time_high():
@@ -108,8 +110,8 @@ def test_the_surrogates_match_simulating_the_plant():
     plant = _plant()
     state = plant.state
     target = plant.description()
-    assert target.qubits[0].t1_us == state.t1_us
-    assert target.qubits[0].frequency_hz == pytest.approx(5e9 + state.frequency_offset_hz)
+    assert target.qudits[0].t1_us == state.t1_us
+    assert target.qudits[0].frequency_hz == pytest.approx(5e9 + state.frequency_offset_hz)
     dev = pulse.device(_target())
     q = dev.qudits[0]
     compiled_t1 = pulse.compile(t1_shot, device=dev)
@@ -147,7 +149,7 @@ def test_the_surrogates_match_simulating_the_plant():
 def test_the_plant_must_define_the_programs_qudits():
     dev = pulse.device(_target())
     lowered = pulse.compile(rabi, device=dev).lower(dev.qudits[0], 1.0)
-    empty = DeviceDescription(name="none", qubits={})
+    empty = DeviceDescription(name="none", qudits={})
     with pytest.raises(ValueError, match="does not define qudits"):
         pulse.simulate(lowered, plant=empty, levels=2)
     with pytest.raises(TypeError, match="DeviceDescription"):

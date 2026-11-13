@@ -427,12 +427,12 @@ class ScheduledEvent:
 
     A call to a classical function adds a ``"submit"`` event, while the
     request holds its link, and a zero-length ``"answer"`` event, when the
-    answer is taken. For those, ``line`` is the link id and ``qubit`` is -1.
+    answer is taken. For those, ``line`` is the link id and ``qudit`` is -1.
     """
 
     kind: str
     line: int
-    qubit: int
+    qudit: int
     start_cycles: int | None
     duration_cycles: int | None
 
@@ -1157,7 +1157,7 @@ def build(
             error.pulse_callers = frames[1:]  # type: ignore[attr-defined]
         raise error
     check_root_schedule(options.schedule, builder)
-    qudits = builder.qubits
+    qudits = builder.qudits
     # The device's tables, of which the module records qudits 0 to
     # qudit_count - 1: when the target defines all of those, it defines every
     # qudit of the program, else they are checked.
@@ -1286,13 +1286,13 @@ def build(
             device=target,
             metrics=metrics,
             parameters=parameters,
-            qudits=builder.used_qubits or qudits,
+            qudits=builder.used_qudits or qudits,
             options=options,
             scheduled=scheduled,
             waits=waits,
         )
     else:
-        used = builder.used_qubits
+        used = builder.used_qudits
         if slots:
             qudits = tuple(q for q in qudits if q >= 0)
             used = tuple(q for q in used if q >= 0)

@@ -12,7 +12,7 @@ import math
 import cudaq_pulse as pulse
 
 NAME = "syndrome"
-NUM_QUBITS = 5
+NUM_QUDITS = 5
 
 
 def _cr_cnot(d_ctrl, d_tgt, t_tgt):

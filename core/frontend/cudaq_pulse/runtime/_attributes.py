@@ -57,7 +57,7 @@ def _level_attributes(
     if any(d > 2 for d in dims):
         alphas = [0.0] * _extent(qudits)
         for q in qudits:
-            alphas[q] = float(target.qubits[q].anharmonicity_hz)
+            alphas[q] = float(target.qudits[q].anharmonicity_hz)
         attrs.append(f"pulse.anharmonicity_hz = {_f64_array(alphas)}")
     return dims, ", ".join(attrs)
 
@@ -84,7 +84,7 @@ def _f64_array(values: list[float]) -> str:
 
 def _target_attributes(
     target: Any,
-    qubits: tuple[int, ...],
+    qudits: tuple[int, ...],
     *,
     integrator: str,
     dephasing: str = "t2_star",
@@ -93,29 +93,29 @@ def _target_attributes(
     cuDensityMat lowering reads, but for the time window, which each segment
     sets.
 
-    *qubits* are the simulated qudits, one mode each in this order; the
+    *qudits* are the simulated qudits, one mode each in this order; the
     others are left out, along with their couplings. Qudits dephase at their
     Ramsey T2* (*dephasing* ``"t2_star"``) or their Hahn-echo T2
     (``"t2_echo"``).
     """
-    qudit_count = _extent(qubits)
+    qudit_count = _extent(qudits)
     t1_ns = [0.0] * qudit_count
     t2_ns = [0.0] * qudit_count
     thermal = [0.0] * qudit_count
     drive_scales = [1.0] * qudit_count
-    for qi in qubits:
-        qubit = target.qubits[qi]
-        t2_us = qubit.t2_star_us if dephasing == "t2_star" else qubit.t2_echo_us
+    for qi in qudits:
+        qudit = target.qudits[qi]
+        t2_us = qudit.t2_star_us if dephasing == "t2_star" else qudit.t2_echo_us
         if t2_us is None:
             raise InvalidValueError(f"qudit {qi} has no Hahn-echo T2 to dephase at")
         # _f64_literal makes each a float.
-        t1_ns[qi] = max(0.0, qubit.t1_us) * 1.0e3
+        t1_ns[qi] = max(0.0, qudit.t1_us) * 1.0e3
         t2_ns[qi] = max(0.0, t2_us) * 1.0e3
-        thermal[qi] = qubit.thermal_population
+        thermal[qi] = qudit.thermal_population
         drive_scales[qi] = target.drive_amplitude_scale(qi)
     attrs = [
-        f"qop.qudit_count = {len(qubits)} : i64",
-        f"pulse.modes = array<i64: {', '.join(map(str, qubits))}>",
+        f"qop.qudit_count = {len(qudits)} : i64",
+        f"pulse.modes = array<i64: {', '.join(map(str, qudits))}>",
         f'qop.integrator = "{integrator}"',
         "pulse.t1_times = [" + ", ".join(map(_f64, t1_ns)) + "]",
         "pulse.t2_times = [" + ", ".join(map(_f64, t2_ns)) + "]",
@@ -123,7 +123,7 @@ def _target_attributes(
     ]
     if any(thermal):
         attrs.append(f"pulse.thermal_populations = {_f64_array(thermal)}")
-    active = set(qubits)
+    active = set(qudits)
     # pulse.coupling_* is the exchange, the operator of the couplings of the
     # one model that simulates (targets.base._COUPLING_OPERATORS).
     couplings = target.couplings

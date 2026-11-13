@@ -20,7 +20,7 @@ from cudaq_pulse.targets import (
     DragPulse,
     FluxCZ,
     MicrowaveDrive,
-    Qubit,
+    PhysicalQudit,
     ReadoutPulse,
 )
 
@@ -31,14 +31,14 @@ _READOUT = ReadoutPulse(duration_ns=300.0, sigma_ns=10.0, integration_ns=400.0)
 
 def _qudit(index=0, **fields):
     fields.setdefault("calibrations", {X: _X, READOUT: _READOUT})
-    return Qubit(index, 5.0e9 + 1e8 * index, -2.0e8, 50.0, 30.0, **fields)
+    return PhysicalQudit(index, 5.0e9 + 1e8 * index, -2.0e8, 50.0, 30.0, **fields)
 
 
 def _device(**fields):
     qudits = {0: _qudit(0, **fields), 1: _qudit(1)}
     cz = FluxCZ(duration_ns=60.0, buffer_ns=10.0, interaction_frequency_hz=4.4e9)
     couplings = [Coupling((0, 1), 5.0e6, calibrations={CZ: cz})]
-    target = DeviceDescription(name="gates", qubits=qudits, couplings=couplings)
+    target = DeviceDescription(name="gates", qudits=qudits, couplings=couplings)
     return pulse.device(target)
 
 
@@ -157,7 +157,7 @@ def test_a_qudit_checks_its_calibrations():
 def test_a_qudit_handle_and_a_coupling_give_the_device_calibrations():
     dev = pulse.device("transmon_17q")
     q = dev.qudits[4]
-    assert q.get_calibration(X) == dev.description.qubits[4].get_calibration(X)
+    assert q.get_calibration(X) == dev.description.qudits[4].get_calibration(X)
     assert q.get_calibration(X).amplitude == pytest.approx(math.pi / _AREA_NS)
     assert q.get_calibration(READOUT) == ReadoutPulse(
         duration_ns=300.0, sigma_ns=10.0, integration_ns=400.0
@@ -297,7 +297,7 @@ def test_what_does_not_play_says_why():
 def test_metadata_is_the_users_own_and_no_part_of_the_device():
     tagged = {"fridge": "B", "fit": {"r2": 0.99, "points": [1, 2, 3]}, "note": None}
     dev = _device(metadata=tagged)
-    qudit = dev.description.qubits[0]
+    qudit = dev.description.qudits[0]
     assert qudit.metadata == tagged and _qudit().metadata == {}
     with pytest.raises(TypeError):
         qudit.metadata["fridge"] = "C"  # type: ignore[index]
@@ -330,8 +330,8 @@ def test_calibrations_and_metadata_round_trip_through_a_system_file():
     assert qudit["metadata"] == {"fridge": "B"}
     assert "calibrations" in data["quantum_system"]["couplings"][0]
     back = pulse.Device.from_dict(json.loads(json.dumps(data)))
-    assert back == dev and back.description.qubits[0].metadata == {"fridge": "B"}
-    assert back.description.qubits[0].get_calibration(X, (1, 2)) == x12
+    assert back == dev and back.description.qudits[0].metadata == {"fridge": "B"}
+    assert back.description.qudits[0].get_calibration(X, (1, 2)) == x12
 
 
 def test_a_system_file_names_a_calibration_of_the_wrong_kind(tmp_path):

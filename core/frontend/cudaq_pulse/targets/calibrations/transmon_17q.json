@@ -421,7 +421,7 @@
    }
   }
  },
- "qubits": {
+ "qudits": {
   "D1": {
    "sweet_spot_idle": "lower",
    "other_sweet_spot_f01": {
@@ -5658,7 +5658,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "Z1",
+      "qudit": "Z1",
       "ratio_idle_over_int": 2.7672413793103487
      },
      "data": {
@@ -5671,7 +5671,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "D1",
+      "qudit": "D1",
       "ratio_idle_over_int": 2.7672413793103487
      }
     },
@@ -5729,7 +5729,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "Z2",
+      "qudit": "Z2",
       "ratio_idle_over_int": 4.4482758620689715
      },
      "data": {
@@ -5742,7 +5742,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "D5",
+      "qudit": "D5",
       "ratio_idle_over_int": 3.232758620689662
      }
     },
@@ -5800,7 +5800,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "Z3",
+      "qudit": "Z3",
       "ratio_idle_over_int": 13.08620689655173
      },
      "data": {
@@ -5813,7 +5813,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "D3",
+      "qudit": "D3",
       "ratio_idle_over_int": 2.87068965517242
      }
     },
@@ -5871,7 +5871,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "Z1",
+      "qudit": "Z1",
       "ratio_idle_over_int": 2.8189655172413843
      },
      "data": {
@@ -5884,7 +5884,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "D4",
+      "qudit": "D4",
       "ratio_idle_over_int": 4.629310344827591
      }
     },
@@ -5942,7 +5942,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "Z2",
+      "qudit": "Z2",
       "ratio_idle_over_int": 2.4568965517241423
      },
      "data": {
@@ -5955,7 +5955,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "D8",
+      "qudit": "D8",
       "ratio_idle_over_int": 3.8534482758620747
      }
     },
@@ -6013,7 +6013,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "Z3",
+      "qudit": "Z3",
       "ratio_idle_over_int": 3.284482758620694
      },
      "data": {
@@ -6026,7 +6026,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "D5",
+      "qudit": "D5",
       "ratio_idle_over_int": 2.896551724137936
      }
     },
@@ -6084,7 +6084,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "Z2",
+      "qudit": "Z2",
       "ratio_idle_over_int": 9.284482758620694
      },
      "data": {
@@ -6097,7 +6097,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "D4",
+      "qudit": "D4",
       "ratio_idle_over_int": 4.913793103448281
      }
     },
@@ -6155,7 +6155,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "Z3",
+      "qudit": "Z3",
       "ratio_idle_over_int": 3.3362068965517295
      },
      "data": {
@@ -6168,7 +6168,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "D2",
+      "qudit": "D2",
       "ratio_idle_over_int": 1.2413793103448327
      }
     },
@@ -6226,7 +6226,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "Z4",
+      "qudit": "Z4",
       "ratio_idle_over_int": 3.025862068965523
      },
      "data": {
@@ -6239,7 +6239,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "D6",
+      "qudit": "D6",
       "ratio_idle_over_int": 7.8620689655172455
      }
     },
@@ -6297,7 +6297,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "Z2",
+      "qudit": "Z2",
       "ratio_idle_over_int": 2.87068965517242
      },
      "data": {
@@ -6310,7 +6310,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "D7",
+      "qudit": "D7",
       "ratio_idle_over_int": 3.8793103448275907
      }
     },
@@ -6368,7 +6368,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "Z3",
+      "qudit": "Z3",
       "ratio_idle_over_int": 3.775862068965523
      },
      "data": {
@@ -6381,7 +6381,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "D6",
+      "qudit": "D6",
       "ratio_idle_over_int": 6.801724137931039
      }
     },
@@ -6439,7 +6439,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "Z4",
+      "qudit": "Z4",
       "ratio_idle_over_int": 1.8879310344827651
      },
      "data": {
@@ -6452,7 +6452,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "D9",
+      "qudit": "D9",
       "ratio_idle_over_int": 2.4310344827586263
      }
     },
@@ -6510,7 +6510,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "X2",
+      "qudit": "X2",
       "ratio_idle_over_int": 0.7758620689655231
      },
      "data": {
@@ -6523,7 +6523,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "D1",
+      "qudit": "D1",
       "ratio_idle_over_int": 2.534482758620694
      }
     },
@@ -6581,7 +6581,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "X3",
+      "qudit": "X3",
       "ratio_idle_over_int": 1.6810344827586263
      },
      "data": {
@@ -6594,7 +6594,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "D5",
+      "qudit": "D5",
       "ratio_idle_over_int": 2.9482758620689715
      }
     },
@@ -6652,7 +6652,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "X4",
+      "qudit": "X4",
       "ratio_idle_over_int": 1.9913793103448327
      },
      "data": {
@@ -6665,7 +6665,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "D7",
+      "qudit": "D7",
       "ratio_idle_over_int": 4.293103448275868
      }
     },
@@ -6723,7 +6723,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "X2",
+      "qudit": "X2",
       "ratio_idle_over_int": 1.4741379310344875
      },
      "data": {
@@ -6736,7 +6736,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "D2",
+      "qudit": "D2",
       "ratio_idle_over_int": 1.2931034482758683
      }
     },
@@ -6794,7 +6794,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "X3",
+      "qudit": "X3",
       "ratio_idle_over_int": 2.0431034482758683
      },
      "data": {
@@ -6807,7 +6807,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "D6",
+      "qudit": "D6",
       "ratio_idle_over_int": 7.603448275862075
      }
     },
@@ -6865,7 +6865,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "X4",
+      "qudit": "X4",
       "ratio_idle_over_int": 1.9913793103448327
      },
      "data": {
@@ -6878,7 +6878,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "D8",
+      "qudit": "D8",
       "ratio_idle_over_int": 2.4310344827586263
      }
     },
@@ -6936,7 +6936,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "X1",
+      "qudit": "X1",
       "ratio_idle_over_int": 1.422413793103452
      },
      "data": {
@@ -6949,7 +6949,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "D3",
+      "qudit": "D3",
       "ratio_idle_over_int": 2.87068965517242
      }
     },
@@ -7007,7 +7007,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "X2",
+      "qudit": "X2",
       "ratio_idle_over_int": 1.2672413793103487
      },
      "data": {
@@ -7020,7 +7020,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "D5",
+      "qudit": "D5",
       "ratio_idle_over_int": 4.3448275862069
      }
     },
@@ -7078,7 +7078,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "X3",
+      "qudit": "X3",
       "ratio_idle_over_int": 0.9827586206896619
      },
      "data": {
@@ -7091,7 +7091,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "D9",
+      "qudit": "D9",
       "ratio_idle_over_int": 2.3275862068965587
      }
     },
@@ -7149,7 +7149,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "X1",
+      "qudit": "X1",
       "ratio_idle_over_int": 2.172413793103452
      },
      "data": {
@@ -7162,7 +7162,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "D2",
+      "qudit": "D2",
       "ratio_idle_over_int": 1.1637931034482811
      }
     },
@@ -7220,7 +7220,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "X2",
+      "qudit": "X2",
       "ratio_idle_over_int": 0.9568965517241423
      },
      "data": {
@@ -7233,7 +7233,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "D4",
+      "qudit": "D4",
       "ratio_idle_over_int": 4.37068965517242
      }
     },
@@ -7291,7 +7291,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "X3",
+      "qudit": "X3",
       "ratio_idle_over_int": 1.8362068965517295
      },
      "data": {
@@ -7304,7 +7304,7 @@
        "units": "s"
       },
       "cooldown": "2022-main",
-      "qubit": "D8",
+      "qudit": "D8",
       "ratio_idle_over_int": 3.3103448275862135
      }
     },
@@ -7889,7 +7889,7 @@
    "cooldown": "device",
    "groups": {
     "top_left": {
-     "qubits": [
+     "qudits": [
       "D7",
       "D4",
       "Z1",
@@ -7905,7 +7905,7 @@
      "confidence": "high for Z1, D4 (traced); medium for D7, Z2"
     },
     "top_right": {
-     "qubits": [
+     "qudits": [
       "D1",
       "D2",
       "D5",
@@ -7923,7 +7923,7 @@
      "confidence": "medium (X2-D5 published; rest by quadrant + spacing)"
     },
     "bottom_left": {
-     "qubits": [
+     "qudits": [
       "D9",
       "D8",
       "X3",
@@ -7939,7 +7939,7 @@
      "confidence": "medium (D9 published; rest by quadrant + spacing)"
     },
     "bottom_right": {
-     "qubits": [
+     "qudits": [
       "D3",
       "D6",
       "Z3",

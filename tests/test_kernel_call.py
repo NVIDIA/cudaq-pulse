@@ -17,7 +17,7 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse.kernel.ir_builder import CompilationError
-from cudaq_pulse.targets import DeviceDescription, MicrowaveDrive, Qubit, TransmonModel
+from cudaq_pulse.targets import DeviceDescription, MicrowaveDrive, PhysicalQudit, TransmonModel
 from cudaq_pulse.targets._registry import ENV_VAR
 
 from tests._handles import Q
@@ -28,8 +28,8 @@ _PI_AMPLITUDE = np.pi / 20.0  # a square pulse of 40 cycles (20 ns) at this rate
 def _device(n=4, **kwargs):
     target = DeviceDescription(
         name="call-test",
-        qubits={
-            i: Qubit(
+        qudits={
+            i: PhysicalQudit(
                 i,
                 5.0e9 + 1e8 * i,
                 -300e6,
@@ -407,10 +407,10 @@ def test_registers_index_like_sequences():
 def test_device_values_are_read_only():
     dev = _device()
     with pytest.raises(ValueError, match="assignment destination is read-only"):
-        dev.qubit_freq[0] = 5.01e9
+        dev.qudit_freq[0] = 5.01e9
     with pytest.raises(ValueError, match="assignment destination is read-only"):
         dev.transition_freq[0, 0, 1] = 5.01e9
-    assert dev.transition_freq[1, 0, 1] == dev.qubit_freq[1] == 5.1e9
+    assert dev.transition_freq[1, 0, 1] == dev.qudit_freq[1] == 5.1e9
     assert dev.transition_freq[1, 1, 2] == pytest.approx(5.1e9 - 300e6)
     with pytest.raises(AttributeError):
         dev.description.name = "other"
@@ -702,7 +702,7 @@ def test_a_qudit_passed_twice_is_an_error():
         pass
 
     @pulse.kernel
-    def layer(qubits):
+    def layer(qudits):
         pass
 
     handles = _device().qudits
@@ -717,7 +717,7 @@ def test_a_qudit_passed_twice_is_an_error():
     )
     with pytest.raises(TypeError, match=message):
         cz(q, q)
-    with pytest.raises(TypeError, match=r"^layer\(\) got qudit 1 twice in 'qubits'; each qudit"):
+    with pytest.raises(TypeError, match=r"^layer\(\) got qudit 1 twice in 'qudits'; each qudit"):
         layer.lower(handles[[0, 1, 1]])
 
 
@@ -829,7 +829,7 @@ def test_a_kernel_called_on_a_qudit_indexed_by_the_loop_variable():
 
     dev = _device()
     lowered = each.lower(dev.qudits[0:4], 4)
-    assert sorted(e.qubit for e in lowered.schedule) == [0, 1, 2, 3]
+    assert sorted(e.qudit for e in lowered.schedule) == [0, 1, 2, 3]
 
 
 def test_nested_kernel_calls_and_tone_state_carried_across_iterations():

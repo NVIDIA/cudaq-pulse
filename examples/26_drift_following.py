@@ -74,9 +74,9 @@ def fringe_top(qudit):
 
 def calibrated_device(offset_hz):
     """The device whose qudit frequency is the nominal one plus *offset_hz*."""
-    nominal = target.qubits[qudit_index]
+    nominal = target.qudits[qudit_index]
     qudit = nominal.replace(frequency_hz=nominal.frequency_hz + offset_hz)
-    return pulse.device(dataclasses.replace(target, qubits={**target.qubits, qudit_index: qudit}))
+    return pulse.device(dataclasses.replace(target, qudits={**target.qudits, qudit_index: qudit}))
 
 
 # ── The background worker ────────────────────────────────────────────────────

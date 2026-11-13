@@ -31,7 +31,7 @@ def _slice(indices):
 
     sliced = DeviceDescription(
         name="transmon-17q-slice",
-        qubits={i: target.qubits[q].replace(index=i) for q, i in new.items()},
+        qudits={i: target.qudits[q].replace(index=i) for q, i in new.items()},
         couplings=renumbered(target.couplings),
         residual_zz=renumbered(target.residual_zz),
         clock_ghz=target.clock_ghz,

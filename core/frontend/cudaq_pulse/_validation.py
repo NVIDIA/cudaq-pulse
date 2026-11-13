@@ -42,7 +42,7 @@ from .ops import (
     sync,
     wait,
 )
-from .targets import DeviceDescription, Qubit
+from .targets import DeviceDescription, PhysicalQudit
 
 if TYPE_CHECKING:
     from .compiler import Lowered
@@ -282,7 +282,7 @@ def _device(system: ControlSystem) -> Any:
     target = DeviceDescription(
         name="validation",
         clock_ghz=clock,
-        qubits={i: Qubit(i, 5.0e9 + 1.5e8 * i, -2.5e8, 50.0, 30.0) for i in range(_QUDITS)},
+        qudits={i: PhysicalQudit(i, 5.0e9 + 1.5e8 * i, -2.5e8, 50.0, 30.0) for i in range(_QUDITS)},
     )
     return pulse.device(target)
 

@@ -10,7 +10,7 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse.runtime._calls import IQModel
-from cudaq_pulse.targets import DeviceDescription, DispersiveReadout, Qubit, ReadoutPulse
+from cudaq_pulse.targets import DeviceDescription, DispersiveReadout, PhysicalQudit, ReadoutPulse
 
 PI_AMP = math.pi / 20
 PLUS = [2**-0.5, 2**-0.5]
@@ -20,7 +20,7 @@ def _device(t1_us=0.0, **readout):
     fields = {"dispersive_shift_hz": 1e6, "linewidth_hz": 2e6, "efficiency": 0.5}
     tuned = {k: readout.pop(k) for k in ReadoutPulse._fields if k in readout}
     fields.update(readout)
-    qubit = Qubit(
+    qudit = PhysicalQudit(
         index=0,
         frequency_hz=5e9,
         anharmonicity_hz=-2e8,
@@ -29,7 +29,7 @@ def _device(t1_us=0.0, **readout):
         readout=DispersiveReadout(**fields),
         calibrations={pulse.gates.READOUT: ReadoutPulse(**tuned)},
     )
-    return pulse.device(DeviceDescription(name="sim", qubits={0: qubit}))
+    return pulse.device(DeviceDescription(name="sim", qudits={0: qudit}))
 
 
 def _centers(dev, amplitude=0.05, duration_ns=None):
@@ -244,7 +244,7 @@ def test_emulation_draws_iq_points_at_the_reported_levels():
     assert abs(np.mean(points) - c1) < 0.2
 
 
-def test_the_17_qubit_twin_separates_its_readout_states():
+def test_the_17_qudit_twin_separates_its_readout_states():
     from cudaq_pulse.classical import emulation
     from cudaq_pulse.targets import transmon_17q
 
@@ -252,7 +252,7 @@ def test_the_17_qubit_twin_separates_its_readout_states():
     q = dev.qudits[0]
     target = dev.description
     model = IQModel(target, (0,), decay=False)
-    given = target.qubits[0].readout
+    given = target.qudits[0].readout
     tau = float(dev.qudits[0].get_calibration(pulse.gates.READOUT).integration_ns)
     c0, c1 = (model.center(0, k, given.frequency_hz, 1.0, tau) for k in (0, 1))
     assert abs(c1 - c0) > 3  # a high-fidelity single-shot readout

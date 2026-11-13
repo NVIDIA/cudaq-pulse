@@ -26,9 +26,9 @@ def _compiles(kernel, *args) -> None:
 
 def test_sync_star_lines_from_the_friction_log():
     @pulse.kernel
-    def k(qubits):
+    def k(qudits):
         lines = []
-        for q in qubits:
+        for q in qudits:
             d = get_drive_line(q)
             lines.append(d)
         sync(*lines)
@@ -283,10 +283,10 @@ def test_lines_in_a_list_from_the_friction_log():
 
 def test_lines_in_dicts_and_nested_lists_stay_current():
     @pulse.kernel
-    def k(qubits):
+    def k(qudits):
         by_name = {}
         nested = []
-        for i, q in enumerate(qubits):
+        for i, q in enumerate(qudits):
             by_name[f"q{i}"] = get_drive_line(q)
             nested.append([get_drive_line(q)])
         for _ in range(3):
@@ -369,8 +369,8 @@ AMPS = (0.1, 0.2, 0.3)
 
 def test_comprehensions_from_the_friction_log():
     @pulse.kernel
-    def probe(qubits):
-        lines = [get_drive_line(qubits[i]) for i in ALL]
+    def probe(qudits):
+        lines = [get_drive_line(qudits[i]) for i in ALL]
         sync(*[line for line in lines])
         amps = [0.1 * i for i in range(3)]
         total = sum([a for a in AMPS])
@@ -444,9 +444,9 @@ def test_comprehension_inside_a_rolled_loop_and_over_range():
 
 def test_generator_expressions_from_the_friction_log():
     @pulse.kernel
-    def probe(qubits):
+    def probe(qudits):
         scale = 2
-        lines = list(get_drive_line(q) for q in qubits)
+        lines = list(get_drive_line(q) for q in qudits)
         sync(*(line for line in lines))
         total = sum(a * scale for a in AMPS if a > 0.1)
         longest = max(8 * (i + 1) for i in range(3))
@@ -550,8 +550,8 @@ def test_starred_assignment_from_the_friction_log():
 
 def test_starred_assignment_of_lines_keeps_them_current():
     @pulse.kernel
-    def k(qubits):
-        d, *others = [get_drive_line(q) for q in qubits]
+    def k(qudits):
+        d, *others = [get_drive_line(q) for q in qudits]
         drive(d, square(8, 0.1))
         for line in others:
             drive(line, square(8, 0.1))

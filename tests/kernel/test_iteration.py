@@ -83,10 +83,10 @@ def test_enumerate_zip_reversed_and_dict_items():
 
 def test_lines_and_tones_from_lists_stay_threaded():
     @pulse.kernel(unroll_threshold=0)
-    def zipped(qubits):
+    def zipped(qudits):
         lines = []
         tones = []
-        for q in qubits:
+        for q in qudits:
             d = get_drive_line(q)
             t = d.tone
             lines.append(d)
@@ -98,11 +98,11 @@ def test_lines_and_tones_from_lists_stay_threaded():
             wait(d, 8)
 
     @pulse.kernel(unroll_threshold=0)
-    def by_index(qubits):
+    def by_index(qudits):
         lines = []
         tones = []
-        for i in range(len(qubits)):
-            d = get_drive_line(qubits[i])
+        for i in range(len(qudits)):
+            d = get_drive_line(qudits[i])
             lines.append(d)
             tones.append(d.tone)
         for _ in range(2):
@@ -114,9 +114,9 @@ def test_lines_and_tones_from_lists_stay_threaded():
     _same(zipped, by_index, qudit_count=3)
 
 
-def test_iterating_a_qubit_vector():
-    qubits = Q[0:3]
-    assert list(qubits) == [qubits[i] for i in range(3)]
+def test_iterating_a_qudit_vector():
+    qudits = Q[0:3]
+    assert list(qudits) == [qudits[i] for i in range(3)]
 
     @pulse.kernel
     def each(qs):

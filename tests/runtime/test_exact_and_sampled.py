@@ -20,7 +20,7 @@ from cudaq_pulse import ControlSystem
 from cudaq_pulse.classical import Link
 from cudaq_pulse.runtime import _propagate
 from cudaq_pulse.runtime import simulate as simulate_module
-from cudaq_pulse.targets import DeviceDescription, MicrowaveDrive, Qubit
+from cudaq_pulse.targets import DeviceDescription, MicrowaveDrive, PhysicalQudit
 
 from tests._handles import Q
 from tests.runtime._lowering import on
@@ -31,8 +31,8 @@ _PI = math.pi / 20.0
 def _target(t1_us=30.0, t2_us=20.0, thermal=0.02, offset_hz=0.0):
     return DeviceDescription(
         name="propagation-test",
-        qubits={
-            0: Qubit(
+        qudits={
+            0: PhysicalQudit(
                 index=0,
                 frequency_hz=5.0e9 + offset_hz,
                 anharmonicity_hz=-200.0e6,

@@ -227,9 +227,9 @@ def true_p1(program, plant, index):
 
 if __name__ == "__main__":
     device = pulse.device(target)
-    nominal = target.qubits[0]
+    nominal = target.qudits[0]
     true_qudit = nominal.replace(frequency_hz=nominal.frequency_hz + hidden_offset_hz)
-    plant = dataclasses.replace(target, qubits={**target.qubits, 0: true_qudit})
+    plant = dataclasses.replace(target, qudits={**target.qudits, 0: true_qudit})
 
     print("=== The program, compiled once ===")
     started = time.perf_counter()

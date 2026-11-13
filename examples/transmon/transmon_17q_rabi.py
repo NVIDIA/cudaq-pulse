@@ -20,21 +20,21 @@ from cudaq_pulse.targets import transmon_17q
 
 target = transmon_17q()
 dev = pulse.device("transmon_17q")
-qubit_idx = 4  # D5 -- central data qubit
+qudit_idx = 4  # D5 -- central data qubit
 
-qubit_d5 = target.qubits[qubit_idx]
+qudit_d5 = target.qudits[qudit_idx]
 clock_ghz = dev.clock_ghz  # the program clock the schedule counts cycles of
 
 print(f"Target: {target.name} ({target.qudit_count} qubits)")
-print(f"Qubit {qubit_d5.label} (idx {qubit_idx}):")
-print(f"  frequency = {qubit_d5.frequency_hz / 1e9:.3f} GHz")
-print(f"  anharmonicity = {qubit_d5.anharmonicity_hz / 1e6:.1f} MHz")
-print(f"  T1 = {qubit_d5.t1_us:.1f} us, T2* = {qubit_d5.t2_star_us:.1f} us")
+print(f"Qubit {qudit_d5.label} (idx {qudit_idx}):")
+print(f"  frequency = {qudit_d5.frequency_hz / 1e9:.3f} GHz")
+print(f"  anharmonicity = {qudit_d5.anharmonicity_hz / 1e6:.1f} MHz")
+print(f"  T1 = {qudit_d5.t1_us:.1f} us, T2* = {qudit_d5.t2_star_us:.1f} us")
 
 # The device's X calibration: the published pulse shape, and (with no
 # published amplitude, so amplitudes are rates in rad/ns) the amplitude that
 # makes it a pi rotation.
-x = dev.qudits[qubit_idx].get_calibration(pulse.gates.X)
+x = dev.qudits[qudit_idx].get_calibration(pulse.gates.X)
 print(
     f"  DRAG pi pulse: {x.duration_ns:.0f} ns, sigma = {x.sigma_ns:.0f} ns, amp = {x.amplitude:.4f}"
 )
@@ -44,8 +44,8 @@ rabi_point_count = 21
 
 
 @pulse.kernel
-def rabi_d5(qubit):
-    drive_line = get_drive_line(qubit)
+def rabi_d5(qudit):
+    drive_line = get_drive_line(qudit)
     pi_pulse = drive_line.get_calibration(pulse.gates.X)
     for i in range(rabi_point_count):
         scale = 2 * i / (rabi_point_count - 1)
@@ -53,7 +53,7 @@ def rabi_d5(qubit):
         wait(drive_line, gap)
 
 
-compiled = pulse.compile(rabi_d5, device=dev).lower(dev.qudits[qubit_idx])
+compiled = pulse.compile(rabi_d5, device=dev).lower(dev.qudits[qudit_idx])
 total_cycles = max(e.end for e in compiled.schedule)
 print(
     f"\nCompiled {compiled.metrics.op_count} ops, total length = {total_cycles / clock_ghz:.1f} ns"

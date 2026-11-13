@@ -37,7 +37,7 @@ from pathlib import Path
 import cudaq_pulse as pulse
 from cudaq_pulse import ControlSystem
 from cudaq_pulse.classical import Link, emulation
-from cudaq_pulse.targets import DeviceDescription, Qubit
+from cudaq_pulse.targets import DeviceDescription, PhysicalQudit
 
 # A 20 ns pi pulse: with H = amplitude * X / 2, this amplitude (rad/ns)
 # rotates by pi.
@@ -68,10 +68,10 @@ def decode(syndrome: pulse.Bits) -> bool:
 
 
 @pulse.kernel
-def decoded_feed_forward(qubit):
+def decoded_feed_forward(qudit):
     """Measure, decode, and correct; the raw measurement if the decoder is late."""
-    drive_line = get_drive_line(qubit)
-    readout_line = get_readout_line(qubit)
+    drive_line = get_drive_line(qudit)
+    readout_line = get_readout_line(qudit)
 
     decode_deadline = 350 * pulse.ns
     m = readout(readout_line, square(cal["readout_duration"], 0.05))
@@ -121,10 +121,10 @@ def update_t1(
 
 
 @pulse.kernel
-def track_t1(qubit, rounds: int, alpha: float, beta: float, first_wait):
+def track_t1(qudit, rounds: int, alpha: float, beta: float, first_wait):
     """Excite, wait, measure, update the estimate, reset; repeat."""
-    drive_line = get_drive_line(qubit)
-    readout_line = get_readout_line(qubit)
+    drive_line = get_drive_line(qudit)
+    readout_line = get_readout_line(qudit)
     pi_pulse = square(cal["pi_duration"], cal["pi_amp"])
     readout_pulse = square(cal["short_readout_duration"], 0.05)
 
@@ -181,8 +181,10 @@ if __name__ == "__main__":
     # A single transmon with T1 = 10 us, for simulation.
     target = DeviceDescription(
         name="classical-demo",
-        qubits={
-            0: Qubit(index=0, frequency_hz=5e9, anharmonicity_hz=-2e8, t1_us=10.0, t2_star_us=0.0)
+        qudits={
+            0: PhysicalQudit(
+                index=0, frequency_hz=5e9, anharmonicity_hz=-2e8, t1_us=10.0, t2_star_us=0.0
+            )
         },
     )
     dev = pulse.device(target)

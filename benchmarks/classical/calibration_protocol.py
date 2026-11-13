@@ -78,16 +78,16 @@ def _bootstrap(values, stat, rng, n=2000):
 
 def _att_target():
     base = transmon_17q()
-    qubit = base.qubits[0]
-    att = qubit.replace(
+    qudit = base.qudits[0]
+    att = qudit.replace(
         frequency_hz=4.13e9,
         anharmonicity_hz=-210e6,
         t1_us=160.0,
         t2_star_us=100.0,
         thermal_population=0.0,
-        readout=qubit.readout.replace(error_1to0=0.11, error_0to1=0.14),
+        readout=qudit.readout.replace(error_1to0=0.11, error_0to1=0.14),
     )
-    return dataclasses.replace(base, qubits={**base.qubits, 0: att})
+    return dataclasses.replace(base, qudits={**base.qudits, 0: att})
 
 
 tracked_t1 = P["tracked_t1"]

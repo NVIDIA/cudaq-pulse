@@ -12,9 +12,9 @@ import numpy as np
 
 
 @pulse.kernel
-def hahn_echo(qubit, sigma, amp_half_pi, amp_pi, tau):
+def hahn_echo(qudit, sigma, amp_half_pi, amp_pi, tau):
     """Hahn echo: pi/2_X - tau - pi_X - tau - pi/2_X."""
-    drive_line = get_drive_line(qubit)
+    drive_line = get_drive_line(qudit)
 
     dur_half_pi = 4 * sigma
     dur_pi = 4 * sigma
@@ -39,9 +39,9 @@ def hahn_echo(qubit, sigma, amp_half_pi, amp_pi, tau):
 
 
 @pulse.kernel
-def cpmg_echo(qubit, sigma, amp_half_pi, amp_pi, tau, refocus_count):
+def cpmg_echo(qudit, sigma, amp_half_pi, amp_pi, tau, refocus_count):
     """CPMG dynamical decoupling: pi/2_X - [tau - pi_Y - tau]^n - pi/2_X."""
-    drive_line = get_drive_line(qubit)
+    drive_line = get_drive_line(qudit)
 
     dur_half_pi = 4 * sigma
     dur_pi = 4 * sigma

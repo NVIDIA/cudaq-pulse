@@ -11,7 +11,7 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.targets import DeviceDescription, MicrowaveDrive, Qubit
+from cudaq_pulse.targets import DeviceDescription, MicrowaveDrive, PhysicalQudit
 
 from tests._handles import Q
 from tests.runtime._lowering import evolve, on, pulse_mlir
@@ -29,7 +29,7 @@ def test_rabi_mlir_structure():
         drive(d0, wf)
 
     ir = (rabi, Q[0])
-    mlir = pulse_mlir(ir, clock_ghz=2.0, qubit_freq_hz={0: 5.0e9})
+    mlir = pulse_mlir(ir, clock_ghz=2.0, qudit_freq_hz={0: 5.0e9})
 
     assert "module @rabi" in mlir
     assert "pulse.qudit_alloc" in mlir
@@ -44,8 +44,8 @@ def test_rabi_gpu_execution():
 
     target = DeviceDescription(
         name="unitary-rabi-test",
-        qubits={
-            0: Qubit(
+        qudits={
+            0: PhysicalQudit(
                 index=0,
                 frequency_hz=5.0e9,
                 anharmonicity_hz=-200.0e6,
@@ -83,8 +83,8 @@ def test_rabi_gpu_integrator_parity(integrator):
 
     target = DeviceDescription(
         name="unitary-rabi-parity",
-        qubits={
-            0: Qubit(
+        qudits={
+            0: PhysicalQudit(
                 index=0,
                 frequency_hz=5.0e9,
                 anharmonicity_hz=-200.0e6,

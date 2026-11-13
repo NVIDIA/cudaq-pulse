@@ -78,7 +78,7 @@ class ReadoutModel:
 
         self.matrices: dict[int, np.ndarray] = {}
         for position, qudit in enumerate(qudits):
-            q = target.qubits[qudit]
+            q = target.qudits[qudit]
             r = q.readout
             d = dims[position]
             m = np.eye(d)

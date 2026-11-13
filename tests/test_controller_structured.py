@@ -13,14 +13,14 @@ import pytest
 from cudaq_pulse import Controller, ControlSystem, backends
 from cudaq_pulse.classical import Link
 from cudaq_pulse.controller import FORMAT, ControllerLimitError, check, unroll
-from cudaq_pulse.targets import DeviceDescription, Qubit
+from cudaq_pulse.targets import DeviceDescription, PhysicalQudit
 
 from tests.test_controller import answered, chained, chosen_by_readout, frame_in_arms, settings
 
 _TARGET = DeviceDescription(
     name="structured",
     clock_ghz=2.0,
-    qubits={i: Qubit(i, 5.0e9 + 1.0e7 * i, -2.0e8, 50.0, 30.0) for i in range(4)},
+    qudits={i: PhysicalQudit(i, 5.0e9 + 1.0e7 * i, -2.0e8, 50.0, 30.0) for i in range(4)},
 )
 _DEV = pulse.device(_TARGET)
 Q = _DEV.qudits

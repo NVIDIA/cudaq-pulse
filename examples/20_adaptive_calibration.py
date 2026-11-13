@@ -114,15 +114,15 @@ if __name__ == "__main__":
     target = transmon_17q()
     dev = pulse.device(target)
     q = dev.qudits[0]
-    qubit = target.qubits[0]
+    qudit = target.qudits[0]
 
     print("=== 1. Frequency binary search in one shot (2 rounds) ===")
     offset_hz = 400e3
     detuned = dataclasses.replace(
         target,
-        qubits={
-            **target.qubits,
-            0: qubit.replace(frequency_hz=qubit.frequency_hz + offset_hz),
+        qudits={
+            **target.qudits,
+            0: qudit.replace(frequency_hz=qudit.frequency_hz + offset_hz),
         },
     )
     lowered = pulse.compile(binary_search, device=dev, control_system=control_system).lower(q, 2)
@@ -141,7 +141,7 @@ if __name__ == "__main__":
     print(f"  mean estimate over branches: {expected / 1e3:+.0f} kHz")
 
     print("\n=== 2. Tracking a drifting device between shots ===")
-    telegraph = TelegraphT1(qubit.t1_us / 4, qubit.t1_us, rate_hz=0.5)
+    telegraph = TelegraphT1(qudit.t1_us / 4, qudit.t1_us, rate_hz=0.5)
     plant = DriftingPlant(
         target,
         t1=telegraph,

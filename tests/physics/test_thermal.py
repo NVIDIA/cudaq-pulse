@@ -27,12 +27,12 @@ def _idle(duration):
     return idle
 
 
-def _thermal_qubit(**qubit):
-    return device([5.0e9], [-200e6], t1_us=T1_US, t2_us=T2_US, thermal_population=P, **qubit)
+def _thermal_qudit(**qudit):
+    return device([5.0e9], [-200e6], t1_us=T1_US, t2_us=T2_US, thermal_population=P, **qudit)
 
 
-def test_a_qubit_starts_in_its_thermal_mixture_and_stays_there():
-    rho = run(_thermal_qubit(), _idle(cycles(2000.0)), dt_ns=1.0).density_matrix
+def test_a_qudit_starts_in_its_thermal_mixture_and_stays_there():
+    rho = run(_thermal_qudit(), _idle(cycles(2000.0)), dt_ns=1.0).density_matrix
     assert np.allclose(rho, np.diag([1.0 - P, P]), atol=1e-12)
 
 
@@ -41,7 +41,7 @@ def test_a_qutrit_starts_in_its_thermal_mixture_and_stays_there():
     the ladder's downward and upward jumps keep in detailed balance."""
     r = P / (1.0 - P)
     weights = np.array([1.0, r, r * r]) / (1.0 + r + r * r)
-    rho = run(_thermal_qubit(), _idle(cycles(2000.0)), levels=3, dt_ns=0.05).density_matrix
+    rho = run(_thermal_qudit(), _idle(cycles(2000.0)), levels=3, dt_ns=0.05).density_matrix
     assert np.allclose(rho, np.diag(weights), atol=1e-10)
 
 
@@ -51,7 +51,7 @@ def test_populations_relax_to_the_thermal_population_at_1_over_t1(start):
     as p + (P1(0) - p) exp(-t / T1)."""
     t_ns = 5000.0
     rho = run(
-        _thermal_qubit(), _idle(cycles(t_ns)), initial_state=basis(2, start), dt_ns=1.0
+        _thermal_qudit(), _idle(cycles(t_ns)), initial_state=basis(2, start), dt_ns=1.0
     ).density_matrix
     expected = P + (start - P) * math.exp(-t_ns / (T1_US * 1e3))
     assert rho[1, 1].real == pytest.approx(expected, rel=1e-9)
@@ -62,7 +62,7 @@ def test_coherence_decays_at_the_chosen_t2(dephasing, t2_us):
     t_ns = 4000.0
     plus = (basis(2, 0) + basis(2, 1)) / math.sqrt(2.0)
     rho = run(
-        _thermal_qubit(t2_echo_us=T2_ECHO_US),
+        _thermal_qudit(t2_echo_us=T2_ECHO_US),
         _idle(cycles(t_ns)),
         initial_state=plus,
         dt_ns=1.0,
@@ -73,4 +73,4 @@ def test_coherence_decays_at_the_chosen_t2(dephasing, t2_us):
 
 def test_echo_dephasing_needs_an_echo_time():
     with pytest.raises(ValueError, match="Hahn-echo T2"):
-        run(_thermal_qubit(), _idle(cycles(10.0)), dephasing="t2_echo")
+        run(_thermal_qudit(), _idle(cycles(10.0)), dephasing="t2_echo")

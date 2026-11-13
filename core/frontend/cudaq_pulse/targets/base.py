@@ -584,8 +584,8 @@ def _area_ns(pulse: DragPulse, owner: str) -> float:
     )
 
 
-def _qudit_name(qubit: Qubit) -> str:
-    return f"qudit {qubit.index} ({qubit.label})" if qubit.label else f"qudit {qubit.index}"
+def _qudit_name(qudit: PhysicalQudit) -> str:
+    return f"qudit {qudit.index} ({qudit.label})" if qudit.label else f"qudit {qudit.index}"
 
 
 def _published(calibrations: Mapping[Any, Any]) -> str:
@@ -598,39 +598,39 @@ def _published(calibrations: Mapping[Any, Any]) -> str:
     return "it publishes " + ", ".join(names)
 
 
-def _qudit_calibration(qubit: Qubit, gate: Any, transition: Any) -> Any:
-    """``Qubit.get_calibration``: the calibration *gate* of *qubit*, derived as
+def _qudit_calibration(qudit: PhysicalQudit, gate: Any, transition: Any) -> Any:
+    """``PhysicalQudit.get_calibration``: the calibration *gate* of *qudit*, derived as
     ``pulse.gates`` describes where it is not published."""
     name = _gate_name(gate, _QUDIT_GATES)
     at = _transition(transition)
     if name == "cz":
         raise InvalidValueError(
-            f"{_gate_label('cz')} is calibrated on a coupling, not on {_qudit_name(qubit)}: "
+            f"{_gate_label('cz')} is calibrated on a coupling, not on {_qudit_name(qudit)}: "
             "dev.coupling(a, b).get_calibration(pulse.gates.CZ)"
         )
-    found: Any = qubit.calibrations.get(_calibration_key(name, at))
+    found: Any = qudit.calibrations.get(_calibration_key(name, at))
     if found is not None:
         if name != "readout" and found._values[2] is None:
             return found.replace(
                 amplitude=_ROTATIONS[name]
-                / (_drive_scale(qubit) * _area_ns(found, _qudit_name(qubit)))
+                / (_drive_scale(qudit) * _area_ns(found, _qudit_name(qudit)))
             )
         return found
     if name == "x90":
-        x = _qudit_calibration(qubit, "x", at)
+        x = _qudit_calibration(qudit, "x", at)
         return x.replace(amplitude=x._values[2] / 2)
     if name in ("y", "y90"):
-        base = _qudit_calibration(qubit, "x" if name == "y" else "x90", at)
+        base = _qudit_calibration(qudit, "x" if name == "y" else "x90", at)
         return base.replace(phase_rad=base._values[4] + math.pi / 2)
     which = _gate_label(name) if at == _DEFAULT_TRANSITION else f"{_gate_label(name)} {at}"
     raise NotFoundError(
-        f"{_qudit_name(qubit)} publishes no {which} calibration; {_published(qubit.calibrations)}"
+        f"{_qudit_name(qudit)} publishes no {which} calibration; {_published(qudit.calibrations)}"
     )
 
 
-def _drive_scale(qubit: Qubit) -> float:
-    """The Rabi rate in rad/ns of amplitude 1 on *qubit*'s drive, if it gives one, else 1.0."""
-    drive = qubit.drive
+def _drive_scale(qudit: PhysicalQudit) -> float:
+    """The Rabi rate in rad/ns of amplitude 1 on *qudit*'s drive, if it gives one, else 1.0."""
+    drive = qudit.drive
     if drive.__class__ is MicrowaveDrive:
         explicit = drive._values[0]
         if explicit is not None:
@@ -638,9 +638,9 @@ def _drive_scale(qubit: Qubit) -> float:
     return 1.0
 
 
-class _QubitFields:
-    """The fields of a ``Qubit``, which its ``__init__`` stores through
-    ``_Unfrozen``: the same layout, without Qubit's read-only ``__setattr__``."""
+class _QuditFields:
+    """The fields of a ``PhysicalQudit``, which its ``__init__`` stores through
+    ``_Unfrozen``: the same layout, without PhysicalQudit's read-only ``__setattr__``."""
 
     __slots__ = (
         "index",
@@ -674,15 +674,15 @@ class _QubitFields:
     metadata: Mapping[str, Any]
 
 
-class _Unfrozen(_QubitFields):
+class _Unfrozen(_QuditFields):
     __slots__ = ()
 
 
-# A qubit's fields but its metadata, in the order of Qubit's arguments.
-_QUBIT_STATE = attrgetter(*_QubitFields.__slots__[:-1])
+# A qubit's fields but its metadata, in the order of PhysicalQudit's arguments.
+_QUDIT_STATE = attrgetter(*_QuditFields.__slots__[:-1])
 
 
-class Qubit(_QubitFields):
+class PhysicalQudit(_QuditFields):
     """Single qubit in a target device.
 
     ``drive`` and ``readout`` are its physics: how it is driven and read
@@ -757,24 +757,24 @@ class Qubit(_QubitFields):
     def __eq__(self, other: object) -> bool:
         if other.__class__ is not self.__class__:
             return NotImplemented
-        return all(getattr(self, n) == getattr(other, n) for n in _QubitFields.__slots__)
+        return all(getattr(self, n) == getattr(other, n) for n in _QuditFields.__slots__)
 
     def __hash__(self) -> int:
         return hash((self.index, self.frequency_hz, self.label))
 
     def __repr__(self) -> str:
-        shown = ", ".join(f"{n}={_plain_value(getattr(self, n))!r}" for n in _QubitFields.__slots__)
+        shown = ", ".join(f"{n}={_plain_value(getattr(self, n))!r}" for n in _QuditFields.__slots__)
         return f"{type(self).__name__}({shown})"
 
     def __reduce__(self) -> tuple[Any, ...]:
-        state = _QUBIT_STATE(self)
+        state = _QUDIT_STATE(self)
         if self.metadata:
             return (type(self), (*state, dict(self.metadata)))
         return (type(self), state)
 
     def replace(self, **changes: Any) -> Self:
         """A copy with the fields *changes* names set to their values."""
-        values = {n: getattr(self, n) for n in _QubitFields.__slots__}
+        values = {n: getattr(self, n) for n in _QuditFields.__slots__}
         values.update(changes)
         return type(self)(**values)
 
@@ -920,7 +920,7 @@ def _coupling_operator(model: Any) -> str | None:
 class DeviceDescription:
     """Full description of a quantum processing unit.
 
-    A target is read-only once built: ``qubits`` is a read-only mapping and
+    A target is read-only once built: ``qudits`` is a read-only mapping and
     ``couplings`` and ``residual_zz`` are tuples. ``clock_ghz`` is the pulse
     clock that converts nanoseconds to clock cycles. ``model`` is how the
     simulator treats its qudits, and how many levels each has: a
@@ -937,7 +937,7 @@ class DeviceDescription:
     """
 
     name: str
-    qubits: Mapping[int, Qubit] = _EMPTY
+    qudits: Mapping[int, PhysicalQudit] = _EMPTY
     couplings: Sequence[Coupling] = ()
     residual_zz: Sequence[ResidualZZ] = ()
     model: SimulationModel | type[SimulationModel] | None = _TRANSMON
@@ -955,7 +955,7 @@ class DeviceDescription:
                 "model must be a SimulationModel class or instance, such as TransmonModel, "
                 f"or None; got {model!r}"
             )
-        object.__setattr__(self, "qubits", MappingProxyType(dict(self.qubits)))
+        object.__setattr__(self, "qudits", MappingProxyType(dict(self.qudits)))
         object.__setattr__(self, "couplings", tuple(self.couplings))
         object.__setattr__(self, "residual_zz", tuple(self.residual_zz))
         # Every problem with the target's entries, each at its path in it.
@@ -972,7 +972,7 @@ class DeviceDescription:
         return all(getattr(self, f.name) == getattr(other, f.name) for f in fields(self))
 
     def __hash__(self) -> int:
-        return hash((self.name, self.clock_ghz, len(self.qubits), len(self.couplings)))
+        return hash((self.name, self.clock_ghz, len(self.qudits), len(self.couplings)))
 
     def __reduce__(self) -> tuple[Any, ...]:
         from .._pickling import frozen_reduce
@@ -981,39 +981,39 @@ class DeviceDescription:
 
     @property
     def qudit_count(self) -> int:
-        return len(self.qubits)
+        return len(self.qudits)
 
     @property
-    def qubit_indices(self) -> list[int]:
-        return sorted(self.qubits.keys())
+    def qudit_indices(self) -> list[int]:
+        return sorted(self.qudits.keys())
 
     @property
     def frequencies(self) -> dict[int, float]:
-        return {q.index: q.frequency_hz for q in self.qubits.values()}
+        return {q.index: q.frequency_hz for q in self.qudits.values()}
 
     @property
     def anharmonicities(self) -> dict[int, float]:
-        return {q.index: q.anharmonicity_hz for q in self.qubits.values()}
+        return {q.index: q.anharmonicity_hz for q in self.qudits.values()}
 
     @property
     def t1_times(self) -> dict[int, float]:
         """T1 in microseconds, keyed by qubit index."""
-        return {q.index: q.t1_us for q in self.qubits.values()}
+        return {q.index: q.t1_us for q in self.qudits.values()}
 
     @property
     def t2_times(self) -> dict[int, float]:
         """T2* in microseconds, keyed by qubit index."""
-        return {q.index: q.t2_star_us for q in self.qubits.values()}
+        return {q.index: q.t2_star_us for q in self.qudits.values()}
 
     @property
     def t2_echo_times(self) -> dict[int, float | None]:
         """Hahn-echo T2 in microseconds, keyed by qubit index (None if unknown)."""
-        return {q.index: q.t2_echo_us for q in self.qubits.values()}
+        return {q.index: q.t2_echo_us for q in self.qudits.values()}
 
     @property
     def thermal_populations(self) -> dict[int, float]:
         """Equilibrium excited-state population, keyed by qubit index."""
-        return {q.index: q.thermal_population for q in self.qubits.values()}
+        return {q.index: q.thermal_population for q in self.qudits.values()}
 
     @property
     def coupling_map(self) -> list[tuple[int, ...]]:
@@ -1036,14 +1036,14 @@ class DeviceDescription:
 
     def connectivity_graph(self) -> dict[int, list[int]]:
         """The qudits each qudit couples to, by qudit index, for every qudit."""
-        g: dict[int, list[int]] = {idx: [] for idx in self.qubits}
+        g: dict[int, list[int]] = {idx: [] for idx in self.qudits}
         for c in self.couplings:
             a, b = c.qudits
             g[a].append(b)
             g[b].append(a)
         return g
 
-    def drive_amplitude_scale(self, qubit_index: int) -> float:
+    def drive_amplitude_scale(self, qudit_index: int) -> float:
         """Return the conversion from pulse amplitude to radians/ns.
 
         A ``MicrowaveDrive`` may give ``amplitude_scale_rad_per_ns``
@@ -1053,27 +1053,27 @@ class DeviceDescription:
         1.0: pulse amplitudes are already angular rates in rad/ns. Another
         drive modality is ``UnsupportedError``.
         """
-        if qubit_index not in self.qubits:
-            raise NotFoundError(f"Qubit {qubit_index} not in target {self.name!r}")
-        drive = self.qubits[qubit_index].drive
+        if qudit_index not in self.qudits:
+            raise NotFoundError(f"Qubit {qudit_index} not in target {self.name!r}")
+        drive = self.qudits[qudit_index].drive
         if drive is None:
             return 1.0
         if not isinstance(drive, MicrowaveDrive):
             raise UnsupportedError(
-                f"no drive model for {type(drive).__name__} (qubit {qubit_index}); the "
+                f"no drive model for {type(drive).__name__} (qubit {qudit_index}); the "
                 "simulator models a MicrowaveDrive"
             )
         explicit = drive.amplitude_scale_rad_per_ns
         if explicit is not None:
             if explicit <= 0:
                 raise InvalidValueError(
-                    f"amplitude_scale_rad_per_ns must be positive for qubit {qubit_index}"
+                    f"amplitude_scale_rad_per_ns must be positive for qubit {qudit_index}"
                 )
             return float(explicit)
-        qubit = self.qubits[qubit_index]
-        x: Any = qubit.calibrations.get("x")
+        qudit = self.qudits[qudit_index]
+        x: Any = qudit.calibrations.get("x")
         if x is not None and x.amplitude:
-            return math.pi / (float(x.amplitude) * _area_ns(x, _qudit_name(qubit)))
+            return math.pi / (float(x.amplitude) * _area_ns(x, _qudit_name(qudit)))
         return 1.0
 
 
@@ -1106,7 +1106,7 @@ _CHECKED: tuple[Sequence[Any], Sequence[Any], frozenset[int]] = ((), (), frozens
 def _entries_problems(target: DeviceDescription) -> list[Problem]:
     """Every problem with *target*'s couplings and residual ZZ entries."""
     global _CHECKED
-    known = target.qubits
+    known = target.qudits
     couplings, residual_zz = target.couplings, target.residual_zz
     checked_couplings, checked_residual_zz, checked_qudits = _CHECKED
     if residual_zz is checked_residual_zz and known.keys() == checked_qudits:

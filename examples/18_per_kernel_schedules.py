@@ -10,7 +10,7 @@ One ancilla measures the parity of four data qubits, round after round:
   4. readout of the ancilla, with a conditional reset,
   5. dynamical decoupling (XY4) on the data qubits while they wait.
 
-Each step is a kernel. ``single_qubit_layer`` and ``xy4`` are declared with
+Each step is a kernel. ``single_qudit_layer`` and ``xy4`` are declared with
 ``schedule="asap"``, and ``measure_and_reset`` with ``schedule="alap"``:
 each is scheduled on its own with that policy, then placed whole by the
 cycle's ALAP schedule. So the layer's pulses always start together, the
@@ -26,7 +26,7 @@ up to the cross-resonance pulse that needs its tone.
 import cudaq_pulse as pulse
 
 rounds = 2
-data_qubits = 4
+data_qudits = 4
 cal = {
     "x_duration": 20 * pulse.ns,
     "x_sigma": 5 * pulse.ns,
@@ -39,7 +39,7 @@ cal = {
 
 
 @pulse.kernel(schedule="asap")
-def single_qubit_layer(lines, tones):
+def single_qudit_layer(lines, tones):
     """A sqrt(X) on every data qubit, all starting together."""
     for i in range(len(lines)):
         drive(
@@ -75,22 +75,22 @@ def xy4(line, tone, tau):
 
 
 @pulse.kernel
-def stabilizer_cycle(qubits):
-    ancilla = get_drive_line(qubits[0])
-    readout_line = get_readout_line(qubits[0])
+def stabilizer_cycle(qudits):
+    ancilla = get_drive_line(qudits[0])
+    readout_line = get_readout_line(qudits[0])
     lines, tones = [], []
-    for q in qubits[1:]:
+    for q in qudits[1:]:
         line = get_drive_line(q)
         lines.append(line)
         tones.append(line.tone)
 
     for _ in range(rounds):
-        single_qubit_layer(lines, tones)
-        for i in range(data_qubits):
+        single_qudit_layer(lines, tones)
+        for i in range(data_qudits):
             cross_resonance(ancilla, tones[i])
-        single_qubit_layer(lines, tones)
+        single_qudit_layer(lines, tones)
         measure_and_reset(ancilla, readout_line)
-        for i in range(data_qubits):
+        for i in range(data_qudits):
             xy4(lines[i], tones[i], cal["dd_tau"])
 
 
@@ -121,14 +121,14 @@ def report(label: str, compiled: pulse.Lowered) -> None:
 
 def main():
     dev = pulse.device("transmon_17q")
-    qubits = [dev.qudits[: 1 + data_qubits]]
+    qudits = [dev.qudits[: 1 + data_qudits]]
     report(
         "per-kernel schedules",
-        stabilizer_cycle.lower(*qubits),
+        stabilizer_cycle.lower(*qudits),
     )
     report(
         "flattened into one ALAP schedule",
-        pulse.compile(stabilizer_cycle, flatten_schedules=True).lower(*qubits),
+        pulse.compile(stabilizer_cycle, flatten_schedules=True).lower(*qudits),
     )
 
 

@@ -11,7 +11,7 @@ from .base import (
     Drive,
     FluxCZ,
     MicrowaveDrive,
-    Qubit,
+    PhysicalQudit,
     Readout,
     ReadoutPulse,
     ResidualZZ,
@@ -22,7 +22,7 @@ from .transmon import transmon_17q, transmon_generic
 
 __all__ = [
     "DeviceDescription",
-    "Qubit",
+    "PhysicalQudit",
     "Readout",
     "DispersiveReadout",
     "Drive",

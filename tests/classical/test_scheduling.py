@@ -803,7 +803,7 @@ def _across(q0, q1, q2):
 def _playing(low):
     """The qudits whose drives or readouts play while a call is out."""
     return {
-        e.qubit
+        e.qudit
         for call in low.classical_report()
         for e in low.schedule
         if e.kind in ("drive", "readout")

@@ -35,7 +35,7 @@ def _generic():
     # The generic target has no readout parameters; give it a dispersive
     # readout so the readout skeletons have something to optimize.
     target = transmon_generic(1)
-    qubit = target.qubits[0].replace(
+    qudit = target.qudits[0].replace(
         readout=DispersiveReadout(
             frequency_hz=7.0e9,
             dispersive_shift_hz=-1.5e6,
@@ -45,7 +45,7 @@ def _generic():
         ),
         calibrations={pulse.gates.READOUT: ReadoutPulse(integration_ns=400.0)},
     )
-    return dataclasses.replace(target, qubits={0: qubit})
+    return dataclasses.replace(target, qudits={0: qudit})
 
 
 TARGETS = {"generic": _generic, "transmon_17q": transmon_17q}
@@ -107,7 +107,7 @@ def test_k11_adaptive_t1_tracks_its_posterior_per_path(target):
             assert call.answer == pytest.approx((alpha, beta, tau))
     # The first shot survives the 5 us wait (plus the 200 ns readout) at
     # exp(-t / T1).
-    t1_ns = target.qubits[0].t1_us * 1e3
+    t1_ns = target.qudits[0].t1_us * 1e3
     survived = sum(b.probability for b in result.branches if b.levels[0] == 1)
     assert survived == pytest.approx(math.exp(-(5000 + 200) / t1_ns), abs=0.02)
     artifact = json.loads(json.dumps(lowered.export_emulation()))
@@ -165,9 +165,9 @@ def test_k12_frequency_binary_search_follows_a_detuned_plant(target):
     plant = DriftingPlant(target, frequency=OrnsteinUhlenbeck(1.0, 1.0), seed=0)
     detuned = dataclasses.replace(
         target,
-        qubits={
-            **target.qubits,
-            0: target.qubits[0].replace(frequency_hz=target.qubits[0].frequency_hz + offset),
+        qudits={
+            **target.qudits,
+            0: target.qudits[0].replace(frequency_hz=target.qudits[0].frequency_hz + offset),
         },
     )
     lowered = pulse.compile(binary_search, device=dev, control_system=MACHINE).lower(
@@ -220,14 +220,14 @@ def test_k13_three_point_decay_and_phase_recover_the_device(target):
         for k in range(3)
     ]
     t1_us = cal.three_point_decay(*p, spacing=spacing_cycles / CLOCK) / 1e3
-    assert t1_us == pytest.approx(target.qubits[0].t1_us, rel=0.02)
+    assert t1_us == pytest.approx(target.qudits[0].t1_us, rel=0.02)
     # A detuned plant puts a phase 2 pi d T on the Ramsey fringe.
     offset = 250e3
     detuned = dataclasses.replace(
         target,
-        qubits={
-            **target.qubits,
-            0: target.qubits[0].replace(frequency_hz=target.qubits[0].frequency_hz + offset),
+        qudits={
+            **target.qudits,
+            0: target.qudits[0].replace(frequency_hz=target.qudits[0].frequency_hz + offset),
         },
     )
     ramsey = pulse.compile(ramsey_shot, device=dev)
@@ -256,15 +256,15 @@ def spectroscopy(q, detuning_hz: float):
     drive(d, square(800, math.pi / 400))  # a 400 ns pi pulse
 
 
-def test_k14_golden_section_finds_the_qubit_frequency(target):
+def test_k14_golden_section_finds_the_qudit_frequency(target):
     dev = _device(target)
     q = dev.qudits[0]
     offset = 1.3e6
     detuned = dataclasses.replace(
         target,
-        qubits={
-            **target.qubits,
-            0: target.qubits[0].replace(frequency_hz=target.qubits[0].frequency_hz + offset),
+        qudits={
+            **target.qudits,
+            0: target.qudits[0].replace(frequency_hz=target.qudits[0].frequency_hz + offset),
         },
     )
     compiled = pulse.compile(spectroscopy, device=dev)
@@ -287,8 +287,8 @@ def test_k14_nelder_mead_optimizes_readout_frequency_and_amplitude(target):
     # The cost of a readout setting: minus the separation of the |0> and |1>
     # points, plus a penalty on photons (amplitude squared).
     model = IQModel(target, (0,), decay=False)
-    resonator = target.qubits[0].readout.frequency_hz
-    tau = target.qubits[0].get_calibration(pulse.gates.READOUT).integration_ns
+    resonator = target.qudits[0].readout.frequency_hz
+    tau = target.qudits[0].get_calibration(pulse.gates.READOUT).integration_ns
 
     def cost(point):
         offset_mhz, amplitude = point
@@ -396,7 +396,7 @@ def test_k15_the_closed_loop_runs_ten_thousand_iterations_on_one_compile(target)
 def test_k16_tracking_a_drifting_plant_against_its_truth(target):
     plant = DriftingPlant(
         target,
-        t1=TelegraphT1(target.qubits[0].t1_us / 4, target.qubits[0].t1_us, rate_hz=0.5),
+        t1=TelegraphT1(target.qudits[0].t1_us / 4, target.qudits[0].t1_us, rate_hz=0.5),
         frequency=OrnsteinUhlenbeck(100e3, correlation_s=5.0),
         seed=21,
     )
@@ -434,10 +434,10 @@ def test_k16_tracking_a_drifting_plant_against_its_truth(target):
 def test_k17_latency_within_depletion_is_hidden(target):
     depleting = dataclasses.replace(
         target,
-        qubits={
-            **target.qubits,
-            0: target.qubits[0].replace(
-                readout=target.qubits[0].readout.replace(depletion_ns=250.0),
+        qudits={
+            **target.qudits,
+            0: target.qudits[0].replace(
+                readout=target.qudits[0].readout.replace(depletion_ns=250.0),
             ),
         },
     )
@@ -464,15 +464,15 @@ def test_k17_latency_within_depletion_is_hidden(target):
 
 
 def test_k18_readout_models_on_the_target(target):
-    qubit = target.qubits[0]
-    given = qubit.readout
+    qudit = target.qudits[0]
+    given = qudit.readout
     params = given.replace(error_0to1=given.error_0to1 or 0.02, error_1to0=given.error_1to0 or 0.05)
-    pulses = qubit.calibrations
+    pulses = qudit.calibrations
     window = (pulses.get(pulse.gates.READOUT) or ReadoutPulse()).replace(duration_ns=400.0)
     calibrations = {**pulses, pulse.gates.READOUT: window}
     modelled = dataclasses.replace(
         target,
-        qubits={**target.qubits, 0: qubit.replace(readout=params, calibrations=calibrations)},
+        qudits={**target.qudits, 0: qudit.replace(readout=params, calibrations=calibrations)},
     )
     dev = _device(modelled)
 

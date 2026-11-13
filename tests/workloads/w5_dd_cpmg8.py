@@ -11,7 +11,7 @@ scf.for in the IR.
 import cudaq_pulse as pulse
 
 NAME = "dd_cpmg8"
-NUM_QUBITS = 1
+NUM_QUDITS = 1
 
 
 @pulse.kernel

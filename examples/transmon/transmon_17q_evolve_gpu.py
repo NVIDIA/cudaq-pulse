@@ -34,9 +34,9 @@ cz_slot = dev.coupling(qudit_aux, qudit_data).get_calibration(pulse.gates.CZ).du
 
 
 @pulse.kernel
-def evolve_pair(qubit_aux, qubit_data):
-    drive_line_aux = get_drive_line(qubit_aux)
-    drive_line_data = get_drive_line(qubit_data)
+def evolve_pair(qudit_aux, qudit_data):
+    drive_line_aux = get_drive_line(qudit_aux)
+    drive_line_data = get_drive_line(qudit_data)
     drive(drive_line_aux, drive_line_aux.get_calibration(pulse.gates.X90))
     drive(drive_line_data, drive_line_data.get_calibration(pulse.gates.X))
     sync(drive_line_aux, drive_line_data)

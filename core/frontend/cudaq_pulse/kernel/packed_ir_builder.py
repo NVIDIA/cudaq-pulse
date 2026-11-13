@@ -370,7 +370,7 @@ class PackedIRBuilder:
         name: str = "main",
         *,
         clock_ghz: float = 2.0,
-        qubit_freq_hz: dict[int, float] | None = None,
+        qudit_freq_hz: dict[int, float] | None = None,
         flatten_schedules: bool = False,
     ):
         self.name = name
@@ -379,7 +379,7 @@ class PackedIRBuilder:
         self.schedule_block_count = 0
         self.clock_ghz = clock_ghz
         # For get_freq_array; compile() records the device's tables instead.
-        self._freq_hz = qubit_freq_hz
+        self._freq_hz = qudit_freq_hz
         # Repeating one zero is twice as fast as converting a zeroed bytes.
         self._buf = array("q", _ZERO) * 8192
         # Where _ensure next grows the buffer: its end, or sooner when
@@ -391,8 +391,8 @@ class PackedIRBuilder:
         # negative), the qudits the module records.
         self.qudit_count = 0
         self._op_count = 0
-        self._qref_to_qubit: dict[int, int] = {}
-        self._line_qubit: dict[int, int] = {}  # line vid → qudit
+        self._qref_to_qudit: dict[int, int] = {}
+        self._line_qudit: dict[int, int] = {}  # line vid → qudit
         self._param_vids: dict[int, int] = {}  # Parameter.index → vid
         self._param_names: dict[int, str] = {}  # Parameter.index → name
         # Key by the expression object itself, not id(expression): temporary
@@ -523,7 +523,7 @@ class PackedIRBuilder:
         if kind in ("pulse.qudit_arg", "pulse.qudit_alloc"):
             idx = a.get("index", self.qudit_count)
             for r in results:
-                self._qref_to_qubit[r.vid] = idx
+                self._qref_to_qudit[r.vid] = idx
             self.qudit_count = max(self.qudit_count, idx + 1)
             return results
 
@@ -533,17 +533,17 @@ class PackedIRBuilder:
         # --- get_drive_line → ALLOC_DRIVE ---
         if kind == "pulse.get_drive_line":
             qref_vid = operands[0].vid if operands else None
-            qubit = self._qref_to_qubit.get(qref_vid, 0) if qref_vid is not None else 0
-            self._line_qubit[results[0].vid] = qubit
-            self._put((_header(_ALLOC_DRIVE, 3), qubit, results[0].vid, results[1].vid))
+            qudit = self._qref_to_qudit.get(qref_vid, 0) if qref_vid is not None else 0
+            self._line_qudit[results[0].vid] = qudit
+            self._put((_header(_ALLOC_DRIVE, 3), qudit, results[0].vid, results[1].vid))
             return results
 
         # --- get_readout_line → ALLOC_READOUT ---
         if kind == "pulse.get_readout_line":
             qref_vid = operands[0].vid if operands else None
-            qubit = self._qref_to_qubit.get(qref_vid, 0) if qref_vid is not None else 0
-            self._line_qubit[results[0].vid] = qubit
-            self._put((_header(_ALLOC_READOUT, 3), qubit, results[0].vid, results[1].vid))
+            qudit = self._qref_to_qudit.get(qref_vid, 0) if qref_vid is not None else 0
+            self._line_qudit[results[0].vid] = qudit
+            self._put((_header(_ALLOC_READOUT, 3), qudit, results[0].vid, results[1].vid))
             return results
 
         # --- Waveform constructors ---
@@ -1172,10 +1172,10 @@ class PackedIRBuilder:
         live = self._next_id
         for vid in [vid for vid in self.readouts if vid >= live]:
             del self.readouts[vid]
-        for vid in [vid for vid in self._qref_to_qubit if vid >= live]:
-            del self._qref_to_qubit[vid]
-        for vid in [vid for vid in self._line_qubit if vid >= live]:
-            del self._line_qubit[vid]
+        for vid in [vid for vid in self._qref_to_qudit if vid >= live]:
+            del self._qref_to_qudit[vid]
+        for vid in [vid for vid in self._line_qudit if vid >= live]:
+            del self._line_qudit[vid]
         for index in [i for i, vid in self._param_vids.items() if vid >= live]:
             del self._param_vids[index]
             self._param_names.pop(index, None)
@@ -1351,11 +1351,11 @@ class PackedIRBuilder:
 
     def _role_and_qudit(self, line: IRValue) -> tuple[str, int]:
         """The role of *line* and its qudit (-1 for a runtime qudit's)."""
-        qudit = self._line_qubit.get(line.vid)
+        qudit = self._line_qudit.get(line.vid)
         if qudit is None:
             # A later version of the line: its channel names the qudit.
             held = getattr(line.chan, "held", None)
-            qudit = -1 if held is None else self._qref_to_qubit.get(held.key[0], -1)
+            qudit = -1 if held is None else self._qref_to_qudit.get(held.key[0], -1)
         return line.vtype.removesuffix("_line"), qudit
 
     def _variable_wait(
@@ -1546,20 +1546,20 @@ class PackedIRBuilder:
         return arr
 
     @property
-    def qubits(self) -> tuple[int, ...]:
+    def qudits(self) -> tuple[int, ...]:
         """Indices of the allocated qudits (runtime qudit k: -1 - k)."""
-        return tuple(sorted(set(self._qref_to_qubit.values())))
+        return tuple(sorted(set(self._qref_to_qudit.values())))
 
     @property
-    def used_qubits(self) -> tuple[int, ...]:
+    def used_qudits(self) -> tuple[int, ...]:
         """Indices of the qudits the program gets a drive or readout line on
         (runtime qudit k: -1 - k)."""
-        return tuple(sorted(set(self._line_qubit.values())))
+        return tuple(sorted(set(self._line_qudit.values())))
 
     @property
     def used_slots(self) -> tuple[int, ...]:
         """The runtime qudits (slots) the program gets a line on."""
-        return tuple(sorted(-1 - q for q in set(self._line_qubit.values()) if q < 0))
+        return tuple(sorted(-1 - q for q in set(self._line_qudit.values()) if q < 0))
 
     @property
     def op_count(self) -> int:
@@ -1571,7 +1571,7 @@ class PackedIRBuilder:
         found = _RecordFinder(
             name=self.name,
             clock_ghz=self.clock_ghz,
-            qubit_freq_hz=self._freq_hz,
+            qudit_freq_hz=self._freq_hz,
             flatten_schedules=not self.schedule_blocks,
         )
         found.word = word

@@ -271,8 +271,8 @@ def test_packed_decoder_rejects_truncated_and_unknown_records():
 def test_a_handle_binds_its_physical_target_index():
 
     @pulse.kernel
-    def kernel(qubit):
-        line = get_drive_line(qubit)
+    def kernel(qudit):
+        line = get_drive_line(qudit)
         wait(line, 10)
 
     compiled = pulse.compile(kernel, passes=()).lower(Q[4])
@@ -284,8 +284,8 @@ def test_a_handle_binds_its_physical_target_index():
 def test_virtual_time_arguments_are_not_silently_truncated():
 
     @pulse.kernel
-    def kernel(qubit):
-        line = get_drive_line(qubit)
+    def kernel(qudit):
+        line = get_drive_line(qudit)
         drive(line, square(10.5, 0.2))
 
     with pytest.raises(CompilationError, match=r"duration is a float \(10.5\)"):

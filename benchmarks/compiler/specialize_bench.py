@@ -23,7 +23,7 @@ from collections.abc import Callable
 
 import cudaq_pulse as pulse
 
-_QUBIT = pulse.device("transmon_17q").qudits[0]
+_QUDIT = pulse.device("transmon_17q").qudits[0]
 _DRIVE_COUNTS = (1, 2, 5, 10, 20)
 
 
@@ -65,10 +65,10 @@ def main() -> int:
         kernel = _drives(count)
         compiled = pulse.compile(kernel)
         compile_ms = _median_ms(
-            lambda i, k=kernel: pulse.compile(k).lower(_QUBIT, 0.5), options.iterations
+            lambda i, k=kernel: pulse.compile(k).lower(_QUDIT, 0.5), options.iterations
         )
         value_ms = _median_ms(
-            lambda i, c=compiled: c.lower(_QUBIT, amp=0.01 * (i + 1)), options.iterations
+            lambda i, c=compiled: c.lower(_QUDIT, amp=0.01 * (i + 1)), options.iterations
         )
         speedups.append((f"{count} drives", compile_ms / value_ms))
         print(f"  {count:6d}  {compile_ms:12.3f}  {value_ms:14.3f}  {speedups[-1][1]:7.1f}x")
@@ -78,11 +78,11 @@ def main() -> int:
     amplitudes = [0.01 * (i + 1) for i in range(100)]
     start = time.perf_counter()
     for amp in amplitudes:
-        compiled.lower(_QUBIT, amp=amp)
+        compiled.lower(_QUDIT, amp=amp)
     value_ms = (time.perf_counter() - start) * 1000
     start = time.perf_counter()
     for amp in amplitudes:
-        pulse.compile(sweep).lower(_QUBIT, amp)
+        pulse.compile(sweep).lower(_QUDIT, amp)
     compile_ms = (time.perf_counter() - start) * 1000
     speedups.append(("sweep of 100", compile_ms / value_ms))
     print(

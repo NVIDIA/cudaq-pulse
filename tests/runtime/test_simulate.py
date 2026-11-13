@@ -14,7 +14,7 @@ import warnings
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.targets import Coupling, DeviceDescription, MicrowaveDrive, Qubit
+from cudaq_pulse.targets import Coupling, DeviceDescription, MicrowaveDrive, PhysicalQudit
 
 from tests._handles import Q
 from tests.runtime._lowering import on
@@ -28,8 +28,8 @@ _HALF_PI = math.pi / 40.0
 def _target(n=1, t1_us=0.0):
     return DeviceDescription(
         name="simulate-test",
-        qubits={
-            q: Qubit(
+        qudits={
+            q: PhysicalQudit(
                 index=q,
                 frequency_hz=5.0e9 + 0.1e9 * q,
                 anharmonicity_hz=-200.0e6,
@@ -180,7 +180,7 @@ def test_active_reset_of_a_superposition():
     assert abs(ones - 0.5) < 4 * math.sqrt(0.25 / 4000)
 
 
-def test_conditional_flip_correlates_the_qubits():
+def test_conditional_flip_correlates_the_qudits():
     result = _run(conditional_flip, 2, shots=1000, seed=3)
     expected = np.zeros((4, 4))
     expected[0, 0] = expected[3, 3] = 0.5  # |00> and |11>, qubit 0 least significant
@@ -273,7 +273,7 @@ def test_each_qudit_has_its_model_s_levels_unless_simulate_sets_them():
     lowered = on(_target(1), measure, Q[0])
     assert pulse.simulate(lowered).dims == (TransmonModel.levels,) == (3,)
     target = DeviceDescription(
-        name="simulate-test", qubits=_target(2).qubits, model=TransmonModel(levels={1: 4})
+        name="simulate-test", qudits=_target(2).qudits, model=TransmonModel(levels={1: 4})
     )
     lowered = on(target, conditional_flip, Q[0], Q[1])
     assert pulse.simulate(lowered).dims == (3, 4)
@@ -360,7 +360,7 @@ def test_the_check_follows_the_model_s_levels_not_a_transmon_s():
     # Evenly spaced levels (no anharmonicity) all turn with the frame.
     harmonic = DeviceDescription(
         name="harmonic",
-        qubits={0: Qubit(0, 5.0e9, 0.0, 0.0, 0.0)},
+        qudits={0: PhysicalQudit(0, 5.0e9, 0.0, 0.0, 0.0)},
     )
     with warnings.catch_warnings():
         warnings.simplefilter("error", pulse.PulseWarning)
@@ -482,7 +482,7 @@ def test_a_gpu_result_that_is_not_finite_raises(monkeypatch):
 def test_a_step_too_coarse_for_coupled_qudits_names_their_detuning():
     pair = DeviceDescription(
         name="pair",
-        qubits={q: Qubit(q, 5.0e9 + 2.0e9 * q, -200.0e6, 0.0, 0.0) for q in range(2)},
+        qudits={q: PhysicalQudit(q, 5.0e9 + 2.0e9 * q, -200.0e6, 0.0, 0.0) for q in range(2)},
         couplings=[Coupling((0, 1), 5.0e6)],
     )
     with pytest.warns(

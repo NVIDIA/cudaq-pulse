@@ -14,14 +14,14 @@ import numpy as np
 import pytest
 from cudaq_pulse.classical import emulation
 from cudaq_pulse.kernel.ir_builder import CompilationError
-from cudaq_pulse.targets import DeviceDescription, Qubit
+from cudaq_pulse.targets import DeviceDescription, PhysicalQudit
 
 PI_AMP = math.pi / 20  # square(40, PI_AMP) is a pi pulse
 
 _DEVICE = pulse.device(
     DeviceDescription(
         name="three",
-        qubits={i: Qubit(i, 5e9 + 1e8 * i, -2e8, 0.0, 0.0) for i in range(3)},
+        qudits={i: PhysicalQudit(i, 5e9 + 1e8 * i, -2e8, 0.0, 0.0) for i in range(3)},
     )
 )
 
@@ -119,7 +119,7 @@ def test_simulation_drives_where_python_s_condition_holds(body, expected):
     result = pulse.simulate(low, initial_state=state, levels=2)
     # A branch's levels are in the order the readouts are scheduled.
     readouts = [e for e in low.schedule if e.kind == "readout"]
-    order = [e.qubit for _, _, e in sorted((e.start_cycles, k, e) for k, e in enumerate(readouts))]
+    order = [e.qudit for _, _, e in sorted((e.start_cycles, k, e) for k, e in enumerate(readouts))]
     seen = set()
     for branch in result.branches:
         s0, s1, flag = (dict(zip(order, branch.levels, strict=True))[q] for q in (0, 1, 2))

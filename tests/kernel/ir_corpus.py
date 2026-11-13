@@ -116,11 +116,11 @@ def surface_syndrome(d: int) -> Callable[..., Any]:
     total_count = data_count + ancilla_count
 
     @pulse.kernel
-    def round_(qubits):
+    def round_(qudits):
         lines = []
         tones = []
         for i in range(total_count):
-            line = get_drive_line(qubits[i])
+            line = get_drive_line(qudits[i])
             lines.append(line)
             tones.append(line.tone)
 
@@ -152,11 +152,11 @@ def bicycle_syndrome(l: int, m: int) -> Callable[..., Any]:  # noqa: E741
     total_count = data_count + 2 * check_count
 
     @pulse.kernel
-    def checks(qubits):
+    def checks(qudits):
         lines = []
         tones = []
         for i in range(total_count):
-            line = get_drive_line(qubits[i])
+            line = get_drive_line(qudits[i])
             lines.append(line)
             tones.append(line.tone)
 
@@ -350,7 +350,7 @@ class Case:
     path: str  # "python" (kernel call) or "packed" (compile() trace)
 
 
-def _qubits(n: int) -> Callable[[], list[Any]]:
+def _qudits(n: int) -> Callable[[], list[Any]]:
     return lambda: [Q[i] for i in range(n)]
 
 
@@ -361,12 +361,12 @@ def _qvec(n: int) -> Callable[[], list[Any]]:
 def _cases() -> list[Case]:
     cases = []
     for n in (8, 32, 128, 512):
-        cases.append(Case(f"dd_loop_n{n}", dd_loop(n), _qubits(1), "python"))
-    cases.append(Case("dd_loop_n8_packed", dd_loop(8), _qubits(1), "packed"))
-    cases.append(Case("cpmg_with_waits", cpmg_with_waits, _qubits(1), "python"))
+        cases.append(Case(f"dd_loop_n{n}", dd_loop(n), _qudits(1), "python"))
+    cases.append(Case("dd_loop_n8_packed", dd_loop(8), _qudits(1), "packed"))
+    cases.append(Case("cpmg_with_waits", cpmg_with_waits, _qudits(1), "python"))
     for mod in (w1_bell, w2_cnot_cr, w3_qaoa4, w4_syndrome, w5_dd_cpmg8, w6_vqe_hea):
-        n = mod.NUM_QUBITS
-        cases.append(Case(f"workload_{mod.NAME}", mod.build, _qubits(n), "python"))
+        n = mod.NUM_QUDITS
+        cases.append(Case(f"workload_{mod.NAME}", mod.build, _qudits(n), "python"))
     for d in (3, 5):
         kernel, n = surface_syndrome(d)
         cases.append(Case(f"surface_d{d}", kernel, _qvec(n), "packed"))
@@ -374,11 +374,11 @@ def _cases() -> list[Case]:
     cases.append(Case("surface_d3_python", kernel, _qvec(n), "python"))
     kernel, n = bicycle_syndrome(3, 3)
     cases.append(Case("bicycle_3x3", kernel, _qvec(n), "packed"))
-    cases.append(Case("closures_and_helpers", closures_and_helpers(0.8), _qubits(2), "python"))
-    cases.append(Case("python_expressions", python_expressions, _qubits(1), "python"))
-    cases.append(Case("python_expressions_packed", python_expressions, _qubits(1), "packed"))
-    cases.append(Case("readout_and_algebra", readout_and_algebra, _qubits(1), "python"))
-    cases.append(Case("readout_and_algebra_packed", readout_and_algebra, _qubits(1), "packed"))
+    cases.append(Case("closures_and_helpers", closures_and_helpers(0.8), _qudits(2), "python"))
+    cases.append(Case("python_expressions", python_expressions, _qudits(1), "python"))
+    cases.append(Case("python_expressions_packed", python_expressions, _qudits(1), "packed"))
+    cases.append(Case("readout_and_algebra", readout_and_algebra, _qudits(1), "python"))
+    cases.append(Case("readout_and_algebra_packed", readout_and_algebra, _qudits(1), "packed"))
     cases.append(
         Case(
             "parametric",
@@ -387,11 +387,11 @@ def _cases() -> list[Case]:
             "packed",
         )
     )
-    cases.append(Case("measurement_branch", measurement_branch, _qubits(1), "packed"))
-    cases.append(Case("active_reset", active_reset, _qubits(1), "python"))
-    cases.append(Case("negated_feedback", negated_feedback, _qubits(2), "python"))
-    cases.append(Case("feedback_in_loop", feedback_in_loop, _qubits(1), "python"))
-    cases.append(Case("feedback_both_return", feedback_both_return, _qubits(1), "python"))
+    cases.append(Case("measurement_branch", measurement_branch, _qudits(1), "packed"))
+    cases.append(Case("active_reset", active_reset, _qudits(1), "python"))
+    cases.append(Case("negated_feedback", negated_feedback, _qudits(2), "python"))
+    cases.append(Case("feedback_in_loop", feedback_in_loop, _qudits(1), "python"))
+    cases.append(Case("feedback_both_return", feedback_both_return, _qudits(1), "python"))
     cases.append(
         Case(
             "compare_symbolic",
@@ -400,9 +400,9 @@ def _cases() -> list[Case]:
             "packed",
         )
     )
-    cases.append(Case("compare_measurement", compare_measurement, _qubits(1), "python"))
-    cases.append(Case("bad_attribute", bad_attribute, _qubits(1), "python"))
-    cases.append(Case("while_loop", while_loop, _qubits(1), "python"))
+    cases.append(Case("compare_measurement", compare_measurement, _qudits(1), "python"))
+    cases.append(Case("bad_attribute", bad_attribute, _qudits(1), "python"))
+    cases.append(Case("while_loop", while_loop, _qudits(1), "python"))
     return cases
 
 
@@ -420,7 +420,7 @@ def trace(case: Case) -> dict[str, Any]:
             op_count = len(ir.ops)
         else:
             builder = PackedIRBuilder(
-                name=fn.__name__, clock_ghz=2.0, qubit_freq_hz={i: 5e9 + 1e6 * i for i in range(64)}
+                name=fn.__name__, clock_ghz=2.0, qudit_freq_hz={i: 5e9 + 1e6 * i for i in range(64)}
             )
             builder.unroll_threshold = UNROLL_THRESHOLD
             _trace_kernel_with_builder(fn, builder, args)

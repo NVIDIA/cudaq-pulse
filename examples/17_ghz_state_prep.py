@@ -22,16 +22,16 @@ cal = {
 
 
 @pulse.kernel
-def ghz_3(qubit_0, qubit_1, qubit_2):
-    """3-qubit GHZ state: H(qubit_0) - CNOT(0,1) - CNOT(1,2).
+def ghz_3(qudit_0, qudit_1, qudit_2):
+    """3-qubit GHZ state: H(qudit_0) - CNOT(0,1) - CNOT(1,2).
 
     Each CNOT is an echoed cross-resonance gate:
       SX(target) - CR(ctrl->tgt) - X(ctrl) - CR_neg(ctrl->tgt) - SX(target)
     """
 
-    drive_line_0 = get_drive_line(qubit_0)
-    drive_line_1 = get_drive_line(qubit_1)
-    drive_line_2 = get_drive_line(qubit_2)
+    drive_line_0 = get_drive_line(qudit_0)
+    drive_line_1 = get_drive_line(qudit_1)
+    drive_line_2 = get_drive_line(qudit_2)
 
     x_duration, x_sigma, beta = cal["x_duration"], cal["x_sigma"], cal["drag_beta"]
     sx_pulse = drag(x_duration, 0.25, x_sigma, beta)
@@ -39,7 +39,7 @@ def ghz_3(qubit_0, qubit_1, qubit_2):
     cr_pos = gaussian_square(cal["cr_duration"], 0.05, x_sigma, cal["cr_width"])
     cr_neg = gaussian_square(cal["cr_duration"], -0.05, x_sigma, cal["cr_width"])
 
-    # H(qubit_0) = Rz(pi) SX Rz(pi/2)
+    # H(qudit_0) = Rz(pi) SX Rz(pi/2)
     shift_phase(drive_line_0.tone, 3.14159)
     drive(drive_line_0, sx_pulse)
     shift_phase(drive_line_0.tone, 1.5708)
@@ -64,15 +64,15 @@ def ghz_3(qubit_0, qubit_1, qubit_2):
 
 
 @pulse.kernel
-def ghz_n(qubit_0, qubit_1, qubit_count):
+def ghz_n(qudit_0, qudit_1, qudit_count):
     """N-qubit GHZ state using a loop of CNOT gates.
 
-    The outer structure: H on qubit_0, then CNOT chain.
+    The outer structure: H on qudit_0, then CNOT chain.
     The for-loop demonstrates loop capture for repeated gate patterns.
     """
 
-    drive_line_0 = get_drive_line(qubit_0)
-    drive_line_1 = get_drive_line(qubit_1)
+    drive_line_0 = get_drive_line(qudit_0)
+    drive_line_1 = get_drive_line(qudit_1)
 
     x_duration, x_sigma, beta = cal["x_duration"], cal["x_sigma"], cal["drag_beta"]
     sx_pulse = drag(x_duration, 0.25, x_sigma, beta)
@@ -80,14 +80,14 @@ def ghz_n(qubit_0, qubit_1, qubit_count):
     cr_pos = gaussian_square(cal["cr_duration"], 0.05, x_sigma, cal["cr_width"])
     cr_neg = gaussian_square(cal["cr_duration"], -0.05, x_sigma, cal["cr_width"])
 
-    # H(qubit_0)
+    # H(qudit_0)
     shift_phase(drive_line_0.tone, 3.14159)
     drive(drive_line_0, sx_pulse)
     shift_phase(drive_line_0.tone, 1.5708)
 
     # CNOT chain: for a 2-qubit kernel we do one CNOT(0,1)
     # In a real N-qubit system, this loop would iterate over qubit pairs
-    for _i in range(qubit_count - 1):
+    for _i in range(qudit_count - 1):
         sync(drive_line_0, drive_line_1)
         drive(drive_line_1, sx_pulse)
         drive(drive_line_0, cr_pos, tone=drive_line_1.tone)

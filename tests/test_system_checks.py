@@ -20,7 +20,7 @@ from cudaq_pulse.targets import (
     Coupling,
     DeviceDescription,
     FluxCZ,
-    Qubit,
+    PhysicalQudit,
     ResidualZZ,
     SimulationModel,
     TransmonModel,
@@ -29,11 +29,11 @@ from cudaq_pulse.targets.base import _COUPLING_OPERATORS, _coupling_operator
 
 
 def _qudits(n=3):
-    return {i: Qubit(i, 5.0e9 + 1.0e8 * i, -2.5e8, 50.0, 40.0) for i in range(n)}
+    return {i: PhysicalQudit(i, 5.0e9 + 1.0e8 * i, -2.5e8, 50.0, 40.0) for i in range(n)}
 
 
 def _system(**fields):
-    return DeviceDescription(name="checked", qubits=_qudits(), **fields)
+    return DeviceDescription(name="checked", qudits=_qudits(), **fields)
 
 
 def _cz(duration_ns, buffer_ns=None, interaction_frequency_hz=None):
@@ -532,9 +532,9 @@ def test_a_system_made_from_a_checked_one_is_checked_for_what_changed():
         residual_zz=[ResidualZZ((0, 2), 1.0e4)],
     )
     assert dataclasses.replace(checked, clock_ghz=1.0).couplings is checked.couplings
-    fewer = {i: q for i, q in checked.qubits.items() if i < 2}
+    fewer = {i: q for i, q in checked.qudits.items() if i < 2}
     with pytest.raises(DeviceDefinitionError, match=r"couplings\[1\].qudits\[1\]: 2 is not"):
-        dataclasses.replace(checked, qubits=fewer)
+        dataclasses.replace(checked, qudits=fewer)
     restrengthened = [Coupling(c.qudits, math.nan, c.calibrations) for c in checked.couplings]
     problems = [str(p) for p in _problems_of(checked, restrengthened)]
     assert [p.split(":")[0] for p in problems] == [
