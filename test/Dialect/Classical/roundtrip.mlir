@@ -7,21 +7,21 @@
 // Every classical op and type, and every argument and result descriptor.
 
 // CHECK: classical.callable @decode {{{.*}}args = ["bits:2"]{{.*}}reaction_deadline_ns = 4.000000e+03{{.*}}results = ["bits:1"]
-classical.callable @decode {function_id = 3007678287 : i64, device = 0 : i64,
+classical.callable @decode {dispatch_key = 3007678287 : i64, device = 0 : i64,
     args = ["bits:2"], results = ["bits:1"], latency_min_ns = 500.0,
     latency_nominal_ns = 900.0, latency_max_ns = 1500.0, mode = "bounded",
     submit = "eager", reaction_deadline_ns = 4000.0}
 // CHECK: classical.callable @est {{{.*}}mode = "timeout"{{.*}}timeout_ns = 2.000000e+03
-classical.callable @est {function_id = 2023343271 : i64, device = 1 : i64,
+classical.callable @est {dispatch_key = 2023343271 : i64, device = 1 : i64,
     args = ["iq:1", "levels:1", "f64", "i64", "u8", "i32", "f32", "f64[2]"],
     results = ["f64", "levels:1", "i32[2]", "iq:1"],
     latency_min_ns = 0.0, latency_nominal_ns = 1000.0, latency_max_ns = 1800.0,
     mode = "timeout", timeout_ns = 2000.0, submit = "lazy", deadline_ns = 5000.0}
-// CHECK: classical.callable @f {{{.*}}function_id_override
-classical.callable @f {function_id = 7 : i64, device = 0 : i64,
+// CHECK: classical.callable @f {{{.*}}dispatch_key_override
+classical.callable @f {dispatch_key = 7 : i64, device = 0 : i64,
     args = ["u8[3]", "f32[1]"], results = [], latency_min_ns = 0.0,
     latency_nominal_ns = 0.0, latency_max_ns = 0.0, mode = "blocking",
-    submit = "eager", function_id_override}
+    submit = "eager", dispatch_key_override}
 
 // CHECK-LABEL: func.func @main
 func.func @main(%m0: !pulse.measurement, %m1: !pulse.measurement) -> i1 {

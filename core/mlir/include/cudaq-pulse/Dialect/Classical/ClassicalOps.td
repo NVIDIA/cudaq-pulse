@@ -20,8 +20,8 @@ def Classical_CallableOp : ClassicalOp<"callable", [Symbol]> {
   let description = [{
     The schema and timing of one classical function.
 
-    - `function_id`: the 32-bit FNV-1a hash of `sym_name`, which identifies
-      the function on the wire. With `function_id_override` it may be any
+    - `dispatch_key`: the 32-bit FNV-1a hash of `sym_name`, which identifies
+      the function on the wire. With `dispatch_key_override` it may be any
       32-bit value instead.
     - `device`: the id of the link the requests travel on.
     - `args`, `results`: one type descriptor per argument and result, in
@@ -55,7 +55,7 @@ def Classical_CallableOp : ClassicalOp<"callable", [Symbol]> {
   }];
   let arguments = (ins
     SymbolNameAttr:$sym_name,
-    I64Attr:$function_id,
+    I64Attr:$dispatch_key,
     I64Attr:$device,
     StrArrayAttr:$args,
     StrArrayAttr:$results,
@@ -66,7 +66,7 @@ def Classical_CallableOp : ClassicalOp<"callable", [Symbol]> {
     StrAttr:$submit,
     OptionalAttr<F64Attr>:$timeout_ns,
     OptionalAttr<F64Attr>:$deadline_ns,
-    UnitAttr:$function_id_override,
+    UnitAttr:$dispatch_key_override,
     OptionalAttr<F64Attr>:$reaction_deadline_ns
   );
   let assemblyFormat = "$sym_name attr-dict";

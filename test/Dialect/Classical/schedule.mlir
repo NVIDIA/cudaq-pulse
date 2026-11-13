@@ -10,15 +10,15 @@
 
 module attributes {pulse.clock_ghz = 2.0 : f64} {
 
-classical.callable @decode {function_id = 3007678287 : i64, device = 0 : i64,
+classical.callable @decode {dispatch_key = 3007678287 : i64, device = 0 : i64,
     args = ["bits:1"], results = ["bits:1"], latency_min_ns = 500.0,
     latency_nominal_ns = 900.0, latency_max_ns = 1500.0, mode = "bounded",
     submit = "eager"}
-classical.callable @est {function_id = 2023343271 : i64, device = 0 : i64,
+classical.callable @est {dispatch_key = 2023343271 : i64, device = 0 : i64,
     args = ["iq:1"], results = ["f64"], latency_min_ns = 0.0,
     latency_nominal_ns = 1000.0, latency_max_ns = 1500.0, mode = "bounded",
     submit = "lazy"}
-classical.callable @track {function_id = 2067622972 : i64, device = 1 : i64,
+classical.callable @track {dispatch_key = 2067622972 : i64, device = 1 : i64,
     args = ["f64"], results = ["f64"], latency_min_ns = 0.0,
     latency_nominal_ns = 10.0, latency_max_ns = 50.0, mode = "blocking",
     submit = "eager"}

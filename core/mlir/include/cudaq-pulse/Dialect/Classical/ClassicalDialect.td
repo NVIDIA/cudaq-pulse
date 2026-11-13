@@ -27,7 +27,7 @@ def ClassicalDialect : Dialect {
     its arguments and results, and its latency.
 
     ```mlir
-    classical.callable @decode {function_id = 3007678287 : i64, device = 0 : i64,
+    classical.callable @decode {dispatch_key = 3007678287 : i64, device = 0 : i64,
         args = ["bits:2"], results = ["bits:1"],
         latency_min_ns = 500.0, latency_nominal_ns = 900.0,
         latency_max_ns = 1500.0, mode = "bounded", submit = "eager"}

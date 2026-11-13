@@ -16,11 +16,11 @@
 module attributes {pulse.clock_ghz = 1.0 : f64,
                    classical.links = {"0" = {max_in_flight = 2 : i64}}} {
 
-classical.callable @decode_wide {function_id = 1, device = 1 : i64,
+classical.callable @decode_wide {dispatch_key = 1, device = 1 : i64,
     args = ["bits:1"], results = ["bits:1"], latency_min_ns = 100.0,
     latency_nominal_ns = 500.0, latency_max_ns = 1000.0, mode = "bounded",
-    submit = "eager", function_id_override}
-classical.callable @decode {function_id = 3007678287 : i64, device = 0 : i64,
+    submit = "eager", dispatch_key_override}
+classical.callable @decode {dispatch_key = 3007678287 : i64, device = 0 : i64,
     args = ["bits:1"], results = ["bits:1"], latency_min_ns = 100.0,
     latency_nominal_ns = 500.0, latency_max_ns = 1000.0, mode = "bounded",
     submit = "eager"}

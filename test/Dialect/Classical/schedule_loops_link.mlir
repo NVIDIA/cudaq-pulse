@@ -13,18 +13,18 @@ module attributes {pulse.clock_ghz = 2.0 : f64,
                    classical.links = {"0" = {fixed_ns = 4.0 : f64, max_in_flight = 1 : i64},
                                       "1" = {fixed_ns = 4.0 : f64, max_in_flight = 6 : i64}}} {
 
-classical.callable @ask {function_id = 1 : i64, device = 0 : i64,
+classical.callable @ask {dispatch_key = 1 : i64, device = 0 : i64,
     args = ["bits:1"], results = ["bits:1"], latency_min_ns = 0.0,
     latency_nominal_ns = 100.0, latency_max_ns = 100.0, mode = "bounded",
-    submit = "eager", function_id_override}
-classical.callable @ask_wide {function_id = 2 : i64, device = 1 : i64,
+    submit = "eager", dispatch_key_override}
+classical.callable @ask_wide {dispatch_key = 2 : i64, device = 1 : i64,
     args = ["bits:1"], results = ["bits:1"], latency_min_ns = 0.0,
     latency_nominal_ns = 100.0, latency_max_ns = 100.0, mode = "bounded",
-    submit = "eager", function_id_override}
-classical.callable @ask_lazy {function_id = 3 : i64, device = 1 : i64,
+    submit = "eager", dispatch_key_override}
+classical.callable @ask_lazy {dispatch_key = 3 : i64, device = 1 : i64,
     args = ["bits:1"], results = ["bits:1"], latency_min_ns = 0.0,
     latency_nominal_ns = 100.0, latency_max_ns = 100.0, mode = "bounded",
-    submit = "lazy", function_id_override}
+    submit = "lazy", dispatch_key_override}
 
 // Rounds branching on their answer, then readouts whose requests nobody
 // awaits: on one slot the second loop's first request waits for the first

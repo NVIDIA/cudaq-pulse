@@ -15,7 +15,7 @@ Functions and links
 
 .. autofunction:: cudaq_pulse.classical.external
 
-.. autofunction:: cudaq_pulse.classical.function_id
+.. autofunction:: cudaq_pulse.classical.dispatch_key
 
 .. autoclass:: cudaq_pulse.classical.ClassicalDecorator
 

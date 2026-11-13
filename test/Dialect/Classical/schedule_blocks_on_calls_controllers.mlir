@@ -19,10 +19,10 @@ module attributes {pulse.clock_ghz = 1.0 : f64, pulse.n_qubits = 3 : i64,
       uncertainty_ns = array<f64: 0.0, 0.0, 0.0>},
     pulse.blocks_on_calls = array<i64: 1, 2>} {
 
-classical.callable @decode {function_id = 1, device = 0 : i64,
+classical.callable @decode {dispatch_key = 1, device = 0 : i64,
     args = ["bits:1"], results = ["f64"], latency_min_ns = 0.0,
     latency_nominal_ns = 100.0, latency_max_ns = 100.0, mode = "bounded",
-    submit = "eager", function_id_override}
+    submit = "eager", dispatch_key_override}
 
 // CHECK-LABEL: func.func @held_where_used
 // CHECK: pulse.drive {{.*}}start_cycles = 0 : i64

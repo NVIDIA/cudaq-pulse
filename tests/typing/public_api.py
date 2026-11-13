@@ -170,7 +170,7 @@ scale_3: ClassicalFunction[[list[float], float], tuple[list[float], float]] = _s
 assert_type(_scale.specialize(x=3).submit([1.0], 2.0).result(), tuple[list[float], float])
 assert_type(table.submit([0, 1]).result(), float)
 assert_type(pulse.classical.random_index(4), ClassicalFunction[[], int])
-assert_type(pulse.classical.function_id("decode"), int)
+assert_type(pulse.classical.dispatch_key("decode"), int)
 functions: list[ClassicalFunction[..., Any]] = [decode, _scale, table]
 decode.submit(0.5)  # type: ignore[arg-type]
 decode.submit([1], [0])  # type: ignore[call-arg]

@@ -63,7 +63,7 @@ def test_export_and_manifest_are_json():
     (entry,) = artifact["manifest"]["functions"]
     version = next_wait.specialize(bits=1)
     assert version.name == "next_wait__1"
-    assert entry["dispatch_key"] == classical.function_id("next_wait__1")
+    assert entry["dispatch_key"] == classical.dispatch_key("next_wait__1")
     assert entry["slot_bytes"] == 256
     assert entry["schema"] == wire.schema(version)
     assert entry["request_bytes"] == 25 and entry["answer_bytes"] == 32

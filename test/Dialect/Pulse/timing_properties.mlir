@@ -55,7 +55,7 @@ func.func @unscheduled(%d0: !pulse.drive_line, %t0: !pulse.tone, %w: !pulse.wave
 // EXACT: {{^}}    %3:2 = classical.wait %future, @est <{timeout_ns = 2.500000e+02 : f64}> {tag = 1 : i64} : i1, f64{{$}}
 // EXACT: {{^}}    %4:2 = classical.wait %future, @est : i1, f64{{$}}
 // EXACT: {{^}}    %5 = pulse.shift_phase %0#1, %arg4 <{period_cycles = array<i64: 10, 20>}> : !pulse.tone, f64 -> !pulse.tone{{$}}
-classical.callable @est {function_id = 2023343271 : i64, device = 0 : i64,
+classical.callable @est {dispatch_key = 2023343271 : i64, device = 0 : i64,
     args = ["f64"], results = ["f64"], latency_min_ns = 0.0,
     latency_nominal_ns = 1000.0, latency_max_ns = 1500.0, mode = "timeout",
     timeout_ns = 2000.0, submit = "lazy"}

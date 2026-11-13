@@ -6,7 +6,7 @@
 // RUN: cudaq-pulse-opt %s --split-input-file --verify-diagnostics --pulse-schedule-asap
 // RUN: cudaq-pulse-opt %s --split-input-file --verify-diagnostics --pulse-schedule-alap
 
-classical.callable @f {function_id = 3809224601 : i64, device = 0 : i64,
+classical.callable @f {dispatch_key = 3809224601 : i64, device = 0 : i64,
     args = [], results = ["f64"], latency_min_ns = 0.0,
     latency_nominal_ns = 0.0, latency_max_ns = 10.0, mode = "blocking",
     submit = "eager"}
@@ -25,7 +25,7 @@ func.func @blocking_in_block() {
 
 // -----
 
-classical.callable @f {function_id = 3809224601 : i64, device = 0 : i64,
+classical.callable @f {dispatch_key = 3809224601 : i64, device = 0 : i64,
     args = [], results = ["i64"], latency_min_ns = 0.0,
     latency_nominal_ns = 0.0, latency_max_ns = 10.0, mode = "bounded",
     submit = "eager"}

@@ -74,7 +74,7 @@ __all__ = [
     "Pending",
     "external",
     "function",
-    "function_id",
+    "dispatch_key",
     "random_index",
 ]
 
@@ -262,7 +262,7 @@ class _Bytes(ValueType):
         super().__init__(f"u8[{n}]", n, "integer", "i64", n, n)
 
 
-def function_id(name: str) -> int:
+def dispatch_key(name: str) -> int:
     """The dispatch key of a function compiled as *name*, unless its
     controller fixes one: 32-bit FNV-1a, the hash CUDA-Q Realtime registers
     handlers by."""
@@ -274,7 +274,7 @@ def function_id(name: str) -> int:
 
 # Keys built-in protocols send, by the protocol: a user function given one
 # (by its name's hash or a controller) is a compile error. These are the
-# function_id of enqueue_syndromes, get_corrections and reset_decoder.
+# dispatch_key of enqueue_syndromes, get_corrections and reset_decoder.
 _RESERVED_KEYS = {
     0x7ED8BE82: "cudaq_pulse.classical.qec",
     0x882D5BA1: "cudaq_pulse.classical.qec",
@@ -819,7 +819,7 @@ class ClassicalFunction[**P, R]:
         self.link = link
         # The key it is dispatched by unless its controller fixes one: its
         # compiled name's hash, or a built-in protocol's key.
-        self._dispatch_key = function_id(name) if _dispatch_key is None else _dispatch_key
+        self._dispatch_key = dispatch_key(name) if _dispatch_key is None else _dispatch_key
         # For a built-in that shares its key (QEC's decoder calls): the first
         # argument that picks it out, CUDA-QX's decoder id. None for a
         # function with a key of its own.
@@ -1147,7 +1147,7 @@ def _make(template: ClassicalFunction[..., Any], key: Any) -> ClassicalFunction[
             raise CompilationError(str(error)) from None
     suffix = "_".join(str(n) if n >= 0 else f"i{-n}" for n in _key_items(key))
     version.name = f"{template.name}__{suffix}"
-    version._dispatch_key = function_id(version.name)
+    version._dispatch_key = dispatch_key(version.name)
     version._template = template
     version._key = key
     version.base_name = template.name
@@ -1437,7 +1437,7 @@ class ClassicalDecorator(_Declare, Protocol):
     Pending: type[Pending[Any]]
     function: _Declare
     external: _External
-    function_id: Callable[[str], int]
+    dispatch_key: Callable[[str], int]
     random_index: Callable[..., _IndexFunction]
     # Submodules, once imported.
     calibration: types.ModuleType

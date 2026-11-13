@@ -12,10 +12,10 @@ module attributes {pulse.clock_ghz = 1.0 : f64, classical.links = {"0" = {
     fixed_ns = 0.0 : f64, bytes_per_ns = 0.0 : f64, feedback_ns = 0.0 : f64,
     max_in_flight = 2 : i64, slot_bytes = 1024 : i64}}} {
 
-classical.callable @decode {function_id = 1, device = 0 : i64,
+classical.callable @decode {dispatch_key = 1, device = 0 : i64,
     args = ["bits:1"], results = ["bits:1"], latency_min_ns = 0.0,
     latency_nominal_ns = 100.0, latency_max_ns = 100.0, mode = "bounded",
-    submit = "eager", function_id_override}
+    submit = "eager", dispatch_key_override}
 
 // The parent's request holds one of the two slots over [10, 111). The block
 // sends two requests 1 cycle apart, so it starts once the first slot is free

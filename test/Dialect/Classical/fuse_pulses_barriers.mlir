@@ -5,7 +5,7 @@
 // line: the second plays after it.
 // RUN: cudaq-pulse-opt --pulse-fuse-pulses %s | FileCheck %s
 
-classical.callable @f {function_id = 3809224601 : i64, device = 0 : i64,
+classical.callable @f {dispatch_key = 3809224601 : i64, device = 0 : i64,
     args = [], results = ["i64"], latency_min_ns = 0.0,
     latency_nominal_ns = 0.0, latency_max_ns = 10.0, mode = "bounded",
     submit = "eager"}

@@ -92,7 +92,7 @@ CudmStatus cudm_operator_append(CudmHandle handle, CudmOperator op,
 // signature is that of a CUDA-Q Realtime host-call handler.
 typedef void (*CudmClassicalHandler)(const void *request, void *answer,
                                      size_t slot_bytes);
-CudmStatus cudm_classical_register(CudmHandle handle, uint32_t function_id,
+CudmStatus cudm_classical_register(CudmHandle handle, uint32_t dispatch_key,
                                    CudmClassicalHandler handler);
 // Send `request` to the run's handler for its function id and check the
 // answer it writes to `answer` (`answer_capacity` bytes): its magic, and the

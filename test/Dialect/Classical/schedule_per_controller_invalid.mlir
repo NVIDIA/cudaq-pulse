@@ -13,10 +13,10 @@ module attributes {pulse.clock_ghz = 1.0 : f64, pulse.n_qubits = 2 : i64,
       feedback_ns = 0.0 : f64, max_in_flight = 1 : i64, slot_bytes = 1024 : i64,
       per_controller, name = "decoder"}}} {
 
-classical.callable @decode {function_id = 1, device = 0 : i64,
+classical.callable @decode {dispatch_key = 1, device = 0 : i64,
     args = ["bits:1"], results = ["f64"], latency_min_ns = 0.0,
     latency_nominal_ns = 100.0, latency_max_ns = 100.0, mode = "bounded",
-    submit = "eager", function_id_override}
+    submit = "eager", dispatch_key_override}
 
 func.func @measured_on_one_used_on_another() {
   %c10 = arith.constant 10 : i64

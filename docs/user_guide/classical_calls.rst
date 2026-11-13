@@ -114,7 +114,7 @@ whose lengths come from their calls need none of this.
 
 **Dispatch keys.** Each request carries the key its service is registered
 under: the 32-bit FNV-1a hash of the compiled name
-(``classical.function_id("flip__3")``), the hash CUDA-Q Realtime registers
+(``classical.dispatch_key("flip__3")``), the hash CUDA-Q Realtime registers
 handlers by. ``call.dispatch_key`` gives it next to ``call.compiled_name``,
 and the call manifest's ``"dispatch_key"``. A controller whose firmware
 fixes the keys of the functions it runs lists them by name in its

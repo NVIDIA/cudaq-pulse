@@ -44,7 +44,7 @@ from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 from .._errors import InvalidTypeError, InvalidValueError
-from . import ClassicalFunction, _Bits, _Byte, _Integer, _NotReadyError, function_id
+from . import ClassicalFunction, _Bits, _Byte, _Integer, _NotReadyError, dispatch_key
 
 if TYPE_CHECKING:
     from .._units import Time
@@ -57,9 +57,9 @@ __all__ = [
     "reset_decoder",
 ]
 
-ENQUEUE_SYNDROMES_ID = function_id("enqueue_syndromes")
-GET_CORRECTIONS_ID = function_id("get_corrections")
-RESET_DECODER_ID = function_id("reset_decoder")
+ENQUEUE_SYNDROMES_ID = dispatch_key("enqueue_syndromes")
+GET_CORRECTIONS_ID = dispatch_key("get_corrections")
+RESET_DECODER_ID = dispatch_key("reset_decoder")
 
 
 class Decoder:

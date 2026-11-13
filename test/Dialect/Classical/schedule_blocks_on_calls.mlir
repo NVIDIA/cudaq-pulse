@@ -11,7 +11,7 @@
 
 module attributes {pulse.clock_ghz = 2.0 : f64, pulse.blocks_on_calls} {
 
-classical.callable @decode {function_id = 3007678287 : i64, device = 0 : i64,
+classical.callable @decode {dispatch_key = 3007678287 : i64, device = 0 : i64,
     args = ["bits:1"], results = ["bits:1"], latency_min_ns = 500.0,
     latency_nominal_ns = 900.0, latency_max_ns = 1500.0, mode = "bounded",
     submit = "eager"}

@@ -965,7 +965,7 @@ CudmStatus cudm_evolve(CudmHandle handle, CudmOperator op, CudmState stateIn,
   return status;
 }
 
-CudmStatus cudm_classical_register(CudmHandle handle, uint32_t function_id,
+CudmStatus cudm_classical_register(CudmHandle handle, uint32_t dispatch_key,
                                    CudmClassicalHandler handler) {
   auto *run = static_cast<HandleData *>(handle);
   if (!run)
@@ -975,11 +975,11 @@ CudmStatus cudm_classical_register(CudmHandle handle, uint32_t function_id,
     return fail(CUDM_ERROR_INVALID_STATE,
                 "cudm_classical_register received a null handler");
   for (auto &entry : run->classical)
-    if (entry.first == function_id) {
+    if (entry.first == dispatch_key) {
       entry.second = handler;
       return CUDM_SUCCESS;
     }
-  run->classical.emplace_back(function_id, handler);
+  run->classical.emplace_back(dispatch_key, handler);
   return CUDM_SUCCESS;
 }
 

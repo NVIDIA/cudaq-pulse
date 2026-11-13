@@ -12,10 +12,10 @@
 
 module attributes {pulse.clock_ghz = 1.0 : f64} {
 
-classical.callable @tau {function_id = 1 : i64, device = 0 : i64,
+classical.callable @tau {dispatch_key = 1 : i64, device = 0 : i64,
     args = [], results = ["i64"], latency_min_ns = 0.0,
     latency_nominal_ns = 50.0, latency_max_ns = 100.0, mode = "bounded",
-    submit = "eager", function_id_override}
+    submit = "eager", dispatch_key_override}
 
 // The answer is due at 101. Line e runs 0..300 and syncs with d after the
 // wait, so the barrier waits for it and the wait starts at 300 (length 16),

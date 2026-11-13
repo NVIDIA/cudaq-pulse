@@ -18,7 +18,7 @@ module attributes {pulse.clock_ghz = 2.0 : f64,
                               slot_bytes = 1024 : i64}}} {
 
 classical.callable @update {args = ["bits:1", "f64", "f64", "f64"], device = 0 : i64,
-    function_id = 672109684 : i64, latency_max_ns = 500.0 : f64,
+    dispatch_key = 672109684 : i64, latency_max_ns = 500.0 : f64,
     latency_min_ns = 0.0 : f64, latency_nominal_ns = 500.0 : f64,
     mode = "bounded", results = ["f64", "f64", "f64"], submit = "eager"}
 

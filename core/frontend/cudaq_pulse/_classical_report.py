@@ -35,7 +35,7 @@ class ClassicalCall:
     version's, such as ``"adaptive_t1__1"``, for a function whose list
     lengths come from its calls, else the same name. ``dispatch_key`` is the
     key its requests carry: the hash of ``compiled_name``
-    (``classical.function_id``), or the key its controller's firmware fixes
+    (``classical.dispatch_key``), or the key its controller's firmware fixes
     (the ``dispatch_keys`` of the processor that runs it).
 
     ``exposed_cycles`` is how long the first use waits for the answer beyond

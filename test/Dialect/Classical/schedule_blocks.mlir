@@ -8,10 +8,10 @@
 
 module attributes {pulse.clock_ghz = 1.0 : f64} {
 
-classical.callable @decode_wide {function_id = 1, device = 1 : i64,
+classical.callable @decode_wide {dispatch_key = 1, device = 1 : i64,
     args = ["bits:1"], results = ["bits:1"], latency_min_ns = 100.0,
     latency_nominal_ns = 500.0, latency_max_ns = 1000.0, mode = "bounded",
-    submit = "eager", function_id_override}
+    submit = "eager", dispatch_key_override}
 
 // A schedule block measures and submits, and returns the future without
 // waiting: the parent waits after the block, and the block's shape makes the

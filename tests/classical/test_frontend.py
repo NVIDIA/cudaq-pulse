@@ -64,9 +64,9 @@ def test_module_is_the_decorator():
 
 def test_function_id_is_fnv1a_as_cuda_q_hashes_handler_names():
     # The keys CUDA-QX pins for its decoder messages.
-    assert classical.function_id("enqueue_syndromes") == 0x7ED8BE82
-    assert classical.function_id("get_corrections") == 0x882D5BA1
-    assert classical.function_id("reset_decoder") == 0x977A59CF
+    assert classical.dispatch_key("enqueue_syndromes") == 0x7ED8BE82
+    assert classical.dispatch_key("get_corrections") == 0x882D5BA1
+    assert classical.dispatch_key("reset_decoder") == 0x977A59CF
 
 
 def test_declaration_keeps_the_schema_and_timing():
@@ -698,11 +698,11 @@ def test_a_call_is_dispatched_by_the_hash_of_its_compiled_name():
     (call,) = low.classical_report()
     assert (call.compiled_name, call.dispatch_key) == (
         "first__1",
-        classical.function_id("first__1"),
+        classical.dispatch_key("first__1"),
     )
     (entry,) = low.export_emulation()["manifest"]["functions"]
     assert entry["dispatch_key"] == call.dispatch_key and "dispatch_key_fixed_by" not in entry
-    assert "function_id" not in entry and "dispatch_key" not in low.export_emulation()["calls"][0]
+    assert "dispatch_key" not in low.export_emulation()["calls"][0]
 
 
 def test_a_function_on_a_processor_that_fixes_keys_must_be_listed():
@@ -759,7 +759,7 @@ def test_a_processor_fixes_the_keys_of_the_functions_it_runs():
     low = _program(_one("table"), _one("decode", link="gpu"), machine=system)
     assert [(c.compiled_name, c.dispatch_key) for c in low.classical_report()] == [
         ("table", 5),
-        ("decode", classical.function_id("decode")),
+        ("decode", classical.dispatch_key("decode")),
     ]
     entries = {e["name"]: e for e in low.export_emulation()["manifest"]["functions"]}
     assert entries["table"]["dispatch_key_fixed_by"] == "controllers[0] (vendor.fpga).processors[0]"
@@ -885,9 +885,9 @@ def test_an_external_of_unsized_inputs_has_a_version_per_length():
     ]
     entries = {e["name"]: e for e in low.export_emulation()["manifest"]["functions"]}
     assert set(entries) == {"_syndromes__2", "_syndromes__3", "_decode_surface__4"}
-    assert entries["_syndromes__3"]["dispatch_key"] == classical.function_id("_syndromes__3")
+    assert entries["_syndromes__3"]["dispatch_key"] == classical.dispatch_key("_syndromes__3")
     assert entries["_syndromes__3"]["schema"] == wire.schema(_syndromes.specialize(syndrome=3))
-    key = classical.function_id("_decode_surface__4")
+    key = classical.dispatch_key("_decode_surface__4")
     assert entries["_decode_surface__4"]["dispatch_key"] == key
 
 
