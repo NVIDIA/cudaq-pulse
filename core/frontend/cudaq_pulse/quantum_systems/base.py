@@ -1266,7 +1266,8 @@ class _Description:
         if explicit is not None:
             if explicit <= 0:
                 raise InvalidValueError(
-                    f"amplitude_scale_rad_per_ns must be positive for qudit {qudit_index}"
+                    f"amplitude_scale_rad_per_ns must be positive for qudit {qudit_index}, "
+                    f"got {explicit!r}"
                 )
             return float(explicit)
         qudit = self.qudits[qudit_index]

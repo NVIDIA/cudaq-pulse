@@ -8,6 +8,7 @@ import dataclasses
 import io
 import json
 import tomllib
+import types
 import warnings
 
 import cudaq_pulse as pulse
@@ -332,6 +333,31 @@ def test_a_control_systems_line_delays_and_reference_clock_are_checked():
     system = pulse.ControlSystem(controllers=[box])
     with pytest.raises(QuantumSystemDefinitionError, match="qudit 40 is not in the quantum system"):
         pulse.quantum_system(TRANSMON_SURFACE17, control_system=system)
+
+
+@pytest.mark.parametrize(
+    ("name", "value", "requirement"),
+    [
+        ("max_concurrent_drives", 0, "must be positive"),
+        ("max_concurrent_drives", -2, "must be positive"),
+        ("max_concurrent_readouts", 0, "must be positive"),
+        ("max_concurrent_readouts", -3, "must be positive"),
+        ("line_switch_penalty_cycles", -4, "cannot be negative"),
+    ],
+)
+def test_control_system_limit_errors_include_the_value(name, value, requirement):
+    system = pulse.ControlSystem(**{name: value})
+    with pytest.raises(ValueError) as error:
+        pulse.compile(drive_and_branch, control_system=system)
+    assert str(error.value) == f"ControlSystem.{name} {requirement}, got {value!r}"
+
+
+def test_readout_latency_error_includes_the_value():
+    # Controllers reject negative latency already; exercise the compiler's guard.
+    machine = dataclasses.replace(pulse.ControlSystem()._machine, readout_latency_cycles=-7)
+    stand_in = types.SimpleNamespace(_machine=machine)
+    with pytest.raises(ValueError, match=r"^the readout latency cannot be negative, got -7$"):
+        pulse.compile(drive_and_branch, control_system=stand_in)
 
 
 def test_a_control_system_takes_its_times_as_times():
