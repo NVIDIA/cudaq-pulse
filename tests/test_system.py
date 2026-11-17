@@ -843,7 +843,7 @@ def test_a_description_is_loaded_by_name_with_the_installation_wiring():
     assert box.readout_lines == (ReadoutLine(0),)
     assert pulse.controller("reference.controller") is pulse.controller("reference.controller")
     with pytest.raises(KeyError, match="did you mean 'reference.controller'"):
-        pulse.controller("reference.controler")
+        pulse.controller("reference.controler")  # codespell:ignore controler
     with pytest.raises(TypeError, match="did you mean 'drive_lines'"):
         pulse.controller("reference.controller", drive_line=[0])
 
