@@ -269,6 +269,7 @@ def simulate(
     quantum_system: Any = None,
     branches: BranchCoverage | str = BranchCoverage.ALL,
     reset_time: Time | None = None,
+    controller_arithmetic: bool = False,
 ) -> SimulationResult:
     """Simulate one kernel call on the quantum system it is compiled for.
 
@@ -394,6 +395,14 @@ def simulate(
         of whole shots, each at least that long, and each plays the true
         values at its start; the result merges them, weighted by shots, with
         the records in shot order.
+    controller_arithmetic:
+        Answer each classical function a processor of the control system
+        computes with its exported program (the export's ``functions``) in
+        its ``number_format``, as the controller computes it, instead of
+        its Python body: a fixed-point estimator's rounding and saturation
+        then show in the simulation as on the controller. A handler given
+        for a function still answers it. An ``UnsupportedError`` for a
+        program with no such function.
     """
     from ..compiler import ScheduledKernel
     from ..kernel._kernel import CompiledKernel, Kernel
@@ -418,6 +427,10 @@ def simulate(
             "simulate(lowered.generic, 0.5), or the module of one call; "
             f"got {type(program).__name__}"
         )
+    if controller_arithmetic:
+        from .._controller_functions import controller_handlers
+
+        handlers = controller_handlers(lowered, handlers)
     if reset_time is not None:
         options: dict[str, Any] = {
             "levels": levels,

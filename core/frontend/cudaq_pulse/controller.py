@@ -615,22 +615,26 @@ def evaluate_function(
 
     *arguments* are the function's, one per descriptor of its
     ``arguments``: a number for a scalar, a sequence for a list (bits as
-    0 or 1). Raises ``ExecutionError`` where the controller must fail the
-    run and ``InvalidValueError`` for a program or arguments it can't
-    read, or a ``number_format`` other than ``"float64"``.
+    0 or 1). The program's ``number_format`` is the arithmetic: in
+    ``"float32"`` and ``"fixed:<i>.<f>"`` every float an argument, a
+    constant or a term gives is rounded to the format (to nearest, ties to
+    even; a fixed-point one saturates), as the classical functions guide
+    describes. Raises ``ExecutionError`` where the controller must fail the
+    run and ``InvalidValueError`` for a program or arguments it can't read.
     """
-    number_format = program.get("number_format", "float64")
-    if number_format != "float64":
-        raise InvalidValueError(
-            f"number_format {number_format!r}; this cudaq-pulse computes in 'float64'"
-        )
+    from ._number_formats import evaluate, parse
+
+    number = parse(program.get("number_format", "float64"))
     descriptors = program["arguments"]
     if len(arguments) != len(descriptors):
         raise InvalidValueError(
             f"the function takes {len(descriptors)} arguments, got {len(arguments)}"
         )
-    scope = _Scope([_argument(d, v) for d, v in zip(descriptors, arguments, strict=True)])
+    values = [_argument(d, v) for d, v in zip(descriptors, arguments, strict=True)]
     body = program["body"]
+    if number is not None:
+        return evaluate(number, body, values, descriptors)
+    scope = _Scope(values)
     for binding in body["let"]:
         scope.locals[binding["name"]] = _evaluate(binding["value"], {}, {}, scope)
     return tuple(_evaluate(result, {}, {}, scope) for result in body["results"])

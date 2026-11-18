@@ -38,9 +38,6 @@ from ._controller_cost import _MATH, _NotAnalyzableError, _source_tree, _Walker,
 from ._errors import UnsupportedError
 from ._units import as_nanoseconds
 
-# The arithmetic number a controller computes in.
-FLOAT64 = "float64"
-
 # Python's operators on numbers, as the terms they are.
 _OPERATORS: Mapping[type, str] = {
     ast.Add: "add",
@@ -982,7 +979,7 @@ def _lower(function: Any) -> Lowered:
     entry = {
         "arguments": descriptors,
         "results": [spec.descriptor for spec in results],
-        "number_format": FLOAT64,
+        "number_format": function.number_format,
         "body": {"let": program.lets, "results": out},
     }
     return Lowered(entry, dict(program.classes), program.counted)
@@ -1008,6 +1005,48 @@ def _result(lowerer: _Lowerer, value: _Scalar, descriptor: str, k: int) -> _Scal
         f"{lowerer.fn.__name__}: result {k} ({descriptor}), which a controller program does "
         "not have"
     )
+
+
+def controller_handlers(
+    lowered: Any, handlers: Mapping[str, Callable[..., Any]] | None
+) -> dict[str, Callable[..., Any]]:
+    """*handlers*, with each function a processor computes answered by its
+    exported program in its ``number_format`` (``simulate(...,
+    controller_arithmetic=True)``); a handler given for a function stays."""
+    system = lowered.options.machine._system
+    if system is None or not system._placement:
+        raise UnsupportedError(
+            "controller_arithmetic=True needs a control system whose processors compute the "
+            "program's classical functions; this one has no processor"
+        )
+    from .controller import evaluate_function
+
+    out = dict(handlers or {})
+    given = set(out)
+    found = 0
+    for index in range(len(system.controllers)):
+        for name, entry in functions_table(lowered, index).items():
+            fn = next(f for f in lowered.classical if f.name == name)
+            if name in given or fn.base_name in given:
+                continue
+            out[name] = _answering(entry, evaluate_function)
+            found += 1
+    if not found and not given:
+        raise UnsupportedError(
+            "controller_arithmetic=True: no classical function of the program is computed by a "
+            "processor of its control system"
+        )
+    return out
+
+
+def _answering(entry: Mapping[str, Any], evaluate: Callable[..., Any]) -> Callable[..., Any]:
+    one = len(entry["results"]) == 1
+
+    def answer(*args: Any) -> Any:
+        results = evaluate(entry, args)
+        return results[0] if one else results
+
+    return answer
 
 
 def functions_table(lowered: Any, controller: int) -> dict[str, Any]:

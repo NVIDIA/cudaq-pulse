@@ -663,8 +663,8 @@ def test_evaluate_function_checks_its_program_and_arguments():
     assert controller.evaluate_function(program, [3.0]) == (1.5,)
     with pytest.raises(pulse.InvalidValueError, match="takes 1 arguments"):
         controller.evaluate_function(program, [])
-    with pytest.raises(pulse.InvalidValueError, match="float64"):
-        controller.evaluate_function({**program, "number_format": "float32"}, [3.0])
+    with pytest.raises(pulse.InvalidValueError, match="number_format must be"):
+        controller.evaluate_function({**program, "number_format": "float16"}, [3.0])
     with pytest.raises(pulse.InvalidValueError, match="only a function's body has"):
         controller.evaluate_expression({"argument": 0})
 

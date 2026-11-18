@@ -327,8 +327,11 @@ programs have no ``functions`` key.
 ``results``
     Its result descriptors, as the manifest's ``result_types``.
 ``number_format``
-    The arithmetic it is computed in: ``"float64"``, IEEE 754 binary64,
-    and 64-bit two's complement integers, as every run-time expression.
+    The arithmetic its floats are computed in, as the function declares it:
+    ``"float64"`` (IEEE 754 binary64, as every run-time expression),
+    ``"float32"`` or ``"fixed:<i>.<f>"``, every float rounded to the format
+    and a fixed-point one saturated (see :doc:`controller_estimators`).
+    Integers are 64-bit two's complement in every format.
 ``body``
     ``{"let": [{"name": n, "value": e}, ...], "results": [e, ...]}``:
     each ``let`` binds its name to its value, in order, then the results

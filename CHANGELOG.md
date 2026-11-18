@@ -77,6 +77,17 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   on a link no processor serves it runs as before. Programs without such
   functions export as before. A negative constant in a body (`-0.02`)
   now costs nothing in `controller_usage`, as other constants do.
+- **Controller arithmetic.** `@pulse.classical(number_format=...)` declares
+  the arithmetic a processor computes a function in: `"float64"` (the
+  default), `"float32"`, or `"fixed:<i>.<f>"`, signed fixed point rounded
+  to nearest even and saturated. The export's `functions` entry carries
+  it, and `controller.evaluate_function` computes in it.
+  `pulse.simulate(..., controller_arithmetic=True)` answers each function
+  a processor computes with its exported program instead of its Python
+  body, so a fixed-point estimator's rounding and saturation show in the
+  simulation as on the controller. The user guide's new page "Running
+  estimators on the controller" puts the cost model, the export and the
+  arithmetic together.
 - **Update buses.** `Controller(update_buses=[UpdateBus(drive_lines=[0, 1],
   cycles_per_update=8)])` (`cudaq_pulse.controller.UpdateBus`) states that
   a group of lines is retuned over one shared bus, one update at a time.

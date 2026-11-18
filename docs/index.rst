@@ -65,6 +65,7 @@ Project status
    user_guide/custom_passes
    user_guide/editors
    user_guide/classical_calls
+   user_guide/controller_estimators
    user_guide/controller_backends
 
 .. toctree::

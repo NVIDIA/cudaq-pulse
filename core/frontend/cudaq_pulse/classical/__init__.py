@@ -724,6 +724,8 @@ class ClassicalFunction[**P, R]:
     # Set on an instance only when given, so that a function without one
     # holds what it held before budgets (the kernel guard copies it).
     reaction_deadline_ns: float | None = None
+    # The arithmetic a controller computes the body in, set only when given.
+    number_format: str = "float64"
 
     def __init__(
         self,
@@ -739,6 +741,7 @@ class ClassicalFunction[**P, R]:
         deadline_ns: float | Time | None = None,
         reaction_deadline_ns: float | Time | None = None,
         link: int | str = 0,
+        number_format: str = "float64",
         _signature: Callable[..., Any] | None = None,
         _dispatch_key: int | None = None,
         _key_route: int | None = None,
@@ -811,6 +814,11 @@ class ClassicalFunction[**P, R]:
             )
         if reaction_deadline_ns is not None:
             self.reaction_deadline_ns = float(reaction_deadline_ns)
+        if number_format != "float64":
+            from .._number_formats import parse
+
+            parse(number_format, name)
+            self.number_format = number_format
         if isinstance(link, str):
             if not link.isidentifier():
                 raise InvalidValueError(f"{name}: a link name must be an identifier, got {link!r}")
@@ -1134,6 +1142,8 @@ def _make(template: ClassicalFunction[..., Any], key: Any) -> ClassicalFunction[
         setattr(version, attr, getattr(template, attr))
     if "reaction_deadline_ns" in template.__dict__:
         version.reaction_deadline_ns = template.reaction_deadline_ns
+    if "number_format" in template.__dict__:
+        version.number_format = template.number_format
     version._shape, version._plan, version._n, version._made = None, None, 0, None
     version._fast = _NO_VERSIONS
     items = iter(_key_items(key))
@@ -1266,6 +1276,7 @@ class _Options(TypedDict, total=False):
     reaction_deadline_ns: float | Time | None
     link: int | str
     name: str | None
+    number_format: str
 
 
 @overload
@@ -1300,6 +1311,11 @@ def function(implementation: Callable[..., Any] | None = None, /, **options: Any
     ``"controller"``, or a link id; default 0; ``device`` is not used for
     it, because a cudaq-pulse quantum system is the QPU) and ``name``. A latency,
     timeout or deadline is a time (``400 * pulse.ns``) or a number of ns.
+    ``number_format`` is the arithmetic a controller's processor computes
+    the body in, as the export's ``functions`` gives it: ``"float64"`` (the
+    default), ``"float32"``, or ``"fixed:<i>.<f>"``, signed fixed point of
+    ``i`` integer bits (the sign among them) and ``f`` fractional bits,
+    rounded to nearest even and saturated (``controller.evaluate_function``).
 
     With ``reaction_deadline_ns``, compiling fails unless every call's answer
     is due within that long of the end of the latest readout whose outcome
