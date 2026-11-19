@@ -29,7 +29,8 @@ controller's program; ``run(artifact, shots_count=...)`` runs it::
 
 A backend may also list the export formats it reads in ``formats``
 (``"cudaq-pulse.controller/1"``, ``cudaq_pulse.controller.FORMAT``, and the
-structured ``"cudaq-pulse.controller/2"`` of ``export_to_controller(version=2)``);
+structured ``"cudaq-pulse.controller/2"``, ``cudaq_pulse.controller.FORMAT_2``, of
+``export_to_controller(version=2)``);
 ``get`` refuses one that reads none of them.
 ``register(name, factory)`` adds a backend in this process, without a
 distribution. Nothing here runs until it is called: importing cudaq-pulse

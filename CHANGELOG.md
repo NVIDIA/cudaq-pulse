@@ -147,6 +147,11 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   once when scrolled into view, with Replay and step buttons, and its data
   comes from what the page compiles and simulates. Readers without
   JavaScript, or who ask for reduced motion, see the still frame.
+- **A name for format /2.** `cudaq_pulse.controller.FORMAT_2` is
+  `"cudaq-pulse.controller/2"`, the structured format of
+  `export_to_controller(version=2)`, beside `FORMAT` for `/1`, so a backend
+  can list the formats it reads (`formats = (FORMAT, FORMAT_2)`) without
+  spelling them.
 
 ### Changed
 

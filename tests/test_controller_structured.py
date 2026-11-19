@@ -12,7 +12,7 @@ import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse import Controller, ControlSystem, backends
 from cudaq_pulse.classical import Link
-from cudaq_pulse.controller import FORMAT, ControllerLimitError, check, unroll
+from cudaq_pulse.controller import FORMAT, FORMAT_2, ControllerLimitError, check, unroll
 from cudaq_pulse.quantum_systems import PhysicalQudit
 
 from tests.test_controller import answered, chained, chosen_by_readout, frame_in_arms, settings
@@ -191,7 +191,7 @@ def test_unrolling_the_structured_export_gives_the_flat_one(name):
     lowered, export = _lower(name)
     flat = lowered.export_to_controller(**export)
     structured = lowered.export_to_controller(**export, version=2)
-    assert structured["format"] == "cudaq-pulse.controller/2"
+    assert structured["format"] == FORMAT_2 == "cudaq-pulse.controller/2"
     assert structured["programs"] == {} and structured["bindings"] == {}
     assert _differences(_canonical(flat), _canonical(unroll(structured))) == []
     assert len(json.dumps(structured)) < len(json.dumps(flat))

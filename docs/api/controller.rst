@@ -17,6 +17,8 @@ Export and limits
 
 .. autodata:: cudaq_pulse.controller.FORMAT
 
+.. autodata:: cudaq_pulse.controller.FORMAT_2
+
 .. autoclass:: cudaq_pulse.controller.DriveLine
    :members: qudits, qudit, delay_ns, max_concurrent_tones
 
