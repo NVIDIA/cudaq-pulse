@@ -154,10 +154,18 @@ def test_the_drive_strength_comes_from_the_drive():
     scaled = _target(drive=MicrowaveDrive(amplitude_scale_rad_per_ns=2.0))
     assert scaled.drive_amplitude_scale(0) == 2.0
     assert _target().drive_amplitude_scale(0) == 1.0
-    with pytest.raises(pulse.InvalidValueError, match="must be positive"):
-        _target(drive=MicrowaveDrive(amplitude_scale_rad_per_ns=0.0)).drive_amplitude_scale(0)
     with pytest.raises(pulse.UnsupportedError, match="no drive model for _Optical"):
         _target(drive=_Optical()).drive_amplitude_scale(0)
+
+
+@pytest.mark.parametrize("value", [0.0, -0.5])
+def test_drive_amplitude_scale_error_includes_the_value(value):
+    target = _target(drive=MicrowaveDrive(amplitude_scale_rad_per_ns=value))
+    with pytest.raises(pulse.InvalidValueError) as error:
+        target.drive_amplitude_scale(0)
+    assert str(error.value) == (
+        f"amplitude_scale_rad_per_ns must be positive for qudit 0, got {value!r}"
+    )
 
 
 def test_a_readout_no_model_knows_is_refused():

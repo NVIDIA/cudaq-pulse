@@ -543,13 +543,25 @@ class CompileOptions:
                     f"pulse.Controller, got {control_system!r}"
                 ) from None
             if machine.max_concurrent_drives <= 0:
-                raise ValueError("ControlSystem.max_concurrent_drives must be positive")
+                raise ValueError(
+                    "ControlSystem.max_concurrent_drives must be positive, "
+                    f"got {machine.max_concurrent_drives!r}"
+                )
             if machine.max_concurrent_readouts <= 0:
-                raise ValueError("ControlSystem.max_concurrent_readouts must be positive")
+                raise ValueError(
+                    "ControlSystem.max_concurrent_readouts must be positive, "
+                    f"got {machine.max_concurrent_readouts!r}"
+                )
             if machine.readout_latency_cycles < 0:
-                raise ValueError("the readout latency cannot be negative")
+                raise ValueError(
+                    "the readout latency cannot be negative, "
+                    f"got {machine.readout_latency_cycles!r}"
+                )
             if machine.line_switch_penalty_cycles < 0:
-                raise ValueError("ControlSystem.line_switch_penalty_cycles cannot be negative")
+                raise ValueError(
+                    "ControlSystem.line_switch_penalty_cycles cannot be negative, "
+                    f"got {machine.line_switch_penalty_cycles!r}"
+                )
         options = CompileOptions(
             schedule,
             passes,

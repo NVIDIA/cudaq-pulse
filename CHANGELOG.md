@@ -195,6 +195,11 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   pulse that plays with it. The frame runs at its old frequency until then.
   Phase changes play as before; their frame updates' `start_cycles` move to
   the end of such a wait or readout.
+- The errors for a `ControlSystem`'s `max_concurrent_drives`,
+  `max_concurrent_readouts`, readout latency and
+  `line_switch_penalty_cycles`, and for a drive's
+  `amplitude_scale_rad_per_ns`, end with the value that was checked
+  (`ControlSystem.max_concurrent_drives must be positive, got 0`).
 - After a wait whose length a `float` argument sets, `classical_report()`
   and the `"calls"` of `export_to_controller()` (formats /1 and /2, and
   `unroll`) and of `export_to_emulator()` gave each call's times with the
