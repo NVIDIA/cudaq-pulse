@@ -45,6 +45,7 @@
 #include "cudaq-pulse/Dialect/Classical/ClassicalOps.h.inc"
 
 #include "cudaq-pulse/Analysis/ClassicalTiming.h"
+#include "cudaq-pulse/Analysis/LineTrace.h"
 #include "cudaq-pulse/Analysis/Timing.h"
 
 #include "llvm/ADT/SetVector.h"
@@ -608,7 +609,7 @@ static bool carriedReadouts(mlir::ValueRange values,
       continue;
     }
     if (!def || def->getNumRegions() > 0) {
-      if (mlir::isa<pulse::MeasurementType>(value.getType()))
+      if (pulse::isReadoutResultType(value.getType()))
         return false;
       continue;
     }

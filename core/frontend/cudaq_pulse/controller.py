@@ -1446,6 +1446,8 @@ def unroll(program: Mapping[str, Any]) -> dict[str, Any]:
                 )
                 event["frequency_hz"] = tone["frequency_hz"]
                 event["phase_rad"] = phase
+                if "acquire" in item:
+                    event["acquire"] = item["acquire"]
                 if run_time[item["waveform"]]:
                     event["waveform"] = _with_runtime(
                         event["waveform"], run_time[item["waveform"]], resolve

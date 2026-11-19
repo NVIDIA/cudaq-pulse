@@ -603,6 +603,7 @@ def _merged(results: list[SimulationResult], sizes: list[int]) -> SimulationResu
             key = (b.levels, b.calls)
             merged[key] = merged.get(key, 0.0) + w * b.probability
     records = [r.records for r in results if r.records is not None]
+    points = [r._points for r in results if r._points is not None]
     first = results[0]
     return SimulationResult(
         density_matrix=np.asarray(density),
@@ -612,4 +613,6 @@ def _merged(results: list[SimulationResult], sizes: list[int]) -> SimulationResu
         branches=[Branch(levels, p, calls) for (levels, calls), p in merged.items()],
         records=np.concatenate(records) if records else None,
         times_ns=first.times_ns,
+        _points=np.concatenate(points) if points and len(points) == len(records) else None,
+        _integrated=first._integrated,
     )

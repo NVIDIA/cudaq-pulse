@@ -35,10 +35,10 @@ func.func @from_a_readout_in_each_arm(%b: i1) -> i1 {
   %zero = arith.constant 0.0 : f64
   %wf = pulse.square %c40, %amp, %zero : i64, f64, f64 -> !pulse.waveform
   %m = scf.if %b -> (!pulse.measurement) {
-    %r1, %t1, %m1 = pulse.readout %r, %wf, %to, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %r1, %t1, %m1 = pulse.readout %r, %wf, %to, level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     scf.yield %m1 : !pulse.measurement
   } else {
-    %r1, %t1, %m1 = pulse.readout %r, %wf, %to, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %r1, %t1, %m1 = pulse.readout %r, %wf, %to, level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     scf.yield %m1 : !pulse.measurement
   }
   %res = pulse.is_set %m : !pulse.measurement -> i1
@@ -55,7 +55,7 @@ func.func @from_a_cast_in_one_arm(%b: i1) -> i1 {
   %zero = arith.constant 0.0 : f64
   %wf = pulse.square %c40, %amp, %zero : i64, f64, f64 -> !pulse.waveform
   %m = scf.if %b -> (!pulse.measurement) {
-    %r1, %t1, %m1 = pulse.readout %r, %wf, %to, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %r1, %t1, %m1 = pulse.readout %r, %wf, %to, level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     scf.yield %m1 : !pulse.measurement
   } else {
     %m2 = builtin.unrealized_conversion_cast %b : i1 to !pulse.measurement
@@ -70,13 +70,13 @@ func.func @from_a_cast_in_one_arm(%b: i1) -> i1 {
 
 // A loop carries the last iteration's readout; its initial value is one too.
 func.func @carried_by_a_loop(%r0: !pulse.readout_line, %t0: !pulse.tone, %wf: !pulse.waveform) -> i1 {
-  %r1, %t1, %m0 = pulse.readout %r0, %wf, %t0, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r1, %t1, %m0 = pulse.readout %r0, %wf, %t0, level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %lb = arith.constant 0 : index
   %ub = arith.constant 4 : index
   %step = arith.constant 1 : index
   %rn, %tn, %mn = scf.for %i = %lb to %ub step %step iter_args(%r = %r1, %t = %t1, %m = %m0) -> (!pulse.readout_line, !pulse.tone, !pulse.measurement) {
     %bit = pulse.is_set %m : !pulse.measurement -> i1
-    %r2, %t2, %m2 = pulse.readout %r, %wf, %t, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %r2, %t2, %m2 = pulse.readout %r, %wf, %t, level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     scf.yield %r2, %t2, %m2 : !pulse.readout_line, !pulse.tone, !pulse.measurement
   }
   %res = pulse.is_set %mn : !pulse.measurement -> i1
@@ -106,7 +106,7 @@ func.func @after_a_loop_that_runs(%r0: !pulse.readout_line, %t0: !pulse.tone, %w
   %ub = arith.constant 4 : index
   %step = arith.constant 1 : index
   %rn, %tn, %mn = scf.for %i = %lb to %ub step %step iter_args(%r = %r0, %t = %t0, %m = %none) -> (!pulse.readout_line, !pulse.tone, !pulse.measurement) {
-    %r2, %t2, %m2 = pulse.readout %r, %wf, %t, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %r2, %t2, %m2 = pulse.readout %r, %wf, %t, level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     scf.yield %r2, %t2, %m2 : !pulse.readout_line, !pulse.tone, !pulse.measurement
   }
   %res = pulse.is_set %mn : !pulse.measurement -> i1
@@ -124,7 +124,7 @@ func.func @placeholder_read_in_the_first_iteration(%r0: !pulse.readout_line, %t0
   %rn, %tn, %mn = scf.for %i = %lb to %ub step %step iter_args(%r = %r0, %t = %t0, %m = %none) -> (!pulse.readout_line, !pulse.tone, !pulse.measurement) {
     // expected-error @+1 {{'pulse.is_set' op measurement must be produced by pulse.readout, got ub.poison}}
     %bit = pulse.is_set %m : !pulse.measurement -> i1
-    %r2, %t2, %m2 = pulse.readout %r, %wf, %t, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %r2, %t2, %m2 = pulse.readout %r, %wf, %t, level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     scf.yield %r2, %t2, %m2 : !pulse.readout_line, !pulse.tone, !pulse.measurement
   }
   return
@@ -138,7 +138,7 @@ func.func @after_a_loop_of_argument_trips(%n: index, %r0: !pulse.readout_line, %
   %lb = arith.constant 0 : index
   %step = arith.constant 1 : index
   %rn, %tn, %mn = scf.for %i = %lb to %n step %step iter_args(%r = %r0, %t = %t0, %m = %none) -> (!pulse.readout_line, !pulse.tone, !pulse.measurement) {
-    %r2, %t2, %m2 = pulse.readout %r, %wf, %t, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %r2, %t2, %m2 = pulse.readout %r, %wf, %t, level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     scf.yield %r2, %t2, %m2 : !pulse.readout_line, !pulse.tone, !pulse.measurement
   }
   // expected-error @+1 {{'pulse.is_set' op measurement must be produced by pulse.readout, got ub.poison}}

@@ -185,7 +185,7 @@ func.func @after_sync_and_loop() {
   %c10 = arith.constant 10 : i64
   %idle = pulse.duration_from_int %c10 : (i64) -> !pulse.duration
   %d1, %t1 = pulse.drive %d, %wf, %t <{duration_cycles = 16 : i64, start_cycles = 0 : i64}> : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
-  %r1, %rt1, %m = pulse.readout %r, %ro, %rt, iq <{duration_cycles = 100 : i64, start_cycles = 0 : i64}> : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r1, %rt1, %m = pulse.readout %r, %ro, %rt, level <{duration_cycles = 100 : i64, start_cycles = 0 : i64}> : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %s:2 = pulse.sync %d1, %r1 : !pulse.drive_line, !pulse.readout_line -> !pulse.drive_line, !pulse.readout_line
   // CHECK: pulse.shift_frequency
   // CHECK-SAME: <{duration_cycles = 0 : i64, start_cycles = 100 : i64}>
@@ -228,7 +228,7 @@ func.func @in_an_arm() {
   %ro_duration = arith.constant 100 : i64
   %ro = pulse.gaussian %ro_duration, %amplitude, %amplitude : i64, f64, f64 -> !pulse.waveform
   %d1, %t1 = pulse.drive %d, %wf, %t <{duration_cycles = 16 : i64, start_cycles = 0 : i64}> : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
-  %r1, %rt1, %m = pulse.readout %r, %ro, %rt, iq <{duration_cycles = 100 : i64, start_cycles = 16 : i64}> : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r1, %rt1, %m = pulse.readout %r, %ro, %rt, level <{duration_cycles = 100 : i64, start_cycles = 16 : i64}> : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %c = pulse.is_set %m : !pulse.measurement -> i1
   %t3 = scf.if %c -> (!pulse.tone) {
     // CHECK: pulse.shift_frequency
@@ -259,7 +259,7 @@ func.func @by_value() {
   %ro_duration = arith.constant 100 : i64
   %ro = pulse.gaussian %ro_duration, %amplitude, %amplitude : i64, f64, f64 -> !pulse.waveform
   %d1, %t1 = pulse.drive %d, %wf, %t <{duration_cycles = 16 : i64, start_cycles = 0 : i64}> : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
-  %r1, %rt1, %m = pulse.readout %r, %ro, %rt, iq <{duration_cycles = 100 : i64, start_cycles = 16 : i64}> : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r1, %rt1, %m = pulse.readout %r, %ro, %rt, level <{duration_cycles = 100 : i64, start_cycles = 16 : i64}> : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %c = pulse.is_set %m : !pulse.measurement -> i1
   %f = arith.select %c, %up, %down : f64
   // CHECK: pulse.shift_frequency
@@ -286,7 +286,7 @@ func.func @by_value() {
   %ro_duration = arith.constant 100 : i64
   %ro = pulse.gaussian %ro_duration, %amplitude, %amplitude : i64, f64, f64 -> !pulse.waveform
   %d1, %t1 = pulse.drive %d, %wf, %t <{duration_cycles = 16 : i64, start_cycles = 0 : i64}> : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
-  %r1, %rt1, %m = pulse.readout %r, %ro, %rt, iq <{duration_cycles = 100 : i64, start_cycles = 16 : i64}> : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r1, %rt1, %m = pulse.readout %r, %ro, %rt, level <{duration_cycles = 100 : i64, start_cycles = 16 : i64}> : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %c = pulse.is_set %m : !pulse.measurement -> i1
   %f = arith.select %c, %up, %down : f64
   // CHECK: pulse.shift_frequency

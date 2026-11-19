@@ -2197,6 +2197,8 @@ class ControlSystem:
                 if index is None:
                     continue
                 need(index, _NEEDS[kind], event)
+                if "acquire" in event:
+                    need(index, "acquire_" + event["acquire"], event)
                 if kind in _PLAYED and (
                     event["frequency_hz"] is None or event["phase_rad"] is None
                 ):

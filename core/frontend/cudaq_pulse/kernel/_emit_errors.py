@@ -37,6 +37,18 @@ def unknown(
     return CompilationError(message, code=code, fix=fix, did_you_mean=close, misspelled=name)
 
 
+def iq_point_error(use: str) -> CompilationError:
+    """Using the IQ point of ``readout(..., acquire="integrated")`` as a
+    level: to *use*, such as "decide a branch"."""
+    return CompilationError(
+        f'an integrated readout (acquire="integrated") gives an IQ point, which cannot {use}: '
+        "it has no level",
+        code="runtime_value",
+        fix='read it out with acquire="level" to branch on its level, or send the point to a '
+        "classical function that takes complex and branch on its answer",
+    )
+
+
 def attribute_error(obj: Any, attr: str) -> CompilationError:
     """The error for ``obj.attr`` when *obj* has no attribute *attr*."""
     code = "unknown_attribute"

@@ -41,8 +41,8 @@ func.func @and_not() {
   %true = arith.cmpi eq, %c0, %c0 : i64
   %false = arith.cmpi ne, %c0, %c0 : i64
   %probe = pulse.square %c100, %amp, %zero : i64, f64, f64 -> !pulse.waveform
-  %r0a, %rt0a, %m0 = pulse.readout %r0, %probe, %rt0, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
-  %r1a, %rt1a, %m1 = pulse.readout %r1, %probe, %rt1, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r0a, %rt0a, %m0 = pulse.readout %r0, %probe, %rt0, level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r1a, %rt1a, %m1 = pulse.readout %r1, %probe, %rt1, level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %b0 = pulse.is_set %m0 : !pulse.measurement -> i1
   %s0 = arith.select %b0, %true, %false : i1
   %b1 = pulse.is_set %m1 : !pulse.measurement -> i1
@@ -86,8 +86,8 @@ func.func @or() {
   %true = arith.cmpi eq, %c0, %c0 : i64
   %false = arith.cmpi ne, %c0, %c0 : i64
   %probe = pulse.square %c100, %amp, %zero : i64, f64, f64 -> !pulse.waveform
-  %r0a, %rt0a, %m0 = pulse.readout %r0, %probe, %rt0, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
-  %r1a, %rt1a, %m1 = pulse.readout %r1, %probe, %rt1, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r0a, %rt0a, %m0 = pulse.readout %r0, %probe, %rt0, level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r1a, %rt1a, %m1 = pulse.readout %r1, %probe, %rt1, level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %b0 = pulse.is_set %m0 : !pulse.measurement -> i1
   %s0 = arith.select %b0, %true, %false : i1
   %b1 = pulse.is_set %m1 : !pulse.measurement -> i1

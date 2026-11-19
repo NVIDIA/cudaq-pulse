@@ -75,6 +75,8 @@ _IF_END = 33
 _BLOCK_BEGIN = 34
 _BLOCK_END = 35
 _BLOCK_POLICY = {"asap": 0, "alap": 1}
+# pulse::ReadoutMode::Integrated, the mode word of a readout of an IQ point.
+_MODE_INTEGRATED = 4
 _CLASSICAL_DECLARE = 36
 _CLASSICAL_SUBMIT = 37
 _CLASSICAL_WAIT = 38
@@ -647,7 +649,11 @@ class PackedIRBuilder:
             rlv = results[0].vid
             rtv = results[1].vid
             mv = results[2].vid
-            self._put((_header(_READOUT, 6), lv, wv, tv, rlv, rtv, mv))
+            if a.get("acquire") == "integrated":
+                # The seventh word is the readout's mode, pulse::ReadoutMode.
+                self._put((_header(_READOUT, 7), lv, wv, tv, rlv, rtv, mv, _MODE_INTEGRATED))
+            else:
+                self._put((_header(_READOUT, 6), lv, wv, tv, rlv, rtv, mv))
             if not self._regions:
                 self.readouts[mv] = self._n_readouts
             self._n_readouts += 1

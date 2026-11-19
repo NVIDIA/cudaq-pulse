@@ -199,7 +199,9 @@ def _static_key(value: Any) -> Any:
 
 
 class _Measured:
-    """A returned measurement: the ordinal of its readout."""
+    """A returned measurement: the ordinal of its readout. Called from
+    Python, the kernel returns its level, or the IQ point of an integrated
+    readout."""
 
     __slots__ = ("readout",)
 
@@ -224,7 +226,7 @@ def _return_spec(value: Any, readouts: dict[int, int], name: str) -> Any:
     """What a call returns, from the value the trace returned: for a value
     only the running program knows, the error calling the kernel raises."""
     if isinstance(value, IRValue):
-        if value.vtype == "measurement":
+        if value.vtype == "measurement" or value.vtype == "iq_point":
             ordinal = readouts.get(value.vid)
             if ordinal is None:
                 raise CompilationError(
@@ -269,7 +271,7 @@ def _has_measurements(spec: Any) -> bool:
     return isinstance(spec, _Sequence) and any(_has_measurements(i) for i in spec.items)
 
 
-def _materialize(spec: Any, outcome: Callable[[int], int]) -> Any:
+def _materialize(spec: Any, outcome: Callable[[int], int | complex]) -> Any:
     if isinstance(spec, _Measured):
         return outcome(spec.readout)
     if isinstance(spec, _Sequence):
@@ -292,10 +294,16 @@ def _execute(lowered: ScheduledKernel, returns: Any) -> Any:
     assert result.records is not None
     row = result.records[0]
     column = {m.readout: i for i, m in enumerate(result.measurements) if not m.iteration}
+    points = result._points
+    integrated = result._integrated
 
-    def outcome(readout: int) -> int:
+    def outcome(readout: int) -> int | complex:
         i = column.get(readout)
-        return -1 if i is None else int(row[i])
+        if i is None:
+            return -1
+        if points is not None and readout in integrated:
+            return complex(points[0, i])
+        return int(row[i])
 
     return _materialize(returns, outcome)
 

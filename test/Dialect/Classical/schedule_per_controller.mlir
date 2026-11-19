@@ -41,8 +41,8 @@ func.func @each_controller_its_own_slot() {
   %q1 = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qudit
   %r1, %rt1 = pulse.get_readout_line %q1 : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
   %d1, %dt1 = pulse.get_drive_line %q1 : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
-  %r0a, %rt0a, %m0 = pulse.readout %r0, %ro, %rt0, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
-  %r1a, %rt1a, %m1 = pulse.readout %r1, %ro, %rt1, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r0a, %rt0a, %m0 = pulse.readout %r0, %ro, %rt0, level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r1a, %rt1a, %m1 = pulse.readout %r1, %ro, %rt1, level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %link = classical.get_link {device = 0 : i64} : !classical.link
   %link1, %f0 = classical.submit %link, @decode(%m0) : (!pulse.measurement) -> (!classical.link, !classical.future)
   %x0 = classical.wait %f0, @decode : f64

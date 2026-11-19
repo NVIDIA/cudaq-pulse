@@ -28,7 +28,7 @@ func.func @test_qudit_and_drive() -> (!pulse.drive_line, !pulse.tone) {
 // CHECK: %[[Q:.*]] = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
 // CHECK: %[[R:.*]], %[[T:.*]] = pulse.get_readout_line %[[Q]] : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
 // CHECK: %[[WF:.*]] = pulse.square
-// CHECK: %[[R1:.*]], %[[T1:.*]], %[[M:.*]] = pulse.readout %[[R]], %[[WF]], %[[T]], iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+// CHECK: %[[R1:.*]], %[[T1:.*]], %[[M:.*]] = pulse.readout %[[R]], %[[WF]], %[[T]], level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
 // CHECK: return %[[R1]], %[[T1]], %[[M]]
 func.func @test_readout() -> (!pulse.readout_line, !pulse.tone, !pulse.measurement) {
   %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
@@ -38,24 +38,26 @@ func.func @test_readout() -> (!pulse.readout_line, !pulse.tone, !pulse.measureme
   %zero = arith.constant 0.0 : f64
   %wf = pulse.square %duration, %amplitude, %zero
       : i64, f64, f64 -> !pulse.waveform
-  %r1, %rt1, %m = pulse.readout %r0, %wf, %rt0, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r1, %rt1, %m = pulse.readout %r0, %wf, %rt0, level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   return %r1, %rt1, %m : !pulse.readout_line, !pulse.tone, !pulse.measurement
 }
 
 // Each readout mode and schedule policy prints as its keyword.
 
 // CHECK-LABEL: func @test_readout_modes
-// CHECK: pulse.readout %{{.*}}, iq :
+// CHECK: pulse.readout %{{.*}}, level :
 // CHECK: pulse.readout %{{.*}}, discriminated :
 // CHECK: pulse.readout %{{.*}}, trace :
 // CHECK: pulse.readout %{{.*}}, counts :
+// CHECK: pulse.readout %{{.*}}, integrated : {{.*}} -> !pulse.readout_line, !pulse.tone, !pulse.iq_data
 // CHECK: pulse.schedule_block alap (
 func.func @test_readout_modes(%r0: !pulse.readout_line, %t0: !pulse.tone, %wf: !pulse.waveform) -> (!pulse.readout_line, !pulse.tone) {
-  %r1, %t1, %m1 = pulse.readout %r0, %wf, %t0, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r1, %t1, %m1 = pulse.readout %r0, %wf, %t0, level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %r2, %t2, %m2 = pulse.readout %r1, %wf, %t1, discriminated : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %r3, %t3, %m3 = pulse.readout %r2, %wf, %t2, trace : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %r4, %t4, %m4 = pulse.readout %r3, %wf, %t3, counts : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
-  %r5, %t5 = pulse.schedule_block alap (%r4, %t4) : (!pulse.readout_line, !pulse.tone) -> (!pulse.readout_line, !pulse.tone) {
+  %r6, %t6, %p6 = pulse.readout %r4, %wf, %t4, integrated : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.iq_data
+  %r5, %t5 = pulse.schedule_block alap (%r6, %t6) : (!pulse.readout_line, !pulse.tone) -> (!pulse.readout_line, !pulse.tone) {
   ^bb0(%r: !pulse.readout_line, %t: !pulse.tone):
     pulse.yield %r, %t : !pulse.readout_line, !pulse.tone
   }

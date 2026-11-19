@@ -295,6 +295,34 @@ class _FromTree(str):
         return value
 
 
+def draw_points(
+    model: Any,
+    rng: np.random.Generator,
+    qudit: int,
+    level: int,
+    frequency_hz: float,
+    amplitude: float,
+    duration_ns: float,
+    count: int,
+) -> np.ndarray:
+    """*count* points of *qudit* at *level*, drawn from the dispersive
+    readout *model* as its ``sample`` draws one, as a complex array: the
+    noiseless points are computed once."""
+    import numpy as np
+
+    point = model.center(qudit, level, frequency_hz, amplitude, duration_ns)
+    points = np.full(count, point, dtype=np.complex128)
+    p = model._params[qudit]
+    if model.decay and level == 1 and p["t1"] > 0:
+        tau = p["tau"] if math.isfinite(p["tau"]) else duration_ns
+        t = rng.exponential(p["t1"], count)
+        ground = model.center(qudit, 0, frequency_hz, amplitude, duration_ns)
+        early = t < tau
+        points[early] = (t[early] * point + (tau - t[early]) * ground) / tau
+    noise = rng.normal(0.0, math.sqrt(0.5), (count, 2))
+    return points + noise[:, 0] + 1j * noise[:, 1]
+
+
 class _CallsModule(types.ModuleType):
     # Not a module __getattr__: the import system asks a module for __path__
     # on every ``from ... import``, and simulate() imports from this module

@@ -376,6 +376,54 @@ duration from it are a ``CompilationError``), and ``&``, ``==`` and the
 other operators do not take a measurement result itself, whose level they
 would compare.
 
+.. _acquisition-modes:
+
+**Acquisition modes**: ``readout(line, waveform)`` acquires the level the
+qudit is observed in, as above. ``acquire="integrated"`` acquires the
+integrated IQ point instead, one complex number per shot, for calibrations
+that fit the points themselves (readout optimization, IQ-blob fits):
+
+.. code-block:: python
+   :class: fragment
+
+   @pulse.kernel
+   def iq_blobs(qubit):
+       drive_line = get_drive_line(qubit)
+       readout_line = get_readout_line(qubit)
+       drive(drive_line, x)
+       sync(drive_line, readout_line)
+       return readout(readout_line, square(1000, 0.05), acquire="integrated")
+
+   result = pulse.simulate(iq_blobs, q, shots_count=2000)
+   points = result.acquisitions(0)    # complex, one row per shot
+
+``acquire`` is ``"level"`` (the default, the readout as it always was) or
+``"integrated"``, a string known while the kernel compiles. A point has no
+level: an ``if`` on it, a comparison with it, or sending it to a classical
+function as ``pulse.Bits`` or ``list[int]`` is a ``CompilationError`` that
+says so. It goes to a classical function that takes ``complex`` or
+``list[complex]``, whose answer a branch may then test, or back to the
+host: ``SimulationResult.acquisitions(readout)`` gives each shot's point
+at that readout (its ``Measurement.readout``), one column per execution,
+and calling the kernel from Python returns the point. Either mode projects
+the qudit on the level it observes, so a program simulates to the same
+state whichever it uses, and the records hold that level. The simulator
+draws each point from the dispersive readout model of the qudit's
+``DispersiveReadout``, as for a call that takes IQ points (see
+:doc:`classical_calls`), at the level the shot observed; it needs
+``shots_count``, and ``readout="model"`` adds no assignment errors to an
+integrated readout, whose point the model already spreads. A call that
+takes the point gets one drawn for the call from the same model, not the
+one ``acquisitions`` gives that shot.
+
+The IR keeps the mode on ``pulse.readout`` (``level`` for a level,
+``integrated`` for a point), and an integrated readout gives the point as
+``!pulse.iq_data`` where a level readout gives ``!pulse.measurement``. The
+controller export gives such a readout ``"acquire": "integrated"`` (see
+:doc:`controller_backends`); a controller acquires points only if it
+supports ``Capability.ACQUIRE_INTEGRATED``. A program that reads out only
+levels exports exactly as before.
+
 Python Inside Kernels
 ---------------------
 

@@ -91,11 +91,12 @@ def Classical_SubmitOp : ClassicalOp<"submit",
   let description = [{
     Sends the request for `callee` on `link`, with `args` in the order the
     function's argument descriptors take them: one SSA value per scalar or
-    array element, and one `!pulse.measurement` per measurement of a
-    `bits`, `levels` or `iq` argument. The submission cannot start before
-    its arguments are available, and it holds the link for the time the
-    request takes to send. It returns the link and a future that becomes
-    available when the answer is due.
+    array element, one `!pulse.measurement` per measurement of a `bits` or
+    `levels` argument, and per point of an `iq` argument a
+    `!pulse.measurement` or the `!pulse.iq_data` of an integrated readout.
+    The submission cannot start before its arguments are available, and it
+    holds the link for the time the request takes to send. It returns the
+    link and a future that becomes available when the answer is due.
   }];
   let arguments = !con((ins
     Classical_LinkType:$link,

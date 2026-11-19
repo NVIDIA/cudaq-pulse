@@ -22,7 +22,9 @@ class Capability(enum.StrEnum):
     a rolled loop unrolled, so each iteration counts against its
     ``max_pulses``. Unrolling does not change its waveform memory: a
     waveform is stored once per shape however often it plays, so only the
-    pulse count goes up.
+    pulse count goes up. ``acquire_integrated``: return the integrated IQ
+    point of a readout (``readout(..., acquire="integrated")``) rather than
+    its level.
     """
 
     PLAY = "play"
@@ -35,3 +37,4 @@ class Capability(enum.StrEnum):
     RUNTIME_FRAME_UPDATE = "runtime_frame_update"
     FORWARD_OUTCOME = "forward_outcome"
     LOOP = "loop"
+    ACQUIRE_INTEGRATED = "acquire_integrated"

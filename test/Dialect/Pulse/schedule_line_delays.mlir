@@ -38,7 +38,7 @@ func.func @delayed_lines() {
   %dur = pulse.duration_from_int %c2 : (i64) -> !pulse.duration
   %a2 = pulse.wait %a1, %dur : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
   %a3, %r1 = pulse.sync %a2, %r0 : !pulse.drive_line, !pulse.readout_line -> !pulse.drive_line, !pulse.readout_line
-  %r2, %tr1, %m = pulse.readout %r1, %w6, %tr, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r2, %tr1, %m = pulse.readout %r1, %w6, %tr, level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   return
 }
 

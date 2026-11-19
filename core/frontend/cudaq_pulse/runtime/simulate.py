@@ -134,6 +134,8 @@ class SimulationResult:
     each with the fraction of shots that took it, and the state is their
     average. ``postselect`` gives the result over the branches a test
     keeps, and ``acceptance`` the fraction of the ensemble it kept.
+    ``acquisitions`` gives the IQ points of the shots at an integrated
+    readout (``readout(..., acquire="integrated")``).
     """
 
     density_matrix: npt.NDArray[np.complex128]
@@ -147,6 +149,43 @@ class SimulationResult:
     #: ``postselect`` made it.
     acceptance: float = 1.0
     _states: list[Any] = field(default_factory=list, repr=False)
+    # Each shot's IQ point at each measurement (a row of records), NaN at a
+    # level readout's or where the shot did not measure; None without shots
+    # or integrated readouts, whose readout indices _integrated holds.
+    _points: npt.NDArray[np.complex128] | None = field(default=None, repr=False)
+    _integrated: tuple[int, ...] = field(default=(), repr=False)
+
+    def acquisitions(self, readout: int, /) -> npt.NDArray[np.complex128]:
+        """The IQ point each shot acquired at the integrated readout
+        *readout* (``readout(..., acquire="integrated")``; its
+        ``Measurement.readout``): a complex array with one row per shot, in
+        the order of ``records``, and one column per execution of that
+        readout, in the order of ``measurements``; NaN where the shot did not
+        reach the readout.
+
+        Each point is drawn for its shot from the dispersive readout model,
+        as for a call that takes IQ points, at the level the shot observed,
+        the level its row of ``records`` holds: the readout projects the
+        state on that level as a level readout does. A call that takes the
+        point gets one drawn for the call, from the same model. Points need
+        ``shots_count``; a readout that acquires a level raises
+        ``InvalidValueError``."""
+        points = self._points
+        if self.records is None:
+            raise InvalidValueError(
+                "IQ points are drawn per shot; simulate with shots_count to acquire them"
+            )
+        if points is None or readout not in self._integrated:
+            some = (
+                f"the integrated readouts are {', '.join(map(str, self._integrated))}"
+                if self._integrated
+                else "the program has no integrated readout"
+            )
+            raise InvalidValueError(
+                f"readout {readout!r} acquires no IQ points; {some} "
+                '(readout(..., acquire="integrated"))'
+            )
+        return points[:, [i for i, m in enumerate(self.measurements) if m.readout == readout]]
 
     def postselect(self, keep: Callable[[Branch], bool], /) -> SimulationResult:
         """The result over the branches *keep* accepts, a test of a
@@ -185,13 +224,17 @@ class SimulationResult:
             density = _Backend.density(state)
             rho += density * (branch.probability / float(np.real(np.trace(density))))
         records = self.records
+        points = self._points
         if records is not None:
             taken = {b.levels for b, k in zip(branches, kept, strict=True) if k}
             if taken.isdisjoint(b.levels for b, k in zip(branches, kept, strict=True) if not k):
                 rows = [tuple(row) in taken for row in records.tolist()]
-                records = records[np.array(rows, dtype=bool)] if rows else records
+                if rows:
+                    records = records[np.array(rows, dtype=bool)]
+                    if points is not None:
+                        points = points[np.array(rows, dtype=bool)]
             else:
-                records = None
+                records = points = None
         return SimulationResult(
             density_matrix=rho / accepted,
             dims=self.dims,
@@ -206,6 +249,8 @@ class SimulationResult:
             times_ns=self.times_ns,
             acceptance=self.acceptance * accepted,
             _states=[s for s, k in zip(states, kept, strict=True) if k],
+            _points=points,
+            _integrated=self._integrated,
         )
 
     def level_populations(self, qudit: int | Qudit | None = None) -> list[float]:
@@ -1026,9 +1071,12 @@ def _simulate_compiled(
         branches.append(Branch(tuple(outcomes), float(np.real(np.trace(density)))))
         rows.extend([outcomes] * count)
     records = None
+    points: npt.NDArray[np.complex128] | None = None
+    integrated: tuple[int, ...] = ()
     if shots_count is not None:
         records = np.array(rows, dtype=np.int64).reshape(len(rows), len(measurements))
         rng.shuffle(records)
+        points, integrated = _acquired(module, target, measurements, records, rng, False)
     return SimulationResult(
         density_matrix=rho,
         dims=dims,
@@ -1038,7 +1086,56 @@ def _simulate_compiled(
         records=records,
         times_ns=(t_start, t_end),
         _states=[leaf for leaf, _, _ in leaves],
+        _points=points,
+        _integrated=integrated,
     )
+
+
+def _acquired(
+    module: Any,
+    target: Any,
+    measurements: list[Measurement],
+    records: npt.NDArray[np.int64],
+    rng: np.random.Generator,
+    decay: bool,
+    integrated: tuple[int, ...] | None = None,
+) -> tuple[npt.NDArray[np.complex128] | None, tuple[int, ...]]:
+    """The IQ point of each shot (a row of *records*) at each measurement of
+    an integrated readout, NaN elsewhere, and the indices of those readouts
+    (*integrated*, else the module's); ``(None, ())`` for a program without
+    any. Shots that observed the same levels share their readouts' tones and
+    amplitudes, which are read once for each such row."""
+    if integrated is None:
+        integrated = tuple(module.integrated_readouts())
+    if not integrated:
+        return None, ()
+    from . import _calls
+
+    columns = [j for j, m in enumerate(measurements) if m.readout in integrated]
+    points = np.full(records.shape, complex(math.nan, math.nan), dtype=np.complex128)
+    if not columns:
+        return points, integrated
+    model = _calls.IQModel(target, sorted({measurements[j].qudit for j in columns}), decay)
+    rows: dict[tuple[int, ...], list[int]] = {}
+    for shot, row in enumerate(records.tolist()):
+        rows.setdefault(tuple(row), []).append(shot)
+    nan = (math.nan, math.nan)
+    for row, shots in rows.items():
+        entries = [[m.readout, *m.iteration, k] for m, k in zip(measurements, row, strict=True)]
+        drives = {
+            (i, tuple(it)): (f, a)
+            for i, it, f, a in module.readout_drives([e for e in entries if e[-1] >= 0])
+        }
+        for j in columns:
+            level = row[j]
+            if level < 0:
+                continue
+            m = measurements[j]
+            frequency, amplitude = drives.get((m.readout, m.iteration), nan)
+            points[shots, j] = _calls.draw_points(
+                model, rng, m.qudit, level, frequency, amplitude, m.end_ns - m.start_ns, len(shots)
+            )
+    return points, integrated
 
 
 def _measurement_tree(
@@ -1207,6 +1304,9 @@ def _simulate_tree(
         if readout == "ideal"
         else ReadoutModel(target, compiled.qudits, dims, decay=readout == "model_with_decay")
     )
+    integrated = tuple(module.integrated_readouts())
+    if model is not None:
+        model.integrated = frozenset(integrated)
     leaves, seen_raw = simulate_tree(
         module,
         engine,
@@ -1256,9 +1356,14 @@ def _simulate_tree(
         )
         rows.extend([outcomes] * leaf.count)
     records = None
+    points = None
     if shots_count is not None:
         records = np.array(rows, dtype=np.int64).reshape(len(rows), len(measurements))
         rng.shuffle(records)
+        decay = readout == "model_with_decay"
+        points, integrated = _acquired(
+            module, target, measurements, records, rng, decay, integrated
+        )
     return SimulationResult(
         density_matrix=rho,
         dims=dims,
@@ -1268,6 +1373,8 @@ def _simulate_tree(
         records=records,
         times_ns=(t_start, t_end),
         _states=[leaf.state for leaf in leaves],
+        _points=points,
+        _integrated=integrated if points is not None else (),
     )
 
 

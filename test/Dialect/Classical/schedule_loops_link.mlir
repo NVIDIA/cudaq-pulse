@@ -49,7 +49,7 @@ func.func @answers_then_unawaited() {
       iter_args(%d = %d0, %t = %t0, %r = %r0, %rt = %rt0, %l = %l0)
       -> (!pulse.drive_line, !pulse.tone, !pulse.readout_line, !pulse.tone, !classical.link) {
     %ds, %rs = pulse.sync %d, %r : !pulse.drive_line, !pulse.readout_line -> !pulse.drive_line, !pulse.readout_line
-    %rn, %rtn, %m = pulse.readout %rs, %ro, %rt, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %rn, %rtn, %m = pulse.readout %rs, %ro, %rt, level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     %ln, %f = classical.submit %l, @ask(%m) : (!pulse.measurement) -> (!classical.link, !classical.future)
     %fix = classical.wait %f, @ask : i1
     %dn, %tn = scf.if %fix -> (!pulse.drive_line, !pulse.tone) {
@@ -63,7 +63,7 @@ func.func @answers_then_unawaited() {
   %d2, %t2, %r2, %rt2, %l2 = scf.for %i = %lb to %ub step %step
       iter_args(%d = %d1, %t = %t1, %r = %r1, %rt = %rt1, %l = %l1)
       -> (!pulse.drive_line, !pulse.tone, !pulse.readout_line, !pulse.tone, !classical.link) {
-    %rn, %rtn, %m = pulse.readout %r, %ro, %rt, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %rn, %rtn, %m = pulse.readout %r, %ro, %rt, level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     %ln, %f = classical.submit %l, @ask(%m) : (!pulse.measurement) -> (!classical.link, !classical.future)
     %dn, %tn = pulse.drive %d, %y, %t : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
     scf.yield %dn, %tn, %rn, %rtn, %ln : !pulse.drive_line, !pulse.tone, !pulse.readout_line, !pulse.tone, !classical.link
@@ -95,7 +95,7 @@ func.func @unawaited_then_lazy() {
   %d1, %t1, %r1, %rt1, %l1 = scf.for %i = %lb to %ub step %step
       iter_args(%d = %d0, %t = %t0, %r = %r0, %rt = %rt0, %l = %l0)
       -> (!pulse.drive_line, !pulse.tone, !pulse.readout_line, !pulse.tone, !classical.link) {
-    %rn, %rtn, %m = pulse.readout %r, %ro, %rt, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %rn, %rtn, %m = pulse.readout %r, %ro, %rt, level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     %ln, %f = classical.submit %l, @ask_wide(%m) : (!pulse.measurement) -> (!classical.link, !classical.future)
     %dn, %tn = pulse.drive %d, %y, %t : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
     scf.yield %dn, %tn, %rn, %rtn, %ln : !pulse.drive_line, !pulse.tone, !pulse.readout_line, !pulse.tone, !classical.link
@@ -103,7 +103,7 @@ func.func @unawaited_then_lazy() {
   %d2, %t2, %r2, %rt2, %l2 = scf.for %i = %lb to %ub step %step
       iter_args(%d = %d1, %t = %t1, %r = %r1, %rt = %rt1, %l = %l1)
       -> (!pulse.drive_line, !pulse.tone, !pulse.readout_line, !pulse.tone, !classical.link) {
-    %rn, %rtn, %m = pulse.readout %r, %ro2, %rt, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %rn, %rtn, %m = pulse.readout %r, %ro2, %rt, level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     %ln, %f = classical.submit %l, @ask_lazy(%m) : (!pulse.measurement) -> (!classical.link, !classical.future)
     %fix = classical.wait %f, @ask_lazy : i1
     %dn, %tn = scf.if %fix -> (!pulse.drive_line, !pulse.tone) {

@@ -68,8 +68,12 @@ class ReadoutModel:
     ``decay=True`` relaxation during the readout window (the
     ``duration_ns`` of its ``READOUT`` calibration) adds
     1 - exp(-t / (2 T1)) to the |1> -> 0 error. Higher levels are reported
-    as themselves.
+    as themselves. The readouts ``integrated`` (by index) acquire IQ points,
+    not levels: they report the true level, whose point the dispersive
+    model spreads instead.
     """
+
+    integrated: frozenset[int] = frozenset()
 
     def __init__(
         self, target: Any, qudits: Sequence[int], dims: Sequence[int], decay: bool
@@ -445,7 +449,7 @@ def simulate_tree(
         for k, (branch, w) in enumerate(zip(projected, weights, strict=False)):
             if w <= floor:
                 continue
-            if readout is None:
+            if readout is None or index in readout.integrated:
                 branches.append((k, k, branch, 1.0))
             else:
                 for r, p in readout.reports(m, k):

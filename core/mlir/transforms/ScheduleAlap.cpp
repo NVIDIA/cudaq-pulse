@@ -226,13 +226,14 @@ static bool holdsCalls(mlir::scf::ForOp loop) {
       .wasInterrupted();
 }
 
-/// Lines, tones and measurement results: the values that become available
-/// at a time. A tone is busy while a drive or readout plays on it, so pulses
-/// that share a tone run in the order the tone is threaded through them.
+/// Lines, tones and readout results (levels and IQ points, both measurements
+/// below): the values that become available at a time. A tone is busy while
+/// a drive or readout plays on it, so pulses that share a tone run in the
+/// order the tone is threaded through them.
 static bool isTimedType(mlir::Type type) {
   return mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType,
-                   pulse::ToneType, pulse::MeasurementType>(type) ||
-         pulse::isClassicalType(type);
+                   pulse::ToneType>(type) ||
+         pulse::isReadoutResultType(type) || pulse::isClassicalType(type);
 }
 
 static bool isLineType(mlir::Type type) {
@@ -294,7 +295,7 @@ static void conditionMeasurements(mlir::Value value,
   if (mlir::isa<classical::LinkType>(value.getType()) ||
       !seen.insert(value).second)
     return;
-  if (mlir::isa<pulse::MeasurementType>(value.getType())) {
+  if (pulse::isReadoutResultType(value.getType())) {
     found.push_back(value);
     return;
   }
@@ -728,7 +729,7 @@ static bool readsMeasurement(mlir::Value value,
                              llvm::DenseSet<mlir::Value> &seen) {
   if (!seen.insert(value).second)
     return false;
-  if (mlir::isa<pulse::MeasurementType>(value.getType()))
+  if (pulse::isReadoutResultType(value.getType()))
     return true;
   mlir::Operation *def = value.getDefiningOp();
   if (!def || mlir::isa<classical::WaitOp>(def))
@@ -751,7 +752,7 @@ static std::shared_ptr<const LoopGroups> loopGroups(mlir::scf::ForOp loop) {
   unsigned n = loop.getNumRegionIterArgs();
   for (mlir::Value arg : loop.getRegionIterArgs()) {
     mlir::Type type = arg.getType();
-    if (mlir::isa<pulse::MeasurementType>(type)
+    if (pulse::isReadoutResultType(type)
             ? !arg.use_empty()
             : isTimedType(type) && !isLineType(type) &&
                   !mlir::isa<pulse::ToneType, classical::LinkType>(type))
@@ -846,7 +847,7 @@ static std::shared_ptr<const LoopGroups> loopGroups(mlir::scf::ForOp loop) {
         for (mlir::Operation &op : block.without_terminator()) {
           for (mlir::Value operand : op.getOperands())
             if (isTimedType(operand.getType()) && !inside(operand)) {
-              if (mlir::isa<pulse::MeasurementType>(operand.getType()))
+              if (pulse::isReadoutResultType(operand.getType()))
                 outside.push_back(operand);
               else
                 ok = false;
@@ -1557,7 +1558,7 @@ private:
                                 llvm::DenseSet<mlir::Value> &seen) {
     if (!seen.insert(value).second)
       return;
-    if (mlir::isa<pulse::MeasurementType>(value.getType())) {
+    if (pulse::isReadoutResultType(value.getType())) {
       found.push_back(value);
       return;
     }
@@ -3168,7 +3169,7 @@ private:
     if (it != lateAt.end())
       return withGroups(value, it->second);
     mlir::Type type = value.getType();
-    if (mlir::isa<pulse::MeasurementType>(type))
+    if (pulse::isReadoutResultType(type))
       return withGroups(value, kNever);
     // Nothing waits for an unused future or untimed value; a line, tone or
     // link may run until the makespan.

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import enum
 from collections.abc import Callable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, NoReturn
+from typing import TYPE_CHECKING, Any, Literal, NoReturn, overload
 
 from .._errors import CompilationError, InvalidTypeError
 from ..kernel.ir_builder import Parameter
@@ -107,6 +107,12 @@ class MeasurementResult(int):
     functions as ``pulse.Bits``, ``list[int]`` or ``complex``."""
 
 
+class IQPoint(complex):
+    """The integrated IQ point of ``readout(..., acquire="integrated")``,
+    one per shot. Kernels pass it to classical functions as ``complex`` or
+    ``list[complex]``, or return it; it has no level to branch on."""
+
+
 class RoundDirection(enum.StrEnum):
     """Which way ``round_duration`` rounds a length onto its line's grid; the
     strings ``"up"``, ``"down"`` and ``"nearest"`` mean the same."""
@@ -190,7 +196,25 @@ def drive(line: Line, waveform: Waveform, *, tone: Tone | None = None) -> None:
     _require_context("drive")
 
 
-def readout(line: Line, waveform: Waveform, *, tone: Tone | None = None) -> MeasurementResult:
+@overload
+def readout(
+    line: Line,
+    waveform: Waveform,
+    *,
+    tone: Tone | None = None,
+    acquire: Literal["level"] = "level",
+) -> MeasurementResult: ...
+
+
+@overload
+def readout(
+    line: Line, waveform: Waveform, *, tone: Tone | None = None, acquire: Literal["integrated"]
+) -> IQPoint: ...
+
+
+def readout(
+    line: Line, waveform: Waveform, *, tone: Tone | None = None, acquire: str = "level"
+) -> MeasurementResult | IQPoint:
     """Acquire a measurement through a readout line.
 
     Args:
@@ -198,9 +222,22 @@ def readout(line: Line, waveform: Waveform, *, tone: Tone | None = None) -> Meas
         waveform: Readout waveform envelope.
         tone: The tone to play it at; by default the line's own,
             ``line.tone``.
+        acquire: What the controller acquires, a string known while the
+            kernel compiles. ``"level"`` (the default): the level the
+            qudit is observed in, which a kernel branches on and sends to
+            classical functions as ``pulse.Bits`` or ``list[int]``.
+            ``"integrated"``: the integrated IQ point, one complex number
+            per shot, which a kernel sends to classical functions as
+            ``complex`` or ``list[complex]`` or returns to the host; it has
+            no level, so branching on it, comparing it or sending it as
+            bits or levels is a ``CompilationError``. Either way the
+            readout projects the qudit on the level it observes. A
+            controller acquires integrated points only if it supports
+            ``Capability.ACQUIRE_INTEGRATED``.
 
     Returns:
-        Measurement result handle.
+        Measurement result handle: the level, or with
+        ``acquire="integrated"`` the IQ point.
     """
     _require_context("readout")
 

@@ -122,6 +122,18 @@ Drives and readouts also have:
     frame change and virtual Z before it applied and the phase a detuned
     tone gains over time, or ``null`` where the two arms of a branch leave
     them different or a frame change is known only at run time.
+``acquire``
+    Only on a readout that acquires something other than the qudit's level,
+    after ``phase_rad``, in ``/1`` and ``/2``: ``"integrated"``, the
+    integrated IQ point (``readout(..., acquire="integrated")``; see
+    :ref:`acquisition modes <acquisition-modes>`), which the controller
+    returns to the host or sends as a submit's operand, and which no
+    condition reads. A readout
+    without it acquires the level, so a program that reads out only levels
+    exports as it always has. A controller that cannot acquire points
+    leaves ``Capability.ACQUIRE_INTEGRATED`` out of its ``supports``, and
+    such a program then fails to compile for it; a backend whose control
+    system supports everything refuses it with ``IncompatibleBackendError``.
 ``tone``, ``frame_updates``, ``phase_offset_rad``
     Only on a tone whose frame depends on run time: one with a frame change
     computed from a readout or an answer, or made in a branch. The tone's

@@ -472,6 +472,12 @@ def loops(q):
         drive(d, square(20, 0.1))
 
 
+@pulse.kernel
+def acquires_a_point(q):
+    r = get_readout_line(q)
+    readout(r, square(100, 0.05), acquire="integrated")
+
+
 # For each capability, a program that needs it and the qudits it runs on:
 # two on one controller, or (0, 2) across two.
 _NEEDING = {
@@ -485,6 +491,7 @@ _NEEDING = {
     pulse.Capability.RUNTIME_FRAME_UPDATE: (turns_by_an_outcome, (0,)),
     pulse.Capability.FORWARD_OUTCOME: (drive_and_branch, (0, 2)),
     pulse.Capability.LOOP: (loops, (0,)),
+    pulse.Capability.ACQUIRE_INTEGRATED: (acquires_a_point, (0,)),
 }
 
 

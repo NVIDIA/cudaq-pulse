@@ -108,10 +108,23 @@ def _measured(q):
 
 def test_the_exports_refuse_a_readout_mode_they_do_not_support_yet():
     text = pulse.compile(_measured).lower(Q[0]).mlir()
-    assert ", iq <{" in text
-    module = native.MLIRPipeline().parse_to_module(text.replace(", iq <{", ", trace <{"))
-    message = "readout mode trace is not supported by the exports yet; only iq is"
+    assert ", level <{" in text
+    module = native.MLIRPipeline().parse_to_module(text.replace(", level <{", ", trace <{"))
+    message = (
+        "readout mode trace is not supported by the exports yet; only level and integrated are"
+    )
     with pytest.raises(NotImplementedError, match=message):
         module.events()
     with pytest.raises(NotImplementedError, match=message):
         module.controller_events([], [])
+
+
+def test_a_level_readout_says_level_and_iq_does_not_parse():
+    text = pulse.compile(_measured).lower(Q[0]).mlir()
+    assert ", level <{" in text and ", iq <{" not in text
+    message = (
+        r"expected one of \[level, discriminated, trace, counts, integrated\] for readout mode, "
+        r"got: iq"
+    )
+    with pytest.raises(RuntimeError, match=message):
+        native.MLIRPipeline().parse_to_module(text.replace(", level <{", ", iq <{"))

@@ -1091,6 +1091,8 @@ struct ControllerWalk : ControllerExpressions {
     r.frequency = frequency;
     r.phase = phase;
     r.known = knownIndex;
+    if (kind[0] == 'r')
+      r.mode = exportedAcquire(op).str();
     if (track && kind[0] != 'w')
       trackPlayed(op);
   }
@@ -2405,11 +2407,11 @@ private:
   // The keys and names of an export, interned once for the life of the
   // process: an export sets them on every event.
   struct Keys {
-    PyObject *amplitude = intern("amplitude"), *answer = intern("answer"),
-             *answers = intern("answers"), *arm = intern("arm"),
-             *body = intern("body"), *branch = intern("branch"),
-             *conditions = intern("conditions"), *constant = intern("const"),
-             *controller = intern("controller"),
+    PyObject *acquire = intern("acquire"), *amplitude = intern("amplitude"),
+             *answer = intern("answer"), *answers = intern("answers"),
+             *arm = intern("arm"), *body = intern("body"),
+             *branch = intern("branch"), *conditions = intern("conditions"),
+             *constant = intern("const"), *controller = intern("controller"),
              *duration = intern("duration_cycles"), *end = intern("end_cycles"),
              *segment = intern("segment"),
              *segmentStep = intern("segment_step"),
@@ -2827,6 +2829,8 @@ private:
       if (!compact)
         put(event, key.amplitude, shape->second);
       frame(r, event);
+      if (!r.mode.empty())
+        put(event, key.acquire, text(r.mode));
     } else if (r.kind[0] == 'f') {
       put(event, key.op, text(r.update));
       put(event, key.value, expression(r.value));

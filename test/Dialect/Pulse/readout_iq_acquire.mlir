@@ -10,7 +10,7 @@
 
 // CHECK-LABEL: func.func @main
 // CHECK: %[[T1:.*]] = pulse.shift_phase
-// CHECK: %{{.*}}, %[[T2:.*]], %[[M:.*]] = pulse.readout %{{.*}}, %{{.*}}, %[[T1]], iq <{duration_cycles = 400 : i64, start_cycles = 0 : i64}>
+// CHECK: %{{.*}}, %[[T2:.*]], %[[M:.*]] = pulse.readout %{{.*}}, %{{.*}}, %[[T1]], level <{duration_cycles = 400 : i64, start_cycles = 0 : i64}>
 // CHECK: %[[T3:.*]] = pulse.shift_phase %[[T2]]
 // CHECK: pulse.iq_acquire %{{.*}}, %{{.*}}, %[[T3]] : !pulse.readout_line
 // CHECK: pulse.is_set %[[M]]
@@ -24,7 +24,7 @@ module attributes {pulse.control_system = #pulse.control_system<clock_period_fs 
     %w = pulse.square %c400, %amp, %zero : i64, f64, f64 -> !pulse.waveform
     %half_pi = arith.constant 1.5707963267948966 : f64
     %t1 = pulse.shift_phase %t0, %half_pi : !pulse.tone, f64 -> !pulse.tone
-    %r1, %t2, %m = pulse.readout %r0, %w, %t1, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %r1, %t2, %m = pulse.readout %r0, %w, %t1, level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     %t3 = pulse.shift_phase %t2, %half_pi : !pulse.tone, f64 -> !pulse.tone
     %r2, %t4, %iq = pulse.iq_acquire %r1, %w, %t3 : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.iq_data
     %i, %qv = pulse.extract_iq %iq : !pulse.iq_data -> f64, f64

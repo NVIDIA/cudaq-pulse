@@ -38,7 +38,7 @@ func.func @held() {
   %ro = pulse.square %c300, %a, %z : i64, f64, f64 -> !pulse.waveform
   %x = pulse.square %c40, %a, %z : i64, f64, f64 -> !pulse.waveform
   %d1, %t1 = pulse.drive %d0, %x, %t0 : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
-  %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %l0 = classical.get_link {device = 0 : i64} : !classical.link
   %l1, %f = classical.submit %l0, @decode(%m) : (!pulse.measurement) -> (!classical.link, !classical.future)
   %d2, %t2 = pulse.drive %d1, %x, %t1 : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone

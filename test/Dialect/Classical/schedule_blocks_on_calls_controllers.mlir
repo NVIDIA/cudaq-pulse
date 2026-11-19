@@ -53,7 +53,7 @@ func.func @held_where_used() {
   %q2 = pulse.qudit_alloc {qudit = 2 : i64} : !pulse.qudit
   %d2, %dt2 = pulse.get_drive_line %q2 : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %d1a, %dt1a = pulse.drive %d1, %x, %dt1 : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
-  %r0a, %rt0a, %m0 = pulse.readout %r0, %ro, %rt0, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r0a, %rt0a, %m0 = pulse.readout %r0, %ro, %rt0, level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %link = classical.get_link {device = 0 : i64} : !classical.link
   %link1, %f0 = classical.submit %link, @decode(%m0) : (!pulse.measurement) -> (!classical.link, !classical.future)
   %d2a, %dt2a = pulse.drive %d2, %long, %dt2 : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone

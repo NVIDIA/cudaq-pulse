@@ -30,6 +30,13 @@ inline int64_t quditOf(mlir::Operation *acquisition) {
   return -1;
 }
 
+/// What a readout gives: the level it observed (`!pulse.measurement`), or
+/// the IQ point of a readout of mode integrated (`!pulse.iq_data`). Either is
+/// available when the readout ends, and both are scheduled alike.
+inline bool isReadoutResultType(mlir::Type type) {
+  return mlir::isa<MeasurementType, IQDataType>(type);
+}
+
 inline bool isLinearPulseType(mlir::Type type) {
   return mlir::isa<DriveLineType, ReadoutLineType, ToneType>(type) ||
          isClassicalType(type);

@@ -96,6 +96,13 @@ def WaveformType : PulseType<"Waveform", "waveform"> {
 
 def IQDataType : PulseType<"IQData", "iq_data"> {
   let summary = "Raw IQ signal data from readout (value type)";
+  let description = [{
+    An IQ point: what a `pulse.readout` of mode `integrated` gives, which a
+    classical call takes as an `iq` argument, and what `pulse.iq_acquire`
+    returns. `pulse.extract_iq`, `pulse.iq_magnitude` and `pulse.iq_phase`
+    read its components. It holds no level: `pulse.is_set` and
+    `pulse.outcome` read only a `!pulse.measurement`.
+  }];
 }
 
 //===----------------------------------------------------------------------===//
@@ -103,10 +110,11 @@ def IQDataType : PulseType<"IQData", "iq_data"> {
 //===----------------------------------------------------------------------===//
 
 def ReadoutMode : I32Enum<"ReadoutMode", "readout mode", [
-    I32EnumCase<"IQ", 0, "iq">,
+    I32EnumCase<"Level", 0, "level">,
     I32EnumCase<"Discriminated", 1, "discriminated">,
     I32EnumCase<"Trace", 2, "trace">,
-    I32EnumCase<"Counts", 3, "counts">
+    I32EnumCase<"Counts", 3, "counts">,
+    I32EnumCase<"Integrated", 4, "integrated">
   ]> {
   let cppNamespace = "::pulse";
 }
@@ -127,13 +135,18 @@ def AnyLineType : Type<
   "any pulse line type"
 >;
 
-// Values that become available at a time: lines, tones, measurements, and
-// the links and call handles of the classical dialect.
+// What a pulse.readout gives: the level it observed, or the IQ point of a
+// readout of mode integrated.
+def ReadoutResultType : AnyTypeOf<[MeasurementType, IQDataType],
+  "the level or IQ point a readout acquires">;
+
+// Values that become available at a time: lines, tones, measurements and IQ
+// points, and the links and call handles of the classical dialect.
 def AnyTimedType : Type<
   Or<[DriveLineType.predicate, ReadoutLineType.predicate,
-      ToneType.predicate, MeasurementType.predicate,
+      ToneType.predicate, MeasurementType.predicate, IQDataType.predicate,
       CPred<"$_self.getDialect().getNamespace() == \"classical\"">]>,
-  "a pulse line, tone, measurement, link or call handle"
+  "a pulse line, tone, measurement, IQ point, link or call handle"
 >;
 
 #endif // CUDAQ_PULSE_DIALECT_PULSE_TYPES

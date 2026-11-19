@@ -889,7 +889,24 @@ _TYPE_WORDS = {
     "tone": "tone",
     "waveform": "waveform",
     "measurement": "measurement result",
+    "iq_point": "integrated IQ point",
 }
+
+# What readout(..., acquire=) takes; the first is the default.
+_ACQUIRE_MODES = ("level", "integrated")
+
+
+def _acquire_mode(value: Any) -> str | None:
+    """The mode ``readout(..., acquire=value)`` emits, None for a level (the
+    default, which the packed IR leaves implicit)."""
+    if isinstance(value, str) and value in _ACQUIRE_MODES:
+        return None if value == "level" else str(value)
+    later = " (trace and counts are not supported yet)" if value in ("trace", "counts") else ""
+    raise CompilationError(
+        f'readout(): acquire is "level" or "integrated", a string known while the kernel '
+        f"compiles; got {value!r}{later}",
+        code="wrong_argument",
+    )
 
 
 def _note_source(e: BaseException, prog: bc.DecodedCode, index: int) -> None:
@@ -1617,11 +1634,13 @@ class PulseIREmitter:
         "_unroll",
         "_one_arm",
         "_dict_items",
+        "_acquire",
     )
 
     # The slots' types, for type checkers: annotations in the class body
     # would cost every process's first trace.
     if TYPE_CHECKING:
+        _acquire: str
         _can_roll: bool
         _dict_items: dict[tuple[int, Any], tuple[dict[Any, Any], Any, Any]] | None
         _slots: dict[int, tuple[list[Any], int, IRValue]]
@@ -2289,6 +2308,10 @@ class PulseIREmitter:
         negated = isinstance(cond, _NotMeasurement)
         value = cond.value if negated else cond
         if value.vtype not in ("measurement", "i1"):
+            if value.vtype == "iq_point":
+                from ._emit_errors import iq_point_error
+
+                raise iq_point_error("decide a branch")
             raise CompilationError(_BRANCH_TYPE_MESSAGE.format(value.vtype), code="runtime_value")
         if not self._can_roll:
             raise CompilationError(_PACKED_BRANCH_MESSAGE)
@@ -3137,6 +3160,12 @@ class PulseIREmitter:
         if isinstance(callable_val, tuple) and len(callable_val) == 2:
             tag, name = callable_val
             if tag == "__unresolved__":
+                if kwargs and name == "readout" and "acquire" in kwargs:
+                    kwargs = dict(kwargs)
+                    acquire = _acquire_mode(kwargs.pop("acquire"))
+                    if acquire is not None:
+                        self._acquired_readout(callable_val, call_args, kwargs, acquire)
+                        return
                 if (
                     kwargs
                     and name in _PLAYS
@@ -3174,6 +3203,12 @@ class PulseIREmitter:
         except TypeError:  # unhashable callable
             op_name = None
         if op_name is not None:
+            if kwargs and op_name == "readout" and "acquire" in kwargs:
+                kwargs = dict(kwargs)
+                acquire = _acquire_mode(kwargs.pop("acquire"))
+                if acquire is not None:
+                    self._acquired_readout(callable_val, call_args, kwargs, acquire)
+                    return
             if (
                 kwargs
                 and op_name in _PLAYS
@@ -3674,6 +3709,21 @@ class PulseIREmitter:
 
         self.stack.append(result)
 
+    def _acquired_readout(
+        self,
+        callable_val: Any,
+        call_args: list[StackVal],
+        kwargs: dict[str, StackVal],
+        acquire: str,
+    ) -> None:
+        """``readout(..., acquire=acquire)`` for a mode other than a level:
+        the call without it, whose readout takes the mode."""
+        self._acquire = acquire
+        try:
+            self._dispatch_call(callable_val, call_args, kwargs or None)
+        finally:
+            del self._acquire
+
     def _push_pulse_results(
         self,
         fname: str,
@@ -3843,6 +3893,12 @@ class PulseIREmitter:
             if optional is not None:
                 attrs[optional[0]] = optional[1]
             out_types = (operands[0].vtype,) if (rtypes is None and operands) else (rtypes or ())
+            if fname == "readout":
+                # Set only while readout(..., acquire=) of a point is emitted.
+                acquire = getattr(self, "_acquire", None)
+                if acquire is not None:
+                    attrs["acquire"] = acquire
+                    out_types = ("readout_line", "tone", "iq_point")
 
         op_name = _OP_NAMES[fname]
         results: tuple[IRValue, ...]

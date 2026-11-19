@@ -25,6 +25,24 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   misspelling, the misspelled name as `value`. Messages read as before; a
   few that gave no fix now give one (`drive(q, ...)` says to pass
   `get_drive_line(q)`, `shift_phase(line, ...)` to pass `line.tone`).
+- **Integrated acquisition.** `readout(line, waveform,
+  acquire="integrated")` acquires the integrated IQ point, one complex
+  number per shot, instead of the level (`acquire="level"`, the default).
+  A kernel sends the point to classical functions that take `complex` or
+  `list[complex]`, or returns it; branching on it, comparing it or sending
+  it as `pulse.Bits` or `list[int]` is a `CompilationError`.
+  `SimulationResult.acquisitions(readout)` gives each shot's point, drawn
+  from the dispersive readout model at the level the shot observed (with
+  `shots_count`); the readout projects the qudit as a level readout does,
+  and `readout="model"` adds no assignment errors to it. The IR keeps the
+  mode on `pulse.readout` (`level`, or the new `integrated`), and an
+  integrated readout gives `!pulse.iq_data`, which is scheduled as a level
+  is and which `pulse.is_set`, `pulse.outcome` and `bits` or `levels` call
+  arguments do not take. The exports (`/1`, `/2`, `unroll`) give such a
+  readout `"acquire": "integrated"`, and a controller acquires points only
+  with the new `Capability.ACQUIRE_INTEGRATED`. Programs that read out
+  only levels export as before, byte for byte, but for a controller whose
+  `supports` is every `Capability`: it lists the new one too.
 - **Unit warnings.** `pulse.compile(k, unit_warnings=True)` issues a
   `pulse.UnitWarning` at each kernel line that gives a duration, wait,
   `sigma`, DRAG `beta` or flat-top `width` as a bare number (clock cycles:
@@ -154,6 +172,22 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 
 ### Changed
 
+- **Readout mode `level`.** The `pulse.readout` mode that acquires the
+  level, spelled `iq` until now, is spelled `level`:
+  `pulse.readout %r, %w, %t, level`. IR text that says `iq` no longer
+  parses (`expected one of [level, discriminated, trace, counts,
+  integrated] for readout mode, got: iq`); the generic form and bytecode
+  keep the mode's value, 0. Kernels and controller exports are unchanged,
+  and the exports and the simulator refuse another mode with "only level
+  and integrated are" where they said "only iq is".
+- **IQ points are timed in the IR.** `!pulse.iq_data`, which an integrated
+  readout gives, becomes available at a time as a measurement does:
+  `pulse.yield` carries it, and a `pulse.schedule_block` takes one from
+  outside only as an operand, also one that `pulse.iq_acquire` or
+  `pulse.create_iq` gives ("uses a line, tone, measurement, IQ point or
+  link from outside its pulse.schedule_block"). A call's `iq` argument
+  takes a point that a `pulse.readout` gives, on every path, which
+  `pulse-verify` checks.
 - **Schedule plots look different.** `viz.plot_schedule`, `viz.save_schedule`
   and `timeline()` draw in the style of the documentation's figures: drives
   green, readouts rose, waits hatched grey and classical calls teal (colors

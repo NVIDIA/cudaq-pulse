@@ -40,7 +40,7 @@ func.func @amplitude() {
   %low = arith.constant 0.1 : f64
   %high = arith.constant 0.3 : f64
   %probe = pulse.square %c100, %low, %zero : i64, f64, f64 -> !pulse.waveform
-  %r1, %rt1, %m = pulse.readout %r, %probe, %rt, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r1, %rt1, %m = pulse.readout %r, %probe, %rt, level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %bit = pulse.is_set %m : !pulse.measurement -> i1
   %amp = arith.select %bit, %high, %low : f64
   %wf = pulse.square %c40, %amp, %zero : i64, f64, f64 -> !pulse.waveform
@@ -73,7 +73,7 @@ func.func @phase() {
   %x = pulse.square %c40, %amp, %zero : i64, f64, f64 -> !pulse.waveform
   %d1, %t1 = pulse.drive %d, %x, %t : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
   %probe = pulse.square %c100, %amp, %zero : i64, f64, f64 -> !pulse.waveform
-  %r1, %rt1, %m = pulse.readout %r, %probe, %rt, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r1, %rt1, %m = pulse.readout %r, %probe, %rt, level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %bit = pulse.is_set %m : !pulse.measurement -> i1
   %ph = arith.select %bit, %pi, %half : f64
   %t2 = pulse.shift_phase %t1, %ph : !pulse.tone, f64 -> !pulse.tone
@@ -110,7 +110,7 @@ func.func @duration() {
   %zero = arith.constant 0.0 : f64
   %amp = arith.constant 0.1 : f64
   %probe = pulse.square %c100, %amp, %zero : i64, f64, f64 -> !pulse.waveform
-  %r1, %rt1, %m = pulse.readout %r, %probe, %rt, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r1, %rt1, %m = pulse.readout %r, %probe, %rt, level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %bit = pulse.is_set %m : !pulse.measurement -> i1
   %n = arith.select %bit, %c80, %c40 : i64
   %len = arith.addi %n, %c8 : i64
@@ -143,8 +143,8 @@ func.func @elif() {
   %two = arith.constant 0.2 : f64
   %three = arith.constant 0.3 : f64
   %probe = pulse.square %c100, %one, %zero : i64, f64, f64 -> !pulse.waveform
-  %r1, %rt1, %m = pulse.readout %r, %probe, %rt, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
-  %r2, %rt2, %n = pulse.readout %r1, %probe, %rt1, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r1, %rt1, %m = pulse.readout %r, %probe, %rt, level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r2, %rt2, %n = pulse.readout %r1, %probe, %rt1, level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %a = pulse.is_set %m : !pulse.measurement -> i1
   %b = pulse.is_set %n : !pulse.measurement -> i1
   %inner = arith.select %b, %two, %one : f64
@@ -190,7 +190,7 @@ func.func @selected_tone_frequency() {
   %f1 = arith.constant 5.1e9 : f64
   %probe = pulse.square %c100, %amp, %zero : i64, f64, f64 -> !pulse.waveform
   %wf = pulse.square %c40, %amp, %zero : i64, f64, f64 -> !pulse.waveform
-  %r1, %rt1, %m = pulse.readout %r, %probe, %rt, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r1, %rt1, %m = pulse.readout %r, %probe, %rt, level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %bit = pulse.is_set %m : !pulse.measurement -> i1
   %f = arith.select %bit, %f1, %f0 : f64
   %tone = pulse.tone %f, %zero : f64, f64 -> !pulse.tone

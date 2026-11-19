@@ -52,7 +52,7 @@ func.func @rounds() {
   %dn, %tn, %rn, %rtn, %ln = scf.for %i = %lb to %ub step %step
       iter_args(%d = %d0, %t = %t0, %r = %r0, %rt = %rt0, %l = %l0)
       -> (!pulse.drive_line, !pulse.tone, !pulse.readout_line, !pulse.tone, !classical.link) {
-    %r1, %rt1, %m = pulse.readout %r, %ro, %rt, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %r1, %rt1, %m = pulse.readout %r, %ro, %rt, level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     %l1, %f = classical.submit %l, @decode(%m) : (!pulse.measurement) -> (!classical.link, !classical.future)
     %fix = classical.wait %f, @decode : i1
     %d1, %t1 = scf.if %fix -> (!pulse.drive_line, !pulse.tone) {
@@ -94,7 +94,7 @@ func.func @pipelined() {
   %dn, %tn, %rn, %rtn, %ln = scf.for %i = %lb to %ub step %step
       iter_args(%d = %d0, %t = %t0, %r = %r0, %rt = %rt0, %l = %l0)
       -> (!pulse.drive_line, !pulse.tone, !pulse.readout_line, !pulse.tone, !classical.link) {
-    %r1, %rt1, %m = pulse.readout %r, %ro, %rt, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %r1, %rt1, %m = pulse.readout %r, %ro, %rt, level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     %l1, %f = classical.submit %l, @decode_wide(%m) : (!pulse.measurement) -> (!classical.link, !classical.future)
     %fix = classical.wait %f, @decode_wide : i1
     %d1, %t1 = scf.if %fix -> (!pulse.drive_line, !pulse.tone) {

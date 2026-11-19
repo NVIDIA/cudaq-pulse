@@ -75,7 +75,17 @@ _HOLDS = {
 
 
 def _is_readout(value: Any) -> bool:
-    return isinstance(value, IRValue) and value.vtype == "measurement"
+    return isinstance(value, IRValue) and value.vtype in ("measurement", "iq_point")
+
+
+def _point_for_level(name: str, parameter: str, kind: str) -> CompilationError:
+    """An integrated readout's IQ point passed where a call takes levels."""
+    return CompilationError(
+        f"{name}.submit(): {parameter} is {kind}, the level of each readout, but an integrated "
+        'readout (acquire="integrated") gives an IQ point and no level',
+        code="wrong_argument",
+        fix=f'read it out with acquire="level", or declare {parameter} complex or list[complex]',
+    )
 
 
 def _local_name(value: Any) -> str | None:
@@ -127,7 +137,15 @@ def _measurements(
         raise _wrong_count(function, spec, position, len(items))
     vids = []
     for item in items:
-        if not (isinstance(item, IRValue) and item.vtype == "measurement"):
+        if (
+            isinstance(item, IRValue)
+            and item.vtype == "iq_point"
+            and not spec.descriptor.startswith("iq")
+        ):
+            raise _point_for_level(
+                function.name, f"argument {position}", _spelled(spec)[0] or spec.descriptor
+            )
+        if not _is_readout(item):
             raise CompilationError(
                 f"{function.name}: argument {position} ({spec.descriptor}) takes measurement "
                 f"results from readout(), got {item!r}",
@@ -262,7 +280,11 @@ def _submit_template(
                 n = len(value) if kind == _KIND_FLOATS else -len(value)
             else:
                 for item in value:
-                    if not (isinstance(item, IRValue) and item.vtype == "measurement"):
+                    if isinstance(item, IRValue) and item.vtype == "iq_point" and kind != _KIND_IQ:
+                        raise _point_for_level(
+                            name, repr(_parameter(template, position)), _LIST_NAME[kind]
+                        )
+                    if not _is_readout(item):
                         raise CompilationError(
                             f"{name}.submit(): {_parameter(template, position)!r}"
                             f" ({_LIST_NAME[kind]}) takes measurement results from readout(),"
@@ -293,7 +315,7 @@ def _parameter(template: ClassicalFunction[..., Any], position: int) -> str:
 
 def _measured(value: Sequence[Any], template: ClassicalFunction[..., Any], position: int) -> bool:
     """Whether a ``list[int]`` holds measurements (levels) or numbers."""
-    measured = [isinstance(v, IRValue) and v.vtype == "measurement" for v in value]
+    measured = [_is_readout(v) for v in value]
     if any(measured) and not all(measured):
         raise CompilationError(
             f"{template.name}.submit(): {_parameter(template, position)!r} is list[int]: all"

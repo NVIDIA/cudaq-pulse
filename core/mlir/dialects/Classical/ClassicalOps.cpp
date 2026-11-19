@@ -116,9 +116,13 @@ LogicalResult SubmitOp::verifySymbolUses(SymbolTableCollection &symbols) {
                << "' takes more (argument " << index << " is "
                << cast<StringAttr>(entry).getValue() << ")";
       Type type = operands[next].getType();
-      bool ok = desc.takesMeasurements() ? isa<pulse::MeasurementType>(type)
-                : desc.isFloat()         ? isa<FloatType>(type)
-                                         : type.isSignlessInteger();
+      // An iq argument also takes the IQ point of an integrated readout;
+      // bits and levels take only a level.
+      bool point = desc.kind == Kind::IQ && isa<pulse::IQDataType>(type);
+      bool ok = desc.takesMeasurements()
+                    ? point || isa<pulse::MeasurementType>(type)
+                : desc.isFloat() ? isa<FloatType>(type)
+                                 : type.isSignlessInteger();
       if (!ok)
         return emitOpError("value ")
                << next << " has type " << type << ", but argument " << index

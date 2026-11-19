@@ -130,15 +130,18 @@ to op like a line.
 - A frame rotates through ``pulse.sync``: a change made before a sync
   applies to the next pulse on the tone after it, however long the sync holds
   the line.
-- ``pulse.readout`` plays its pulse and gives a measurement (the level
-  ``pulse.is_set`` and ``pulse.outcome`` read); ``pulse.iq_acquire`` gives the
-  raw IQ point instead. Both return their line and tone, so a frame change
-  before either applies to it. Only ``pulse.readout`` is scheduled: the
-  scheduler gives ``pulse.iq_acquire`` no start or duration, and the
-  controller export has no event for it.
+- ``pulse.readout`` plays its pulse and gives what its mode acquires: the
+  level (``!pulse.measurement``, which ``pulse.is_set`` and
+  ``pulse.outcome`` read), or with mode ``integrated`` the integrated IQ
+  point (``!pulse.iq_data``); ``pulse.iq_acquire`` gives a raw IQ point
+  too. Both return their line and tone, so a frame change before either
+  applies to it. Only ``pulse.readout`` is scheduled, its point as a level
+  would be: the scheduler gives ``pulse.iq_acquire`` no start or duration,
+  and the controller export has no event for it.
 
-``test/Conversion/pulse-to-qop-frames.mlir`` and
-``test/Dialect/Pulse/readout_iq_acquire.mlir`` show each rule.
+``test/Conversion/pulse-to-qop-frames.mlir``,
+``test/Dialect/Pulse/readout_iq_acquire.mlir`` and
+``test/Dialect/Pulse/readout_integrated.mlir`` show each rule.
 
 Classical
 ---------

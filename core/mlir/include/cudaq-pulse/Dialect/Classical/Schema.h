@@ -36,7 +36,8 @@ struct Descriptor {
   Kind kind;
   int64_t count = 1;
 
-  /// Its SSA values are `!pulse.measurement`s.
+  /// Its SSA values are readout results: `!pulse.measurement`s, and for
+  /// `iq` also the `!pulse.iq_data` of an integrated readout.
   bool takesMeasurements() const {
     return kind == Kind::Bits || kind == Kind::Levels || kind == Kind::IQ;
   }

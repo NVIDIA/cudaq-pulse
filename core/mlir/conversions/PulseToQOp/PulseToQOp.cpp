@@ -677,7 +677,7 @@ struct PulseToQOpPass
 
     // Readouts are numbered in walk order for `pulse.path`.
     SmallVector<Operation *> readouts;
-    Operation *notIq = nullptr;
+    Operation *unsupported = nullptr;
     module.walk([&](Operation *op) {
       // A drive line nothing uses is dead, and standard passes erase it: its
       // frequency is not the qudit's.
@@ -687,18 +687,22 @@ struct PulseToQOpPass
             quditFreqHz.try_emplace(qi, freqAttr.getValueAsDouble());
       }
       if (auto readout = dyn_cast<pulse::ReadoutOp>(op)) {
-        if (readout.getMode() != pulse::ReadoutMode::IQ && !notIq)
-          notIq = op;
+        // An integrated readout projects as a level readout does; its IQ
+        // point is drawn on the host.
+        if (readout.getMode() != pulse::ReadoutMode::Level &&
+            readout.getMode() != pulse::ReadoutMode::Integrated && !unsupported)
+          unsupported = op;
         readouts.push_back(op);
       }
       if (op->getName().getStringRef() == "pulse.iq_acquire")
         readouts.push_back(op);
     });
-    if (notIq) {
-      notIq->emitError("readout mode ")
+    if (unsupported) {
+      unsupported->emitError("readout mode ")
           << pulse::stringifyReadoutMode(
-                 cast<pulse::ReadoutOp>(notIq).getMode())
-          << " is not supported by the simulator yet; only iq is";
+                 cast<pulse::ReadoutOp>(unsupported).getMode())
+          << " is not supported by the simulator yet; only level and "
+             "integrated are";
       return signalPassFailure();
     }
     Operation *unanswered = nullptr;

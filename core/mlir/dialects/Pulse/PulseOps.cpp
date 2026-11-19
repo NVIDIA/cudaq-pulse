@@ -106,6 +106,19 @@ LogicalResult SyncOp::verify() {
   return success();
 }
 
+LogicalResult ReadoutOp::verify() {
+  // A readout of mode integrated gives its IQ point; one of any other mode
+  // gives the level it observes.
+  Type expected = getMode() == ReadoutMode::Integrated
+                      ? Type(IQDataType::get(getContext()))
+                      : Type(MeasurementType::get(getContext()));
+  if (getResult().getType() != expected)
+    return emitOpError("of mode ")
+           << stringifyReadoutMode(getMode()) << " gives " << expected
+           << ", got " << getResult().getType();
+  return success();
+}
+
 namespace {
 /// `arith.cmpi ne, (pulse.outcome %m), 0` is `pulse.is_set %m`.
 struct OutcomeNonzeroToIsSet : OpRewritePattern<arith::CmpIOp> {
@@ -138,10 +151,11 @@ void IsSetOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
   patterns.add<OutcomeNonzeroToIsSet>(ctx);
 }
 
-/// The types AnyTimedType admits: lines, tones, measurements, and the
-/// classical dialect's links and call handles.
+/// The types AnyTimedType admits: lines, tones, measurements, IQ points,
+/// and the classical dialect's links and call handles.
 static bool isTimedValueType(Type type) {
-  return isa<DriveLineType, ReadoutLineType, ToneType, MeasurementType>(type) ||
+  return isa<DriveLineType, ReadoutLineType, ToneType, MeasurementType,
+             IQDataType>(type) ||
          type.getDialect().getNamespace() == "classical";
 }
 
@@ -151,8 +165,8 @@ LogicalResult ScheduleBlockOp::verifyRegions() {
   Block &body = getBody().front();
   if (body.empty() || !isa<YieldOp>(body.back()))
     return emitOpError("body must end in pulse.yield");
-  // Lines, tones and measurements reach the body only as block arguments,
-  // so the boundary lists every timed value that crosses it.
+  // Lines, tones, measurements and IQ points reach the body only as block
+  // arguments, so the boundary lists every timed value that crosses it.
   Operation *self = getOperation();
   WalkResult walk = getBody().walk([&](Operation *inner) {
     for (Value operand : inner->getOperands()) {
@@ -163,8 +177,9 @@ LogicalResult ScheduleBlockOp::verifyRegions() {
         continue;
       if (region == &getBody())
         continue;
-      inner->emitOpError("uses a line, tone, measurement or link from outside "
-                         "its pulse.schedule_block; pass it as an operand");
+      inner->emitOpError("uses a line, tone, measurement, IQ point or link "
+                         "from outside its pulse.schedule_block; pass it as an "
+                         "operand");
       return WalkResult::interrupt();
     }
     return WalkResult::advance();

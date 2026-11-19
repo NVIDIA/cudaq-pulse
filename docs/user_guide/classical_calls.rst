@@ -50,7 +50,10 @@ A parameter is one of:
 - ``list[int]``: measurement results read as levels (``0``, ``1``, ``2``, ...
   for a qudit), or a list of integers;
 - ``list[complex]``: the IQ points of readouts, or ``complex`` for one, with I
-  as the real part and Q as the imaginary part;
+  as the real part and Q as the imaginary part: of level readouts, or of
+  readouts that acquire only the point (``acquire="integrated"``, see
+  :ref:`acquisition modes <acquisition-modes>`), which go to no other
+  parameter;
 - ``float``, ``int`` or ``list[float]``.
 
 A result is ``float``, ``int``, ``bool``, ``pulse.Bits``, ``list[float]``,

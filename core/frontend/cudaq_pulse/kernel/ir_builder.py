@@ -112,6 +112,10 @@ class UndecidableComparison(_UndecidableComparisons):
 
         if measured(self):
             raise measurement_error(self.lhs, self.op, self.rhs)
+        if "iq_point" in (getattr(self.lhs, "vtype", None), getattr(self.rhs, "vtype", None)):
+            from ._emit_errors import iq_point_error
+
+            raise iq_point_error("be compared")
         if self.lhs.__class__ is IRValue or self.rhs.__class__ is IRValue:
             raise CompilationError(
                 f"cannot compare a runtime IR value at trace time ({self.lhs!r} {self.op} "
@@ -427,6 +431,10 @@ class IRValue(_UndecidableComparisons):
         self.chan: Any = None
 
     def __bool__(self) -> bool:
+        if self.vtype == "iq_point":
+            from ._emit_errors import iq_point_error
+
+            raise iq_point_error("decide a branch")
         what = "a measurement result" if self.vtype == "measurement" else repr(self)
         raise CompilationError(
             f"cannot decide {what} at trace time: it is known only when the program runs; "

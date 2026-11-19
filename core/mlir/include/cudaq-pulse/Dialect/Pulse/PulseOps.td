@@ -262,16 +262,27 @@ def ReadoutOp : PulseOp<"readout", []> {
   let summary = "Apply a readout pulse and produce a measurement result";
   let description = [{
     Plays `pulse` on a readout line at `tone` and measures the qudit,
-    returning the updated line and tone and a `!pulse.measurement`. The
-    measurement completes at the end of the pulse: `pulse.is_set` and
-    `pulse.outcome` read it, and `pulse-verify` checks that ops
-    conditioned on it start after it completes. `mode` names what the
-    acquisition gives: `iq` (demodulated and discriminated into a level, what
-    the frontend emits), `discriminated`, `trace` or `counts`. Only `iq` is
-    simulated and exported so far; the others are refused there.
+    returning the updated line and tone and what the acquisition gives,
+    which `mode` names: `level`, the level the qudit is observed in,
+    demodulated and discriminated (`readout(line, waveform)` in a kernel,
+    `acquire="level"`), as a `!pulse.measurement`; `integrated`, the
+    integrated IQ point itself (`acquire="integrated"`), as a
+    `!pulse.iq_data`; `discriminated`, `trace` or `counts`, as a
+    `!pulse.measurement`. Only `level` and `integrated` are simulated and
+    exported so far; the others are refused there.
+
+    The result is available at the end of the pulse: `pulse.is_set` and
+    `pulse.outcome` read a level, and `pulse-verify` checks that ops
+    conditioned on it start after it completes. An IQ point has no level:
+    a classical call takes it as an IQ argument (`iq:n`), or it is
+    returned to the host. It is scheduled as a level is, and the readout
+    projects the qudit on the level it observes either way.
 
     ```mlir
-    %r1, %t1, %m = pulse.readout %r0, %w, %t0, iq : ...
+    %r1, %t1, %m = pulse.readout %r0, %w, %t0, level : ...
+        -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %r2, %t2, %p = pulse.readout %r1, %w, %t1, integrated : ...
+        -> !pulse.readout_line, !pulse.tone, !pulse.iq_data
     ```
   }];
   let arguments = !con((ins
@@ -284,7 +295,7 @@ def ReadoutOp : PulseOp<"readout", []> {
   let results = (outs
     ReadoutLineType:$updated_line,
     ToneType:$updated_tone,
-    MeasurementType:$result
+    ReadoutResultType:$result
   );
   let assemblyFormat = [{
     $line `,` $pulse `,` $tone `,` $mode `` custom<Timing>("getOperationName()", $start_cycles, $duration_cycles, $period_cycles) attr-dict `:` qualified(type($line))
@@ -292,6 +303,7 @@ def ReadoutOp : PulseOp<"readout", []> {
     `->` qualified(type($updated_line)) `,` qualified(type($updated_tone))
     `,` qualified(type($result))
   }];
+  let hasVerifier = 1;
 }
 
 //===----------------------------------------------------------------------===//
@@ -590,8 +602,8 @@ def PulseNegOp : PulseOp<"neg", [Pure]> {
 def YieldOp : PulseOp<"yield", [Pure, Terminator, ReturnLike]> {
   let summary = "Yield from a pulse region";
   let description = [{
-    Ends the body of a `pulse.schedule_block`, passing the lines, tones
-    and measurements that leave it to the block's results.
+    Ends the body of a `pulse.schedule_block`, passing the lines, tones,
+    measurements and IQ points that leave it to the block's results.
   }];
   let arguments = (ins Variadic<AnyTimedType>:$values);
   let assemblyFormat = "attr-dict ($values^ `:` type($values))?";
@@ -608,12 +620,12 @@ def ScheduleBlockOp : PulseOp<"schedule_block", [
     then places the whole block at one start time, so the relative timing of
     the ops inside is the same wherever the block appears.
 
-    Lines, tones and measurements cross the boundary explicitly, as with
-    `scf.for` iteration arguments: each operand is passed to the matching
-    block argument, and the `pulse.yield` operands become the results. A
-    line or tone that enters the block continues as one of its results.
-    Values of other types (waveforms, constants) may be used from the
-    enclosing region directly.
+    Lines, tones, measurements and IQ points cross the boundary explicitly,
+    as with `scf.for` iteration arguments: each operand is passed to the
+    matching block argument, and the `pulse.yield` operands become the
+    results. A line or tone that enters the block continues as one of its
+    results. Values of other types (waveforms, constants) may be used from
+    the enclosing region directly.
 
     ```mlir
     %d1, %t1 = pulse.schedule_block asap (%d0, %t0)
@@ -657,7 +669,8 @@ def IQAcquireOp : PulseOp<"iq_acquire", []> {
     `pulse.readout`, it returns the updated line and tone, so one tone can
     be acquired with again. Unlike `pulse.readout`, it is not scheduled: it
     gets no start or duration, and the controller export has no event for
-    it.
+    it. A `pulse.readout` of mode `integrated` gives a point that is
+    scheduled and exported.
   }];
   let arguments = (ins
     ReadoutLineType:$line,

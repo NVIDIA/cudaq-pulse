@@ -48,16 +48,17 @@ static bool isTimedOp(mlir::Operation *op) {
   return mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(op);
 }
 
-/// The measurement results a branch condition is computed from, not
-/// through a link or an answer (see the scheduler's conditionMeasurements):
-/// pulse-classical-check checks a branch on an answer.
+/// The readout results (levels and IQ points) a branch condition is computed
+/// from, not through a link or an answer (see the scheduler's
+/// conditionMeasurements): pulse-classical-check checks a branch on an
+/// answer.
 static void conditionMeasurements(mlir::Value value,
                                   llvm::SmallVectorImpl<mlir::Value> &found,
                                   llvm::DenseSet<mlir::Value> &seen) {
   if (mlir::isa<classical::LinkType>(value.getType()) ||
       !seen.insert(value).second)
     return;
-  if (mlir::isa<pulse::MeasurementType>(value.getType())) {
+  if (pulse::isReadoutResultType(value.getType())) {
     found.push_back(value);
     return;
   }
@@ -278,6 +279,8 @@ public:
       return checkMeasurement(op, isSet.getMeasurement());
     if (auto wait = mlir::dyn_cast<pulse::WaitOp>(op))
       return checkBounds(wait);
+    if (auto submit = mlir::dyn_cast<classical::SubmitOp>(op))
+      return checkSentPoints(submit);
   }
 
 private:
@@ -386,6 +389,24 @@ private:
       op->emitOpError("measurement must be produced by pulse.readout, got ")
           << wrong->getName();
       hadError = true;
+    }
+  }
+
+  /// A call takes an IQ point from a readout on every path, as pulse.is_set
+  /// takes a measurement: the exports list the readout a call sends, and
+  /// have no event for pulse.iq_acquire.
+  void checkSentPoints(classical::SubmitOp submit) {
+    for (mlir::Value point : submit.getArgs()) {
+      if (!mlir::isa<pulse::IQDataType>(point.getType()) ||
+          point.getDefiningOp<pulse::ReadoutOp>())
+        continue;
+      if (mlir::Operation *wrong = sourceOtherThanReadout(point)) {
+        submit.emitOpError("sends an IQ point that must be produced by "
+                           "pulse.readout, got ")
+            << wrong->getName();
+        hadError = true;
+        return;
+      }
     }
   }
 

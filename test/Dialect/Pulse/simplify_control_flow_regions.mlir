@@ -16,7 +16,7 @@ func.func @feedback(%x: !pulse.waveform) {
   %a0, %ta = pulse.get_drive_line %qa : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %b0, %tb = pulse.get_drive_line %qb : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %r0, %rt0 = pulse.get_readout_line %qa : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
-  %r1, %rt1, %m = pulse.readout %r0, %x, %rt0, iq : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r1, %rt1, %m = pulse.readout %r0, %x, %rt0, level : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %k = pulse.outcome %m : !pulse.measurement -> i64
   %c0 = arith.constant 0 : i64
   %bit = arith.cmpi ne, %k, %c0 : i64
