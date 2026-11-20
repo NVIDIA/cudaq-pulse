@@ -8,8 +8,9 @@ kernel using matplotlib.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from .._errors import InvalidValueError
 
@@ -159,11 +160,23 @@ def plot_schedule(
 
 def save_schedule(
     schedule: ScheduledKernel | Sequence[ScheduledEvent],
-    path: str,
-    **kwargs: Any,
+    path: str | os.PathLike[str],
+    *,
+    figsize: tuple[float, float] = (14, 4),
+    title: str | None = None,
 ) -> None:
-    """Plot and save a schedule to a file."""
-    fig = plot_schedule(schedule, **kwargs)
+    """Plot and save a pulse schedule timeline to a file.
+
+    The extension of ``path`` picks the output format, the file is written at
+    150 dpi, and the figure is closed afterwards.
+
+    Args:
+        schedule: A compiled schedule or sequence of scheduled events to plot.
+        path: Output file path.
+        figsize: Figure size ``(width, height)`` in inches.
+        title: Optional title for the plot.
+    """
+    fig = plot_schedule(schedule, figsize=figsize, title=title)
     fig.savefig(path, dpi=150, bbox_inches="tight")
     import matplotlib.pyplot as plt
 
