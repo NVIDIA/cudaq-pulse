@@ -293,78 +293,188 @@ static mlir::Value heldResult(mlir::Operation *op) {
   return toneResult(op);
 }
 
-/// The iteration arguments of `loop` whose tone (or link) `value` may be:
-/// the argument itself, a frame change of it, a pulse's updated tone or a
-/// call's updated link of it, or what an inner loop, a branch or a schedule
-/// block passes on of it (an inner loop's argument holds its operand on the
-/// first trip and what the inner loop yields after). None for a value from
-/// outside the loop.
-static llvm::SmallBitVector heldArgsOf(mlir::scf::ForOp loop,
-                                       mlir::Value value) {
-  auto args = loop.getRegionIterArgs();
-  llvm::SmallBitVector found(args.size());
-  llvm::SmallVector<mlir::Value, 8> work{value};
-  llvm::SmallPtrSet<void *, 8> seen;
-  while (!work.empty()) {
-    mlir::Value v = work.pop_back_val();
-    if (!seen.insert(v.getAsOpaquePointer()).second ||
-        !loop->isAncestor(v.getParentRegion()->getParentOp()))
-      continue;
-    if (auto arg = mlir::dyn_cast<mlir::BlockArgument>(v)) {
-      mlir::Operation *owner = arg.getOwner()->getParentOp();
-      if (owner == loop.getOperation()) {
-        if (auto it = llvm::find(args, v); it != args.end())
-          found.set(it - args.begin());
-      } else if (auto inner = mlir::dyn_cast<mlir::scf::ForOp>(owner)) {
-        if (mlir::OpOperand *init = inner.getTiedLoopInit(arg)) {
-          work.push_back(init->get());
-          work.push_back(inner.getTiedLoopYieldedValue(arg)->get());
-        }
-      } else if (mlir::isa_and_nonnull<pulse::ScheduleBlockOp>(owner) &&
-                 arg.getArgNumber() < owner->getNumOperands()) {
-        work.push_back(owner->getOperand(arg.getArgNumber()));
+/// The values whose tone (or link) `value`, a value in the body of `loop`,
+/// may be, one step back: what a frame change, a pulse's updated tone or a
+/// call's updated link is of, or what an inner loop, a branch or a schedule
+/// block passes on (an inner loop's argument holds its operand on the first
+/// trip and what the inner loop yields after).
+static void heldSources(mlir::scf::ForOp loop, mlir::Value value,
+                        llvm::SmallVectorImpl<mlir::Value> &sources) {
+  if (auto arg = mlir::dyn_cast<mlir::BlockArgument>(value)) {
+    mlir::Operation *owner = arg.getOwner()->getParentOp();
+    if (owner == loop.getOperation())
+      return;
+    if (auto inner = mlir::dyn_cast<mlir::scf::ForOp>(owner)) {
+      if (mlir::OpOperand *init = inner.getTiedLoopInit(arg)) {
+        sources.push_back(init->get());
+        sources.push_back(inner.getTiedLoopYieldedValue(arg)->get());
       }
-      continue;
+    } else if (mlir::isa_and_nonnull<pulse::ScheduleBlockOp>(owner) &&
+               arg.getArgNumber() < owner->getNumOperands()) {
+      sources.push_back(owner->getOperand(arg.getArgNumber()));
     }
-    mlir::Operation *def = v.getDefiningOp();
-    unsigned index = mlir::cast<mlir::OpResult>(v).getResultNumber();
-    if (auto inner = mlir::dyn_cast<mlir::scf::ForOp>(def)) {
-      work.push_back(inner.getInitArgs()[index]);
-      work.push_back(inner.getBody()->getTerminator()->getOperand(index));
-      continue;
-    }
-    if (auto branch = mlir::dyn_cast<mlir::scf::IfOp>(def)) {
-      work.push_back(branch.thenYield().getOperand(index));
-      if (!branch.getElseRegion().empty())
-        work.push_back(branch.elseYield().getOperand(index));
-      continue;
-    }
-    if (auto block = mlir::dyn_cast<pulse::ScheduleBlockOp>(def)) {
-      work.push_back(
-          block->getRegion(0).front().getTerminator()->getOperand(index));
-      continue;
-    }
-    if (def->getNumRegions() > 0)
-      continue;
-    if (isTimedOp(def)) {
-      if (mlir::Value held = heldOperand(def); held && v == heldResult(def))
-        work.push_back(held);
-      continue;
-    }
-    mlir::Value only;
-    for (mlir::Value operand : def->getOperands())
-      if (isTimedType(operand.getType())) {
-        if (only) {
-          only = {};
-          break;
-        }
-        only = operand;
-      }
-    if (only)
-      work.push_back(only);
+    return;
   }
-  return found;
+  mlir::Operation *def = value.getDefiningOp();
+  unsigned index = mlir::cast<mlir::OpResult>(value).getResultNumber();
+  if (auto inner = mlir::dyn_cast<mlir::scf::ForOp>(def)) {
+    sources.push_back(inner.getInitArgs()[index]);
+    sources.push_back(inner.getBody()->getTerminator()->getOperand(index));
+    return;
+  }
+  if (auto branch = mlir::dyn_cast<mlir::scf::IfOp>(def)) {
+    sources.push_back(branch.thenYield().getOperand(index));
+    if (!branch.getElseRegion().empty())
+      sources.push_back(branch.elseYield().getOperand(index));
+    return;
+  }
+  if (auto block = mlir::dyn_cast<pulse::ScheduleBlockOp>(def)) {
+    sources.push_back(
+        block->getRegion(0).front().getTerminator()->getOperand(index));
+    return;
+  }
+  if (def->getNumRegions() > 0)
+    return;
+  if (isTimedOp(def)) {
+    if (mlir::Value held = heldOperand(def); held && value == heldResult(def))
+      sources.push_back(held);
+    return;
+  }
+  mlir::Value only;
+  for (mlir::Value operand : def->getOperands())
+    if (isTimedType(operand.getType())) {
+      if (only)
+        return;
+      only = operand;
+    }
+  if (only)
+    sources.push_back(only);
 }
+
+/// The iteration arguments of `loop` whose tone (or link) a value may be,
+/// through the steps of heldSources: an argument is its own, a value from
+/// outside the loop is none. Each value's are found once and kept, so asking
+/// for every pulse on a chain walks the chain once. The steps go round a
+/// cycle only through an inner loop's arguments, and the values of a cycle
+/// hold the same arguments: they are found together, as the strongly
+/// connected components of the steps (Tarjan's algorithm, without recursion
+/// since a chain may be long).
+class HeldArgs {
+public:
+  explicit HeldArgs(mlir::scf::ForOp loop)
+      : loop(loop), words((loop.getNumRegionIterArgs() + 63) / 64) {}
+
+  /// Calls `fn` with the number of each argument `value` may hold.
+  template <typename Fn>
+  void forEach(mlir::Value value, Fn &&fn) {
+    if (words == 0 || !inLoop(value))
+      return;
+    unsigned row = search(value);
+    const uint64_t *bits = &pool[words * row];
+    for (unsigned w = 0; w < words; ++w)
+      for (uint64_t b = bits[w]; b; b &= b - 1)
+        fn(w * 64 + llvm::countr_zero(b));
+  }
+
+private:
+  struct Node {
+    /// The first node on the path this one reaches back to.
+    unsigned low;
+    /// Where the node is on the path.
+    unsigned onPath;
+    /// The node whose row of `pool` holds this node's arguments: its own,
+    /// or the first of its component's.
+    unsigned row;
+    bool done = false;
+  };
+  struct Frame {
+    unsigned node;
+    unsigned next = 0;
+    llvm::SmallVector<mlir::Value, 2> sources;
+  };
+
+  bool inLoop(mlir::Value value) {
+    return loop->isAncestor(value.getParentRegion()->getParentOp());
+  }
+
+  void merge(unsigned into, unsigned from) {
+    for (unsigned w = 0; w < words; ++w)
+      pool[words * into + w] |= pool[words * from + w];
+  }
+
+  /// The row of `value`'s arguments.
+  unsigned search(mlir::Value value) {
+    if (auto it = ids.find(value); it != ids.end())
+      return nodes[it->second].row;
+    visit(value);
+    while (!frames.empty()) {
+      Frame &frame = frames.back();
+      unsigned id = frame.node;
+      if (frame.next < frame.sources.size()) {
+        mlir::Value source = frame.sources[frame.next++];
+        auto [it, fresh] = ids.try_emplace(source, nodes.size());
+        if (fresh)
+          visit(source);
+        else if (nodes[it->second].done)
+          merge(id, nodes[it->second].row);
+        else
+          nodes[id].low = std::min(nodes[id].low, it->second);
+        continue;
+      }
+      frames.pop_back();
+      Node node = nodes[id];
+      if (node.low != id) {
+        nodes[frames.back().node].low =
+            std::min(nodes[frames.back().node].low, node.low);
+        continue;
+      }
+      // The node is the first of its component: the nodes after it on the
+      // path hold the same arguments.
+      for (unsigned member : llvm::drop_begin(path, node.onPath)) {
+        merge(id, member);
+        nodes[member].row = id;
+        nodes[member].done = true;
+      }
+      path.truncate(node.onPath);
+      if (!frames.empty())
+        merge(frames.back().node, id);
+    }
+    return nodes[ids.find(value)->second].row;
+  }
+
+  void visit(mlir::Value value) {
+    unsigned id = nodes.size();
+    ids[value] = id;
+    nodes.push_back({id, static_cast<unsigned>(path.size()), id, false});
+    path.push_back(id);
+    pool.resize(pool.size() + words);
+    auto arg = mlir::dyn_cast<mlir::BlockArgument>(value);
+    if (arg && arg.getOwner() == loop.getBody()) {
+      auto args = loop.getRegionIterArgs();
+      if (auto it = llvm::find(args, value); it != args.end()) {
+        size_t j = it - args.begin();
+        pool[words * id + j / 64] |= uint64_t(1) << (j % 64);
+      }
+    }
+    Frame frame{id, 0, {}};
+    heldSources(loop, value, frame.sources);
+    llvm::erase_if(frame.sources,
+                   [&](mlir::Value source) { return !inLoop(source); });
+    frames.push_back(std::move(frame));
+  }
+
+  mlir::scf::ForOp loop;
+  unsigned words;
+  /// Each value visited, numbered in the order visited.
+  llvm::DenseMap<mlir::Value, unsigned> ids;
+  llvm::SmallVector<Node> nodes;
+  /// The arguments of each node, a row of `words` words.
+  llvm::SmallVector<uint64_t> pool;
+  /// The nodes visited whose component is not complete, in order.
+  llvm::SmallVector<unsigned> path;
+  /// The values being searched back from, innermost last.
+  llvm::SmallVector<Frame> frames;
+};
 
 /// The tone and link arguments of `loop` that hand their tone (or link) on
 /// to another each trip, in a cycle (tones rotated or swapped through the
@@ -379,15 +489,15 @@ static llvm::SmallBitVector rotatedTones(mlir::scf::ForOp loop) {
   llvm::SmallBitVector rotated(n);
   // reach[j]: the arguments argument j hands its tone on to, at any distance.
   llvm::SmallVector<llvm::SmallBitVector> reach(n, llvm::SmallBitVector(n));
+  HeldArgs held(loop);
   bool any = false;
   for (auto [i, value] : llvm::enumerate(yields)) {
     if (!mlir::isa<pulse::ToneType, classical::LinkType>(value.getType()))
       continue;
-    llvm::SmallBitVector from = heldArgsOf(loop, value);
-    for (int j : from.set_bits()) {
+    held.forEach(value, [&](unsigned j) {
       reach[j].set(i);
-      any |= j != static_cast<int>(i);
-    }
+      any |= j != i;
+    });
   }
   if (!any)
     return rotated;
@@ -398,8 +508,8 @@ static llvm::SmallBitVector rotatedTones(mlir::scf::ForOp loop) {
   // The arguments a pulse or a call in the body plays the tone or link of.
   llvm::SmallBitVector plays(n);
   loop.getBody()->walk([&](mlir::Operation *op) {
-    if (mlir::Value held = isTimedOp(op) ? heldOperand(op) : mlir::Value())
-      plays |= heldArgsOf(loop, held);
+    if (mlir::Value value = isTimedOp(op) ? heldOperand(op) : mlir::Value())
+      held.forEach(value, [&](unsigned j) { plays.set(j); });
   });
   // An argument is in a cycle with each other argument it reaches and is
   // reached from.
