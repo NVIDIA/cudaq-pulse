@@ -531,7 +531,9 @@ def stack_choices(
                 elif b is kept:
                     b = jump_if_true
             if not bits_chosen(cond, a, b):
-                emitter._check_choosable("", a, b, prog, index, first, cond)
+                from ._branches import check_choosable
+
+                check_choosable(emitter, "", a, b, prog, index, first, cond)
             chosen.append((slot, a, b))
 
 
