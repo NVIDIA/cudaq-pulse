@@ -120,9 +120,30 @@ class Sites:
         rates take) and notes the points between statements."""
         from .kernel._emitter import tracing_frames
 
+        # A kernel is traced again when a float parameter turns out to set
+        # a length: the record starts over with each trace.
         log = self.log
+        log.clear()
+        self.hosts = 0
+        self.entering.clear()
+        self.done.clear()
+        self.lengths.clear()
+        self.busy = False
+        self.inserting = self.filling = None
         emit = builder.emit
         rollback = builder.rollback
+        submit = builder.classical_submit
+        wait = builder.classical_wait
+
+        def submitted(*args: Any, **kwargs: Any) -> Any:
+            if self.filling is not None:
+                raise self.filling.refuse("calls a classical function")
+            return submit(*args, **kwargs)
+
+        def waited(*args: Any, **kwargs: Any) -> Any:
+            if self.filling is not None:
+                raise self.filling.refuse("takes the answer of a classical function")
+            return wait(*args, **kwargs)
 
         def recorded(
             kind: str,
@@ -172,6 +193,8 @@ class Sites:
 
         builder.emit = recorded
         builder.rollback = rolled_back
+        builder.classical_submit = submitted
+        builder.classical_wait = waited
         builder._sites = self
         base: type[Any]
         if tracer is not None:
@@ -378,6 +401,10 @@ class _SiteTracer:
         if not tiles:
             return
         sites.busy = True
+        # The regions a fill opens (a loop of its own) are closed again when
+        # it is written: the kernel's later regions keep the numbers they
+        # had in the trace the plan was made from.
+        regions = builder._next_scope
         try:
             for tile in tiles:
                 sites.done[tile.number] = builder._cur
@@ -392,6 +419,7 @@ class _SiteTracer:
             sites.busy = False
             sites.inserting = None
             sites.filling = None
+        builder._next_scope = regions
         self._refresh_lines()  # type: ignore[attr-defined]
 
     def _drive_channel(self, qudit: int) -> Any:
@@ -438,9 +466,10 @@ class _SiteTracer:
             lead = 0
         traced = self._traced_fill(held, window, qudit)
         if length is not None and traced != length:
-            raise InternalError(
+            raise CompilationError(
                 f"idle replacement: fill {rule.fill.__name__}() has another length each time "
-                "it is traced"
+                "it is traced; a fill must trace the same way every time",
+                code="unsupported_construct",
             )
         if window - traced - lead:
             self._emit_pulse_call("wait", [line.value, window - traced - lead])
@@ -640,6 +669,8 @@ class Gap:
         "own",
         "varies",
         "executions",
+        "holes",
+        "uneven",
     )
 
     def __init__(
@@ -671,6 +702,12 @@ class Gap:
         # happens on the qudit meanwhile, and all of them.
         self.varies = False
         self.executions: list[Gap] = [self]
+        # Stretches of it in which the qudit is read out or its tone plays
+        # in every iteration of a loop the gap runs through, which are not
+        # listed one by one; and whether something on the qudit repeats
+        # with another period than the gap does.
+        self.holes: list[tuple[int, int]] = []
+        self.uneven = False
 
     def key(self) -> tuple[Any, ...]:
         """What the executions of one gap of the kernel share."""
@@ -678,14 +715,16 @@ class Gap:
             self.qudit,
             None if self.lo is None else self.lo.site,
             None if self.hi is None else self.hi.site,
-            tuple(event.site for event, _, _, _ in self.inner),
         )
 
     def shape(self) -> tuple[Any, ...]:
         """Its length and what happens when, from its start."""
         return (
             self.end - self.start,
-            tuple((a - self.start, b - self.start, what) for _, a, b, what in self.inner),
+            tuple(
+                (event.site, a - self.start, b - self.start, what)
+                for event, a, b, what in self.inner
+            ),
             self.first,
             self.last,
             self.barrier,
@@ -710,9 +749,12 @@ class Gap:
         frame in the gap come in the order the program writes them: what
         is written into the gap is written between them."""
         at = self.start
-        for _, start, _, what in self.inner:
+        # In a gap within one iteration, what cuts it is written after the
+        # op it starts after.
+        after = -1 if self.lo is None or self.lo.site is None or self.wraps() else self.lo.site
+        for event, start, _, what in self.inner:
             if what in _CHAINED:
-                if start < at:
+                if start < at or (after >= 0 and (event.site is None or event.site < after)):
                     return False
                 at = start
         return at <= self.end
@@ -723,7 +765,8 @@ class Gap:
         its frame changes."""
         parts: list[tuple[int, int]] = []
         at = self.start
-        for _, start, end, _ in sorted(self.inner, key=lambda item: item[1]):
+        busy = [(start, end) for _, start, end, _ in self.inner] + self.holes
+        for start, end in sorted(busy):
             start = min(max(start, self.start), self.end)
             end = min(max(end, self.start), self.end)
             if start > at:
@@ -758,11 +801,14 @@ class _Line:
     """What a walk knows of one qudit's drive line: where its open gap
     starts and after which event, and what happened on the qudit since."""
 
-    __slots__ = ("since", "inner", "started", "detuned", "gaps")
+    __slots__ = ("since", "inner", "started", "detuned", "gaps", "holes")
 
     def __init__(self) -> None:
         self.since = _Timed(0, None)
         self.inner: list[tuple[_Event, _Timed, _Timed, str]] = []
+        # Of the open gap: where a loop it runs through repeats what
+        # happens on the qudit, as (start, end) that move with their event.
+        self.holes: list[tuple[_Timed, _Timed]] = []
         self.started = False
         self.detuned = False
         self.gaps: list[Gap] = []
@@ -784,10 +830,11 @@ def gaps(lines: list[tuple[str, int]], items: list[Any]) -> dict[int, list[Gap]]
     # lines is free.
     free: dict[int, _Timed] = {}
     barrier = False
-    # Each qudit's own readouts, as (event, start, end). The program orders
-    # a readout with nothing on the drive line, so one written after a gap
-    # may run during it: they are laid over the gaps at the end.
-    readouts: dict[int, list[tuple[_Event, int, int]]] = {qudit: [] for qudit in state}
+    # Each qudit's own readouts, at the first iteration of the loops around
+    # them. The program orders a readout with nothing on the drive line, so
+    # one written after a gap, or of another iteration, may run during it:
+    # they are laid over the gaps at the end.
+    readouts: dict[int, list[_Event]] = {qudit: [] for qudit in state}
 
     def close(qudit: int, hi: _Event | None, end: int, restart: int) -> None:
         """End the open gap of *qudit* at *hi*, at *end*; the next one
@@ -807,7 +854,15 @@ def gaps(lines: list[tuple[str, int]], items: list[Any]) -> dict[int, list[Gap]]
                 line.detuned,
             )
         )
-        line.inner = [(event, a, b, "busy") for event, a, b, _ in line.inner if b.at > restart]
+        line.gaps[-1].holes = [(a.at, b.at) for a, b in line.holes]
+        line.holes = []
+        # What still runs then is busy time of the next gap; a pulse at the
+        # tone that has not begun is one of its events.
+        line.inner = [
+            (event, a, b, what if a.at >= restart else "busy")
+            for event, a, b, what in line.inner
+            if b.at > restart
+        ]
 
     for item in items:
         if item.__class__ is tuple:
@@ -818,18 +873,28 @@ def gaps(lines: list[tuple[str, int]], items: list[Any]) -> dict[int, list[Gap]]
                 for timed in free.values():
                     timed.advance(depth, loop, iterations)
                 for line in state.values():
+                    for a, b in line.holes:
+                        a.advance(depth, loop, iterations)
+                        b.advance(depth, loop, iterations)
+                    opened = line.since.event
+                    if opened is None or not opened.advance(depth, loop, 1):
+                        # The gap runs through the loop: what happens on
+                        # the qudit in its second iteration happens in
+                        # every one up to the last, which is listed again.
+                        again = [
+                            (a.at, event)
+                            for event, a, _, _ in line.inner
+                            if event.advance(depth, loop, 1)
+                        ]
+                        if again:
+                            start, first = min(again, key=lambda found: found[0])
+                            hole = _Timed(start, first), _Timed(start, first)
+                            hole[1].advance(depth, loop, iterations)
+                            line.holes.append(hole)
                     line.since.advance(depth, loop, iterations)
                     for _, a, b, _ in line.inner:
                         a.advance(depth, loop, iterations)
                         b.advance(depth, loop, iterations)
-                # The readouts of the iteration after the second, which may
-                # run during the second's gaps, and of the last.
-                for listed in readouts.values():
-                    for read, start, end in list(listed):
-                        for more in {1, iterations}:
-                            shift = read.advance(depth, loop, more)
-                            if shift:
-                                listed.append((read, start + shift, end + shift))
             continue
         event: _Event = item
         if event.kind == "sync":
@@ -866,7 +931,8 @@ def gaps(lines: list[tuple[str, int]], items: list[Any]) -> dict[int, list[Gap]]
                 line.since = _Timed(event.end, event)
                 line.started = True
             elif role == "readout" and event.kind == "readout" and qudit in state:
-                readouts[qudit].append((event, event.start, event.end))
+                if not any(copy for _, copy, _ in event.path):
+                    readouts[qudit].append(event)
         if event.tone < 0 or event.tone == event.line:
             continue
         tone_role, owner = lines[event.tone]
@@ -889,18 +955,90 @@ def gaps(lines: list[tuple[str, int]], items: list[Any]) -> dict[int, list[Gap]]
         end = max(length, line.since.at)
         close(qudit, None, end, end)
         for gap in line.gaps:
-            gap.inner += sorted(
-                (
-                    (event, start, end, "readout")
-                    for event, start, end in readouts[qudit]
-                    if start < gap.end and end > gap.start
-                ),
-                key=lambda item: item[1],
-            )
+            _lay(gap, readouts[qudit])
+            # A pulse at the tone that repeats with another period than the
+            # line's ops is elsewhere in every round.
+            beat = gap.lo or gap.hi
+            if beat is not None and any(
+                what != "sync" and _out_of_step(beat, event) for event, _, _, what in gap.inner
+            ):
+                gap.uneven = True
         # No operation of the line follows the last gap.
         line.gaps[-1].last = True
         found[qudit] = _merged(line.gaps)
     return found
+
+
+def _lay(gap: Gap, readouts: list[_Event]) -> None:
+    """Lay over *gap* the executions of its qudit's own *readouts* (each
+    given at the first iteration of its loops) that run during it. In a
+    loop that holds both, the gap stands for every iteration and a readout
+    of any other iteration may be the one that runs during it, so every
+    distance between two iterations is laid; a readout that repeats there
+    with another period makes the gap uneven. Readouts too many to list
+    are one hole from the first to the last."""
+    beat = gap.lo or gap.hi
+    for event in readouts:
+        start = event.start
+        terms = []
+        shared = beat is not None
+        for depth, (loop, _, trips) in enumerate(event.path):
+            period = event.shifts[depth]
+            shared = (
+                shared
+                and beat is not None
+                and depth < len(beat.path)
+                and beat.path[depth][0] == loop
+            )
+            if shared:
+                assert beat is not None
+                if beat.shifts[depth] != period:
+                    gap.uneven = True
+                start += beat.path[depth][1] * period
+                terms.append((period, 1 - trips, trips - 1))
+            else:
+                terms.append((period, 0, trips - 1))
+        terms = sorted((term for term in terms if term[0] > 0), reverse=True)
+        length = event.end - event.start
+        found: list[int] = []
+        if not _starts(start, terms, gap.start - length, gap.end, found):
+            # Its earliest and latest execution that can run during the gap.
+            first = start + sum(min(p * a, p * b) for p, a, b in terms)
+            last = start + sum(max(p * a, p * b) for p, a, b in terms) + length
+            gap.holes.append((max(first, gap.start), min(last, gap.end)))
+            continue
+        gap.inner += [(event, at, at + length, "readout") for at in sorted(found)]
+
+
+def _starts(
+    offset: int, terms: list[tuple[int, int, int]], low: int, high: int, found: list[int]
+) -> bool:
+    """Add to *found* every ``offset + sum(m * step)`` strictly between
+    *low* and *high*, m whole per term (step, least m, most m), steps
+    positive and longest first; False once there are more than 64."""
+    if not terms:
+        if low < offset < high:
+            found.append(offset)
+        return len(found) <= 64
+    (step, least, most), rest = terms[0], terms[1:]
+    under = sum(min(s * a, s * b) for s, a, b in rest)
+    over = sum(max(s * a, s * b) for s, a, b in rest)
+    first = max(least, (low - over - offset) // step + 1)
+    last = min(most, -((offset + under - high) // step) - 1)
+    if last - first > 64:
+        return False
+    return all(_starts(offset + m * step, rest, low, high, found) for m in range(first, last + 1))
+
+
+def _out_of_step(a: _Event, b: _Event) -> bool:
+    """Whether *a* and *b* repeat with different periods in a loop that
+    holds both."""
+    for depth in range(min(len(a.path), len(b.path))):
+        if a.path[depth][0] != b.path[depth][0]:
+            return False
+        if a.shifts[depth] != b.shifts[depth]:
+            return True
+    return False
 
 
 def _merged(executions: list[Gap]) -> list[Gap]:
@@ -1041,7 +1179,9 @@ def kept(gap: Gap, part: tuple[int, int], rule: Any, log: list[Site], forward: b
         return "left alone: after a wait whose length is known only when the program runs"
     if gap.detuned:
         return "left alone: the kernel changed the frequency of the qudit's tone"
-    if gap.varies and (gap.wraps() or not _steady(gap, {part}, forward)):
+    if gap.holes:
+        return "left alone: a loop reads the qudit out or plays its tone in every round meanwhile"
+    if gap.uneven or (gap.varies and (gap.wraps() or not _steady(gap, {part}, forward))):
         return "left alone: its rounds differ"
     if not gap.ordered():
         return "left alone: the program writes what surrounds it in another order than it runs"
@@ -1344,13 +1484,18 @@ def prove(
     forward: bool,
 ) -> None:
     """Check that *module*, the program of *base* with its windows filled,
-    is that program with something written into its gaps: every op of the
-    kernel is where it was, and what was written lies back to back from the
-    op before it to the op after it. A ``TimingError`` names the first op
+    is that program with something written into its gaps: every drive,
+    readout, wait and sync of the kernel is where it was, with its loop
+    periods, and so is every change of a frame but a phase shift (the
+    passes fold a phase shift into the pulse after it, which may now be a
+    fill's); what was written has no slack on the side the schedule places
+    from; and no written pulse plays while its qudit is read out or its
+    tone plays from another line. A ``CompilationError`` names the first op
     that moved."""
     filled_lines, final = read(module)
     if filled_lines != lines:
         raise InternalError("idle replacement: the filled program has other lines")
+    base = [item for item in base if item.__class__ is tuple or item.kind != "shift_phase"]
     # The kernel's own ops, and of the loops only those that hold some.
     loops = {
         loop
@@ -1364,7 +1509,7 @@ def prove(
         if (
             (item[0] != "advance" or item[1] in loops)
             if item.__class__ is tuple
-            else (item.site is None or item.site >= 0)
+            else ((item.site is None or item.site >= 0) and item.kind != "shift_phase")
         )
     ]
     for was, now in zip(base, own, strict=False):
@@ -1393,11 +1538,96 @@ def prove(
     else:
         if len(base) == len(own):
             _back_to_back(final, name, forward)
+            _clear_of_the_qudit(lines, final, name)
             return
     raise InternalError(
         f"idle replacement: {name}() traced differently the second time, so its filled "
         "program is not the program with its windows filled"
     )
+
+
+def _meets(offset: int, terms: list[tuple[int, int, int]], low: int, high: int) -> bool:
+    """Whether ``offset + sum(m * step)`` lies strictly between *low* and
+    *high* for some whole m per term (step, least m, most m), steps
+    positive and longest first."""
+    if not terms:
+        return low < offset < high
+    (step, least, most), rest = terms[0], terms[1:]
+    under = sum(min(s * a, s * b) for s, a, b in rest)
+    over = sum(max(s * a, s * b) for s, a, b in rest)
+    first = max(least, (low - over - offset) // step + 1)
+    last = min(most, -((offset + under - high) // step) - 1)
+    if last - first > 4096:
+        # Loops whose periods do not nest: more cases than are worth trying.
+        return True
+    return any(_meets(offset + m * step, rest, low, high) for m in range(first, last + 1))
+
+
+def _overlap(a: _Event, b: _Event) -> bool:
+    """Whether some execution of *a* overlaps some execution of *b*, over
+    every iteration of the loops around them."""
+
+    def first(event: _Event) -> int:
+        return event.start - sum(
+            copy * shift for (_, copy, _), shift in zip(event.path, event.shifts, strict=True)
+        )
+
+    terms = []
+    shared = True
+    for depth in range(max(len(a.path), len(b.path))):
+        mine = a.path[depth] if depth < len(a.path) else None
+        other = b.path[depth] if depth < len(b.path) else None
+        shared = shared and mine is not None and other is not None and mine[0] == other[0]
+        if shared and a.shifts[depth] == b.shifts[depth]:
+            # Any two iterations of a loop that holds both.
+            assert mine is not None
+            terms.append((a.shifts[depth], 1 - mine[2], mine[2] - 1))
+            continue
+        if mine is not None:
+            terms.append((a.shifts[depth], 0, mine[2] - 1))
+        if other is not None:
+            terms.append((b.shifts[depth], 1 - other[2], 0))
+    terms = sorted((term for term in terms if term[0] > 0), reverse=True)
+    # a starts before b ends, and ends after b starts.
+    return _meets(first(a) - first(b), terms, a.start - a.end, b.end - b.start)
+
+
+def _clear_of_the_qudit(lines: list[tuple[str, int]], final: list[Any], name: str) -> None:
+    """Check that no pulse written into a window plays while its qudit's
+    own readout runs or its tone plays from another line, in any iteration
+    of the loops around either: the gaps are found from two iterations of
+    each loop, and this is what they must have got right."""
+    readout_of = {qudit: index for index, (role, qudit) in enumerate(lines) if role == "readout"}
+    written: dict[int, list[_Event]] = {}
+    busy: dict[int, list[_Event]] = {}
+    for item in final:
+        if item.__class__ is tuple or item.kind not in _PLAYS:
+            continue
+        role, qudit = lines[item.line] if item.line >= 0 else ("", -1)
+        if item.site is not None and item.site < 0:
+            if role == "drive":
+                written.setdefault(qudit, []).append(item)
+        elif item.kind == "readout" and role == "readout":
+            busy.setdefault(qudit, []).append(item)
+        if item.tone >= 0 and item.tone != item.line and (item.site is None or item.site >= 0):
+            tone_role, owner = lines[item.tone]
+            if tone_role == "drive":
+                busy.setdefault(owner, []).append(item)
+    for qudit, pulses in written.items():
+        for other in busy.get(qudit, ()):
+            for pulse in pulses:
+                if _overlap(pulse, other):
+                    what = (
+                        "its own readout runs"
+                        if other.line == readout_of.get(qudit)
+                        else "its tone plays from another line"
+                    )
+                    raise InternalError(
+                        f"idle replacement: a pulse written into an idle window of {name}() "
+                        f"on qudit {qudit} (first at cycle {pulse.start}) plays while {what} "
+                        f"(first at cycle {other.start}); until this is fixed, qudits= can "
+                        "leave the qudit out"
+                    )
 
 
 def _back_to_back(final: list[Any], name: str, forward: bool) -> None:

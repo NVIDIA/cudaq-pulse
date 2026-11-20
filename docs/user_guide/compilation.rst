@@ -235,9 +235,10 @@ The data qudit's line now holds a wait from cycle 80 to 240, the echo from
 240 to 320 and a wait to 480; every operation of ``syndrome`` starts where
 it did, and the program is as long as it was (280 ns).
 
-**Windows.** A qudit idles while its drive line has no operation, none of
-its tones plays from another line (a cross-resonance pulse at its tone makes
-it busy), and its own readout does not run. A window is such a stretch of at
+**Windows.** A qudit idles while its drive line has no operation, its
+line's tone does not play from another line (a cross-resonance pulse at its
+tone makes it busy), and its own readout does not run, in any iteration of
+the loops around them. A window is such a stretch of at
 least ``threshold``, an ``int`` of clock cycles or a time
 (``100 * pulse.ns``); a stretch of exactly the threshold is one. A window
 ends at the next operation on the line or at the qudit's tone, where a
@@ -256,7 +257,7 @@ waits: centred by default, or at the window's start or end with
 threshold. In this version a fill drives and waits on its own qudit's drive
 line, at that line's tone, and may shift the tone's phase by constants that
 add up to zero; a readout, a ``sync``, a change of frequency, another line
-or a classical call in a fill is an error at the fill's line.
+or a classical call in a fill is a ``CompilationError``.
 
 **Loops.** A window in a loop is written once, in the loop's body, and the
 loop stays rolled: a thousand rounds compile as nine do. A window that runs
@@ -270,25 +271,34 @@ qudit, ``start`` and ``end`` in clock cycles, the ``rounds`` it stands for,
 the operation it ends at, whether it was ``filled`` and the ``result``:
 ``"filled by echo()"``, or why it was left alone (before the qudit's first
 operation, next to an arm of a branch, after a wait whose length is known
-only when the program runs, rounds that differ, no statement of the kernel
-to write it at). ``pulse.IdleReplacement(None, threshold=...)`` replaces
+only when the program runs, rounds that differ, a loop that reads the qudit
+out in more rounds than are listed, no statement of the kernel to write it
+at). ``pulse.IdleReplacement(None, threshold=...)`` replaces
 nothing: the program is the one compiled without the rule, with the report.
 
 **What it guarantees.** The program is compiled twice: once without the
 rule, whose schedule gives the windows, and once with the fills written in.
-The two schedules are then compared: every operation of the kernel has the
-start, length and loop periods it had, and the program is no longer; if
-not, compiling fails and names the operation that moved. Each gap is
+The two schedules are then compared: every drive, readout, wait and
+``sync`` of the kernel has the start, length and loop periods it had, the
+program is as long, and no pulse of a fill plays while its qudit is read
+out or its tone plays from another line; if not, compiling fails and names
+the operation. A phase shift of the kernel in front of a window is folded,
+as the passes fold it, into the pulse after it, which may be the fill's:
+the fill plays in the shifted frame. Each gap is
 written to the cycle, so one fill gives one program under every schedule
 policy. Under ``"rcp"`` and ``"alap_rcp"`` a fill's pulses take drive lanes
 like any pulse; when they do not fit, compiling fails and names the lanes
 (``qudits=`` or a control system with more ``max_concurrent_drives`` are
-the ways out). A compilation without the rule is unchanged and pays nothing.
+the ways out). A compilation without the rule is unchanged: it loads
+nothing and makes a few tests more. A program with filled windows pickles
+as the program it is; its options are then those without the rule.
 
 Not supported yet, each refused with a message: kernels whose qudits or
 lists each call binds (parameters annotated ``Qudit``, ``Register`` or
 ``list``), a ``wait`` whose length a ``float`` parameter sets, and control
-systems with line delays.
+systems with line delays. Not seen yet: a pulse at the tone of another
+transition of the qudit (``line.tones[(1, 2)]``) played from another line
+does not make the qudit busy.
 
 Per-kernel schedules
 --------------------

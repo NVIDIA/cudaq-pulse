@@ -24,7 +24,7 @@ from ._errors import (
     UnsupportedError,
     _closest,
 )
-from .compiler import CompileOptions
+from .compiler import _DEFAULT_MACHINE, CompileOptions
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -378,6 +378,10 @@ def specialize(
             "binds (parameters annotated Qudit, Register or list), which idle replacement "
             "does not support yet; leave the qudit parameters unannotated"
         )
+    if target.control_system is not None and options.machine is _DEFAULT_MACHINE:
+        # Compiled for no control system: the one of the qudits' quantum
+        # system, as any compilation takes it (Kernel._specialize).
+        options = dataclasses.replace(options, machine=target.control_system._machine)
     if options.machine._line_delays:
         raise UnsupportedError(
             "idle replacement: the control system delays some lines (delay_ns), which idle "
@@ -387,6 +391,12 @@ def specialize(
 
     rule = options.idle_replacement
     assert rule is not None
+    for qudit in rule.qudits or ():
+        if qudit.quantum_system.fingerprint != target.fingerprint:
+            raise InvalidValueError(
+                f"idle replacement: qudits= names {qudit!r}, a qudit of another quantum "
+                f"system than the one {kernel.__name__}() is compiled for ({target.name})"
+            )
     sites = Sites()
     base = _traced(kernel, values, target, options, sites)
     refused = _float_wait(kernel, base)
@@ -414,7 +424,9 @@ def specialize(
                 "replacing its idle windows traces it twice"
             )
         if planned.tiles:
-            return _filled(kernel, values, target, options, planned, windows, lines, items, sites)
+            return _filled(
+                kernel, values, target, options, planned, windows, lines, items, sites, lowered
+            )
     # Nothing is replaced: the program is the one compiled without the rule.
     module.strip_sites()
     lowered.options = options
@@ -436,10 +448,11 @@ def _filled(
     lines: list[tuple[str, int]],
     items: list[Any],
     sites: Sites,
+    plain: Any,
 ) -> _Entry:
     """*kernel* compiled again for *values* with *planned* written into
-    it, checked against the program without: *lines* and *items* are what
-    was read of that one, *sites* its trace's record."""
+    it, checked against *plain*, the program without: *lines* and *items*
+    are what was read of that one, *sites* its trace's record."""
     from ._idle_windows import Sites, prove
     from .kernel._guard import Guard, build_guard
 
@@ -462,6 +475,12 @@ def _filled(
                 code="timing",
             ) from None
         raise
+    if lowered.duration != plain.duration:
+        raise CompilationError(
+            f"idle replacement: with the idle windows of {kernel.__name__}() filled, the "
+            f"program lasts {lowered.duration} instead of {plain.duration}",
+            code="timing",
+        )
     module.strip_sites()
     lowered.options = options
     lowered.metrics.idle_windows = windows  # type: ignore[attr-defined]

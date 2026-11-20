@@ -48,8 +48,8 @@ without numbers. An operation written into a window also carries the
 attribute ``pulse.written`` until the numbers are removed:
 ``pulse-merge-waits`` does not merge a written wait and
 ``pulse-fuse-pulses`` does not fuse a written drive with one of the
-kernel's, so the kernel's operations stay the ones the two schedules are
-compared by.
+kernel's (two written drives fuse into a written one), so the kernel's
+operations stay the ones the two schedules are compared by.
 
 Optimization passes
 -------------------

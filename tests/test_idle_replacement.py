@@ -1122,15 +1122,35 @@ def test_waits_as_long_as_the_windows_change_no_schedule(
     assert all(not w.filled or w.result == "filled by a wait" for w in program.idle_windows)
 
 
-def test_a_program_with_filled_windows_pickles_with_its_rule_and_its_windows():
+def test_a_program_with_filled_windows_pickles_as_the_program_it_is():
     import pickle
 
     program = _filled(host, Q[0], Q[1])
     again = pickle.loads(pickle.dumps(program))
     assert _events(again) == _events(program)
     assert again.idle_windows == program.idle_windows
-    assert again.options == program.options
-    assert again.options.idle_replacement.fill is pi
+    # The rule holds its fill, a live kernel: the program pickles without it.
+    assert again.options == program.options.without_rule()
+
+
+def test_a_program_filled_by_a_kernel_defined_in_a_function_pickles():
+    import pickle
+
+    @pulse.kernel
+    def local(qudit, window):
+        drive(get_drive_line(qudit), gaussian(40, 0.2, 10))
+
+    program = _filled(host, Q[0], Q[1], fill=local)
+    again = pickle.loads(pickle.dumps(program))
+    assert again.idle_windows[0].result == "filled by local()"
+
+
+def test_a_rule_pickles_with_its_fill():
+    import pickle
+
+    rule = pulse.IdleReplacement(pi, threshold=100, align="end")
+    again = pickle.loads(pickle.dumps(rule))
+    assert again == rule and again.fill is pi
 
 
 _PULSE = {"cycles": 40}
@@ -1190,6 +1210,302 @@ def test_a_kernel_that_traces_differently_each_time_is_refused():
 
     with pytest.raises(pulse.UnsupportedError, match="replacing its idle windows traces it twice"):
         _filled(dice, Q[0], Q[1])
+
+
+# -- What a review of the first version found --------------------------------
+
+
+def _executions(program):
+    """Every execution of every timed op, loops in full: (kind, line, tone,
+    start, end), and the lines as (role, qudit)."""
+    lines, tree = program._module.site_tree()
+    found = []
+
+    def walk(nodes, iterations):
+        for node in nodes:
+            if node[0] == "for":
+                for k in range(node[1]):
+                    walk(node[2], (*iterations, k))
+            elif node[0] == "if":
+                walk(node[1], iterations)
+                walk(node[2], iterations)
+            elif node[0] not in ("sync", "answer"):
+                _, _, line, tone, start, length, shifts, _ = node
+                at = start + sum(k * shift for k, shift in zip(iterations, shifts, strict=True))
+                found.append((node[0], line, tone, at, at + length))
+
+    walk(tree, ())
+    return [(str(role), int(qudit)) for role, qudit in lines], found
+
+
+def _pulses_on_a_busy_qudit(plain, filled):
+    """The pulses *filled* has and *plain* has not that play while their
+    qudit's own readout runs or its tone plays from another line."""
+    lines, before = _executions(plain)
+    _, after = _executions(filled)
+    readout_of = {qudit: i for i, (role, qudit) in enumerate(lines) if role == "readout"}
+    host = set(before)
+    wrong = []
+    for kind, line, _, start, end in after:
+        if kind != "drive" or (kind, line, line, start, end) in host:
+            continue
+        qudit = lines[line][1]
+        for other, on, tone, a, b in after:
+            own_readout = other == "readout" and on == readout_of.get(qudit)
+            own_tone = other in ("drive", "readout") and tone == line and on != line
+            if (own_readout or own_tone) and start < b and a < end:
+                wrong.append((start, end, other, a, b))
+    return wrong
+
+
+@pulse.kernel
+def read_every_round(a, b, n: int):
+    da = get_drive_line(a)
+    ra = get_readout_line(a)
+    db = get_drive_line(b)
+    drive(da, square(40, 0.1))
+    sync(da, ra, db)
+    for _ in range(n):
+        readout(ra, square(100, 0.05))
+        wait(ra, 400)
+        drive(db, square(500, 0.1))
+    sync(da, ra, db)
+    drive(da, square(40, 0.1))
+
+
+@pulse.kernel
+def readouts_behind(a, b, n: int):
+    da = get_drive_line(a)
+    ra = get_readout_line(a)
+    db = get_drive_line(b)
+    wait(ra, 2000)
+    for _ in range(n):
+        drive(da, square(40, 0.1))
+        drive(db, square(600, 0.1))
+        sync(da, db)
+        drive(da, square(40, 0.1))
+        readout(ra, square(300, 0.05))
+
+
+@pytest.mark.parametrize("schedule", ["asap", "alap"])
+def test_a_gap_through_a_loop_is_filled_between_the_qudits_readouts_of_every_round(schedule):
+    # a's line is free from its first drive to its last, and a is read out
+    # in each of the eight rounds in between: every readout is laid over
+    # the gap, not only those of the two rounds a loop is read by.
+    program = _filled(read_every_round, Q[0], Q[1], 8, fill=pair, schedule=schedule)
+    plain = pulse.compile(read_every_round, schedule=schedule).lower(Q[0], Q[1], 8)
+    assert program.duration == plain.duration
+    assert [(w.start, w.end, w.filled) for w in program.idle_windows] == [
+        (140 + 500 * k, 540 + 500 * k, True) for k in range(8)
+    ]
+    assert _pulses_on_a_busy_qudit(plain, program) == []
+
+
+@pytest.mark.parametrize("schedule", ["asap", "alap"])
+def test_a_gap_through_a_loop_of_too_many_readouts_to_list_is_left_alone(schedule):
+    program = _filled(read_every_round, Q[0], Q[1], 1000, fill=pair, schedule=schedule)
+    plain = pulse.compile(read_every_round, schedule=schedule).lower(Q[0], Q[1], 1000)
+    assert program.mlir() == plain.mlir()
+    (window,) = program.idle_windows
+    assert (window.start, window.end, window.filled) == (499640, 500040, False)
+    assert window.result == (
+        "left alone: a loop reads the qudit out or plays its tone in every round meanwhile"
+    )
+
+
+@pytest.mark.parametrize("schedule", ["asap", "alap"])
+@pytest.mark.parametrize("n", [3, 9, 12])
+def test_no_fill_plays_while_readouts_of_other_rounds_run(schedule, n):
+    # a's readouts start late and repeat faster than its drives: the readout
+    # that runs during a round's gap is one of another round.
+    program = _filled(readouts_behind, Q[0], Q[1], n, schedule=schedule, trailing=True)
+    plain = pulse.compile(readouts_behind, schedule=schedule).lower(Q[0], Q[1], n)
+    assert _pulses_on_a_busy_qudit(plain, program) == []
+    assert program.duration == plain.duration
+
+
+def test_the_quantum_systems_control_system_is_the_one_compiled_for():
+    from cudaq_pulse.controller import DriveLine, ReadoutLine
+
+    from tests._handles import ladder_target
+
+    box = pulse.Controller(
+        drive_lines=[DriveLine(q) for q in range(4)],
+        readout_lines=[ReadoutLine(q) for q in range(4)],
+    )
+    qpu = ladder_target(
+        4, control_system=pulse.ControlSystem(controllers=[box], max_concurrent_drives=1)
+    )
+    q = qpu.qudits
+    # (A fill under "alap" is not here: with one drive at a time, the plain
+    # program's two drives already do not fit under "alap".)
+    for fill, schedule in ((None, "alap_rcp"), (None, "rcp")):
+        plain = pulse.compile(two_lines, schedule=schedule).lower(q[0], q[1])
+        rule = pulse.IdleReplacement(fill, threshold=100, leading=True)
+        program = pulse.compile(
+            two_lines, schedule=schedule, passes=_WITH, idle_replacement=rule
+        ).lower(q[0], q[1])
+        assert program.options.schedule_args() == plain.options.schedule_args()
+        assert program.options.schedule_args()[1] == 1
+        assert program.options.machine == plain.options.machine
+        if fill is None:
+            assert program.export_to_controller() == plain.export_to_controller()
+    # One drive lane: the fill's pulse does not fit beside b's, and the
+    # error counts the lanes of the system the program is compiled for.
+    with pytest.raises(pulse.CompilationError, match="and the control system has 1;"):
+        pulse.compile(
+            two_lines,
+            schedule="alap_rcp",
+            passes=_WITH,
+            idle_replacement=pulse.IdleReplacement(pi, threshold=100, leading=True),
+        ).lower(q[0], q[1])
+
+
+def test_a_float_parameter_that_sets_a_pulses_length_compiles_at_once():
+    # The kernel is traced again with the parameter static: the record of
+    # the first trace is not the second's.
+    @pulse.kernel
+    def widths(a, b, width: float):
+        da = get_drive_line(a)
+        db = get_drive_line(b)
+        drive(da, square(width, 0.1))
+        drive(db, square(600, 0.1))
+        sync(da, db)
+        drive(da, square(40, 0.1))
+
+    with pytest.warns(Warning):
+        program = _filled(widths, Q[0], Q[1], 40.0)
+    assert [(w.start, w.end, w.filled) for w in program.idle_windows] == [(40, 600, True)]
+
+
+@pulse.kernel
+def virtual_z_rounds(a, b, n: int):
+    da = get_drive_line(a)
+    db = get_drive_line(b)
+    rb = get_readout_line(b)
+    for _ in range(n):
+        drive(da, square(40, 0.1))
+        shift_phase(da.tone, 0.25)
+        drive(db, square(40, 0.1))
+        sync(da, db, rb)
+        readout(rb, square(600, 0.05))
+        sync(da, db, rb)
+
+
+@pytest.mark.parametrize("schedule", ["asap", "alap"])
+@pytest.mark.parametrize("n", [3, 20])
+def test_a_phase_shift_of_the_kernel_before_a_window_may_fold_into_the_fill(schedule, n):
+    # The passes fold a phase shift into the pulse after it, here the
+    # fill's first: the fill plays in the shifted frame, as it should.
+    program = _filled(virtual_z_rounds, Q[0], Q[1], n, schedule=schedule)
+    plain = pulse.compile(virtual_z_rounds, schedule=schedule).lower(Q[0], Q[1], n)
+    assert program.duration == plain.duration
+    assert any(w.filled for w in program.idle_windows)
+    host = [e for e in _events(plain) if e[0] != "shift_phase"]
+    assert [e for e in _events(program) if e in host] == host
+
+
+@pytest.mark.parametrize("schedule", ["asap", "alap"])
+@pytest.mark.parametrize("n", [3, 20])
+def test_a_fill_that_holds_a_loop_leaves_the_kernels_later_loops_their_places(schedule, n):
+    @pulse.kernel
+    def two_stage(a, b, n: int):
+        da = get_drive_line(a)
+        db = get_drive_line(b)
+        drive(da, square(40, 0.1))
+        drive(db, square(600, 0.1))
+        sync(da, db)
+        drive(da, square(40, 0.1))
+        for _ in range(n):
+            drive(da, square(40, 0.1))
+            drive(db, square(600, 0.1))
+            sync(da, db)
+            drive(da, square(40, 0.1))
+
+    @pulse.kernel
+    def ten(qudit, window):
+        line = get_drive_line(qudit)
+        for _ in range(10):
+            wait(line, 5)
+            drive(line, gaussian(40, 0.2, 10))
+            wait(line, 5)
+
+    program = _filled(two_stage, Q[0], Q[1], n, fill=ten, schedule=schedule, leading=True)
+    plain = pulse.compile(two_stage, schedule=schedule).lower(Q[0], Q[1], n)
+    assert program.duration == plain.duration
+    assert sum(w.filled for w in program.idle_windows) >= 2
+    assert _pulses_on_a_busy_qudit(plain, program) == []
+
+
+def test_two_pulses_of_a_fill_that_fuse_stay_apart_from_the_kernels():
+    @pulse.kernel
+    def doubled(qudit, window):
+        line = get_drive_line(qudit)
+        drive(line, square(20, 0.1))
+        drive(line, square(20, 0.1))
+
+    program = _kept(host, Q[0], Q[1], fill=doubled, align="start")
+    assert _events(program)[3:5] == [("drive", 0, 40, 80), ("wait", 0, 80, 640)]
+
+
+def test_a_fill_that_calls_a_classical_function_the_kernel_already_calls_is_refused():
+    from tests.classical import _schedule_matrix as matrix
+
+    link = next(iter(matrix.LINKS))
+    _, tau = matrix.FUNCTIONS[(link, next(iter(matrix.TAKES)))]
+
+    @pulse.kernel
+    def calling(a, b):
+        da = get_drive_line(a)
+        db = get_drive_line(b)
+        drive(da, square(40, 0.1))
+        future = tau.submit(1.0)
+        drive(db, square(600, 0.1))
+        sync(da, db)
+        drive(da, square(40, 0.1))
+        return future
+
+    @pulse.kernel
+    def submits(qudit, window):
+        tau.submit(2.0)
+        drive(get_drive_line(qudit), gaussian(40, 0.2, 10))
+
+    with pytest.raises(pulse.CompilationError) as raised:
+        pulse.compile(
+            calling,
+            schedule="asap",
+            passes=_WITH,
+            idle_replacement=pulse.IdleReplacement(submits, threshold=100),
+            control_system=matrix.MACHINE,
+        ).lower(Q[0], Q[1])
+    assert str(raised.value).startswith(
+        "idle replacement: fill submits() calls a classical function; in this version"
+    )
+
+
+def test_qudits_of_another_quantum_system_are_refused():
+    from tests._handles import ladder_target
+
+    other = ladder_target(8)
+    with pytest.raises(pulse.InvalidValueError, match="a qudit of another quantum system"):
+        _filled(host, Q[0], Q[1], qudits=[other.qudits[0]])
+
+
+def test_a_pulse_at_the_tone_written_before_the_gap_it_plays_in_leaves_the_gap_alone():
+    # a's line only waits; its tone plays from b's line, written first.
+    @pulse.kernel
+    def tone_before(a, b):
+        da = get_drive_line(a)
+        db = get_drive_line(b)
+        wait(db, 300)
+        drive(db, square(100, 0.1), tone=da.tone)
+        wait(da, 40)
+        drive(db, square(600, 0.1))
+        sync(da, db)
+        wait(da, 40)
+
+    program = _kept(tone_before, Q[0], Q[1], threshold=60)
+    assert not any(w.filled for w in program.idle_windows if w.qudit == 0)
 
 
 # -- A compilation without a rule pays nothing --------------------------------
