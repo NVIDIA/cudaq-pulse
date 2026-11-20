@@ -124,13 +124,17 @@ class IdleReplacement:
     *fill* is a ``@pulse.kernel`` that takes ``(qudit, window)``: the idle
     qudit and the length of its idle window in clock cycles. It is traced
     once for each window, where the window is, as a kernel called there;
-    ``None`` replaces nothing and only lists the windows. *threshold* is the
+    ``None`` replaces nothing and only lists the windows
+    (``ScheduledKernel.idle_windows``). In this version a fill drives and
+    waits on its own qudit's drive line, at that line's tone, and may shift
+    the tone's phase by constants that add up to zero. *threshold* is the
     shortest idle that is a window, an ``int`` of clock cycles or a time
     (``100 * pulse.ns``); an idle of exactly that length is one. *qudits*
     keeps the rule to those qudits. The idle before a qudit's first
     operation and after its last is left alone unless *leading* or
     *trailing* is true. *align* places a fill shorter than its window in
-    it: ``"center"``, ``"start"`` or ``"end"``.
+    it, completed with waits: ``"center"``, ``"start"`` or ``"end"``; a fill
+    longer than its window is a ``CompilationError``.
 
     A rule is immutable; two rules are equal when they hold the same kernel
     and settings.

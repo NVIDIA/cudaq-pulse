@@ -147,8 +147,18 @@ Options, all keyword-only:
    that take no time, remove loops that run once or never), ``FOLD_PHASES``
    (fold frame changes into drives), ``FUSE_PULSES`` (merge square pulses in
    a row) and ``HOIST_LOOP_INVARIANTS`` (move loop-invariant operations out
-   of loops). An unknown name is a ``ValueError`` that names the closest. See
+   of loops). ``IDLE_REPLACEMENT`` is listed together with
+   ``idle_replacement=`` and works on the schedule, so its place in the
+   list changes nothing (see `Idle replacement`_). An unknown name is a
+   ``ValueError`` that names the closest. See
    :doc:`../architecture/mlir_passes`.
+
+``idle_replacement`` *(IdleReplacement, optional)*
+   The kernel that replaces each idle window of the schedule, and the
+   shortest idle that counts as one. Given together with
+   ``Pass.IDLE_REPLACEMENT`` in ``passes``; either one without the other is
+   an ``InvalidValueError`` that names the missing one. See
+   `Idle replacement`_.
 
 ``control_system`` *(ControlSystem or Controller, optional)*
    The control system to compile for: every program is checked against its
@@ -169,6 +179,116 @@ Options, all keyword-only:
 
 Calling the kernel directly always uses the defaults: ``k(...)`` takes only
 the kernel's own arguments.
+
+.. _idle-replacement:
+
+Idle replacement
+----------------
+
+A schedule leaves qudits idle: a data qudit while an ancilla is read out, a
+line that waits at a ``sync`` for a longer pulse on another line.
+``Pass.IDLE_REPLACEMENT`` finds each such stretch that is at least a
+threshold long, an idle window, and writes a kernel of yours into it, the
+fill: a dynamical-decoupling sequence, an echo, whatever the qudit should do
+instead of nothing. The fill is an ordinary kernel that takes the idle qudit
+and the window's length in clock cycles:
+
+.. code-block:: python
+
+   import cudaq_pulse as pulse
+   from cudaq_pulse.compiler import DEFAULT_PASSES
+
+   qs = pulse.quantum_system("transmon_surface17")
+   data, ancilla = qs.qudit("D1"), qs.qudit("X1")
+
+   @pulse.kernel
+   def syndrome(data, ancilla):
+       data_drive = get_drive_line(data)
+       ancilla_drive = get_drive_line(ancilla)
+       ancilla_readout = get_readout_line(ancilla)
+       half = data_drive.get_calibration(pulse.gates.X90)
+       drive(data_drive, half)
+       drive(ancilla_drive, ancilla_drive.get_calibration(pulse.gates.X))
+       sync(data_drive, ancilla_drive, ancilla_readout)
+       readout(ancilla_readout, ancilla_readout.get_calibration(pulse.gates.READOUT))
+       sync(data_drive, ancilla_drive, ancilla_readout)   # the data qudit idles until here
+       drive(data_drive, half)
+
+   @pulse.kernel
+   def echo(qudit, window):
+       line = get_drive_line(qudit)
+       drive(line, line.get_calibration(pulse.gates.X))
+
+   program = pulse.compile(
+       syndrome,
+       passes=(*DEFAULT_PASSES, pulse.Pass.IDLE_REPLACEMENT),
+       idle_replacement=pulse.IdleReplacement(echo, threshold=100 * pulse.ns),
+   ).lower(data, ancilla)
+   print(program.idle_windows)
+
+.. code-block:: text
+
+   qudit  start  end  cycles  rounds  before                           result
+       0     80  480     400       1  sync() at line 18 of syndrome()  filled by echo()
+
+The data qudit's line now holds a wait from cycle 80 to 240, the echo from
+240 to 320 and a wait to 480; every operation of ``syndrome`` starts where
+it did, and the program is as long as it was (280 ns).
+
+**Windows.** A qudit idles while its drive line has no operation, none of
+its tones plays from another line (a cross-resonance pulse at its tone makes
+it busy), and its own readout does not run. A window is such a stretch of at
+least ``threshold``, an ``int`` of clock cycles or a time
+(``100 * pulse.ns``); a stretch of exactly the threshold is one. A window
+ends at the next operation on the line or at the qudit's tone, where a
+``sync`` of the line meets, and where the kernel changes the tone's frame.
+A ``wait`` the kernel writes is an operation and is kept: only the gaps the
+schedule made are windows. The idle before a qudit's first operation and
+after its last is left alone unless the rule says ``leading=True`` or
+``trailing=True``, and ``qudits=[...]`` keeps the rule to some qudits.
+
+**The fill.** ``fill(qudit, window)`` is traced at each window as a kernel
+called there, so it reads the qudit's calibrations and may compute its
+spacing from ``window``. A fill shorter than its window is completed with
+waits: centred by default, or at the window's start or end with
+``align="start"`` or ``align="end"``. A fill longer than its window is a
+``CompilationError`` that gives both lengths; shorten the fill or raise the
+threshold. In this version a fill drives and waits on its own qudit's drive
+line, at that line's tone, and may shift the tone's phase by constants that
+add up to zero; a readout, a ``sync``, a change of frequency, another line
+or a classical call in a fill is an error at the fill's line.
+
+**Loops.** A window in a loop is written once, in the loop's body, and the
+loop stays rolled: a thousand rounds compile as nine do. A window that runs
+from a qudit's last operation of one round to its first of the next is
+written at the end of the body and filled in every round, the last
+included, if the qudit idles as long after the loop. Rounds that differ
+only by more idle at one end take the fill of the shortest round.
+
+**The report.** ``program.idle_windows`` lists every window with its
+qudit, ``start`` and ``end`` in clock cycles, the ``rounds`` it stands for,
+the operation it ends at, whether it was ``filled`` and the ``result``:
+``"filled by echo()"``, or why it was left alone (before the qudit's first
+operation, next to an arm of a branch, after a wait whose length is known
+only when the program runs, rounds that differ, no statement of the kernel
+to write it at). ``pulse.IdleReplacement(None, threshold=...)`` replaces
+nothing: the program is the one compiled without the rule, with the report.
+
+**What it guarantees.** The program is compiled twice: once without the
+rule, whose schedule gives the windows, and once with the fills written in.
+The two schedules are then compared: every operation of the kernel has the
+start, length and loop periods it had, and the program is no longer; if
+not, compiling fails and names the operation that moved. Each gap is
+written to the cycle, so one fill gives one program under every schedule
+policy. Under ``"rcp"`` and ``"alap_rcp"`` a fill's pulses take drive lanes
+like any pulse; when they do not fit, compiling fails and names the lanes
+(``qudits=`` or a control system with more ``max_concurrent_drives`` are
+the ways out). A compilation without the rule is unchanged and pays nothing.
+
+Not supported yet, each refused with a message: kernels whose qudits or
+lists each call binds (parameters annotated ``Qudit``, ``Register`` or
+``list``), a ``wait`` whose length a ``float`` parameter sets, and control
+systems with line delays.
 
 Per-kernel schedules
 --------------------
