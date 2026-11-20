@@ -82,6 +82,84 @@ def test_a_device_config_without_a_control_system_loads_no_clock_modules(tmp_pat
     assert loaded == "[]"
 
 
+_BRANCHING = (
+    "import sys, cudaq_pulse as p\n"
+    "from cudaq_pulse.kernel._emitter import PulseIREmitter\n"
+    "@p.kernel\n"
+    "def plain(q):\n"
+    "    d = get_drive_line(q)\n"
+    "    drive(d, square(40, 0.1))\n"
+    "@p.kernel\n"
+    "def reset(q):\n"
+    "    d = get_drive_line(q)\n"
+    "    r = get_readout_line(q)\n"
+    "    m = readout(r, square(100, 0.05))\n"
+    "    sync(d, r)\n"
+    "    if m:\n"
+    "        drive(d, square(40, 0.1))\n"
+    "q = p.quantum_system('transmon_surface17').qudits[0]\n"
+)
+
+
+def test_the_branch_code_loads_at_the_first_measurement_conditioned_if(tmp_path):
+    # A compile without such an if never reads kernel/_branches.py. The first
+    # one puts runtime_branch in the method's place: later ifs, and those
+    # nested in it, call it with no frame between.
+    out = _run(
+        _BRANCHING + "p.compile(plain).lower(q)\n"
+        "print('cudaq_pulse.kernel._branches' in sys.modules)\n"
+        "p.compile(reset).lower(q)\n"
+        "from cudaq_pulse.kernel import _branches\n"
+        "print(PulseIREmitter.__dict__['_runtime_branch'] is _branches.runtime_branch)",
+        tmp_path,
+    )
+    assert out == "False\nTrue"
+
+
+def test_an_error_in_a_later_branch_has_no_frame_of_the_first_use_stub(tmp_path):
+    out = _run(
+        _BRANCHING + "p.compile(reset).lower(q)\n"
+        "@p.kernel\n"
+        "def bad(q):\n"
+        "    d = get_drive_line(q)\n"
+        "    r = get_readout_line(q)\n"
+        "    if readout(r, square(100, 0.05)):\n"
+        "        if d:\n"
+        "            drive(d, square(40, 0.1))\n"
+        "try:\n"
+        "    p.compile(bad).lower(q)\n"
+        "except p.CompilationError as e:\n"
+        "    tb, names = e.__traceback__, []\n"
+        "    while tb is not None:\n"
+        "        names.append(tb.tb_frame.f_code.co_name)\n"
+        "        tb = tb.tb_next\n"
+        "    print(e.code, names.count('runtime_branch'), names.count('_runtime_branch'))",
+        tmp_path,
+    )
+    assert out == "runtime_value 2 0"
+
+
+def test_threads_tracing_their_first_branch_at_once_agree(tmp_path):
+    out = _run(
+        _BRANCHING + "import threading\n"
+        "barrier = threading.Barrier(16)\n"
+        "texts = []\n"
+        "def work():\n"
+        "    barrier.wait()\n"
+        "    texts.append(str(p.compile(reset).lower(q).mlir()))\n"
+        "threads = [threading.Thread(target=work) for _ in range(16)]\n"
+        "for t in threads:\n"
+        "    t.start()\n"
+        "for t in threads:\n"
+        "    t.join()\n"
+        "from cudaq_pulse.kernel import _branches\n"
+        "print(len(texts), len(set(texts)))\n"
+        "print(PulseIREmitter.__dict__['_runtime_branch'] is _branches.runtime_branch)",
+        tmp_path,
+    )
+    assert out == "16 1\nTrue"
+
+
 def test_links_wait_checks_and_the_classical_report_load_on_first_use(tmp_path):
     out = _run(
         "import sys, cudaq_pulse as p\n"
