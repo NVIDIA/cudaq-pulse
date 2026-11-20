@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from . import _clocks
     from ._classical_report import ClassicalCall as ClassicalCall
     from ._device import QuantumSystem
+    from ._idle import IdleReplacement
     from ._programs import _Role
     from ._system import Controller, ControlSystem
     from ._waits import _WaitLengths
@@ -86,7 +87,9 @@ class Pass(StrEnum):
     in any order; the pattern passes (all but ``VERIFY`` and
     ``HOIST_LOOP_INVARIANTS``) that follow one another run as one rewrite of
     the program, and each of them also removes the operations its rewrites
-    leave unused.
+    leave unused. ``IDLE_REPLACEMENT`` is the exception: it works on the
+    schedule, so its place in the list changes nothing, and it is listed
+    together with ``idle_replacement=``, which gives it its kernel.
     """
 
     #: Check waveform durations and that each line is used once at each step.
@@ -109,6 +112,9 @@ class Pass(StrEnum):
     #: Move operations that compute the same value in every iteration out of
     #: loops.
     HOIST_LOOP_INVARIANTS = "hoist_loop_invariants"
+    #: Replace each idle window of the schedule with the kernel that
+    #: ``idle_replacement=`` gives (a ``pulse.IdleReplacement``).
+    IDLE_REPLACEMENT = "idle_replacement"
 
 
 # The cudaq-pulse-opt pass each member runs.
@@ -545,6 +551,9 @@ class CompileOptions:
     # compilation with unit warnings has options of a subclass
     # (kernel/_unit_warnings.py).
     unit_warnings = False
+    # Not a field either: a compilation that replaces idle windows has
+    # options of a subclass that holds its rule (_idle.py).
+    idle_replacement = None
 
     @staticmethod
     def make(
@@ -554,6 +563,7 @@ class CompileOptions:
         flatten_schedules: bool = False,
         unroll_threshold: int | None = None,
         unit_warnings: bool = False,
+        idle_replacement: IdleReplacement | None = None,
     ) -> CompileOptions:
         if schedule not in _VALID_SCHEDULES:
             close = _closest(str(schedule).lower(), _VALID_SCHEDULES)
@@ -563,6 +573,9 @@ class CompileOptions:
                 f"Choose from: {', '.join(sorted(_VALID_SCHEDULES))}"
             )
         passes = DEFAULT_PASSES if passes is None else _passes(passes)
+        listed = passes is not DEFAULT_PASSES and Pass.IDLE_REPLACEMENT in passes
+        if listed:
+            passes = tuple(p for p in passes if p is not Pass.IDLE_REPLACEMENT)
         if control_system is None:
             machine = _DEFAULT_MACHINE
         else:
@@ -592,7 +605,11 @@ class CompileOptions:
         if unit_warnings:
             from .kernel._unit_warnings import with_unit_warnings
 
-            return with_unit_warnings(options)
+            options = with_unit_warnings(options)
+        if listed or idle_replacement is not None:
+            from ._idle import with_idle_replacement
+
+            return with_idle_replacement(options, idle_replacement, listed)
         return options
 
     def schedule_args(self) -> tuple[str, int, int, int, int]:
@@ -2020,6 +2037,7 @@ def compile[**P](
     flatten_schedules: bool = False,
     unroll_threshold: int | None = None,
     unit_warnings: bool = False,
+    idle_replacement: IdleReplacement | None = None,
 ) -> CompiledKernel[P]:
     """Compile a ``@cudaq_pulse.kernel`` without its arguments.
 
@@ -2042,6 +2060,7 @@ def compile[**P](
     passes:
         Optimization passes (``Pass`` members or their names), run in the
         order given; ``DEFAULT_PASSES`` by default, ``()`` for none.
+        ``Pass.IDLE_REPLACEMENT`` goes with *idle_replacement*.
     control_system:
         The ``ControlSystem`` to compile for: every program is checked
         against its controllers' wiring, capabilities and limits, and its
@@ -2068,6 +2087,11 @@ def compile[**P](
         frequency far below the quantum system's carriers (one probably in
         MHz or kHz rather than Hz). Off by default. The warnings are
         issued when the kernel traces; they do not change the program.
+    idle_replacement:
+        A ``pulse.IdleReplacement``: the kernel that replaces each idle
+        window of the schedule, and the shortest idle that counts as one.
+        Given together with ``Pass.IDLE_REPLACEMENT`` in *passes*; either
+        one without the other is an ``InvalidValueError``.
     quantum_system:
         Pin the compiled kernel to one quantum system: a call with handles of
         another raises ``QuantumSystemMismatchError``, and a call without handles
@@ -2086,5 +2110,6 @@ def compile[**P](
         flatten_schedules,
         kernel.unroll_threshold if unroll_threshold is None else unroll_threshold,
         unit_warnings,
+        idle_replacement,
     )
     return CompiledKernel(kernel, options, quantum_system)

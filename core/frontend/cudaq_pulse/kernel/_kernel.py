@@ -788,6 +788,10 @@ class Kernel[**P]:
             # Compiled for no control system: scheduled and checked for the
             # one of the qudits it is lowered on.
             options = replace(options, machine=target.control_system._machine)
+        if options.idle_replacement is not None:
+            from .._idle import specialize
+
+            return specialize(self, values, target, options)
         if options.machine._line_delays or self._traced:
             found = self._retimed(values, target, options)
             if found is not None:

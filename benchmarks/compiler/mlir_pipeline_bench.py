@@ -39,7 +39,9 @@ def _device(frequencies: dict[int, float]) -> pulse.QuantumSystem:
 
 
 _STAGES = ("trace_ms", "ffi_ms", "passes_ms", "schedule_ms", "total_ms")
-_PASSES = tuple(pulse.Pass)
+# Each pass of the pipeline: idle replacement needs its rule and works on the
+# schedule, not the module.
+_PASSES = tuple(p for p in pulse.Pass if p is not pulse.Pass.IDLE_REPLACEMENT)
 
 
 def _median_ms(fn: Callable[[], Any], repeats: int) -> float:

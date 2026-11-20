@@ -103,6 +103,7 @@ if TYPE_CHECKING:
     from . import viz as viz
     from ._capability import Capability as Capability
     from ._error_codes import ErrorCode as ErrorCode
+    from ._idle import IdleReplacement as IdleReplacement
     from ._system import Controller as Controller
     from ._system import ControlSystem as ControlSystem
     from ._system import Processor as Processor
@@ -136,6 +137,8 @@ _LAZY_EXPORTS = {
     # Making an enum costs more than importing what compiling needs.
     "ErrorCode": "._error_codes",
     "UnitWarning": ".kernel._unit_warnings",
+    # Only a compilation that replaces idle windows loads it.
+    "IdleReplacement": "._idle",
     "Controller": "._system",
     "ControlSystem": "._system",
     "Processor": "._system",
@@ -183,6 +186,7 @@ __all__ = [
     "PulseWarning",
     "UpgradeNotice",
     "UnitWarning",
+    "IdleReplacement",
     "NoProcessQuantumSystemError",
     "NoQuantumSystemError",
     "QuantumSystemMismatchError",

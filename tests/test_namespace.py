@@ -46,6 +46,7 @@ TOP_LEVEL = {
     "PulseWarning",
     "UpgradeNotice",
     "UnitWarning",
+    "IdleReplacement",
     "NoProcessQuantumSystemError",
     "NoQuantumSystemError",
     "QuantumSystemMismatchError",

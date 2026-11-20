@@ -203,7 +203,12 @@ def test_passes_are_members_or_their_names():
     assert as_members.mlir() == pulse.compile(_bell).lower(Q[0], Q[1]).mlir()
 
 
-@pytest.mark.parametrize("passes", [(p,) for p in pulse.Pass] + [tuple(pulse.Pass)[::-1]])
+# IDLE_REPLACEMENT is the one member that is not a rewrite before the schedule:
+# it goes with idle_replacement= (tests/test_idle_replacement.py).
+_REWRITES = tuple(p for p in pulse.Pass if p is not pulse.Pass.IDLE_REPLACEMENT)
+
+
+@pytest.mark.parametrize("passes", [(p,) for p in _REWRITES] + [_REWRITES[::-1]])
 def test_every_pass_runs_alone_and_in_any_order(passes):
     lowered = pulse.compile(_ramsey, passes=passes).lower(Q[0], 0.25)
     assert "pulse.drive" in lowered.mlir()
