@@ -506,10 +506,19 @@ def test_a_window_in_a_loop_counts_its_rounds(n):
     assert (window.start, window.end, window.rounds, window.result) == (40, 640, n, _OPEN)
 
 
-def test_a_window_whose_rounds_differ_is_left_alone_at_its_shortest():
+def test_a_window_whose_rounds_differ_only_in_length_is_given_at_its_shortest():
+    # The first round idles 360 cycles, the others 760: a fill fits 360.
     window = _windows(uneven, Q[0], Q[1], 50)[0]
-    assert (window.start, window.end, window.rounds) == (40, 400, 50)
-    assert window.result == "left alone: its rounds differ"
+    assert (window.start, window.end, window.rounds, window.result) == (40, 400, 50, _OPEN)
+
+
+def test_windows_whose_rounds_differ_otherwise_are_listed_by_kind_of_round():
+    # Under asap a's drive of a round follows its drive of the round before
+    # at once in the second round and after the readout in the others.
+    windows = _windows(memory, Q[0], Q[1], 20)
+    assert [(w.qudit, w.start, w.end, w.rounds, w.result) for w in windows if w.qudit == 0][:1] == [
+        (0, 80, 640, 18, "left alone: its rounds differ")
+    ]
 
 
 def test_an_error_of_the_program_is_the_one_it_raises_without_the_rule():
@@ -895,11 +904,18 @@ def test_a_window_across_the_end_of_a_loop_iteration_is_filled_in_every_round(n)
 
 
 def test_a_window_to_the_programs_end_is_written_after_the_kernels_last_statement():
-    # Under asap a's drive of the last round is its last operation, inside
-    # the loop; a then idles through the last readout, to the end.
-    program = _kept(memory, Q[0], Q[1], 20, trailing=True)
+    # a's last operation is inside the loop; b plays on after it.
+    @pulse.kernel
+    def tail(a, b, n: int):
+        da = get_drive_line(a)
+        db = get_drive_line(b)
+        for _ in range(n):
+            drive(da, square(40, 0.1))
+            drive(db, square(400, 0.2))
+
+    program = _kept(tail, Q[0], Q[1], 20, trailing=True)
     (window,) = program.idle_windows
-    assert (window.start, window.end, window.before, window.filled) == (11440, 12040, None, True)
+    assert (window.start, window.end, window.before, window.filled) == (800, 8000, None, True)
 
 
 def test_a_loops_window_needs_as_much_room_after_the_last_round():
@@ -919,6 +935,131 @@ def test_a_loops_window_with_the_tone_playing_at_the_start_of_the_next_round_is_
     assert {w.result for w in program.idle_windows if not w.filled} >= {
         "left alone: its tone plays or changes at the start of the next round"
     }
+
+
+@pulse.kernel
+def barrier_of_pairs(a, b, c):
+    la = get_drive_line(a)
+    lb = get_drive_line(b)
+    lc = get_drive_line(c)
+    drive(la, square(40, 0.1))
+    drive(lb, square(300, 0.1))
+    for one, other in ((la, lb), (lb, lc), (lb, lc), (la, lb)):
+        sync(one, other)
+    drive(lb, square(60, 0.1))
+    drive(la, square(40, 0.1), tone=lc.tone)
+    drive(la, square(40, 0.1))
+
+
+def test_a_gap_is_cut_where_a_sync_of_its_line_meets():
+    # a idles from 40 to the barrier at 300; c, with no operation of its
+    # own, from the start to the barrier, then its tone plays on a's line.
+    program = _kept(barrier_of_pairs, Q[0], Q[1], Q[2], leading=True)
+    assert [(w.qudit, w.start, w.end, w.filled) for w in program.idle_windows] == [
+        (0, 40, 300, True),
+        (2, 0, 300, True),
+    ]
+    assert [e for e in _events(program) if e[1] == 2] == [
+        ("wait", 2, 0, 130),
+        ("drive", 2, 130, 170),
+        ("wait", 2, 170, 300),
+        ("wait", 2, 300, 380),  # the rest of c's gap, to the program's end
+    ]
+
+
+def _surface_code_cycle():
+    """The kernel of examples/transmon/transmon_surface17_surface_code_cycle.py
+    and its qudits."""
+    import contextlib
+    import importlib.util
+    import io
+
+    path = Path(__file__).parent.parent / "examples/transmon"
+    spec = importlib.util.spec_from_file_location(
+        "surface_code_cycle_example", path / "transmon_surface17_surface_code_cycle.py"
+    )
+    example = importlib.util.module_from_spec(spec)
+    with contextlib.redirect_stdout(io.StringIO()):
+        spec.loader.exec_module(example)
+    return example.surface_code_cycle, example.qs.qudits[: example.qudit_count]
+
+
+@pulse.kernel
+def calibrated_echo(qudit, window):
+    line = get_drive_line(qudit)
+    drive(line, line.get_calibration(pulse.gates.X))
+
+
+@pytest.mark.parametrize("schedule", ["asap", "alap"])
+def test_the_gaps_of_the_surface_code_cycle_are_written_through_its_barriers(schedule):
+    # The example's barriers are chains of syncs of two lines. A sync is no
+    # time of its own, so a gap runs from one operation of its line to the
+    # next and is written whole: a part before a sync left unwritten would
+    # let what is written slide, under alap, towards the operation after.
+    kernel, qudits = _surface_code_cycle()
+    rule = pulse.IdleReplacement(calibrated_echo, threshold=50 * pulse.ns)
+    program = pulse.compile(kernel, schedule=schedule, passes=_WITH, idle_replacement=rule).lower(
+        qudits
+    )
+    plain = pulse.compile(kernel, schedule=schedule).lower(qudits)
+    host = _events(plain)
+    assert [event for event in _events(program) if event in host] == host
+    assert program.duration == plain.duration
+    windows = program.idle_windows
+    assert (len(windows), sum(w.filled for w in windows)) == (88, 46)
+    assert {w.cycles for w in windows if w.filled} == {196}
+
+
+@pulse.kernel(schedule="asap")
+def layer(lines):
+    for line in lines:
+        drive(line, square(40, 0.1))
+
+
+@pulse.kernel(schedule="alap")
+def measured(drive_line, readout_line):
+    sync(drive_line, readout_line)
+    result = readout(readout_line, square(800, 0.05))
+    if result:
+        drive(drive_line, square(40, 0.3))
+    return result
+
+
+@pulse.kernel
+def cycle(qudits, n: int):
+    ancilla = get_drive_line(qudits[0])
+    readout_line = get_readout_line(qudits[0])
+    lines = [get_drive_line(q) for q in qudits[1:]]
+    for _ in range(n):
+        layer(lines)
+        for line in lines:
+            drive(ancilla, square(200, 0.05), tone=line.tone)
+        layer(lines)
+        measured(ancilla, readout_line)
+
+
+@pytest.mark.parametrize("flatten", [False, True])
+@pytest.mark.parametrize("n", [2, 50])
+def test_the_data_qudits_of_a_stabilizer_cycle_are_filled_between_its_layers(flatten, n):
+    # The layers are kernels with a schedule of their own; each data qudit
+    # idles from the pulse at its tone to the next layer, 40 cycles longer
+    # in the rounds after the first. The fill takes the shortest and is
+    # written after the pulse at the tone, around the calls of the layers.
+    rule = pulse.IdleReplacement(pair, threshold=100)
+    register = Q[0:4]
+    compiled = pulse.compile(cycle, passes=_WITH, idle_replacement=rule, flatten_schedules=flatten)
+    program = compiled.lower(register, n)
+    plain = pulse.compile(cycle, flatten_schedules=flatten).lower(register, n)
+    assert program.duration == plain.duration
+    filled = [(w.qudit, w.cycles, w.rounds) for w in program.idle_windows if w.filled]
+    assert filled == [
+        (1, 1160, n),
+        (2, 1000 if flatten else 960, n),
+        (3, 800 if flatten else 760, n),
+    ]
+    if n == 2:
+        host = _events(plain)
+        assert [event for event in _events(program) if event in host] == host
 
 
 def test_a_fill_may_hold_a_loop():

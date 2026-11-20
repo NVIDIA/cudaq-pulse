@@ -398,10 +398,11 @@ def specialize(
     lines, items = read(module)
     found = gaps(lines, items)
     threshold, chosen = _cycles(rule.threshold, target.clock_ghz), _chosen(rule)
+    forward = options.schedule in ("asap", "rcp")
     if rule.fill is None:
-        windows = report(found, rule, sites.log, threshold, chosen)
+        windows = report(found, rule, sites.log, threshold, chosen, forward)
     else:
-        planned, windows = plan(found, rule, sites.log, threshold, chosen, _PADS)
+        planned, windows = plan(found, rule, sites.log, threshold, chosen, forward, _PADS)
         if planned.tiles and base.guard.impure:
             raise UnsupportedError(
                 f"idle replacement: {kernel.__name__}() calls a function whose result can "
@@ -444,7 +445,7 @@ def _filled(
     lowered = entry.lowered
     module = lowered._module
     try:
-        prove(lines, items, module, sites.log, kernel.__name__)
+        prove(lines, items, module, sites.log, kernel.__name__, options.schedule in ("asap", "rcp"))
     except CompilationError as error:
         schedule = options.schedule
         if error.code == "timing" and schedule in ("rcp", "alap_rcp"):

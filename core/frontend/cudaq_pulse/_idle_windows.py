@@ -44,11 +44,13 @@ class Site:
     """One numbered op of a trace: its kind (the op's name), where its
     record starts in the packed buffer, the regions open when it was
     emitted, the kernel instructions being traced then (innermost first),
-    its length in cycles when the trace knows it, and whether the tracer
-    was between two kernel statements right before it (``enter``) and right
-    after it (``leave``), in its own region: the points where something can
-    be written next to it. ``number`` is its place among the kernel's own
-    ops, or, for an op written into an idle window, a negative number."""
+    its length in cycles when the trace knows it, and the regions in which
+    the tracer was between two kernel statements right before it
+    (``enter``) and right after it (``leave``): the points where something
+    can be written next to it, in its own region and, for the first or
+    last op of a called kernel, in the caller's. ``number`` is its place
+    among the kernel's own ops, or, for an op written into an idle window,
+    a negative number."""
 
     __slots__ = ("kind", "mark", "scope", "frames", "cycles", "enter", "leave", "number")
 
@@ -59,7 +61,7 @@ class Site:
         scope: tuple[int, ...],
         frames: Any,
         cycles: int | None,
-        enter: bool,
+        enter: set[tuple[int, ...]],
         number: int,
     ) -> None:
         self.kind = kind
@@ -68,7 +70,7 @@ class Site:
         self.frames = frames
         self.cycles = cycles
         self.enter = enter
-        self.leave = False
+        self.leave: set[tuple[int, ...]] = set()
         self.number = number
 
     def describe(self) -> str:
@@ -95,18 +97,18 @@ class Sites:
         # Whether a pulse call is being emitted (calls nest: a calibrated
         # gate emits its ops through the same entry), or a tile written.
         self.busy = False
-        # (number of the next op of the kernel, regions open) when the
-        # outermost pulse call began: an op recorded with both has a point
-        # before it.
-        self.entered: tuple[int, tuple[int, ...]] | None = None
+        # By number of the next op of the kernel: the regions in which a
+        # statement began since the op before it.
+        self.entering: dict[int, set[tuple[int, ...]]] = {}
         self.plan = plan
         self.rule = rule
         # The tile being written (its number), and the fill being traced.
         self.inserting: int | None = None
         self.filling: _Filling | None = None
-        # The points of the plan already written, with the buffer's cursor
-        # then: a loop body traced again writes its points again.
-        self.done: dict[tuple[str, int], int] = {}
+        # The tiles of the plan already written, by number, with the
+        # buffer's cursor then: a loop body traced again writes its tiles
+        # again.
+        self.done: dict[int, int] = {}
         # The trace's waveform lengths, by value id (the tracer's own dict).
         self.durations: dict[int, Any] = {}
         # The fill's length by (qudit, window), once it has been traced.
@@ -146,10 +148,10 @@ class Sites:
             if self.inserting is None:
                 number = self.hosts
                 self.hosts += 1
-                enter = self.entered == (number, scope)
+                enter = self.entering.pop(number, set())
             else:
                 number = -1 - self.inserting
-                enter = False
+                enter = set()
             log.append(Site(kind, mark, scope, tracing_frames(), cycles, enter, number))
             return results  # type: ignore[no-any-return]
 
@@ -160,9 +162,11 @@ class Sites:
             while log and log[-1].mark >= cursor:
                 if log.pop().number >= 0:
                     self.hosts -= 1
-            # A point written at the cursor was written before what is undone.
-            for point in [point for point, mark in self.done.items() if mark > cursor]:
-                del self.done[point]
+            for number in [number for number in self.entering if number > self.hosts]:
+                del self.entering[number]
+            # A tile written at the cursor was written before what is undone.
+            for tile in [tile for tile, mark in self.done.items() if mark > cursor]:
+                del self.done[tile]
             if self.filling is not None:
                 self.filling.undo(cursor)
 
@@ -196,7 +200,7 @@ class Sites:
                 "idle replacement: the module's operations are not the ones the trace recorded"
             )
         plan = self.plan
-        if plan is not None and len(self.done) != plan.points():
+        if plan is not None and len(self.done) != plan.tiles:
             raise InternalError(
                 "idle replacement: the program traced differently the second time, so "
                 "not every idle window was written"
@@ -310,52 +314,77 @@ class _SiteTracer:
             return super()._emit_pulse_call(fname, call_args)  # type: ignore[misc,no-any-return]
         sites.durations = self._durations  # type: ignore[attr-defined]
         before = sites.hosts
-        scope = tuple(builder._scope)
-        plan = sites.plan
-        if plan is not None and fname in _SITE_CALLS:
-            tiles = plan.before.get(before)
-            if tiles is not None and ("before", before) not in sites.done:
-                self._write(("before", before), tiles, scope)
-        sites.entered = (before, scope)
+        if fname in _SITE_CALLS:
+            self._statement_begins(before)
         sites.busy = True
         try:
             results: tuple[Any, ...] = super()._emit_pulse_call(fname, call_args)  # type: ignore[misc]
         finally:
             sites.busy = False
-            sites.entered = None
         if sites.hosts > before:
-            last = sites.hosts - 1
-            if plan is None:
-                if sites.log[-1].scope == tuple(builder._scope):
-                    sites.log[-1].leave = True
-            else:
-                tiles = plan.after.get(last)
-                if tiles is not None and ("after", last) not in sites.done:
-                    self._write(("after", last), tiles, tuple(builder._scope))
+            self._statement_ends()
         return results
+
+    def _dispatch_call(self, callable_val: Any, call_args: list[Any], kwargs: Any) -> None:
+        # A call of a kernel is a statement too: what its first op starts
+        # after or its last op ends before can be written around the call,
+        # in the caller's region (the kernel may be scheduled on its own).
+        builder: Any = self.b  # type: ignore[attr-defined]
+        sites: Sites = builder._sites
+        if sites.busy or getattr(callable_val, "__pulse_kernel_fn__", None) is None:
+            super()._dispatch_call(callable_val, call_args, kwargs)  # type: ignore[misc]
+            return
+        before = sites.hosts
+        self._statement_begins(before)
+        super()._dispatch_call(callable_val, call_args, kwargs)  # type: ignore[misc]
+        if sites.hosts > before:
+            self._statement_ends()
+
+    def _statement_begins(self, number: int) -> None:
+        """A statement begins here, before the kernel's op *number*: note
+        the point, or write what the plan has for it."""
+        builder: Any = self.b  # type: ignore[attr-defined]
+        sites: Sites = builder._sites
+        scope = tuple(builder._scope)
+        if sites.plan is None:
+            sites.entering.setdefault(number, set()).add(scope)
+        else:
+            self._write(sites.plan.before.get(number), scope)
+
+    def _statement_ends(self) -> None:
+        """A statement that emitted ops of the kernel ends here."""
+        builder: Any = self.b  # type: ignore[attr-defined]
+        sites: Sites = builder._sites
+        scope = tuple(builder._scope)
+        if sites.plan is None:
+            # Without a plan the record holds the kernel's ops only.
+            sites.log[sites.hosts - 1].leave.add(scope)
+        else:
+            self._write(sites.plan.after.get(sites.hosts - 1), scope)
 
     def trace(self, prog: Any) -> Any:
         """Trace the kernel, then write what the plan has for its end."""
         result = super().trace(prog)  # type: ignore[misc]
         builder: Any = self.b  # type: ignore[attr-defined]
         plan = builder._sites.plan
-        if plan is not None and plan.end:
-            self._write(("end", 0), plan.end, tuple(builder._scope))
+        if plan is not None:
+            self._write(plan.end, tuple(builder._scope))
         return result
 
-    def _write(self, point: tuple[str, int], tiles: list[Tile], scope: tuple[int, ...]) -> None:
-        """Write *tiles* here, the point *point* of the plan."""
+    def _write(self, tiles: list[Tile] | None, scope: tuple[int, ...]) -> None:
+        """Write here, in the region *scope*, those of *tiles* that belong
+        to it and are not written yet."""
+        if not tiles:
+            return
         builder: Any = self.b  # type: ignore[attr-defined]
         sites: Sites = builder._sites
-        sites.done[point] = builder._cur
+        tiles = [tile for tile in tiles if tile.scope == scope and tile.number not in sites.done]
+        if not tiles:
+            return
         sites.busy = True
         try:
             for tile in tiles:
-                if tile.scope != scope:
-                    raise InternalError(
-                        "idle replacement: the program traced differently the second time, "
-                        "so an idle window is not where it was found"
-                    )
+                sites.done[tile.number] = builder._cur
                 held = self._drive_channel(tile.qudit)
                 sites.inserting = tile.number
                 for item in tile.items:
@@ -561,9 +590,9 @@ def read(module: Any) -> tuple[list[tuple[str, int]], list[Any]]:
 # ---------------------------------------------------------------- gaps and their idle parts
 
 _PLAYS = ("drive", "readout")
-# What uses the qudit's tone in a gap: the program orders it with whatever
-# else uses that tone.
-_CHAINED = ("tone", "frame", "frequency")
+# What the program orders with whatever is written on the qudit's line in
+# a gap: what uses the qudit's tone, and a sync of its line.
+_CHAINED = ("tone", "frame", "frequency", "sync")
 # What plays on the qudit in a gap.
 _ON_QUDIT = ("tone", "busy", "readout")
 _FREQUENCY = ("shift_frequency", "set_frequency")
@@ -586,13 +615,13 @@ class _Timed:
 
 class Gap:
     """A stretch in which a qudit's drive line has no operation: from the
-    end of ``lo`` (an op or sync on the line; None at the program's start)
-    to the start of ``hi`` (None at its end), with the events on the qudit
-    in between, each (event, start, end, what): ``"tone"`` while its tone
-    plays from another line, ``"readout"`` while its own readout runs,
-    ``"frame"`` where the kernel changes the tone's phase,
-    ``"frequency"`` where it changes its frequency, and ``"busy"`` for a
-    pulse at its tone that began before the gap.
+    end of ``lo`` (a drive or wait on the line; None at the program's
+    start) to the start of ``hi`` (None at its end), with the events on the
+    qudit in between, each (event, start, end, what): ``"tone"`` while its
+    tone plays from another line, ``"readout"`` while its own readout runs,
+    ``"frame"`` where the kernel changes the tone's phase, ``"frequency"``
+    where it changes its frequency, ``"sync"`` where a sync of the line
+    meets, and ``"busy"`` for a pulse at its tone that began before the gap.
 
     ``first`` and ``last`` say whether the qudit has no operation before
     the gap and none after it; ``barrier`` whether a wait of run-time
@@ -612,7 +641,9 @@ class Gap:
         "barrier",
         "detuned",
         "rounds",
+        "own",
         "varies",
+        "executions",
     )
 
     def __init__(
@@ -637,10 +668,13 @@ class Gap:
         self.last = False
         self.barrier = barrier
         self.detuned = detuned
-        self.rounds = _rounds(lo, hi)
+        # The executions this one stands for, and, on the gap that stands
+        # for every execution of one gap of the kernel, all of them.
+        self.own = self.rounds = _rounds(lo, hi)
         # Whether the executions it stands for differ in length or in what
-        # happens on the qudit meanwhile.
+        # happens on the qudit meanwhile, and all of them.
         self.varies = False
+        self.executions: list[Gap] = [self]
 
     def key(self) -> tuple[Any, ...]:
         """What the executions of one gap of the kernel share."""
@@ -740,9 +774,10 @@ class _Line:
 
 def gaps(lines: list[tuple[str, int]], items: list[Any]) -> dict[int, list[Gap]]:
     """Per qudit with a drive line, the gaps of that line in program order;
-    the last one ends where the last line does. Executions of one gap of the kernel
-    (the iterations of a loop, and the copies the schedule made of one) are
-    one ``Gap``, of the first; ``varies`` says they differ."""
+    the last one ends where the last line does. Executions of one gap of
+    the kernel (the iterations of a loop, and the copies the schedule made
+    of one) are one ``Gap``, the shortest, which lists them all; ``varies``
+    says they differ."""
     state: dict[int, _Line] = {}
     drive_of: dict[int, int] = {}
     for index, (role, qudit) in enumerate(lines):
@@ -815,10 +850,14 @@ def gaps(lines: list[tuple[str, int]], items: list[Any]) -> dict[int, list[Gap]]
             else:
                 event.shifts = (0,) * len(event.path)
             for index in event.lines:
+                # Each of its lines goes on from where they met. A sync is
+                # no time of its own: the gap goes on through it, cut there.
+                free[index] = _Timed(meet, event)
                 role, qudit = lines[index] if 0 <= index < len(lines) else ("", -1)
                 if role == "drive" and drive_of.get(qudit) == index:
-                    close(qudit, event, meet, meet)
-                    state[qudit].since = _Timed(meet, event)
+                    state[qudit].inner.append(
+                        (event, _Timed(meet, event), _Timed(meet, event), "sync")
+                    )
             continue
         role, qudit = lines[event.line] if event.line >= 0 else ("", -1)
         if event.line >= 0 and event.kind in ("drive", "readout", "wait"):
@@ -853,8 +892,6 @@ def gaps(lines: list[tuple[str, int]], items: list[Any]) -> dict[int, list[Gap]]
     for qudit, line in state.items():
         end = max(length, line.since.at)
         close(qudit, None, end, end)
-        # Nothing plays on the qudit after the last gap, nor in the gaps
-        # before it that no pulse at its tone follows.
         for gap in line.gaps:
             gap.inner += sorted(
                 (
@@ -864,32 +901,64 @@ def gaps(lines: list[tuple[str, int]], items: list[Any]) -> dict[int, list[Gap]]
                 ),
                 key=lambda item: item[1],
             )
-        for gap in reversed(line.gaps):
-            gap.last = True
-            if gap.lo is not None and gap.lo.kind != "sync":
-                break
-            if any(what == "tone" for _, _, _, what in gap.inner):
-                break
+        # No operation of the line follows the last gap.
+        line.gaps[-1].last = True
         found[qudit] = _merged(line.gaps)
     return found
 
 
 def _merged(executions: list[Gap]) -> list[Gap]:
     """One gap per gap of the kernel, in the order of their first
-    executions."""
+    executions: the shortest execution, which is the one a fill must fit."""
     merged: dict[tuple[Any, ...], Gap] = {}
     for gap in executions:
         first = merged.setdefault(gap.key(), gap)
         if first is gap:
             continue
-        first.rounds += gap.rounds
-        if gap.shape() != first.shape():
-            first.varies = True
-            if gap.end - gap.start < first.end - first.start:
-                # The shortest execution is the one a fill must fit.
-                gap.rounds, gap.varies = first.rounds, True
-                merged[gap.key()] = gap
+        gap.executions = first.executions
+        first.executions.append(gap)
+        gap.rounds += first.rounds
+        gap.varies = first.varies or gap.shape() != first.shape()
+        if gap.end - gap.start < first.end - first.start:
+            merged[gap.key()] = gap
+        else:
+            first.rounds, first.varies = gap.rounds, gap.varies
+    for gap in merged.values():
+        if gap.varies:
+            for execution in gap.executions:
+                execution.varies = True
     return list(merged.values())
+
+
+def _steady(gap: Gap, fills: set[tuple[int, int]], forward: bool) -> bool:
+    """Whether the executions of *gap*, which differ, can all take what is
+    written for the shortest: they differ only by more idle at one end.
+    A schedule that places as soon as possible (*forward*) keeps what is
+    written at the gap's start, one that places as late as possible at its
+    end; where that is the end with the idle to spare, nothing may play on
+    the qudit on the far side of a fill, which sits further that way in a
+    longer round."""
+    length = gap.end - gap.start
+    flags = gap.shape()[2:]
+    from_start = [(event.site, a - gap.start, b - gap.start, w) for event, a, b, w in gap.inner]
+    from_end = [(event.site, a - gap.end, b - gap.end, w) for event, a, b, w in gap.inner]
+    at_start = at_end = True
+    for other in gap.executions:
+        if other.shape()[2:] != flags or other.end - other.start < length:
+            return False
+        inner = other.inner
+        at_start &= from_start == [
+            (event.site, a - other.start, b - other.start, w) for event, a, b, w in inner
+        ]
+        at_end &= from_end == [
+            (event.site, a - other.end, b - other.end, w) for event, a, b, w in inner
+        ]
+    if not fills:
+        return at_start or at_end
+    first, last = min(u for u, _ in fills), max(v for _, v in fills)
+    if at_start and (forward or all(b <= first for _, _, b, _ in gap.inner)):
+        return True
+    return at_end and (not forward or all(a >= last for _, a, _, _ in gap.inner))
 
 
 # ---------------------------------------------------------------- the report
@@ -957,9 +1026,10 @@ class IdleWindows(tuple[IdleWindow, ...]):
         )
 
 
-def kept(gap: Gap, part: tuple[int, int], rule: Any, log: list[Site]) -> str | None:
+def kept(gap: Gap, part: tuple[int, int], rule: Any, log: list[Site], forward: bool) -> str | None:
     """Why the idle part *part* of *gap* is left alone under *rule*
-    whatever the fill, or None."""
+    whatever the fill, or None; *forward* says whether the schedule places
+    operations as soon as possible."""
     lo = gap.lo
     if gap.first and not rule.leading:
         # Before the qudit's first operation; a pulse at its tone from
@@ -975,17 +1045,20 @@ def kept(gap: Gap, part: tuple[int, int], rule: Any, log: list[Site]) -> str | N
         return "left alone: after a wait whose length is known only when the program runs"
     if gap.detuned:
         return "left alone: the kernel changed the frequency of the qudit's tone"
-    if gap.varies:
+    if gap.varies and (gap.wraps() or not _steady(gap, {part}, forward)):
         return "left alone: its rounds differ"
     if not gap.ordered():
         return "left alone: the program writes what surrounds it in another order than it runs"
     if gap.wraps():
         assert lo is not None and lo.site is not None
         # What plays on the qudit's tone before its first op of the next
-        # iteration would have to be written around from two places.
+        # iteration would have to be written around from two places. A sync
+        # there that meets where the gap ends cuts nothing off.
         if any(
-            what in _CHAINED and (event.site is None or event.site < lo.site)
-            for event, _, _, what in gap.inner
+            what in _CHAINED
+            and (event.site is None or event.site < lo.site)
+            and not (what == "sync" and a == gap.end)
+            for event, a, _, what in gap.inner
         ):
             return "left alone: its tone plays or changes at the start of the next round"
     return None
@@ -1034,10 +1107,6 @@ class Plan:
             points.setdefault(site, []).append(tile)
         self.tiles += 1
 
-    def points(self) -> int:
-        """How many points of the program something is written at."""
-        return len(self.before) + len(self.after) + bool(self.end)
-
 
 def _site(event: _Event | None, log: list[Site]) -> Site | None:
     if event is None or event.site is None or not 0 <= event.site < len(log):
@@ -1068,11 +1137,11 @@ def _point(
     the kernel's last statement. An op the passes made of several traced
     ones has no point after it: that point is inside it."""
     site = _site(b, log)
-    if site is not None and site.enter and site.scope == region:
+    if site is not None and region in site.enter:
         assert b is not None and b.site is not None
         return "before", b.site
     site = _site(a, log)
-    if site is not None and site.leave and site.scope == region:
+    if site is not None and region in site.leave:
         assert a is not None and a.site is not None
         if a.kind not in ("drive", "readout", "wait") or site.cycles == a.end - a.start:
             return "after", a.site
@@ -1094,9 +1163,16 @@ def _tiles(
     loop's body: its last piece after the op before it, never before the
     op it ends at, which starts the next iteration."""
     region = _region(gap, log)
-    bounds = [(event, start) for event, start, _, what in gap.inner if what in _CHAINED]
+    wraps = gap.wraps()
+    bounds = [
+        (event, start)
+        for event, start, _, what in gap.inner
+        # In a gap across the end of an iteration, only what the body
+        # writes after the op the gap starts after cuts it.
+        if what in _CHAINED and not (wraps and (event.site is None or event.site < gap.lo.site))  # type: ignore[union-attr]
+    ]
     edges = [gap.start, *(start for _, start in bounds), gap.end]
-    points = [gap.lo, *(event for event, _ in bounds), None if gap.wraps() else gap.hi]
+    points = [gap.lo, *(event for event, _ in bounds), None if wraps else gap.hi]
     parts = gap.idle()
     out = []
     for k in range(len(edges) - 1):
@@ -1186,10 +1262,12 @@ def plan(
     log: list[Site],
     threshold: int,
     chosen: frozenset[int] | None,
+    forward: bool,
     pads: bool = False,
 ) -> tuple[Plan, IdleWindows]:
     """What to write for *rule* into the gaps *found*, and the windows with
-    what is done in each."""
+    what is done in each; *forward* says whether the schedule places
+    operations as soon as possible."""
     planned = Plan(pads)
     name = "a wait" if pads else f"{rule.fill.__name__}()"
     rows = []
@@ -1204,8 +1282,11 @@ def plan(
             if index in taken:
                 gap = _shortened(gap, taken[index])
             parts = [part for part in gap.idle() if part[1] - part[0] >= threshold]
-            reasons = {part: kept(gap, part, rule, log) for part in parts}
+            reasons = {part: kept(gap, part, rule, log, forward) for part in parts}
             fills = {part for part in parts if reasons[part] is None}
+            if fills and gap.varies and not _steady(gap, fills, forward):
+                reasons.update(dict.fromkeys(fills, "left alone: its rounds differ"))
+                fills = set()
             rounds = gap.rounds
             if fills and gap.wraps():
                 last = _last_round(listed, index, log)
@@ -1215,6 +1296,9 @@ def plan(
                 else:
                     taken[last] = gap.end - gap.start  # type: ignore[index]
                     rounds += listed[last].rounds  # type: ignore[index]
+            if gap.varies and not fills and index not in taken:
+                rows += _apart(gap, rule, log, threshold, forward)
+                continue
             if fills or (index in taken and gap.end > gap.start):
                 tiles = _tiles(gap, fills, log)
                 if tiles is None:
@@ -1255,7 +1339,12 @@ def _shape(item: Any) -> Any:
 
 
 def prove(
-    lines: list[tuple[str, int]], base: list[Any], module: Any, log: list[Site], name: str
+    lines: list[tuple[str, int]],
+    base: list[Any],
+    module: Any,
+    log: list[Site],
+    name: str,
+    forward: bool,
 ) -> None:
     """Check that *module*, the program of *base* with its windows filled,
     is that program with something written into its gaps: every op of the
@@ -1290,11 +1379,13 @@ def prove(
             break
         if a[4] != b[4]:
             moved = f"starts at cycle {b[4]} instead of {a[4]}"
-        elif a[6] != b[6]:
+        elif a[6] != b[6] and len(a[6]) == len(b[6]):
             moved = (
                 f"repeats every {', '.join(map(str, b[6]))} cycles instead of every "
                 f"{', '.join(map(str, a[6]))}"
             )
+        elif a[6] != b[6] or a[7] != b[7]:
+            moved = "is in other iterations of its loops than it was"
         else:
             moved = f"ends at cycle {b[5]} instead of {a[5]}"
         raise CompilationError(
@@ -1304,7 +1395,7 @@ def prove(
         )
     else:
         if len(base) == len(own):
-            _back_to_back(final, name)
+            _back_to_back(final, name, forward)
             return
     raise InternalError(
         f"idle replacement: {name}() traced differently the second time, so its filled "
@@ -1312,13 +1403,25 @@ def prove(
     )
 
 
-def _back_to_back(final: list[Any], name: str) -> None:
-    """Check that each op written into a gap starts where the op before it
-    on its line ends, and that the kernel's next op on the line starts
-    where the last written one ends."""
+def _back_to_back(final: list[Any], name: str, forward: bool) -> None:
+    """Check that what was written into a gap has no slack on the side the
+    schedule places from: under a policy that places as soon as possible
+    (*forward*) each written op starts where the op before it on its line
+    ends (or where a sync of the line meets); under one that places as late
+    as possible the op after a written one starts where it ends. A gap
+    written to the cycle is then tight on both sides; one written for the
+    shortest of its rounds has its spare idle on the other."""
     ends: dict[int, int] = {}
     latest: dict[int, _Event] = {}
     tiled: set[int] = set()
+
+    def moved(what: str) -> CompilationError:
+        return CompilationError(
+            f"idle replacement: what was written into an idle window of {name}() does not "
+            f"stay in place: {what}",
+            code="timing",
+        )
+
     for item in final:
         if item.__class__ is tuple:
             if item[0] == "advance":
@@ -1329,8 +1432,7 @@ def _back_to_back(final: list[Any], name: str) -> None:
                     ends[line] += event.advance(depth, loop, iterations)
             continue
         if item.kind == "sync":
-            # Its lines go on from where the last of them is free; what was
-            # written before it on a line ends there.
+            # Its lines go on from where the last of them is free.
             meet = max((ends.get(line, 0) for line in item.lines), default=0)
             last = max(
                 (latest[line] for line in item.lines if line in latest),
@@ -1338,12 +1440,10 @@ def _back_to_back(final: list[Any], name: str) -> None:
                 default=None,
             )
             for line in item.lines:
-                if line in tiled and ends[line] != meet:
-                    raise CompilationError(
-                        f"idle replacement: what was written into an idle window of {name}() "
-                        f"does not stay in place: line {line} is free at cycle {ends[line]}, "
-                        f"before the sync it was written up to, at {meet}",
-                        code="timing",
+                if not forward and line in tiled and ends[line] != meet:
+                    raise moved(
+                        f"line {line} is free at cycle {ends[line]}, before the sync it was "
+                        f"written up to, at {meet}"
                     )
                 ends[line] = meet
                 if last is not None:
@@ -1351,19 +1451,16 @@ def _back_to_back(final: list[Any], name: str) -> None:
                     # it, and repeats as the op it waited for does.
                     item.shifts = (*last.shifts, *(0,) * len(item.path))[: len(item.path)]
                     latest[line] = item
-            tiled.difference_update(item.lines)
             continue
         if item.kind not in ("drive", "readout", "wait"):
             continue
         line = item.line
         written = item.site is not None and item.site < 0
         expected = ends.get(line, 0)
-        if (written or line in tiled) and item.start != expected:
-            raise CompilationError(
-                f"idle replacement: what was written into an idle window of {name}() does "
-                f"not stay in place: a {item.kind} on line {line} starts at cycle "
-                f"{item.start}, not at {expected} where the operation before it ends",
-                code="timing",
+        if (written if forward else line in tiled) and item.start != expected:
+            raise moved(
+                f"a {item.kind} on line {line} starts at cycle {item.start}, not at "
+                f"{expected} where the operation before it ends"
             )
         if written:
             tiled.add(line)
@@ -1373,25 +1470,56 @@ def _back_to_back(final: list[Any], name: str) -> None:
         latest[line] = item
 
 
+def _apart(gap: Gap, rule: Any, log: list[Site], threshold: int, forward: bool) -> list[IdleWindow]:
+    """The windows of a gap whose rounds differ and that is left alone:
+    those of each kind of round, with the rounds of that kind."""
+    kinds: dict[tuple[Any, ...], list[Any]] = {}
+    for execution in gap.executions:
+        kinds.setdefault(execution.shape(), [execution, 0])[1] += execution.own
+    rows = []
+    for execution, rounds in kinds.values():
+        for part in execution.idle():
+            if part[1] - part[0] >= threshold:
+                reason = kept(execution, part, rule, log, forward)
+                rows.append(
+                    IdleWindow(
+                        gap.qudit,
+                        part[0],
+                        part[1],
+                        rounds,
+                        _before(execution, part, log),
+                        False,
+                        reason or "left alone: its rounds differ",
+                    )
+                )
+    return rows
+
+
 def report(
     found: dict[int, list[Gap]],
     rule: Any,
     log: list[Site],
     threshold: int,
     chosen: frozenset[int] | None,
+    forward: bool,
 ) -> IdleWindows:
     """The windows of *found* under *rule*, none of them filled: the idle
     parts of at least *threshold* cycles on the qudits *chosen* (None:
-    every qudit)."""
+    every qudit); *forward* says whether the schedule places operations as
+    soon as possible."""
     rows = []
     for qudit in sorted(found):
         if chosen is not None and qudit not in chosen:
             continue
         for gap in found[qudit]:
+            parts = {part for part in gap.idle() if part[1] - part[0] >= threshold}
+            if gap.varies and not (parts and _steady(gap, parts, forward)):
+                rows += _apart(gap, rule, log, threshold, forward)
+                continue
             for part in gap.idle():
                 if part[1] - part[0] < threshold:
                     continue
-                reason = kept(gap, part, rule, log)
+                reason = kept(gap, part, rule, log, forward)
                 rows.append(
                     IdleWindow(
                         qudit,
