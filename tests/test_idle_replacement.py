@@ -285,6 +285,260 @@ def test_replacing_windows_is_not_built_yet():
         _compiled(two_lines).lower(Q[0], Q[1])
 
 
+# -- The report of idle windows (a rule without a fill) -----------------------
+
+
+@pulse.kernel
+def host(a, b):
+    da = get_drive_line(a)
+    db = get_drive_line(b)
+    rb = get_readout_line(b)
+    drive(da, square(40, 0.1))
+    drive(db, square(40, 0.1))
+    sync(da, db, rb)
+    readout(rb, square(600, 0.05))
+    sync(da, db, rb)  # ends the window
+    drive(da, square(40, 0.1))
+    drive(db, square(40, 0.1))
+
+
+@pulse.kernel
+def rounds(a, b, n: int):
+    da = get_drive_line(a)
+    db = get_drive_line(b)
+    rb = get_readout_line(b)
+    for _ in range(n):
+        drive(da, square(40, 0.1))
+        drive(db, square(40, 0.1))
+        sync(da, db, rb)
+        readout(rb, square(600, 0.05))
+        sync(da, db, rb)
+        drive(da, square(40, 0.1))
+
+
+@pulse.kernel
+def crossed(a, b):
+    da = get_drive_line(a)
+    db = get_drive_line(b)
+    drive(da, square(40, 0.1))
+    drive(db, square(400, 0.1), tone=da.tone)  # a's tone plays: a is not idle
+    wait(db, 300)
+    drive(db, square(40, 0.1))
+    sync(da, db)
+    drive(da, square(40, 0.1))
+
+
+@pulse.kernel
+def own_readout(a):
+    da = get_drive_line(a)
+    ra = get_readout_line(a)
+    drive(da, square(40, 0.1))
+    readout(ra, square(300, 0.05))
+    wait(ra, 500)
+    sync(da, ra)
+    drive(da, square(40, 0.1))
+
+
+@pulse.kernel
+def written_wait(a, b):
+    da = get_drive_line(a)
+    db = get_drive_line(b)
+    drive(da, square(40, 0.1))
+    wait(da, 400)
+    drive(db, square(440, 0.1))
+    sync(da, db)
+    drive(da, square(40, 0.1))
+
+
+@pulse.kernel
+def before_a_branch(a, b):
+    da = get_drive_line(a)
+    db = get_drive_line(b)
+    rb = get_readout_line(b)
+    drive(da, square(40, 0.1))
+    m = readout(rb, square(600, 0.05))
+    if m:
+        drive(db, square(40, 0.1))
+    sync(da, db)
+    drive(da, square(40, 0.1))
+
+
+@pulse.kernel
+def into_a_branch(a, b):
+    da = get_drive_line(a)
+    rb = get_readout_line(b)
+    drive(da, square(40, 0.1))
+    m = readout(rb, square(600, 0.05))
+    if m:
+        drive(da, square(40, 0.1))
+    wait(da, 400)
+    drive(da, square(40, 0.1))
+
+
+@pulse.kernel
+def detuned(a, b):
+    da = get_drive_line(a)
+    db = get_drive_line(b)
+    drive(da, square(40, 0.1))
+    shift_frequency(da.tone, 1.0e6)
+    drive(db, square(600, 0.1))
+    sync(da, db)
+    drive(da, square(40, 0.1))
+
+
+@pulse.kernel
+def uneven(a, b, n: int):
+    da = get_drive_line(a)
+    db = get_drive_line(b)
+    for _ in range(n):
+        drive(da, square(40, 0.1))
+        drive(db, square(400, 0.1))
+        sync(da, db)
+        drive(da, square(40, 0.1))
+        drive(db, square(440, 0.2))
+
+
+def _windows(kernel, *args, schedule="asap", **settings):
+    rule = pulse.IdleReplacement(None, **({"threshold": 100} | settings))
+    program = pulse.compile(kernel, schedule=schedule, passes=_WITH, idle_replacement=rule)
+    return program.lower(*args).idle_windows
+
+
+def _spans(windows):
+    return [(w.qudit, w.start, w.end, w.rounds) for w in windows]
+
+
+_OPEN = "not filled: the rule has no fill"
+
+
+def test_a_gap_the_schedule_made_is_a_window():
+    (window,) = _windows(host, Q[0], Q[1])
+    line = Path(__file__).read_text().splitlines().index("    sync(da, db, rb)  # ends the window")
+    assert window == pulse.compiler.IdleWindow(
+        0, 40, 640, 1, f"sync() at line {line + 1} of host()", False, _OPEN
+    )
+    assert window.cycles == 600
+
+
+@pytest.mark.parametrize("schedule", ["asap", "alap", "rcp", "alap_rcp"])
+def test_the_report_is_the_same_under_every_policy_that_keeps_the_times(schedule):
+    assert _spans(_windows(host, Q[0], Q[1], schedule=schedule)) == [(0, 40, 640, 1)]
+
+
+def test_the_windows_print_as_a_table():
+    text = str(_windows(host, Q[0], Q[1]))
+    head, row = text.splitlines()
+    assert head.split() == ["qudit", "start", "end", "cycles", "rounds", "before", "result"]
+    assert row.split()[:5] == ["0", "40", "640", "600", "1"]
+    assert row.endswith(_OPEN)
+    assert str(_windows(host, Q[0], Q[1], threshold=601)) == "no idle windows"
+
+
+def test_a_rule_without_a_fill_leaves_the_program_as_it_is():
+    rule = pulse.IdleReplacement(None, threshold=100)
+    program = pulse.compile(host, passes=_WITH, idle_replacement=rule).lower(Q[0], Q[1])
+    plain = pulse.compile(host).lower(Q[0], Q[1])
+    assert program.mlir() == plain.mlir()
+    assert program._module.serialize() == plain._module.serialize()
+    assert program.options.idle_replacement is rule
+    assert plain.idle_windows is None
+    assert program.bind(()).idle_windows is program.idle_windows
+
+
+@pytest.mark.parametrize(
+    ("threshold", "count"),
+    [(600, 1), (601, 0), (300 * pulse.ns, 1), (300.25 * pulse.ns, 0)],
+)
+def test_a_window_is_at_least_the_threshold(threshold, count):
+    # The clock runs two cycles a nanosecond: the window lasts 600 cycles.
+    assert len(_windows(host, Q[0], Q[1], threshold=threshold)) == count
+
+
+def test_the_rule_can_name_its_qudits():
+    assert _windows(host, Q[0], Q[1], qudits=[Q[1]]) == ()
+    assert _spans(_windows(host, Q[0], Q[1], qudits=[Q[0]])) == [(0, 40, 640, 1)]
+
+
+def test_a_qudit_whose_tone_plays_from_another_line_is_not_idle():
+    # a's line is free from 40 to 780; its tone plays on b's line until 440.
+    assert _spans(_windows(crossed, Q[0], Q[1])) == [(0, 440, 780, 1)]
+
+
+@pytest.mark.parametrize(("schedule", "start", "end"), [("asap", 300, 800), ("alap", 300, 760)])
+def test_a_qudit_is_not_idle_while_its_own_readout_runs(schedule, start, end):
+    # Under alap the readout is written after the gap it runs in.
+    settings = {"leading": True} if schedule == "alap" else {}
+    windows = _windows(own_readout, Q[0], schedule=schedule, **settings)
+    assert _spans(windows) == [(0, start, end, 1)]
+    assert windows[0].result == _OPEN
+
+
+def test_a_written_wait_is_an_operation_and_no_window():
+    assert _windows(written_wait, Q[0], Q[1]) == ()
+
+
+def test_idle_before_the_first_operation_and_after_the_last_is_left_alone_unless_asked():
+    (first,) = _windows(host, Q[0], Q[1], schedule="alap", threshold=30)[:1]
+    assert _spans([first]) == [(0, 40, 640, 1)]  # nothing leads under alap here
+    (lead,) = _windows(before_a_branch, Q[0], Q[1], schedule="alap")
+    assert (lead.start, lead.end) == (0, 600)
+    assert lead.result == ("left alone: before the qudit's first operation (leading=True fills it)")
+    (asked,) = _windows(before_a_branch, Q[0], Q[1], schedule="alap", leading=True)
+    assert asked.result == _OPEN
+    tail = _windows(uneven, Q[0], Q[1], 1)[-1]
+    assert (tail.start, tail.end, tail.before) == (440, 840, None)
+    assert tail.result == "left alone: after the qudit's last operation (trailing=True fills it)"
+    assert _windows(uneven, Q[0], Q[1], 1, trailing=True)[-1].result == _OPEN
+
+
+def test_the_gap_before_a_branch_is_a_window_and_one_that_ends_in_an_arm_is_not():
+    (window,) = _windows(before_a_branch, Q[0], Q[1])
+    assert (window.start, window.end, window.result) == (40, 640, _OPEN)
+    (window,) = _windows(into_a_branch, Q[0], Q[1])
+    assert (window.start, window.end) == (40, 600)
+    assert window.result == "left alone: in or next to an arm of a branch"
+
+
+def test_a_window_after_the_kernel_changes_the_tones_frequency_is_left_alone():
+    (window,) = _windows(detuned, Q[0], Q[1])
+    assert (window.start, window.end) == (40, 600)
+    assert window.result == "left alone: the kernel changed the frequency of the qudit's tone"
+
+
+@pytest.mark.parametrize("n", [3, 9, 1000])
+def test_a_window_in_a_loop_counts_its_rounds(n):
+    # Unrolled (3) and rolled (9, 1000): one window, as many rounds.
+    (window,) = _windows(rounds, Q[0], Q[1], n)
+    assert (window.start, window.end, window.rounds, window.result) == (40, 640, n, _OPEN)
+
+
+def test_a_window_whose_rounds_differ_is_left_alone_at_its_shortest():
+    window = _windows(uneven, Q[0], Q[1], 50)[0]
+    assert (window.start, window.end, window.rounds) == (40, 400, 50)
+    assert window.result == "left alone: its rounds differ"
+
+
+def test_an_error_of_the_program_is_the_one_it_raises_without_the_rule():
+    # The schedule's errors print where the operation is; the operations of
+    # a compilation with a rule carry numbers there.
+    @pulse.kernel(max_duration_cycles=500)
+    def budgeted(a):
+        da = get_drive_line(a)
+        drive(da, square(400, 0.1))
+        wait(da, 200)
+
+    with pytest.raises(RuntimeError) as plain:
+        pulse.compile(budgeted).lower(Q[0])
+    with pytest.raises(RuntimeError) as ruled:
+        pulse.compile(
+            budgeted, passes=_WITH, idle_replacement=pulse.IdleReplacement(None, threshold=100)
+        ).lower(Q[0])
+    assert "max_duration_cycles=500" in str(plain.value)
+    assert str(ruled.value) == str(plain.value)
+    assert type(ruled.value) is type(plain.value)
+    assert ruled.value.__context__ is None
+
+
 # -- A compilation without a rule pays nothing --------------------------------
 
 

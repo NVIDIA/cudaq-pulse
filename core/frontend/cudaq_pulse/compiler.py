@@ -40,6 +40,8 @@ if TYPE_CHECKING:
     from ._classical_report import ClassicalCall as ClassicalCall
     from ._device import QuantumSystem
     from ._idle import IdleReplacement
+    from ._idle_windows import IdleWindow as IdleWindow
+    from ._idle_windows import IdleWindows as IdleWindows
     from ._programs import _Role
     from ._system import Controller, ControlSystem
     from ._waits import _WaitLengths
@@ -71,6 +73,20 @@ class _Module(ModuleType):
         from ._classical_report import ClassicalCall
 
         return ClassicalCall
+
+    # The types of ScheduledKernel.idle_windows, loaded with the first
+    # compilation that replaces idle windows.
+    @property
+    def IdleWindow(self) -> type[IdleWindow]:  # noqa: N802
+        from ._idle_windows import IdleWindow
+
+        return IdleWindow
+
+    @property
+    def IdleWindows(self) -> type[IdleWindows]:  # noqa: N802
+        from ._idle_windows import IdleWindows
+
+        return IdleWindows
 
 
 sys.modules[__name__].__class__ = _Module
@@ -552,8 +568,10 @@ class CompileOptions:
     # (kernel/_unit_warnings.py).
     unit_warnings = False
     # Not a field either: a compilation that replaces idle windows has
-    # options of a subclass that holds its rule (_idle.py).
+    # options of a subclass that holds its rule (_idle.py), and each of its
+    # two compilations options that hold the record its trace keeps.
     idle_replacement = None
+    _sites = None
 
     @staticmethod
     def make(
@@ -1121,6 +1139,14 @@ class ScheduledKernel:
         """
         return (_report or _load_report())(self)
 
+    @property
+    def idle_windows(self) -> IdleWindows | None:
+        """The idle windows of a program compiled with ``idle_replacement=``:
+        each stretch of at least the rule's threshold in which a qudit idles,
+        with what was done there (see ``IdleWindow``). ``None`` for a program
+        compiled without it."""
+        return getattr(self.metrics, "idle_windows", None)
+
     def export_to_emulator(self, *, controller: int | None = None) -> dict[str, Any]:
         """The program for a controller emulator: its schedule by segment, its
         calls and the manifest of its classical functions (see
@@ -1426,11 +1452,17 @@ def build(
     plain = machine._plain
     clocks = None if plain else _clocked_builder(builder, machine, target)
     # One try for the trace and the module: a try statement costs a bytecode.
+    # One of the two compilations of an idle replacement (_idle.py) has sites.
+    sites = options._sites
     try:
-        if options.unit_warnings:
-            from .kernel._unit_warnings import unit_checked
+        if options.unit_warnings or sites is not None:
+            checked = None
+            if options.unit_warnings:
+                from .kernel._unit_warnings import unit_checked
 
-            checked = unit_checked(builder, target)
+                checked = unit_checked(builder, target)
+            if sites is not None:
+                checked = sites.attach(builder, checked)
             builder.returned = _trace_kernel_with_builder(fn, builder, trace_args, checked)
         else:
             builder.returned = _trace_kernel_with_builder(fn, builder, trace_args)
@@ -1529,6 +1561,8 @@ def build(
         if plain and max_duration_cycles is None
         else _clocked_module(module, machine, target, clocks, max_duration_cycles)
     )
+    if sites is not None:
+        sites.number(module)
     metrics.ffi_ms = (time.perf_counter() - t0) * 1000
 
     t0 = time.perf_counter()

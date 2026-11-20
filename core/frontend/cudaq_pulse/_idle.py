@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from ._device import Qudit
+    from ._idle_windows import Sites
     from ._units import Time
     from .kernel._kernel import Kernel, _Entry
 
@@ -235,8 +236,28 @@ class _IdleOptions(CompileOptions):
             return with_unit_warnings(plain)
         return plain
 
+    def traced(self, sites: Sites) -> CompileOptions:
+        """The options of one of the compilations an idle replacement makes
+        of the program: no rule, and the record *sites* its trace keeps."""
+        return _SiteOptions(
+            *(getattr(self, f.name) for f in dataclasses.fields(CompileOptions)),
+            unit_warnings=self.unit_warnings,
+            _sites=sites,
+        )
+
     def __repr__(self) -> str:
         return f"{self.without_rule()!r} + {self.idle_replacement!r}"
+
+
+@dataclasses.dataclass(frozen=True)
+class _SiteOptions(CompileOptions):
+    """Options of one of the compilations an idle replacement makes of a
+    program: those of the program without the rule, with the record its
+    trace keeps of the operations it emits. A record equals only itself,
+    so no compilation is taken for another."""
+
+    unit_warnings: bool = False  # type: ignore[assignment]
+    _sites: Sites | None = None  # type: ignore[assignment]
 
 
 def with_idle_replacement(
@@ -296,6 +317,35 @@ def _float_wait(kernel: Kernel[...], entry: _Entry) -> CompilationError | None:
     )
 
 
+def _cycles(threshold: int | Time, clock_ghz: float) -> int:
+    """*threshold* in clock cycles: the fewest that last at least a time."""
+    if threshold.__class__ is int:
+        return threshold  # type: ignore[return-value]
+    from ._units import in_cycles
+
+    numerator, denominator = in_cycles(threshold, clock_ghz)  # type: ignore[arg-type]
+    return -(-numerator // denominator)
+
+
+def _chosen(rule: IdleReplacement) -> frozenset[int] | None:
+    """The indices of the qudits *rule* is restricted to, or None."""
+    return None if rule.qudits is None else frozenset(q.index for q in rule.qudits)
+
+
+def _traced(
+    kernel: Kernel[...], values: tuple[Any, ...], target: Any, options: _IdleOptions, sites: Sites
+) -> _Entry:
+    """*kernel* compiled for *values* without the rule, its trace recorded
+    in *sites*. An error is the one the program raises without the rule:
+    the numbers the traced operations carry show in an error's text."""
+    try:
+        return kernel._specialize(values, target, options.traced(sites))
+    except Exception as error:
+        failed = error
+    kernel._specialize(values, target, options.without_rule())
+    raise failed
+
+
 def specialize(
     kernel: Kernel[...], values: tuple[Any, ...], target: Any, options: CompileOptions
 ) -> _Entry:
@@ -312,11 +362,38 @@ def specialize(
             "binds (parameters annotated Qudit, Register or list), which idle replacement "
             "does not support yet; leave the qudit parameters unannotated"
         )
-    base = kernel._specialize(values, target, options.without_rule())
+    if options.machine._line_delays:
+        raise UnsupportedError(
+            "idle replacement: the control system delays some lines (delay_ns), which idle "
+            "replacement does not support yet"
+        )
+    from ._idle_windows import Sites, gaps, read, report
+
+    rule = options.idle_replacement
+    assert rule is not None
+    sites = Sites()
+    base = _traced(kernel, values, target, options, sites)
     refused = _float_wait(kernel, base)
     if refused is not None:
         raise refused
-    raise UnsupportedError(
-        "idle replacement: reading the idle windows of a schedule and replacing them is not "
-        "built yet; this version has the option, its checks and the refusals"
+    lowered = base.lowered
+    if not lowered.scheduled:
+        raise UnsupportedError(
+            f"idle replacement: {kernel.__name__}() is scheduled only once a call gives "
+            "its arguments' values, so its idle windows differ at every call"
+        )
+    module = lowered._module
+    lines, items = read(module)
+    found = gaps(lines, items)
+    if rule.fill is not None:
+        raise UnsupportedError(
+            "idle replacement: replacing the idle windows is not built yet; "
+            "pulse.IdleReplacement(None, threshold=...) lists them, as idle_windows"
+        )
+    # Nothing is replaced: the program is the one compiled without the rule.
+    module.strip_sites()
+    lowered.options = options
+    lowered.metrics.idle_windows = report(  # type: ignore[attr-defined]
+        found, rule, sites.log, _cycles(rule.threshold, target.clock_ghz), _chosen(rule)
     )
+    return base

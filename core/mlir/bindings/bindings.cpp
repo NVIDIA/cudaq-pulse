@@ -3482,6 +3482,183 @@ public:
     return nb::make_tuple(root);
   }
 
+  // ── Sites: the traced ops of a program, for idle replacement ────────
+  //
+  // The frontend numbers every drive, readout, wait, sync and frame change
+  // it traces. A number is kept as the op's location, which no pass reads
+  // and the printed module does not show, so a numbered module compiles as
+  // the same module without numbers; a copy of an op (a peeled or unrolled
+  // loop iteration) keeps its number, and so does the op a rewrite makes
+  // of several (the first of them).
+
+  static bool isSiteOp(mlir::Operation *op) {
+    return mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp,
+                     pulse::SyncOp, pulse::ShiftPhaseOp, pulse::SetPhaseOp,
+                     pulse::ShiftFrequencyOp, pulse::SetFrequencyOp>(op);
+  }
+
+  /// The number number_sites() gave `op`, if any.
+  static std::optional<int64_t> siteOf(mlir::Operation *op) {
+    auto loc = mlir::dyn_cast<mlir::FileLineColLoc>(op->getLoc());
+    if (!loc || loc.getFilename().getValue() != "pulse.site")
+      return std::nullopt;
+    int64_t line = loc.getLine();
+    return loc.getColumn() ? -line - 1 : line;
+  }
+
+  /// Number the drives, readouts, waits, syncs and frame changes of a module
+  /// just built, in program order: the k-th gets `sites[k]`, at least -2**31
+  /// and below 2**31. Returns one letter per op for its kind (d, r, w, s for
+  /// a drive, readout, wait and sync, f for a frame change), which the
+  /// caller holds against its own record of what it traced.
+  std::string number_sites(const std::vector<int64_t> &sites) {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    std::string kinds;
+    kinds.reserve(sites.size());
+    size_t next = 0;
+    module_->walk([&](mlir::Operation *op) {
+      if (!isSiteOp(op))
+        return;
+      if (next < sites.size()) {
+        int64_t site = sites[next];
+        if (site < INT32_MIN || site > INT32_MAX)
+          throw std::invalid_argument("number_sites: a site is out of range");
+        op->setLoc(mlir::FileLineColLoc::get(
+            ctx_.get(), "pulse.site",
+            static_cast<unsigned>(site < 0 ? -site - 1 : site),
+            site < 0 ? 1 : 0));
+      }
+      ++next;
+      kinds.push_back(mlir::isa<pulse::DriveOp>(op)     ? 'd'
+                      : mlir::isa<pulse::ReadoutOp>(op) ? 'r'
+                      : mlir::isa<pulse::WaitOp>(op)    ? 'w'
+                      : mlir::isa<pulse::SyncOp>(op)    ? 's'
+                                                        : 'f');
+    });
+    if (next != sites.size())
+      throw std::invalid_argument(
+          "number_sites: " + std::to_string(sites.size()) + " numbers for " +
+          std::to_string(next) + " ops");
+    return kinds;
+  }
+
+  /// Remove the numbers number_sites() gave, from the module and from its
+  /// source before scheduling.
+  void strip_sites() {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    mlir::Location unknown = mlir::UnknownLoc::get(ctx_.get());
+    auto strip = [&](mlir::ModuleOp module) {
+      module.walk([&](mlir::Operation *op) {
+        if (siteOf(op))
+          op->setLoc(unknown);
+      });
+    };
+    strip(*module_);
+    if (source_)
+      strip(*source_);
+  }
+
+  /// The lines, (role, qudit) in allocation order, and the scheduled
+  /// program as a list of nodes in program order, linear in its ops:
+  /// - (kind, site, line, tone, start_cycles, duration_cycles, shifts,
+  ///   barrier) for a drive, readout, wait or frame change ("drive",
+  ///   "readout", "wait", "shift_phase", "set_phase", "shift_frequency",
+  ///   "set_frequency"): its number (None without one), its line (-1 for a
+  ///   frame change), the line whose tone it plays or changes (-1 for a wait
+  ///   and for a tone that is no line's own), its start at the first
+  ///   iteration of the loops around it and that start's shift per iteration
+  ///   of each, outermost first, and whether its length is known only when
+  ///   the program runs;
+  /// - ("sync", site, lines);
+  /// - ("answer",) for a blocking wait on a classical answer;
+  /// - ("for", trips, nodes) for a loop;
+  /// - ("if", nodes, nodes) for the two arms of a branch.
+  nb::tuple site_tree() {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    llvm::DenseMap<mlir::Operation *, int64_t> lineIndex;
+    nb::list lines;
+    module_->walk([&](mlir::Operation *op) {
+      if (!mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
+        return;
+      lineIndex.try_emplace(op, static_cast<int64_t>(lineIndex.size()));
+      lines.append(nb::make_tuple(
+          mlir::isa<pulse::GetDriveLineOp>(op) ? "drive" : "readout",
+          pulse::quditOf(op)));
+    });
+    llvm::SmallVector<int64_t, 2> iteration;
+    pulse::AllocationTracer trace;
+    std::optional<AttrNames> ownNames;
+    const AttrNames &names = ContextStore::names(ctx_.get(), ownNames);
+    auto indexOf = [&](mlir::Value value) -> int64_t {
+      mlir::Operation *allocation = trace(value);
+      if (!allocation)
+        return -1;
+      auto found = lineIndex.find(allocation);
+      return found == lineIndex.end() ? -1 : found->second;
+    };
+    auto site = [](mlir::Operation &op) -> nb::object {
+      std::optional<int64_t> number = siteOf(&op);
+      return number ? nb::cast(*number) : nb::none();
+    };
+    std::function<void(mlir::Block &, nb::list &)> build =
+        [&](mlir::Block &block, nb::list &out) {
+          for (mlir::Operation &op : block) {
+            bool played = mlir::isa<pulse::DriveOp, pulse::ReadoutOp>(op);
+            bool wait = mlir::isa<pulse::WaitOp>(op);
+            if (played || wait ||
+                mlir::isa<pulse::ShiftPhaseOp, pulse::SetPhaseOp,
+                          pulse::ShiftFrequencyOp, pulse::SetFrequencyOp>(op)) {
+              std::optional<int64_t> start =
+                  pulse::scheduledStart(&op, iteration);
+              nb::list shifts;
+              if (start)
+                for (int64_t &k : iteration) {
+                  k = 1;
+                  std::optional<int64_t> next =
+                      pulse::scheduledStart(&op, iteration);
+                  k = 0;
+                  shifts.append(next ? nb::cast(*next - *start) : nb::none());
+                }
+              out.append(nb::make_tuple(
+                  op.getName().stripDialect().str(), site(op),
+                  played || wait ? indexOf(op.getOperand(0)) : int64_t{-1},
+                  wait ? int64_t{-1} : indexOf(op.getOperand(played ? 2 : 0)),
+                  start, pulse::scheduledDuration(&op), shifts,
+                  AttrNames::has(&op, names.variable)));
+            } else if (mlir::isa<pulse::SyncOp>(op)) {
+              nb::list joined;
+              for (mlir::Value line : op.getOperands())
+                joined.append(indexOf(line));
+              out.append(nb::make_tuple("sync", site(op), joined));
+            } else if (mlir::isa<classical::WaitOp>(op)) {
+              if (AttrNames::has(&op, names.blocking))
+                out.append(nb::make_tuple("answer"));
+            } else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
+              int64_t trips = pulse::constantTripCount(loop).value_or(0);
+              nb::list body;
+              iteration.push_back(0);
+              build(*loop.getBody(), body);
+              iteration.pop_back();
+              out.append(
+                  nb::make_tuple("for", std::max<int64_t>(trips, 0), body));
+            } else if (auto branch = mlir::dyn_cast<mlir::scf::IfOp>(op)) {
+              nb::list then, other;
+              build(branch.getThenRegion().front(), then);
+              if (!branch.getElseRegion().empty())
+                build(branch.getElseRegion().front(), other);
+              out.append(nb::make_tuple("if", then, other));
+            } else {
+              for (mlir::Region &region : op.getRegions())
+                for (mlir::Block &nested : region)
+                  build(nested, out);
+            }
+          }
+        };
+    nb::list root;
+    build(*module_->getBody(), root);
+    return nb::make_tuple(lines, root);
+  }
+
   /// (role, qudit): a runtime qudit's line has qudit -1.
   using ControllerLine = std::tuple<std::string, int64_t>;
 
@@ -7930,6 +8107,14 @@ NB_MODULE(_cudaq_pulse_native, m) {
       .def("event_tree", &PulseModule::event_tree, nb::arg("limit"),
            "events(), or past `limit` events the ops once each with the "
            "loops they repeat in")
+      .def("number_sites", &PulseModule::number_sites, nb::arg("sites"),
+           "Number the traced ops of a module just built; returns their "
+           "kinds, one letter each")
+      .def("strip_sites", &PulseModule::strip_sites,
+           "Remove the numbers number_sites() gave")
+      .def("site_tree", &PulseModule::site_tree,
+           "The lines and the scheduled ops with their numbers, times and "
+           "the loops and branches they lie in")
       .def("controller_dependencies", &PulseModule::controller_dependencies,
            "For each event of controller_program(), not rolled: the "
            "arguments its tone frequency, frame phase and waveform depend on")

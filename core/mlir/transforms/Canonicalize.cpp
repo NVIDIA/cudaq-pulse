@@ -109,7 +109,8 @@ struct MergeAdjacentWaits : public mlir::OpRewritePattern<pulse::WaitOp> {
     if (!a || !b)
       return mlir::failure();
     rewriter.setInsertionPoint(second);
-    mlir::Location loc = second.getLoc();
+    // The first wait's location: the merged wait starts where it did.
+    mlir::Location loc = first.getLoc();
     auto cycles =
         mlir::arith::ConstantIntOp::create(rewriter, loc, *a + *b, 64);
     auto duration = pulse::DurationFromIntOp::create(
