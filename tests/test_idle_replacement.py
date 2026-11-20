@@ -831,6 +831,96 @@ def test_a_window_in_a_loop_is_filled_in_every_round_and_the_loop_stays_rolled(s
         assert len(fills) == 3 * n
 
 
+@pulse.kernel
+def memory(a, b, n: int):
+    da = get_drive_line(a)
+    db = get_drive_line(b)
+    rb = get_readout_line(b)
+    for _ in range(n):
+        drive(da, square(40, 0.1))
+        drive(db, square(40, 0.1))
+        sync(da, db, rb)
+        readout(rb, square(600, 0.05))  # a idles until its drive of the next round
+
+
+@pulse.kernel
+def memory_then_gate(a, b, n: int, last: int):
+    da = get_drive_line(a)
+    db = get_drive_line(b)
+    rb = get_readout_line(b)
+    for _ in range(n):
+        drive(da, square(40, 0.1))
+        drive(db, square(40, 0.1))
+        sync(da, db, rb)
+        readout(rb, square(600, 0.05))
+    drive(da, square(last, 0.1))
+
+
+@pulse.kernel
+def tone_first(a, b, n: int):
+    da = get_drive_line(a)
+    db = get_drive_line(b)
+    rb = get_readout_line(b)
+    for _ in range(n):
+        drive(db, square(100, 0.1), tone=da.tone)
+        drive(da, square(40, 0.1))
+        sync(da, db, rb)
+        readout(rb, square(600, 0.05))
+
+
+@pytest.mark.parametrize("n", [3, 9, 1000])
+def test_a_window_across_the_end_of_a_loop_iteration_is_filled_in_every_round(n):
+    # Under alap a's drive of each round waits for the round before: a
+    # idles from its drive to its drive of the next round, and after the
+    # last round as long again, to the program's end.
+    program = _filled(memory, Q[0], Q[1], n, schedule="alap")
+    (window,) = program.idle_windows
+    assert (window.start, window.end, window.rounds, window.filled) == (40, 600, n, True)
+    assert window.before.startswith("drive() at line ")
+    plain = pulse.compile(memory, schedule="alap").lower(Q[0], Q[1], n)
+    assert program.duration == plain.duration
+    if n == 3:
+        host = _events(plain)
+        written = [event for event in _events(program) if event not in host]
+        assert written == [
+            (kind, 0, 600 * k + a, 600 * k + b)
+            for k in range(3)
+            for kind, a, b in (("wait", 40, 300), ("drive", 300, 340), ("wait", 340, 600))
+        ] + [("wait", 0, 1800, 1840)]
+    else:
+        assert (
+            program.metrics.op_count
+            == _filled(memory, Q[0], Q[1], 9, schedule="alap").metrics.op_count
+        )
+
+
+def test_a_window_to_the_programs_end_is_written_after_the_kernels_last_statement():
+    # Under asap a's drive of the last round is its last operation, inside
+    # the loop; a then idles through the last readout, to the end.
+    program = _kept(memory, Q[0], Q[1], 20, trailing=True)
+    (window,) = program.idle_windows
+    assert (window.start, window.end, window.before, window.filled) == (11440, 12040, None, True)
+
+
+def test_a_loops_window_needs_as_much_room_after_the_last_round():
+    program = _kept(memory_then_gate, Q[0], Q[1], 20, 40, schedule="alap")
+    assert [(w.start, w.end, w.rounds, w.filled) for w in program.idle_windows] == [
+        (40, 600, 20, True)
+    ]
+    # A longer gate after the loop starts sooner: the last round has less room.
+    program = _kept(memory_then_gate, Q[0], Q[1], 20, 200, schedule="alap")
+    window = program.idle_windows[0]
+    assert (window.rounds, window.filled) == (19, False)
+    assert window.result == "left alone: there is less room for it after the loop's last round"
+
+
+def test_a_loops_window_with_the_tone_playing_at_the_start_of_the_next_round_is_left_alone():
+    program = _kept(tone_first, Q[0], Q[1], 20, schedule="alap", threshold=60)
+    assert {w.result for w in program.idle_windows if not w.filled} >= {
+        "left alone: its tone plays or changes at the start of the next round"
+    }
+
+
 def test_a_fill_may_hold_a_loop():
     program = _kept(host, Q[0], Q[1], fill=train)
     pulses = [e for e in _events(program) if e[1] == 0 and e[0] == "drive" and 40 <= e[2] < 640]
@@ -873,6 +963,10 @@ def test_a_window_before_waits_the_passes_merge_is_written_before_the_first():
         (many, (Q[0], Q[1], Q[2], Q[3], Q[4]), {}),
         (rounds, (Q[0], Q[1], 200), {}),
         (into_a_loop, (Q[0], Q[1], 20), {"trailing": True}),
+        (memory, (Q[0], Q[1], 20), {"trailing": True}),
+        (memory_then_gate, (Q[0], Q[1], 20, 40), {"trailing": True}),
+        (memory_then_gate, (Q[0], Q[1], 6, 200), {}),
+        (tone_first, (Q[0], Q[1], 20), {"threshold": 60, "leading": True, "trailing": True}),
         (uneven, (Q[0], Q[1], 6), {"leading": True, "trailing": True}),
     ],
 )
