@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from ._device import Qudit
-    from ._idle_windows import Sites
+    from ._idle_windows import IdleWindows, Plan, Sites
     from ._units import Time
     from .kernel._kernel import Kernel, _Entry
 
@@ -197,6 +197,10 @@ class IdleReplacement:
     def __eq__(self, other: object) -> bool:
         return other.__class__ is IdleReplacement and other._key() == self._key()  # type: ignore[attr-defined]
 
+    def __reduce__(self) -> tuple[Any, ...]:
+        # With its fill, which pickles as a kernel does.
+        return (_rebuilt, tuple(getattr(self, name) for name in self.__slots__))
+
     def __hash__(self) -> int:
         return hash(self._key())
 
@@ -214,6 +218,14 @@ class IdleReplacement:
         if self.align != "center":
             parts.append(f"align={self.align!r}")
         return f"IdleReplacement({', '.join(parts)})"
+
+
+def _rebuilt(
+    fill: Any, threshold: Any, qudits: Any, leading: bool, trailing: bool, align: str
+) -> IdleReplacement:
+    return IdleReplacement(
+        fill, threshold=threshold, qudits=qudits, leading=leading, trailing=trailing, align=align
+    )
 
 
 @dataclasses.dataclass(frozen=True, repr=False)
@@ -367,7 +379,7 @@ def specialize(
             "idle replacement: the control system delays some lines (delay_ns), which idle "
             "replacement does not support yet"
         )
-    from ._idle_windows import Sites, gaps, read, report
+    from ._idle_windows import Sites, gaps, plan, read, report
 
     rule = options.idle_replacement
     assert rule is not None
@@ -385,15 +397,72 @@ def specialize(
     module = lowered._module
     lines, items = read(module)
     found = gaps(lines, items)
-    if rule.fill is not None:
-        raise UnsupportedError(
-            "idle replacement: replacing the idle windows is not built yet; "
-            "pulse.IdleReplacement(None, threshold=...) lists them, as idle_windows"
-        )
+    threshold, chosen = _cycles(rule.threshold, target.clock_ghz), _chosen(rule)
+    if rule.fill is None:
+        windows = report(found, rule, sites.log, threshold, chosen)
+    else:
+        planned, windows = plan(found, rule, sites.log, threshold, chosen, _PADS)
+        if planned.tiles and base.guard.impure:
+            raise UnsupportedError(
+                f"idle replacement: {kernel.__name__}() calls a function whose result can "
+                "differ each time the kernel is traced (such as random.random()), and "
+                "replacing its idle windows traces it twice"
+            )
+        if planned.tiles:
+            return _filled(kernel, values, target, options, planned, windows, lines, items, sites)
     # Nothing is replaced: the program is the one compiled without the rule.
     module.strip_sites()
     lowered.options = options
-    lowered.metrics.idle_windows = report(  # type: ignore[attr-defined]
-        found, rule, sites.log, _cycles(rule.threshold, target.clock_ghz), _chosen(rule)
-    )
+    lowered.metrics.idle_windows = windows  # type: ignore[attr-defined]
     return base
+
+
+# For tests: write each fill as a wait of its window's length.
+_PADS = False
+
+
+def _filled(
+    kernel: Kernel[...],
+    values: tuple[Any, ...],
+    target: Any,
+    options: _IdleOptions,
+    planned: Plan,
+    windows: IdleWindows,
+    lines: list[tuple[str, int]],
+    items: list[Any],
+    sites: Sites,
+) -> _Entry:
+    """*kernel* compiled again for *values* with *planned* written into
+    it, checked against the program without: *lines* and *items* are what
+    was read of that one, *sites* its trace's record."""
+    from ._idle_windows import Sites, prove
+    from .kernel._guard import Guard, build_guard
+
+    rule = options.idle_replacement
+    assert rule is not None and rule.fill is not None
+    entry = kernel._specialize(values, target, options.traced(Sites(planned, rule)))
+    lowered = entry.lowered
+    module = lowered._module
+    try:
+        prove(lines, items, module, sites.log, kernel.__name__)
+    except CompilationError as error:
+        schedule = options.schedule
+        if error.code == "timing" and schedule in ("rcp", "alap_rcp"):
+            drives = options.schedule_args()[1]
+            raise CompilationError(
+                f"{error.args[0]}; under schedule={schedule!r} a fill's pulses take drive "
+                f"lanes like any pulse, and the control system has {drives}",
+                fix="fill fewer qudits (qudits=), use a fill with fewer pulses, or allow "
+                "more drives at once (max_concurrent_drives)",
+                code="timing",
+            ) from None
+        raise
+    module.strip_sites()
+    lowered.options = options
+    lowered.metrics.idle_windows = windows  # type: ignore[attr-defined]
+    # The program is valid while the kernel's reads and the fill's hold.
+    host, fill = entry.guard, build_guard(rule.fill.__pulse_kernel_fn__)
+    entry.guard = Guard(
+        lambda: host.check() and fill.check(), host.reads + fill.reads, host.impure, (), 0
+    )
+    return entry

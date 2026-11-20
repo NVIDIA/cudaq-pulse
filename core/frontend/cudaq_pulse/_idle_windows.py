@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from ._errors import InternalError, UnsupportedError
+from ._errors import CompilationError, InternalError, UnsupportedError
 
 if TYPE_CHECKING:
     from .kernel._emitter import PulseIREmitter
@@ -36,25 +36,40 @@ _LETTERS = {
 }
 
 
+# The pulse calls that emit a numbered op.
+_SITE_CALLS = frozenset(kind.removeprefix("pulse.") for kind in _LETTERS)
+
+
 class Site:
     """One numbered op of a trace: its kind (the op's name), where its
     record starts in the packed buffer, the regions open when it was
     emitted, the kernel instructions being traced then (innermost first),
-    and whether the tracer was between two kernel statements right before
-    it (``enter``) and right after it (``leave``), in its own region: the
-    points where something can be written next to it."""
+    its length in cycles when the trace knows it, and whether the tracer
+    was between two kernel statements right before it (``enter``) and right
+    after it (``leave``), in its own region: the points where something can
+    be written next to it. ``number`` is its place among the kernel's own
+    ops, or, for an op written into an idle window, a negative number."""
 
-    __slots__ = ("kind", "mark", "scope", "frames", "enter", "leave")
+    __slots__ = ("kind", "mark", "scope", "frames", "cycles", "enter", "leave", "number")
 
     def __init__(
-        self, kind: str, mark: int, scope: tuple[int, ...], frames: Any, enter: bool
+        self,
+        kind: str,
+        mark: int,
+        scope: tuple[int, ...],
+        frames: Any,
+        cycles: int | None,
+        enter: bool,
+        number: int,
     ) -> None:
         self.kind = kind
         self.mark = mark
         self.scope = scope
         self.frames = frames
+        self.cycles = cycles
         self.enter = enter
         self.leave = False
+        self.number = number
 
     def describe(self) -> str:
         """``drive() at line 12 of cycle()``."""
@@ -68,16 +83,34 @@ class Site:
 
 
 class Sites:
-    """The record one trace keeps of its numbered ops, in program order."""
+    """The record one trace keeps of its numbered ops, in program order.
 
-    def __init__(self) -> None:
+    With a *plan*, the trace also writes it: at the points the plan names,
+    the waits and fills of its tiles (``rule`` gives the fill)."""
+
+    def __init__(self, plan: Plan | None = None, rule: Any = None) -> None:
         self.log: list[Site] = []
+        # The kernel's own ops recorded so far (all of them without a plan).
+        self.hosts = 0
         # Whether a pulse call is being emitted (calls nest: a calibrated
-        # gate emits its ops through the same entry).
+        # gate emits its ops through the same entry), or a tile written.
         self.busy = False
-        # (index of the next site, regions open) when the outermost pulse
-        # call began: a site logged with both has a point before it.
+        # (number of the next op of the kernel, regions open) when the
+        # outermost pulse call began: an op recorded with both has a point
+        # before it.
         self.entered: tuple[int, tuple[int, ...]] | None = None
+        self.plan = plan
+        self.rule = rule
+        # The tile being written (its number), and the fill being traced.
+        self.inserting: int | None = None
+        self.filling: _Filling | None = None
+        # The points of the plan already written, with the buffer's cursor
+        # then: a loop body traced again writes its points again.
+        self.done: dict[tuple[str, int], int] = {}
+        # The trace's waveform lengths, by value id (the tracer's own dict).
+        self.durations: dict[int, Any] = {}
+        # The fill's length by (qudit, window), once it has been traced.
+        self.lengths: dict[tuple[int, int], int] = {}
 
     def attach(self, builder: Any, tracer: type[PulseIREmitter] | None) -> type[PulseIREmitter]:
         """Record what *builder* is given from here on; returns the tracer
@@ -95,12 +128,29 @@ class Sites:
             result_types: tuple[str, ...] = (),
             attrs: dict[str, Any] | None = None,
         ) -> tuple[Any, ...]:
+            filling = self.filling
+            if filling is not None:
+                filling.take(kind, operands, attrs or {}, builder._cur, self.durations)
             if kind not in _LETTERS:
                 return emit(kind, operands, result_types, attrs)  # type: ignore[no-any-return]
             mark = builder._cur
             scope = tuple(builder._scope)
             results = emit(kind, operands, result_types, attrs)
-            log.append(Site(kind, mark, scope, tracing_frames(), self.entered == (len(log), scope)))
+            cycles = None
+            if kind == "pulse.wait":
+                cycles = (attrs or {}).get("duration")
+            elif kind in ("pulse.drive", "pulse.readout"):
+                cycles = self.durations.get(operands[1].vid)
+            if cycles.__class__ is not int:
+                cycles = None
+            if self.inserting is None:
+                number = self.hosts
+                self.hosts += 1
+                enter = self.entered == (number, scope)
+            else:
+                number = -1 - self.inserting
+                enter = False
+            log.append(Site(kind, mark, scope, tracing_frames(), cycles, enter, number))
             return results  # type: ignore[no-any-return]
 
         def rolled_back(checkpoint: tuple[Any, ...]) -> None:
@@ -108,7 +158,13 @@ class Sites:
             rollback(checkpoint)
             cursor = checkpoint[0]
             while log and log[-1].mark >= cursor:
-                log.pop()
+                if log.pop().number >= 0:
+                    self.hosts -= 1
+            # A point written at the cursor was written before what is undone.
+            for point in [point for point, mark in self.done.items() if mark > cursor]:
+                del self.done[point]
+            if self.filling is not None:
+                self.filling.undo(cursor)
 
         builder.emit = recorded
         builder.rollback = rolled_back
@@ -133,17 +189,117 @@ class Sites:
 
     def number(self, module: Any) -> None:
         """Give each numbered op of *module*, just built from the trace,
-        its place in the record."""
-        kinds = module.number_sites(list(range(len(self.log))))
+        its number."""
+        kinds = module.number_sites([site.number for site in self.log])
         if kinds != "".join(_LETTERS[site.kind] for site in self.log):
             raise InternalError(
                 "idle replacement: the module's operations are not the ones the trace recorded"
             )
+        plan = self.plan
+        if plan is not None and len(self.done) != len(plan.before) + len(plan.after):
+            raise InternalError(
+                "idle replacement: the program traced differently the second time, so "
+                "not every idle window was written"
+            )
+
+    def hosted(self) -> list[Site]:
+        """The kernel's own ops, by number."""
+        return [site for site in self.log if site.number >= 0]
+
+
+class _Filling:
+    """The fill being traced into a window: what it may do (drive and wait
+    on its own qudit's drive line, at that line's tone, and shift the
+    tone's phase by constants that add up to zero) and how long it is."""
+
+    __slots__ = ("name", "line", "tone", "ops")
+
+    def __init__(self, name: str, line: Any, tone: Any) -> None:
+        self.name = name
+        self.line = line
+        self.tone = tone
+        # (cursor of the buffer, what, value): "length" in cycles, "phase"
+        # in radians, "for" with a trip count, "end".
+        self.ops: list[tuple[int, str, Any]] = []
+
+    def refuse(self, what: str) -> CompilationError:
+        return CompilationError(
+            f"idle replacement: fill {self.name}() {what}; in this version a fill drives and "
+            "waits on its own qudit's drive line, at that line's tone, and nothing else",
+            code="unsupported_construct",
+        )
+
+    def take(
+        self,
+        kind: str,
+        operands: tuple[Any, ...],
+        attrs: dict[str, Any],
+        mark: int,
+        durations: dict[int, Any],
+    ) -> None:
+        """Check the op the fill emits, and note what it adds."""
+        if kind == "pulse.drive":
+            if operands[0].chan is not self.line:
+                raise self.refuse("drives another line than its qudit's drive line")
+            if operands[2].chan is not self.tone:
+                raise self.refuse("plays a tone that is not its drive line's own")
+            cycles = durations.get(operands[1].vid)
+            if cycles.__class__ is not int:
+                raise self.refuse("plays a waveform whose length is not known when it compiles")
+            self.ops.append((mark, "length", cycles))
+        elif kind == "pulse.wait":
+            if operands[0].chan is not self.line:
+                raise self.refuse("waits on another line than its qudit's drive line")
+            cycles = attrs.get("duration", 0)
+            if cycles.__class__ is not int or attrs.get("bounds") is not None:
+                raise self.refuse("waits a length that is not a whole number of cycles")
+            self.ops.append((mark, "length", cycles))
+        elif kind == "pulse.shift_phase":
+            phase = attrs.get("phase_rad", 0.0)
+            if operands[0].chan is not self.tone or not isinstance(phase, (int, float)):
+                raise self.refuse("shifts a phase that is not a number, or of another tone")
+            self.ops.append((mark, "phase", float(phase)))
+        elif kind == "scf.for":
+            trips = max(0, -(-(attrs.get("ub", 0) - attrs.get("lb", 0)) // attrs.get("step", 1)))
+            self.ops.append((mark, "for", trips))
+        elif kind == "scf.for_end":
+            self.ops.append((mark, "end", None))
+        elif kind == "scf.yield":
+            pass
+        elif kind in _LETTERS or kind.startswith("scf.") or kind in _ACQUIRING:
+            raise self.refuse(f"uses {kind.removeprefix('pulse.').removeprefix('scf.')}")
+
+    def undo(self, cursor: int) -> None:
+        ops = self.ops
+        while ops and ops[-1][0] >= cursor:
+            ops.pop()
+
+    def totals(self) -> tuple[int, float]:
+        """Its length in cycles and the phase it leaves its tone shifted
+        by, a loop's body counted once per iteration."""
+        stack = [[1, 0, 0.0]]
+        for _, what, value in self.ops:
+            if what == "for":
+                stack.append([value, 0, 0.0])
+            elif what == "end":
+                trips, length, phase = stack.pop()
+                stack[-1][1] += trips * length
+                stack[-1][2] += trips * phase
+            elif what == "length":
+                stack[-1][1] += value
+            else:
+                stack[-1][2] += value
+        return stack[0][1], stack[0][2]
+
+
+# What a fill may not make: a line or a tone it does not have yet.
+_ACQUIRING = ("pulse.get_drive_line", "pulse.get_readout_line", "pulse.tone")
 
 
 class _SiteTracer:
     """Notes, for the record of its builder, the points between kernel
-    statements; emits as the tracer it is mixed into."""
+    statements, and writes the record's plan at them; emits as the tracer
+    it is mixed into."""
 
     __slots__ = ()
 
@@ -152,18 +308,142 @@ class _SiteTracer:
         sites: Sites = builder._sites
         if sites.busy:
             return super()._emit_pulse_call(fname, call_args)  # type: ignore[misc,no-any-return]
-        log = sites.log
-        before = len(log)
-        sites.entered = (before, tuple(builder._scope))
+        sites.durations = self._durations  # type: ignore[attr-defined]
+        before = sites.hosts
+        scope = tuple(builder._scope)
+        plan = sites.plan
+        if plan is not None and fname in _SITE_CALLS:
+            tiles = plan.before.get(before)
+            if tiles is not None and ("before", before) not in sites.done:
+                self._write(("before", before), tiles, scope)
+        sites.entered = (before, scope)
         sites.busy = True
         try:
             results: tuple[Any, ...] = super()._emit_pulse_call(fname, call_args)  # type: ignore[misc]
         finally:
             sites.busy = False
             sites.entered = None
-        if len(log) > before and log[-1].scope == tuple(builder._scope):
-            log[-1].leave = True
+        if sites.hosts > before:
+            last = sites.hosts - 1
+            if plan is None:
+                if sites.log[-1].scope == tuple(builder._scope):
+                    sites.log[-1].leave = True
+            else:
+                tiles = plan.after.get(last)
+                if tiles is not None and ("after", last) not in sites.done:
+                    self._write(("after", last), tiles, tuple(builder._scope))
         return results
+
+    def _write(self, point: tuple[str, int], tiles: list[Tile], scope: tuple[int, ...]) -> None:
+        """Write *tiles* here, the point *point* of the plan."""
+        builder: Any = self.b  # type: ignore[attr-defined]
+        sites: Sites = builder._sites
+        sites.done[point] = builder._cur
+        sites.busy = True
+        try:
+            for tile in tiles:
+                if tile.scope != scope:
+                    raise InternalError(
+                        "idle replacement: the program traced differently the second time, "
+                        "so an idle window is not where it was found"
+                    )
+                held = self._drive_channel(tile.qudit)
+                sites.inserting = tile.number
+                for item in tile.items:
+                    if item[0] == "wait":
+                        self._emit_pulse_call("wait", [held.cells[0].value, item[1]])
+                    else:
+                        self._fill(held, item[1])
+        finally:
+            sites.busy = False
+            sites.inserting = None
+            sites.filling = None
+        self._refresh_lines()  # type: ignore[attr-defined]
+
+    def _drive_channel(self, qudit: int) -> Any:
+        """The drive channel the trace holds of *qudit*."""
+        qudits = self.b._qref_to_qudit  # type: ignore[attr-defined]
+        for key, held in self._lines.held.items():  # type: ignore[attr-defined]
+            if len(key) == 2 and key[1] == "get_drive_line" and qudits.get(key[0]) == qudit:
+                return held
+        raise InternalError(f"idle replacement: the trace holds no drive line of qudit {qudit}")
+
+    def _fill(self, held: Any, window: int) -> None:
+        """Trace the rule's fill into a window of *window* cycles on the
+        channel *held*, as a call ``fill(qudit, window)`` written here, and
+        complete it with waits to the window's length."""
+        from .kernel._emitter import _channel_values, _restore_channels
+
+        builder: Any = self.b  # type: ignore[attr-defined]
+        sites: Sites = builder._sites
+        rule = sites.rule
+        line = held.cells[0]
+        if sites.plan is not None and sites.plan.pads:
+            self._emit_pulse_call("wait", [line.value, window])
+            return
+        qudit = builder._qref_to_qudit.get(held.key[0])
+        length = None
+        if rule.align != "start":
+            # The wait before the fill is as long as the fill leaves over:
+            # the fill is traced once to learn its length, and undone.
+            length = sites.lengths.get((qudit, window))
+            if length is None:
+                channels = self._lines.held  # type: ignore[attr-defined]
+                count, values = len(channels), _channel_values(channels)
+                checkpoint = builder.checkpoint()
+                length = self._traced_fill(held, window, qudit)
+                builder.rollback(checkpoint)
+                _restore_channels(channels, count, values)
+                self._refresh_lines()  # type: ignore[attr-defined]
+                sites.lengths[qudit, window] = length
+            spare = window - length
+            lead = spare if rule.align == "end" else spare // 2
+            if lead:
+                self._emit_pulse_call("wait", [line.value, lead])
+        else:
+            lead = 0
+        traced = self._traced_fill(held, window, qudit)
+        if length is not None and traced != length:
+            raise InternalError(
+                f"idle replacement: fill {rule.fill.__name__}() has another length each time "
+                "it is traced"
+            )
+        if window - traced - lead:
+            self._emit_pulse_call("wait", [line.value, window - traced - lead])
+
+    def _traced_fill(self, held: Any, window: int, qudit: int) -> int:
+        """Trace the fill here; its length in cycles."""
+        from .kernel.ir_builder import IRValue
+
+        builder: Any = self.b  # type: ignore[attr-defined]
+        sites: Sites = builder._sites
+        fill = sites.rule.fill
+        name = fill.__name__
+        line, tone = held.cells
+        calls, readouts = len(builder.classical), builder._n_readouts
+        filling = sites.filling = _Filling(name, line, tone)
+        try:
+            if getattr(fill, "schedule", None) is not None:
+                raise filling.refuse("has a schedule= of its own")
+            self._dispatch_call(fill, [IRValue(held.key[0], "qref"), window], None)  # type: ignore[attr-defined]
+            self.stack.pop()  # type: ignore[attr-defined]
+        finally:
+            sites.filling = None
+        if len(builder.classical) != calls or builder._n_readouts != readouts:
+            raise filling.refuse("calls a classical function or reads out")
+        length, phase = filling.totals()
+        if abs(phase) > 1e-9:
+            raise filling.refuse(
+                f"leaves its tone's phase shifted by {phase:g} rad (its shifts must add up to zero)"
+            )
+        if length > window:
+            raise CompilationError(
+                f"idle replacement: fill {name}() takes {length} cycles, {length - window} more "
+                f"than its window of {window} cycles on qudit {qudit}",
+                fix="shorten the fill, or raise threshold= so that this window is left alone",
+                code="invalid_duration",
+            )
+        return length
 
 
 _SITED: dict[type[Any], type[Any]] = {}
@@ -686,6 +966,310 @@ def kept(gap: Gap, part: tuple[int, int], rule: Any, log: list[Site]) -> str | N
         if hi.site <= lo.site:
             return "left alone: across the end of a loop iteration (not built yet)"
     return None
+
+
+# ---------------------------------------------------------------- what is written where
+
+
+class Tile:
+    """What is written at one point of the program on one qudit's drive
+    line: waits and fills back to back, as ``("wait", cycles)`` and
+    ``("fill", cycles)``, in the region *scope*."""
+
+    __slots__ = ("qudit", "items", "scope", "number")
+
+    def __init__(
+        self, qudit: int, items: list[tuple[str, int]], scope: tuple[int, ...], number: int
+    ) -> None:
+        self.qudit = qudit
+        self.items = items
+        self.scope = scope
+        self.number = number
+
+
+class Plan:
+    """The tiles to write right before an op of the kernel and right after
+    one, by the op's number. With *pads*, each fill is written as a wait
+    of its window's length."""
+
+    def __init__(self, pads: bool = False) -> None:
+        self.before: dict[int, list[Tile]] = {}
+        self.after: dict[int, list[Tile]] = {}
+        self.pads = pads
+        self.tiles = 0
+
+    def add(
+        self, where: str, site: int, qudit: int, items: list[tuple[str, int]], scope: Any
+    ) -> None:
+        points = self.before if where == "before" else self.after
+        points.setdefault(site, []).append(Tile(qudit, items, scope, self.tiles))
+        self.tiles += 1
+
+
+def _site(event: _Event | None, log: list[Site]) -> Site | None:
+    if event is None or event.site is None or not 0 <= event.site < len(log):
+        return None
+    return log[event.site]
+
+
+def _region(gap: Gap, log: list[Site]) -> tuple[int, ...]:
+    """The region a gap lies in: the innermost that holds both the op it
+    starts after and the op it ends at."""
+    lo, hi = _site(gap.lo, log), _site(gap.hi, log)
+    if lo is None or hi is None:
+        return ()
+    region = []
+    for a, b in zip(lo.scope, hi.scope, strict=False):
+        if a != b:
+            break
+        region.append(a)
+    return tuple(region)
+
+
+def _point(
+    a: _Event | None, b: _Event | None, region: tuple[int, ...], log: list[Site]
+) -> tuple[str, int] | None:
+    """Where the stretch from *a* to *b* is written: right before *b*, else
+    right after *a*, if the tracer is between two statements of *region*
+    there. An op the passes made of several traced ones has no point after
+    it: that point is inside it."""
+    site = _site(b, log)
+    if site is not None and site.enter and site.scope == region:
+        assert b is not None and b.site is not None
+        return "before", b.site
+    site = _site(a, log)
+    if site is not None and site.leave and site.scope == region:
+        assert a is not None and a.site is not None
+        if a.kind in ("drive", "readout", "wait") and site.cycles != a.end - a.start:
+            return None
+        return "after", a.site
+    return None
+
+
+def _tiles(
+    gap: Gap, fills: set[tuple[int, int]], log: list[Site]
+) -> list[tuple[str, int, list[tuple[str, int]], tuple[int, ...]]] | None:
+    """The whole of *gap* as waits and fills (its idle parts in *fills*),
+    cut where the kernel plays or changes the qudit's tone: each piece with
+    the point it is written at, or None if one has none. The whole gap is
+    written so that its line has no slack left: every piece then stays
+    where it is planned under every schedule policy."""
+    region = _region(gap, log)
+    bounds = [(event, start) for event, start, _, what in gap.inner if what in _CHAINED]
+    edges = [gap.start, *(start for _, start in bounds), gap.end]
+    points = [gap.lo, *(event for event, _ in bounds), gap.hi]
+    parts = gap.idle()
+    out = []
+    for k in range(len(edges) - 1):
+        a, b = edges[k], edges[k + 1]
+        if b <= a:
+            continue
+        items: list[tuple[str, int]] = []
+
+        def wait(cycles: int, items: list[tuple[str, int]] = items) -> None:
+            if items and items[-1][0] == "wait":
+                items[-1] = ("wait", items[-1][1] + cycles)
+            else:
+                items.append(("wait", cycles))
+
+        at = a
+        for u, v in parts:
+            if v <= a or u >= b:
+                continue
+            if u > at:
+                wait(u - at)
+            if (u, v) in fills:
+                items.append(("fill", v - u))
+            else:
+                wait(v - u)
+            at = v
+        if b > at:
+            wait(b - at)
+        where = _point(points[k], points[k + 1], region, log)
+        if where is None:
+            return None
+        out.append((*where, items, region))
+    return out
+
+
+_NO_POINT = "left alone: the program has no statement to write it before or after"
+
+
+def plan(
+    found: dict[int, list[Gap]],
+    rule: Any,
+    log: list[Site],
+    threshold: int,
+    chosen: frozenset[int] | None,
+    pads: bool = False,
+) -> tuple[Plan, IdleWindows]:
+    """What to write for *rule* into the gaps *found*, and the windows with
+    what is done in each."""
+    planned = Plan(pads)
+    name = "a wait" if pads else f"{rule.fill.__name__}()"
+    rows = []
+    for qudit in sorted(found):
+        if chosen is not None and qudit not in chosen:
+            continue
+        for gap in found[qudit]:
+            parts = [part for part in gap.idle() if part[1] - part[0] >= threshold]
+            if not parts:
+                continue
+            reasons = {part: kept(gap, part, rule, log) for part in parts}
+            fills = {part for part in parts if reasons[part] is None}
+            if fills:
+                tiles = _tiles(gap, fills, log)
+                if tiles is None:
+                    for part in fills:
+                        reasons[part] = _NO_POINT
+                else:
+                    for where, site, items, region in tiles:
+                        planned.add(where, site, qudit, items, region)
+            for part in parts:
+                reason = reasons[part]
+                rows.append(
+                    IdleWindow(
+                        qudit,
+                        part[0],
+                        part[1],
+                        gap.rounds,
+                        _before(gap, part, log),
+                        reason is None,
+                        reason or f"filled by {name}",
+                    )
+                )
+    return planned, IdleWindows(rows)
+
+
+# ---------------------------------------------------------------- the proof
+
+
+def _shape(item: Any) -> Any:
+    """What an item of a program read back must share with the same item
+    of the program before its windows were filled."""
+    if item.__class__ is tuple:
+        # Loops are numbered as they are met; a fill may hold some.
+        return (item[0], *item[2:])
+    where = (tuple((copy, trips) for _, copy, trips in item.path), len(item.arms))
+    if item.kind == "sync":
+        return (item.site, "sync", item.lines, where)
+    return (item.site, item.kind, item.line, item.tone, item.start, item.end, item.shifts, where)
+
+
+def prove(
+    lines: list[tuple[str, int]], base: list[Any], module: Any, log: list[Site], name: str
+) -> None:
+    """Check that *module*, the program of *base* with its windows filled,
+    is that program with something written into its gaps: every op of the
+    kernel is where it was, and what was written lies back to back from the
+    op before it to the op after it. A ``TimingError`` names the first op
+    that moved."""
+    filled_lines, final = read(module)
+    if filled_lines != lines:
+        raise InternalError("idle replacement: the filled program has other lines")
+    # The kernel's own ops, and of the loops only those that hold some.
+    loops = {
+        loop
+        for item in final
+        if item.__class__ is not tuple and (item.site is None or item.site >= 0)
+        for loop, _, _ in item.path
+    }
+    own = [
+        item
+        for item in final
+        if (
+            (item[0] != "advance" or item[1] in loops)
+            if item.__class__ is tuple
+            else (item.site is None or item.site >= 0)
+        )
+    ]
+    for was, now in zip(base, own, strict=False):
+        a, b = _shape(was), _shape(now)
+        if a == b:
+            continue
+        site = _site(was if was.__class__ is not tuple else None, log)
+        if site is None or a[:2] != b[:2] or a[1] == "sync":
+            break
+        if a[4] != b[4]:
+            moved = f"starts at cycle {b[4]} instead of {a[4]}"
+        elif a[6] != b[6]:
+            moved = (
+                f"repeats every {', '.join(map(str, b[6]))} cycles instead of every "
+                f"{', '.join(map(str, a[6]))}"
+            )
+        else:
+            moved = f"ends at cycle {b[5]} instead of {a[5]}"
+        raise CompilationError(
+            f"idle replacement: with the idle windows of {name}() filled, "
+            f"{site.describe()} {moved}",
+            code="timing",
+        )
+    else:
+        if len(base) == len(own):
+            _back_to_back(final, name)
+            return
+    raise InternalError(
+        f"idle replacement: {name}() traced differently the second time, so its filled "
+        "program is not the program with its windows filled"
+    )
+
+
+def _back_to_back(final: list[Any], name: str) -> None:
+    """Check that each op written into a gap starts where the op before it
+    on its line ends, and that the kernel's next op on the line starts
+    where the last written one ends."""
+    ends: dict[int, int] = {}
+    latest: dict[int, _Event] = {}
+    tiled: set[int] = set()
+    for item in final:
+        if item.__class__ is tuple:
+            if item[0] == "advance":
+                # The iterations of a loop that are not listed: its lines
+                # are that much further on.
+                _, loop, depth, iterations = item
+                for line, event in latest.items():
+                    ends[line] += event.advance(depth, loop, iterations)
+            continue
+        if item.kind == "sync":
+            # Its lines go on from where the last of them is free; what was
+            # written before it on a line ends there.
+            meet = max((ends.get(line, 0) for line in item.lines), default=0)
+            last = max(
+                (latest[line] for line in item.lines if line in latest),
+                key=lambda event: event.end,
+                default=None,
+            )
+            for line in item.lines:
+                if line in tiled and ends[line] != meet:
+                    raise CompilationError(
+                        f"idle replacement: what was written into an idle window of {name}() "
+                        f"does not stay in place: line {line} is free at cycle {ends[line]}, "
+                        f"before the sync it was written up to, at {meet}",
+                        code="timing",
+                    )
+                ends[line] = meet
+                if last is not None:
+                    latest[line] = last
+            tiled.difference_update(item.lines)
+            continue
+        if item.kind not in ("drive", "readout", "wait"):
+            continue
+        line = item.line
+        written = item.site is not None and item.site < 0
+        expected = ends.get(line, 0)
+        if (written or line in tiled) and item.start != expected:
+            raise CompilationError(
+                f"idle replacement: what was written into an idle window of {name}() does "
+                f"not stay in place: a {item.kind} on line {line} starts at cycle "
+                f"{item.start}, not at {expected} where the operation before it ends",
+                code="timing",
+            )
+        if written:
+            tiled.add(line)
+        else:
+            tiled.discard(line)
+        ends[line] = item.end
+        latest[line] = item
 
 
 def report(

@@ -3489,7 +3489,11 @@ public:
   // and the printed module does not show, so a numbered module compiles as
   // the same module without numbers; a copy of an op (a peeled or unrolled
   // loop iteration) keeps its number, and so does the op a rewrite makes
-  // of several (the first of them).
+  // of several (the first of them). An op written into an idle window has
+  // a negative number and, until the numbers are removed, the attribute
+  // `pulse.written`: the rewrites keep it apart from the kernel's own ops
+  // (a written wait is not merged, a written drive not fused with one of
+  // the kernel's).
 
   static bool isSiteOp(mlir::Operation *op) {
     return mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp,
@@ -3527,6 +3531,8 @@ public:
             ctx_.get(), "pulse.site",
             static_cast<unsigned>(site < 0 ? -site - 1 : site),
             site < 0 ? 1 : 0));
+        if (site < 0)
+          op->setAttr("pulse.written", mlir::UnitAttr::get(ctx_.get()));
       }
       ++next;
       kinds.push_back(mlir::isa<pulse::DriveOp>(op)     ? 'd'
@@ -3551,6 +3557,7 @@ public:
       module.walk([&](mlir::Operation *op) {
         if (siteOf(op))
           op->setLoc(unknown);
+        op->removeAttr("pulse.written");
       });
     };
     strip(*module_);

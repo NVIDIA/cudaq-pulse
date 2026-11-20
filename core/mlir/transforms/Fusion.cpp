@@ -111,6 +111,10 @@ struct FuseAdjacentSquareDrives
 
     if (secondDrive->getBlock() != firstDrive->getBlock())
       return mlir::failure();
+    // A drive written into an idle window stays apart from the kernel's own.
+    if (firstDrive->hasAttr("pulse.written") !=
+        secondDrive->hasAttr("pulse.written"))
+      return mlir::failure();
     for (mlir::Operation *op = firstDrive->getNextNode(); op != secondDrive;
          op = op->getNextNode())
       if (holdsBarrier(op))
