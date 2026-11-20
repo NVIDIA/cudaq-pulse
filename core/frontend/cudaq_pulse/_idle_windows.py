@@ -189,7 +189,7 @@ class Sites:
             sited = _SITED[base] = type(
                 f"Sited{base.__name__}", (_SiteTracer, base), {"__slots__": ()}
             )
-        return sited  # type: ignore[no-any-return]
+        return sited
 
     def number(self, module: Any) -> None:
         """Give each numbered op of *module*, just built from the trace,
@@ -205,10 +205,6 @@ class Sites:
                 "idle replacement: the program traced differently the second time, so "
                 "not every idle window was written"
             )
-
-    def hosted(self) -> list[Site]:
-        """The kernel's own ops, by number."""
-        return [site for site in self.log if site.number >= 0]
 
 
 class _Filling:
@@ -281,7 +277,7 @@ class _Filling:
     def totals(self) -> tuple[int, float]:
         """Its length in cycles and the phase it leaves its tone shifted
         by, a loop's body counted once per iteration."""
-        stack = [[1, 0, 0.0]]
+        stack: list[list[Any]] = [[1, 0, 0.0]]
         for _, what, value in self.ops:
             if what == "for":
                 stack.append([value, 0, 0.0])
@@ -293,7 +289,7 @@ class _Filling:
                 stack[-1][1] += value
             else:
                 stack[-1][2] += value
-        return stack[0][1], stack[0][2]
+        return int(stack[0][1]), float(stack[0][2])
 
 
 # What a fill may not make: a line or a tone it does not have yet.
@@ -463,7 +459,7 @@ class _SiteTracer:
         try:
             if getattr(fill, "schedule", None) is not None:
                 raise filling.refuse("has a schedule= of its own")
-            self._dispatch_call(fill, [IRValue(held.key[0], "qref"), window], None)  # type: ignore[attr-defined]
+            self._dispatch_call(fill, [IRValue(held.key[0], "qref"), window], None)
             self.stack.pop()  # type: ignore[attr-defined]
         finally:
             sites.filling = None
@@ -829,11 +825,11 @@ def gaps(lines: list[tuple[str, int]], items: list[Any]) -> dict[int, list[Gap]]
                 # The readouts of the iteration after the second, which may
                 # run during the second's gaps, and of the last.
                 for listed in readouts.values():
-                    for event, start, end in list(listed):
+                    for read, start, end in list(listed):
                         for more in {1, iterations}:
-                            shift = event.advance(depth, loop, more)
+                            shift = read.advance(depth, loop, more)
                             if shift:
-                                listed.append((event, start + shift, end + shift))
+                                listed.append((read, start + shift, end + shift))
             continue
         event: _Event = item
         if event.kind == "sync":
@@ -1164,12 +1160,13 @@ def _tiles(
     op it ends at, which starts the next iteration."""
     region = _region(gap, log)
     wraps = gap.wraps()
+    # In a gap across the end of an iteration, only what the body writes
+    # after the op the gap starts after cuts it: that op's number.
+    after = gap.lo.site if wraps and gap.lo is not None and gap.lo.site is not None else -1
     bounds = [
         (event, start)
         for event, start, _, what in gap.inner
-        # In a gap across the end of an iteration, only what the body
-        # writes after the op the gap starts after cuts it.
-        if what in _CHAINED and not (wraps and (event.site is None or event.site < gap.lo.site))  # type: ignore[union-attr]
+        if what in _CHAINED and (after < 0 or (event.site is not None and event.site >= after))
     ]
     edges = [gap.start, *(start for _, start in bounds), gap.end]
     points = [gap.lo, *(event for event, _ in bounds), None if wraps else gap.hi]

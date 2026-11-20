@@ -199,7 +199,7 @@ class IdleReplacement:
         )
 
     def __eq__(self, other: object) -> bool:
-        return other.__class__ is IdleReplacement and other._key() == self._key()  # type: ignore[attr-defined]
+        return other.__class__ is IdleReplacement and other._key() == self._key()
 
     def __reduce__(self) -> tuple[Any, ...]:
         # With its fill, which pickles as a kernel does.
@@ -241,7 +241,7 @@ class _IdleOptions(CompileOptions):
     # Fields here: every way of copying options (dataclasses.replace, the
     # field-by-field copy of the unit warnings) keeps them.
     idle_replacement: IdleReplacement | None = None  # type: ignore[assignment]
-    unit_warnings: bool = False  # type: ignore[assignment]
+    unit_warnings: bool = False
 
     def without_rule(self) -> CompileOptions:
         """The options of the same compilation with no idle replacement."""
@@ -256,7 +256,7 @@ class _IdleOptions(CompileOptions):
         """The options of one of the compilations an idle replacement makes
         of the program: no rule, and the record *sites* its trace keeps."""
         return _SiteOptions(
-            *(getattr(self, f.name) for f in dataclasses.fields(CompileOptions)),
+            **{f.name: getattr(self, f.name) for f in dataclasses.fields(CompileOptions)},
             unit_warnings=self.unit_warnings,
             _sites=sites,
         )
@@ -272,7 +272,7 @@ class _SiteOptions(CompileOptions):
     trace keeps of the operations it emits. A record equals only itself,
     so no compilation is taken for another."""
 
-    unit_warnings: bool = False  # type: ignore[assignment]
+    unit_warnings: bool = False
     _sites: Sites | None = None  # type: ignore[assignment]
 
 
@@ -297,7 +297,7 @@ def with_idle_replacement(
             "add it, as passes=(*pulse.compiler.DEFAULT_PASSES, pulse.Pass.IDLE_REPLACEMENT)"
         )
     return _IdleOptions(
-        *(getattr(options, f.name) for f in dataclasses.fields(CompileOptions)),
+        **{f.name: getattr(options, f.name) for f in dataclasses.fields(CompileOptions)},
         idle_replacement=rule,
         unit_warnings=options.unit_warnings,
     )
@@ -314,7 +314,7 @@ def _float_wait(kernel: Kernel[...], entry: _Entry) -> CompilationError | None:
     for wait in waits.waits:
         if wait.lowest is None:
             continue  # as long as an answer: a run-time length, not a float's
-        for index in _ARGUMENT.findall(wait.source):
+        for index in _ARGUMENT.findall(wait.source or ""):
             name = kernel._names[entry.runtime[int(index)]]
             if name not in names:
                 names.append(name)
@@ -336,7 +336,7 @@ def _float_wait(kernel: Kernel[...], entry: _Entry) -> CompilationError | None:
 def _cycles(threshold: int | Time, clock_ghz: float) -> int:
     """*threshold* in clock cycles: the fewest that last at least a time."""
     if threshold.__class__ is int:
-        return threshold  # type: ignore[return-value]
+        return threshold
     from ._units import in_cycles
 
     numerator, denominator = in_cycles(threshold, clock_ghz)  # type: ignore[arg-type]
