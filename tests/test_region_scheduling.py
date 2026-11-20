@@ -61,13 +61,15 @@ class _Writer:
             else:
                 self.loop(trips, body)
         elif kind == "drive":
-            _, i, d = op
+            # On line i, with the tone line j holds (its own unless given).
+            i, d = op[1], op[2]
+            j = op[3] if len(op) > 3 else i
             line, tone = self.fresh("d"), self.fresh("t")
             self.emit(
-                f"{line}, {tone} = pulse.drive {self.lines[i]}, %wf{d}, {self.tones[i]} : "
+                f"{line}, {tone} = pulse.drive {self.lines[i]}, %wf{d}, {self.tones[j]} : "
                 f"{_LINE}, !pulse.waveform, {_TONE} -> {_LINE}, {_TONE}"
             )
-            self.lines[i], self.tones[i] = line, tone
+            self.lines[i], self.tones[j] = line, tone
         elif kind == "phase":
             _, i, value = op
             tone = self.fresh("t")
@@ -77,6 +79,12 @@ class _Writer:
                 f"{tone} = pulse.shift_phase {self.tones[i]}, {angle} : {_TONE}, f64 -> {_TONE}"
             )
             self.tones[i] = tone
+        elif kind == "rotate":
+            # Each member's line takes the tone of the next member's.
+            members = op[1]
+            moved = [self.tones[i] for i in members[1:] + members[:1]]
+            for i, tone in zip(members, moved, strict=True):
+                self.tones[i] = tone
         elif kind == "wait":
             _, i, d = op
             line = self.fresh("d")
@@ -172,6 +180,72 @@ def test_retained_loop_schedules_like_its_unrolling(policy, case, drives, penalt
     assert _timeline(rolled, policy, drives, 0, penalty) == _timeline(
         unrolled, policy, drives, 0, penalty
     )
+
+
+# A loop that hands tones from one iteration argument to another: each
+# argument holds another tone every trip. (lines, before, trips, body, after)
+_ROTATIONS = {
+    # Line 0 plays the tone of line 1, then lines 1-3 pass theirs on.
+    "three_rolled": (
+        4,
+        [],
+        7,
+        [("drive", 0, 40, 1), ("rotate", (1, 2, 3))],
+        [("drive", i, 40) for i in (1, 2, 3)],
+    ),
+    "two_rolled": (
+        3,
+        [("drive", 2, 40)],
+        7,
+        [("drive", 0, 40, 1), ("rotate", (1, 2))],
+        [("drive", i, 40) for i in (1, 2)],
+    ),
+    # The tone of line 4 is busy until 140: the last trips are peeled.
+    "four_peeled": (
+        5,
+        [("drive", 4, 100), ("drive", 4, 40)],
+        5,
+        [("drive", 0, 40, 1), ("rotate", (1, 2, 3, 4))],
+        [("drive", i, 40) for i in (1, 2, 3, 4)],
+    ),
+    # Line 0's own tone is rotated with the others.
+    "three_peeled": (
+        3,
+        [("drive", 1, 100), ("drive", 2, 100), ("drive", 2, 100)],
+        5,
+        [("drive", 0, 40), ("rotate", (0, 1, 2))],
+        [("drive", i, 40) for i in (0, 1, 2)],
+    ),
+    "three_after_a_drive": (
+        3,
+        [("drive", 2, 100)],
+        3,
+        [("drive", 0, 40), ("rotate", (0, 1, 2))],
+        [("drive", i, 40) for i in (0, 1, 2)],
+    ),
+    # The tone played in an inner loop, which the outer loop hands on.
+    "three_inner_loop": (
+        4,
+        [],
+        7,
+        [("loop", 1, [("drive", 0, 40, 1)]), ("rotate", (1, 2, 3))],
+        [("drive", i, 40) for i in (1, 2, 3)],
+    ),
+    "three_inner_loop_of_two": (
+        4,
+        [],
+        7,
+        [("loop", 2, [("drive", 0, 40, 1)]), ("rotate", (1, 2, 3))],
+        [("drive", i, 40) for i in (1, 2, 3)],
+    ),
+}
+
+
+@pytest.mark.parametrize("case", _ROTATIONS)
+@pytest.mark.parametrize("policy", ["asap", "alap", "rcp", "alap_rcp"])
+def test_tones_rotated_through_a_loop_schedule_like_its_unrolling(policy, case):
+    rolled, unrolled = _programs(*_ROTATIONS[case])
+    assert _timeline(rolled, policy, 3, 0, 0) == _timeline(unrolled, policy, 3, 0, 0)
 
 
 # ── A measurement carried to the next iteration ──────────────────────

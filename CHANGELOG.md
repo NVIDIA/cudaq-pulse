@@ -345,6 +345,14 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   such waits at distance 41. The check now compiles for any number of
   waits and accepts and refuses the same calls as before; waits of one
   length and bounds share one test.
+- A loop that passes tones from one iteration argument to another (tones
+  rotated or swapped each trip, also when an inner loop plays them) is
+  scheduled as its unrolling under every policy: a drive after it on a tone
+  it hands out no longer starts before the loop's last pulse on that tone
+  (`asap` started one at 0), one before it no longer runs into the loop's
+  first (`alap`), and a loop whose last trips are peeled off passes each
+  tone (or link) to the right op after it instead of the last trip's to
+  all.
 
 ## [0.1.0] - 2026-11-13
 
