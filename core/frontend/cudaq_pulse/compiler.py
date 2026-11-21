@@ -1119,16 +1119,26 @@ def _rejected_literal(
     from .kernel._emitter import add_source_note
 
     message, word = error.args
-    located = CompilationError(message, code="wrong_argument")
+    arms = message.startswith("arms:")
+    if arms:
+        located = _different_lines(message, None)
+    else:
+        located = CompilationError(message, code="wrong_argument")
     finder = traced.finder(word)
     try:
         if not finder.locate(fn, trace_args):
             return located
     except Exception:
-        return located
+        # The trace failed. When *traced* is a trace that failed too (its
+        # record is in a loop traced rolled, where finding it does not stop
+        # the trace), the two are one trace if they wrote the same.
+        if finder.frames is None:
+            return located
     written = finder.get_buffer()
     if traced.get_buffer()[: len(written)] != written:
         return located
+    if arms:
+        located = _different_lines(message, finder.labels)
     if finder.frames:
         frames, heading = finder.frames, None
     elif finder.host_frames:
@@ -1143,6 +1153,113 @@ def _rejected_literal(
     located.pulse_callers = frames[1:]  # type: ignore[attr-defined]
     add_source_note(located, heading)
     return located
+
+
+def _different_lines(message: str, labels: Sequence[str] | None) -> CompilationError:
+    """The error for a name, or a place of a list, that holds different
+    lines (or different tones) after the two arms of an if on a
+    measurement, and is then operated on, or that a loop compiled as one
+    loop would have to carry between its iterations. *message* is the
+    extension's: ``arms:``, the place of that result of the if, ``,tone``
+    when it is a tone and ``,loop`` for the loop. *labels* is what each
+    result of the if is carried by, when known."""
+    place, *marks = message[5:].split(",")
+    what = "a name or a place of a list"
+    if labels is not None and place.isdigit() and int(place) < len(labels):
+        what = labels[int(place)]
+    kind = "tone" if "tone" in marks else "line"
+    fix = (
+        f"do in each arm what follows on that arm's {kind}, or bind it to the same {kind} "
+        "in both arms"
+    )
+    if "loop" in marks:
+        # Which iterations read the name is known only when each is traced.
+        so = "so the loop cannot carry it from one iteration to the next"
+        fix += (
+            "; when no iteration reads it before binding it, a larger unroll_threshold= "
+            "compiles the loop one iteration at a time"
+        )
+    elif kind == "tone":
+        so = "so no operation after the if can be given it"
+    else:
+        so = "so no operation after the if can be written on it"
+    return CompilationError(
+        f"after this if, {what} holds one {kind} when the measurement is set and another when "
+        f"it is not (its arms bind it differently, as a, b = b, a in one arm does), {so}",
+        fix=fix,
+        code="runtime_value",
+    )
+
+
+def _cause_in_program(
+    fn: Any,
+    trace_args: Sequence[Any],
+    builder: Any,
+    target: QuantumSystem,
+    parameters: tuple[str, ...],
+    slots: int,
+    failed: CompilationError,
+) -> CompilationError | None:
+    """Why a trace of *fn* failed with *failed*, when what it wrote before
+    failing says so: a record the extension rejects (an if whose arms leave
+    different lines in one place) leaves the tracer with a line it has lost
+    track of, and the trace fails at a later operation on that line with an
+    error about the operation. Only a line the failing operation was given
+    is looked up: another the kernel holds may be lost as well, and is not
+    why this operation failed."""
+    from .kernel.ir_builder import LINEAR_TYPES, IRValue
+
+    # A line the tracer has lost track of is no channel's value and has no
+    # tone. Two failures are that line's: an operation given it finds no
+    # tone among its operands (play_calibrated, where the operand error is
+    # raised), and an attribute of it is read (_value_attribute). Any other
+    # failure is its own, whatever lines the kernel holds.
+    trace = failed.__traceback__
+    if trace is None:
+        return None
+    while trace.tb_next is not None:
+        trace = trace.tb_next
+    held = trace.tb_frame.f_locals
+    site = trace.tb_frame.f_code.co_name
+    given: Sequence[Any] = ()
+    if site == "_value_attribute":
+        given = (held.get("value"),)
+    elif site == "play_calibrated":
+        operands = held.get("call_args")
+        # Identity, not ``in``: a line compared with ``==`` is an error.
+        if operands.__class__ is list and any(item is None for item in operands):
+            given = operands
+    lost = [
+        item.vid
+        for item in given
+        if item.__class__ is IRValue and item.vtype in LINEAR_TYPES and item.chan is None
+    ]
+    if not lost:
+        return None
+    count = builder.qudit_count
+    tables = target._tables
+    if tables[0] < count:
+        tables = target._frequency_tables(count)
+    try:
+        PulseModuleBuilder().build_from_packed(
+            builder.get_buffer(),
+            target.clock_ghz,
+            count,
+            tables[1],
+            list(parameters),
+            ["f64"] * len(parameters),
+            name=builder.name,
+            slot_count=slots,
+            readout_freqs=tables[2],
+            lost_lines=lost,
+        )
+    except PackedValueError as error:
+        if error.args[0].startswith("arms:"):
+            return _rejected_literal(fn, trace_args, builder, error)
+    except Exception:  # noqa: S110
+        # What was traced ends where the trace failed: not a whole program.
+        pass
+    return None
 
 
 _BUDGETS = ("max_duration_cycles", "reaction_deadline_ns", "max_program_duration")
@@ -1190,55 +1307,56 @@ def build(
     builder.locate_structural = frozenset(parameters)
     plain = machine._plain
     clocks = None if plain else _clocked_builder(builder, machine, target)
-    if options.unit_warnings:
-        from .kernel._unit_warnings import unit_checked
-
-        checked = unit_checked(builder, target)
-        builder.returned = _trace_kernel_with_builder(fn, builder, trace_args, checked)
-    else:
-        builder.returned = _trace_kernel_with_builder(fn, builder, trace_args)
-    needed = tuple(sorted(builder.structural & set(parameters)))
-    if needed:
-        error = SymbolicValueError(
-            f"{name}(): {', '.join(needed)} must be known while the kernel compiles",
-            needed,
-            "a value that must be an integer, such as a waveform duration",
-        )
-        frames = getattr(builder, "structural_at", {}).get(needed[0])
-        if frames:
-            error.pulse_source = frames[0]  # type: ignore[attr-defined]
-            error.pulse_callers = frames[1:]  # type: ignore[attr-defined]
-        raise error
-    check_root_schedule(options.schedule, builder)
-    qudits = builder.qudits
-    # The quantum system's tables, of which the module records qudits 0 to
-    # qudit_count - 1: when the target defines all of those, it defines every
-    # qudit of the program, else they are checked.
-    qudit_count = builder.qudit_count
-    carrier_count, freq, readout_freqs = target._tables
-    if carrier_count < qudit_count:
-        carrier_count, freq, readout_freqs = target._frequency_tables(qudit_count)
-        if carrier_count < qudit_count:
-            missing = [q for q in qudits if q not in target.frequencies]
-            if missing:
-                # Runtime qudit k is qudit -1 - k, of no target.
-                missing = [q for q in missing if q >= 0]
-                if missing:
-                    defined = sorted(target.frequencies)
-                    span = f"{defined[0]}..{defined[-1]}" if defined else "none"
-                    raise CompilationError(
-                        f"{name}() uses qudit {', '.join(map(str, missing))}, which quantum system "
-                        f"{target.name!r} does not define (it defines qudits {span})",
-                        code="control_system",
-                    )
-    buf: Any = builder.get_buffer()
-    routes = builder.routes
-    links = [link for link, _, _ in routes] if routes else []
-    metrics.trace_ms = (time.perf_counter() - t0) * 1000
-    metrics.op_count = builder.op_count
-
-    t0 = time.perf_counter()
+    # One try for the trace and the module: a try statement costs a bytecode.
     try:
+        if options.unit_warnings:
+            from .kernel._unit_warnings import unit_checked
+
+            checked = unit_checked(builder, target)
+            builder.returned = _trace_kernel_with_builder(fn, builder, trace_args, checked)
+        else:
+            builder.returned = _trace_kernel_with_builder(fn, builder, trace_args)
+        needed = tuple(sorted(builder.structural & set(parameters)))
+        if needed:
+            error = SymbolicValueError(
+                f"{name}(): {', '.join(needed)} must be known while the kernel compiles",
+                needed,
+                "a value that must be an integer, such as a waveform duration",
+            )
+            frames = getattr(builder, "structural_at", {}).get(needed[0])
+            if frames:
+                error.pulse_source = frames[0]  # type: ignore[attr-defined]
+                error.pulse_callers = frames[1:]  # type: ignore[attr-defined]
+            raise error
+        check_root_schedule(options.schedule, builder)
+        qudits = builder.qudits
+        # The quantum system's tables, of which the module records qudits 0 to
+        # qudit_count - 1: when the target defines all of those, it defines every
+        # qudit of the program, else they are checked.
+        qudit_count = builder.qudit_count
+        carrier_count, freq, readout_freqs = target._tables
+        if carrier_count < qudit_count:
+            carrier_count, freq, readout_freqs = target._frequency_tables(qudit_count)
+            if carrier_count < qudit_count:
+                missing = [q for q in qudits if q not in target.frequencies]
+                if missing:
+                    # Runtime qudit k is qudit -1 - k, of no target.
+                    missing = [q for q in missing if q >= 0]
+                    if missing:
+                        defined = sorted(target.frequencies)
+                        span = f"{defined[0]}..{defined[-1]}" if defined else "none"
+                        raise CompilationError(
+                            f"{name}() uses qudit {', '.join(map(str, missing))}, which quantum "
+                            f"system {target.name!r} does not define (it defines qudits {span})",
+                            code="control_system",
+                        )
+        buf: Any = builder.get_buffer()
+        routes = builder.routes
+        links = [link for link, _, _ in routes] if routes else []
+        metrics.trace_ms = (time.perf_counter() - t0) * 1000
+        metrics.op_count = builder.op_count
+
+        t0 = time.perf_counter()
         if slots:
             module = PulseModuleBuilder().build_from_packed(
                 buf,
@@ -1273,6 +1391,14 @@ def build(
             )
     except PackedValueError as error:
         raise _rejected_literal(fn, trace_args, builder, error) from None
+    except CompilationError as failed:
+        # The failure may be the late sign of something traced earlier.
+        cause = None
+        if failed.__class__ is CompilationError:
+            cause = _cause_in_program(fn, trace_args, builder, target, parameters, slots, failed)
+        if cause is None:
+            raise
+        raise cause from None
     if links:
         system = machine._system
         module.set_attributes(

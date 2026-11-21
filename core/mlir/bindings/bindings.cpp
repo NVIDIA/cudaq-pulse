@@ -260,6 +260,227 @@ rejectPacked(const std::string &what, const char *rule, const std::string &got,
   throw PackedValueError(what + " " + rule + ", got " + got, word);
 }
 
+/// The value of a line or tone as it enters `arm`, an arm of an if being
+/// built: the version of it that no op of the arm made. `entered` holds,
+/// for a result of an if that lies in an arm of another, the value that
+/// entered that if, so that the enclosing if does not walk its arms again.
+inline mlir::Value
+enteringArm(mlir::Value value, mlir::Block *arm,
+            const llvm::DenseMap<mlir::Value, mlir::Value> &entered) {
+  while (value) {
+    mlir::Operation *made = value.getDefiningOp();
+    if (!made || !arm ||
+        (made->getBlock() != arm && !arm->findAncestorOpInBlock(*made)))
+      break;
+    if (!entered.empty()) {
+      auto inner = entered.find(value);
+      if (inner != entered.end()) {
+        value = inner->second;
+        continue;
+      }
+    }
+    mlir::Value before = pulse::linearPredecessor(value);
+    if (!before)
+      break;
+    value = before;
+  }
+  return value;
+}
+
+/// What a line or tone value is a version of: its line (a line's own tone
+/// stands for its line), or, for a tone that is a frame of its own, the
+/// pulse.tone that made the frame. Null when neither is found.
+inline mlir::Operation *lineOrFrame(pulse::AllocationTracer &trace,
+                                    mlir::Value value) {
+  if (mlir::Operation *line = trace(value))
+    return line;
+  while (mlir::Value before = pulse::linearPredecessor(value))
+    value = before;
+  mlir::Operation *made = value.getDefiningOp();
+  return made && mlir::isa<pulse::ToneOp>(made) ? made : nullptr;
+}
+
+/// Whether `op` is in `block` or in a region of an op of it.
+inline bool within(mlir::Operation *op, mlir::Block *block) {
+  return block &&
+         (op->getBlock() == block || block->findAncestorOpInBlock(*op));
+}
+
+/// Whether two operands are one number: one value, or equal constants.
+inline bool sameNumber(mlir::Value a, mlir::Value b) {
+  llvm::APFloat x(0.0), y(0.0);
+  return a == b || (mlir::matchPattern(a, mlir::m_ConstantFloat(&x)) &&
+                    mlir::matchPattern(b, mlir::m_ConstantFloat(&y)) &&
+                    x.bitwiseIsEqual(y));
+}
+
+/// Whether `tone` is, on every path that reaches it, a frame made at the
+/// frequency and phase `like` is made at and only played since: no op
+/// changed its phase or frequency. An if's result is so when what each of
+/// its arms yields there is; a loop's, when what the loop began with and
+/// what its body gives back are; a schedule block's, when what its body
+/// yields is. Every value is looked at once.
+inline bool asMade(mlir::Value tone, mlir::Operation *like) {
+  llvm::SmallVector<mlir::Value, 16> open{tone};
+  llvm::DenseSet<mlir::Value> seen;
+  while (!open.empty()) {
+    mlir::Value value = open.pop_back_val();
+    if (!value)
+      return false;
+    if (!seen.insert(value).second)
+      continue;
+    if (auto argument = mlir::dyn_cast<mlir::BlockArgument>(value)) {
+      mlir::Operation *parent = argument.getOwner()->getParentOp();
+      unsigned place = argument.getArgNumber();
+      if (auto block = mlir::dyn_cast_or_null<pulse::ScheduleBlockOp>(parent)) {
+        open.push_back(block.getInputs()[place]);
+        continue;
+      }
+      // An iteration begins with what the loop began with, or with what
+      // the iteration before it gave back.
+      auto loop = mlir::dyn_cast_or_null<mlir::scf::ForOp>(parent);
+      if (!loop || place == 0)
+        return false;
+      open.push_back(loop.getInitArgs()[place - 1]);
+      open.push_back(loop.getBody()->getTerminator()->getOperand(place - 1));
+      continue;
+    }
+    mlir::Operation *made = value.getDefiningOp();
+    unsigned index = mlir::cast<mlir::OpResult>(value).getResultNumber();
+    if (mlir::isa<pulse::ToneOp>(made)) {
+      if (!sameNumber(made->getOperand(0), like->getOperand(0)) ||
+          !sameNumber(made->getOperand(1), like->getOperand(1)))
+        return false;
+    } else if (auto branch = mlir::dyn_cast<mlir::scf::IfOp>(made)) {
+      open.push_back(branch.thenYield().getOperand(index));
+      open.push_back(branch.elseYield().getOperand(index));
+    } else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(made)) {
+      open.push_back(loop.getInitArgs()[index]);
+      open.push_back(loop.getBody()->getTerminator()->getOperand(index));
+    } else if (auto block = mlir::dyn_cast<pulse::ScheduleBlockOp>(made)) {
+      open.push_back(
+          block.getBody().front().getTerminator()->getOperand(index));
+    } else if (mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::IQAcquireOp>(
+                   made)) {
+      open.push_back(pulse::linearPredecessor(value));
+    } else {
+      return false;
+    }
+  }
+  return true;
+}
+
+/// Whether `then` and `other`, which the two arms of an if yield in one
+/// result, are versions of different lines, or of different tones. Looked
+/// up only when the arms did not begin with one value there: both arms
+/// begin with the same version of every line.
+///
+/// Whether an op in `arm` changes the tone `entered`, a version from
+/// outside the arm, or a later version of it: any op given it there other
+/// than a play. A play's tone result is followed, and so is what a loop,
+/// an if or a schedule block inside the arm makes of it.
+inline bool changedIn(mlir::Value entered, mlir::Block *arm) {
+  if (!arm)
+    return false;
+  llvm::SmallVector<mlir::Value, 8> open{entered};
+  llvm::DenseSet<mlir::Value> seen;
+  while (!open.empty()) {
+    mlir::Value value = open.pop_back_val();
+    if (!seen.insert(value).second)
+      continue;
+    for (mlir::OpOperand &use : value.getUses()) {
+      mlir::Operation *user = use.getOwner();
+      if (!within(user, arm))
+        continue;
+      unsigned place = use.getOperandNumber();
+      if (mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::IQAcquireOp>(
+              user)) {
+        for (mlir::OpResult result : user->getResults())
+          if (mlir::isa<pulse::ToneType>(result.getType()))
+            open.push_back(result);
+      } else if (mlir::isa<mlir::scf::YieldOp, pulse::YieldOp>(user)) {
+        // What a region inside the arm yields is its op's result there,
+        // and a loop's next iteration begins with it.
+        mlir::Operation *parent = user->getParentOp();
+        if (!parent || place >= parent->getNumResults())
+          return true;
+        open.push_back(parent->getResult(place));
+        if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(parent))
+          open.push_back(loop.getRegionIterArgs()[place]);
+      } else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(user)) {
+        for (auto [init, argument, result] :
+             llvm::zip(loop.getInitArgs(), loop.getRegionIterArgs(),
+                       loop.getResults()))
+          if (init == value) {
+            open.push_back(argument);
+            open.push_back(result);
+          }
+      } else if (auto block = mlir::dyn_cast<pulse::ScheduleBlockOp>(user)) {
+        for (auto [input, argument] : llvm::zip(
+                 block.getInputs(), block.getBody().front().getArguments()))
+          if (input == value)
+            open.push_back(argument);
+      } else {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/// The first read of a transition's tone inside an arm makes a pulse.tone
+/// there, so two arms may yield frames of two ops for what the kernel
+/// reads as one tone. A read still in view at the if (`kept` tells: made
+/// in a block open around the if) is the one a read of the same tone
+/// returns, in the arms too: such a frame and another such, or one that an
+/// arm of this if made, are two tones of the kernel, also at one
+/// frequency. Otherwise: what reads the result follows the frame the first
+/// arm yields, as it is on each path. That is the other path's tone too
+/// when the other arm's frame is made alike and only played, and the first
+/// arm's is either its own (made in that arm, whatever the arm then does to
+/// it) or made alike, only played, and not changed by the other arm
+/// (`entered` is the version of it the if began with). A frame an op
+/// changed on the other path is another tone.
+inline bool differentLines(mlir::Value then, mlir::Block *thenArm,
+                           mlir::Value entered, mlir::Value other,
+                           mlir::Block *elseArm,
+                           llvm::function_ref<bool(mlir::Operation *)> kept) {
+  pulse::AllocationTracer trace;
+  mlir::Operation *a = lineOrFrame(trace, then);
+  mlir::Operation *b = lineOrFrame(trace, other);
+  if (!a || !b || a == b)
+    return false;
+  if (!mlir::isa<pulse::ToneOp>(a) || !mlir::isa<pulse::ToneOp>(b))
+    return true;
+  bool ownA = within(a, thenArm), ownB = within(b, elseArm);
+  bool keptA = kept(a), keptB = kept(b);
+  if ((keptA && (keptB || ownB)) || (keptB && ownA))
+    return true;
+  return !(asMade(other, a) &&
+           (ownA || (asMade(then, a) && !changedIn(entered, elseArm))));
+}
+
+/// A result of an if that is no value: its arms leave versions of
+/// different lines there, or, when `tone`, of different tones. `word` is the
+/// if's record and `place` the result's place among the record's results.
+struct MixedResult {
+  size_t word;
+  int64_t place;
+  bool tone;
+};
+
+// The frontend reads what follows "arms:" as the result, by place, that
+// holds different lines after the if (compiler.py, _rejected_literal),
+// ",tone" after it as the result being a tone, and ",loop" as a loop having
+// to carry that result from one iteration to the next.
+[[noreturn, gnu::cold, gnu::noinline]] void rejectArms(const MixedResult &from,
+                                                       bool carried = false) {
+  throw PackedValueError("arms:" + std::to_string(from.place) +
+                             (from.tone ? ",tone" : "") +
+                             (carried ? ",loop" : ""),
+                         from.word);
+}
+
 [[noreturn, gnu::cold, gnu::noinline]] void
 rejectFloat(const char *what, const char *rule, double got, size_t word) {
   rejectPacked(what, rule, pythonFloat(got), word);
@@ -5896,6 +6117,14 @@ public:
     builder_ = std::make_unique<mlir::OpBuilder>(ctx_.get());
   }
 
+  /// The ids of the lines and tones that the failing operation of a trace
+  /// was given: build_from_packed then rejects one that is a result of an
+  /// if whose arms leave different lines there, where the if is.
+  void expectLost(std::vector<int64_t> results) {
+    std::lock_guard<std::mutex> guard(lock_);
+    lostLines_ = std::move(results);
+  }
+
   // ─── Packed-buffer decoder (zero-copy path) ──────────────────────────
   PulseModule build_from_packed(
       nb::ndarray<int64_t, nb::ndim<1>, nb::c_contig> stream, double clock_ghz,
@@ -6019,11 +6248,23 @@ public:
       if (!blocks.empty())
         blockVids[v].push_back(vid);
     };
+    // The results of ifs that are no value: one whose arms leave versions
+    // of different lines (or of different lines' tones) there, as two names
+    // swapped in one arm do. By result id, the word of the if's record and
+    // the result's place. Such a result is not made, so the if yields each
+    // line once; what reads it is the error, at its if.
+    llvm::DenseMap<int64_t, MixedResult> mixed;
+    // For the results of an if in an arm of another: what entered it.
+    llvm::DenseMap<mlir::Value, mlir::Value> entered;
     auto look = [&](int64_t vid) -> mlir::Value {
       auto it = ssa.find(vid);
-      if (it == ssa.end())
+      if (it == ssa.end()) {
+        auto lost = mixed.find(vid);
+        if (lost != mixed.end())
+          rejectArms(lost->second);
         throw std::runtime_error("packed: SSA value not found for vid=" +
                                  std::to_string(vid));
+      }
       return it->second;
     };
     // Region bodies are built in detached blocks and moved into their scf op
@@ -6271,8 +6512,34 @@ public:
         llvm::SmallVector<mlir::Value> inits, yields;
         llvm::SmallVector<size_t> argOf;
         llvm::DenseMap<int64_t, size_t> argOfInit;
+        // A name an if in the body leaves as no one line (the if binds it
+        // to different lines) is no value to carry. One the body itself
+        // made is bound in every iteration before it is read, as it was in
+        // the first, so it is left out, and is no value after the loop.
+        // One from before the loop may be read by the next iteration, which
+        // the records do not tell; so may one that was no one line when the
+        // loop began.
+        const size_t notCarried = std::numeric_limits<size_t>::max();
         for (int64_t i = 0; i < n; ++i) {
           int64_t init = p[1 + i];
+          if (!mixed.empty()) [[unlikely]] {
+            auto lost = mixed.find(p[1 + n + i]);
+            if (lost != mixed.end()) {
+              MixedResult from = lost->second;
+              if (init >= 0)
+                rejectArms(from, /*carried=*/true);
+              mixed.insert_or_assign(p[1 + 2 * n + i], from);
+              if (llvm::is_contained(lostLines_, p[1 + 2 * n + i]))
+                rejectArms(from);
+              argOf.push_back(notCarried);
+              continue;
+            }
+            if (init >= 0) {
+              auto began = mixed.find(init);
+              if (began != mixed.end())
+                rejectArms(began->second, /*carried=*/true);
+            }
+          }
           mlir::Value next = look(p[1 + n + i]);
           if (init >= 0) {
             auto [it, inserted] = argOfInit.try_emplace(init, inits.size());
@@ -6323,7 +6590,8 @@ public:
             return loop->isProperAncestor(use.getOwner());
           });
         for (int64_t i = 0; i < n; ++i)
-          bind(p[1 + 2 * n + i], loop.getResult(argOf[i]));
+          if (argOf[i] != notCarried)
+            bind(p[1 + 2 * n + i], loop.getResult(argOf[i]));
         for (auto [device, index] : carriedLinks)
           links[device] = loop.getResult(index);
         break;
@@ -6377,10 +6645,70 @@ public:
         const int64_t n = p[0];
         llvm::SmallVector<mlir::Value> thenValues, elseValues;
         llvm::SmallVector<mlir::Type> types;
+        // Whether a tone's op is still in view at this if: made in a block
+        // that is open around it. A read made there is the one a later
+        // read of the same tone returns, in the arms of this if too.
+        auto kept = [&](mlir::Operation *op) {
+          mlir::Block *block = op->getBlock();
+          return block == region.parent ||
+                 llvm::any_of(regions, [&](const Region &around) {
+                   return block == around.parent;
+                 });
+        };
+        // The record's results that the if has, by place in the record,
+        // and, in an arm of another if, what entered this one for each.
+        llvm::SmallVector<int64_t> made;
+        llvm::SmallVector<std::pair<size_t, mlir::Value>, 4> began;
         for (int64_t i = 0; i < n; ++i) {
-          thenValues.push_back(look(p[1 + i]));
-          elseValues.push_back(look(p[1 + n + i]));
-          types.push_back(thenValues.back().getType());
+          // A result either arm takes from an if that left different lines
+          // there is none either.
+          if (!mixed.empty()) [[unlikely]] {
+            auto lost = mixed.find(p[1 + i]);
+            if (lost == mixed.end())
+              lost = mixed.find(p[1 + n + i]);
+            if (lost != mixed.end()) {
+              MixedResult from = lost->second;
+              mixed.insert_or_assign(p[1 + 2 * n + i], from);
+              if (llvm::is_contained(lostLines_, p[1 + 2 * n + i]))
+                rejectArms(from);
+              continue;
+            }
+          }
+          mlir::Value then = look(p[1 + i]), other = look(p[1 + n + i]);
+          // A result is one line, or one tone, on either path: an arm that
+          // leaves another line there (two names swapped in one arm) would
+          // make every later op on it play one path's line on both.
+          if (mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType,
+                        pulse::ToneType>(then.getType())) {
+            // An arm that operated once on what the other arm left alone
+            // began with it: one line, with no walk.
+            mlir::Value a, b;
+            if (then != other && pulse::linearPredecessor(then) == other) {
+              a = b = other;
+            } else if (then != other &&
+                       pulse::linearPredecessor(other) == then) {
+              a = b = then;
+            } else {
+              a = enteringArm(then, region.body.get(), entered);
+              b = enteringArm(other, region.elseBody.get(), entered);
+            }
+            if (a != b && differentLines(then, region.body.get(), a, other,
+                                         region.elseBody.get(), kept))
+                [[unlikely]] {
+              MixedResult from{cur, i,
+                               mlir::isa<pulse::ToneType>(then.getType())};
+              mixed.insert_or_assign(p[1 + 2 * n + i], from);
+              if (llvm::is_contained(lostLines_, p[1 + 2 * n + i]))
+                rejectArms(from);
+              continue;
+            }
+            if (openIfs > 0 && a == b)
+              began.push_back({made.size(), a});
+          }
+          made.push_back(i);
+          thenValues.push_back(then);
+          elseValues.push_back(other);
+          types.push_back(then.getType());
           runTime |= yieldsValue(types.back());
         }
         // A link either arm sent on leaves the branch as a result.
@@ -6414,8 +6742,10 @@ public:
         };
         fill(branch.thenBlock(), region.body.get(), thenValues);
         fill(branch.elseBlock(), region.elseBody.get(), elseValues);
-        for (int64_t i = 0; i < n; ++i)
-          bind(p[1 + 2 * n + i], branch.getResult(i));
+        for (size_t k = 0; k < made.size(); ++k)
+          bind(p[1 + 2 * n + made[k]], branch.getResult(k));
+        for (auto [k, value] : began)
+          entered[branch.getResult(k)] = value;
         for (auto [device, index] : branchLinks)
           links[device] = branch.getResult(index);
         break;
@@ -7163,6 +7493,8 @@ private:
   std::shared_ptr<mlir::MLIRContext> ctx_;
   std::unique_ptr<mlir::OpBuilder> builder_;
   std::mutex lock_;
+  // See expectLost.
+  std::vector<int64_t> lostLines_;
 };
 
 // -----------------------------------------------------------------------
@@ -7690,6 +8022,33 @@ NB_MODULE(_cudaq_pulse_native, m) {
            nb::arg("param_types") = std::vector<std::string>{},
            nb::arg("name") = "main", nb::arg("slot_count") = 0,
            nb::arg("readout_freqs").none() = nb::none())
+      .def(
+          "build_from_packed",
+          [](PulseModuleBuilder &self,
+             nb::ndarray<int64_t, nb::ndim<1>, nb::c_contig> stream,
+             double clock_ghz, int64_t qudit_count,
+             nb::ndarray<double, nb::ndim<1>, nb::c_contig> qubit_freqs,
+             std::vector<std::string> param_names,
+             std::vector<std::string> param_types, const std::string &name,
+             int64_t slot_count,
+             std::optional<nb::ndarray<const double, nb::ndim<1>, nb::c_contig>>
+                 readout_freqs,
+             std::vector<int64_t> lost_lines) {
+            self.expectLost(std::move(lost_lines));
+            nb::gil_scoped_release release;
+            return self.build_from_packed(stream, clock_ghz, qudit_count,
+                                          qubit_freqs, std::move(param_names),
+                                          std::move(param_types), name,
+                                          slot_count, readout_freqs);
+          },
+          "The same for a trace that failed: lost_lines are the ids of the "
+          "lines and tones its failing operation was given. One that is an "
+          "if's result whose arms leave different lines there is an error "
+          "at that if, also when no record reads it",
+          nb::arg("stream"), nb::arg("clock_ghz"), nb::arg("qudit_count"),
+          nb::arg("qubit_freqs"), nb::arg("param_names"),
+          nb::arg("param_types"), nb::arg("name"), nb::arg("slot_count"),
+          nb::arg("readout_freqs").none(), nb::arg("lost_lines"))
       .def(
           "load",
           [](PulseModuleBuilder &self, nb::bytes module, nb::bytes source,

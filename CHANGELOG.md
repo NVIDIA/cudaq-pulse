@@ -269,6 +269,20 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   with controllers, a loop whose lines move by periods of their own still
   takes time that grows with the trips in the controller check, as under
   `asap`; that is a separate issue.
+- A name, or a place of a list, that the two arms of an `if` on a
+  measurement bind to different lines or tones (as `a, b = b, a` in one arm
+  does) is not one line after the `if`. An operation on it could compile
+  into a program that used one path's line or tone on both paths
+  (`drive(a, waveform, tone=t)`; `wait(a, n)` without the verify pass; two
+  names of `line.tones[(1, 2)]` tones swapped), or fail with
+  `drive(): argument 3 must be a tone, got NoneType None`. It is now a
+  `CompilationError` at the `if`, which names the name or list place and
+  says what to write instead. A loop compiled as one loop that would carry
+  such a name to its next iteration is the same error, and names
+  `unroll_threshold=` as the way to compile it when no iteration reads the
+  name. A kernel that binds such a name in each
+  arm and does not use it after the `if`, which the verify pass refused
+  with `linear pulse value is consumed more than once`, compiles.
 - The schedule passes and `Pass.SIMPLIFY_CONTROL_FLOW` no longer crash on
   two inputs. A schedule block that yields one of its own arguments, passing
   an input through, is inlined with that input as its result; the passes
