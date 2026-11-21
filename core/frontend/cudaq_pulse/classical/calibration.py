@@ -265,6 +265,13 @@ class GoldenSection:
 
     @classmethod
     def start(cls, lo: float, hi: float, tolerance: float) -> GoldenSection:
+        """A search for the minimum of a cost on [*lo*, *hi*], with no cost
+        measured yet.
+
+        The interior points split the interval in the golden ratio. The
+        search has converged once the interval is no wider than
+        *tolerance*, which is in the units of *lo* and *hi*.
+        """
         c = hi - _INVPHI * (hi - lo)
         d = lo + _INVPHI * (hi - lo)
         return cls(lo, hi, c, d, math.nan, math.nan, tolerance)
@@ -274,6 +281,8 @@ class GoldenSection:
         return self.c if math.isnan(self.fc) else self.d
 
     def converged(self) -> bool:
+        """Whether the interval is no wider than ``tolerance``
+        (``hi - lo <= tolerance``)."""
         return self.hi - self.lo <= self.tolerance
 
     def best(self) -> float:
@@ -281,10 +290,14 @@ class GoldenSection:
         return (self.lo + self.hi) / 2
 
     def as_floats(self) -> list[float]:
+        """The state as 7 floats, in the order ``lo``, ``hi``, ``c``, ``d``,
+        ``fc``, ``fd``, ``tolerance``. A cost not measured yet is NaN."""
         return [self.lo, self.hi, self.c, self.d, self.fc, self.fd, self.tolerance]
 
     @classmethod
     def from_floats(cls, values: Sequence[float]) -> GoldenSection:
+        """The state that ``as_floats`` packed into *values*. Only the first
+        7 values are read."""
         return cls(*(float(v) for v in values[:7]))
 
 
@@ -342,6 +355,15 @@ class NelderMead:
 
     @classmethod
     def start(cls, x0: Sequence[float], step: float, tolerance: float) -> NelderMead:
+        """A search that starts from the point *x0*, with no cost measured
+        yet.
+
+        The first simplex is *x0* and one vertex per coordinate, each *x0*
+        moved by *step* along that coordinate, so *step* sets the size of
+        the first simplex. The search has converged once every vertex is
+        within *tolerance* of the best in every coordinate. The first point
+        asked for is *x0*.
+        """
         dim = len(x0)
         vertices = [tuple(float(v) for v in x0)]
         for i in range(dim):
@@ -360,6 +382,7 @@ class NelderMead:
 
     @property
     def dim(self) -> int:
+        """The number of coordinates of a point, ``len(x0)`` at the start."""
         return len(self.simplex) - 1
 
     @staticmethod
@@ -368,6 +391,9 @@ class NelderMead:
         return (dim + 1) * dim + (dim + 1) + 3 + dim + 1
 
     def next_point(self) -> tuple[float, ...]:
+        """The point whose cost the search needs next. That is a vertex
+        while the start or a shrink is measured, and otherwise the
+        reflection, expansion or contraction being tried."""
         if self.stage in (_INIT, _SHRINK):
             return self.simplex[self.index]
         return self.trial
@@ -385,10 +411,17 @@ class NelderMead:
         )
 
     def best(self) -> tuple[float, ...]:
+        """The vertex with the lowest cost so far. A vertex whose cost is not
+        measured yet is never preferred to one that has a cost."""
         i = min(range(len(self.costs)), key=lambda k: (math.isnan(self.costs[k]), self.costs[k]))
         return self.simplex[i]
 
     def as_floats(self) -> list[float]:
+        """The state as ``NelderMead.size(dim)`` floats, in this order: the
+        dim + 1 vertices of the simplex, ``dim`` coordinates each, one vertex
+        after the other; their dim + 1 costs; ``stage``, ``index`` and
+        ``tolerance``; the ``dim`` coordinates of ``trial``; and
+        ``trial_cost``. A cost not measured yet is NaN."""
         flat = [x for v in self.simplex for x in v]
         return [
             *flat,
@@ -402,6 +435,9 @@ class NelderMead:
 
     @classmethod
     def from_floats(cls, values: Sequence[float], dim: int) -> NelderMead:
+        """The state that ``as_floats`` packed into *values*. The floats do
+        not record the dimension, so *dim* must be the one the state was
+        packed with."""
         v = [float(x) for x in values]
         n = dim + 1
         simplex = tuple(tuple(v[i * dim : (i + 1) * dim]) for i in range(n))
