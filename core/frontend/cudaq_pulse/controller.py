@@ -3151,7 +3151,6 @@ def _compile_check(
     # Loops of lines of different periods summarized too, then not, then none.
     passes: tuple[bool | None, ...] = (True, False, None)
     if system is not None:
-        passes = (False, None)
         if (
             repeats is None
             or not system._lines_up
@@ -3246,12 +3245,14 @@ def _system_call_violations(lowered: ScheduledKernel) -> Sequence[str]:
             # A controller counting cycles of its own is walked in full.
             if any(c.ratio != 1 for c in clocks.controllers):
                 repeats = None
-        # Summarized while the system's controllers line up, else every iteration.
+        # Summarized while the system's controllers line up, loops of lines
+        # of different periods too, then not, else every iteration.
+        periods: list[tuple[int, int, int]] | None = []
         while True:
             lines, events, _, off, problems = _walk(
                 lowered,
                 own=_native_clock(clocks),
-                summary=None if repeats is None else (repeats, None),
+                summary=None if repeats is None else (repeats, periods),
             )
             if not repeats:
                 break
@@ -3260,11 +3261,14 @@ def _system_call_violations(lowered: ScheduledKernel) -> Sequence[str]:
             # A summarizing walk's problems name only the copies it plays.
             if not problems:
                 parts = system._summarized(
-                    lowered, lines, events, repeats, clocks, off, None, None, None
+                    lowered, lines, events, repeats, clocks, off, None, None, None, periods or ()
                 )
                 if parts is not None:
                     return finished(parts)
-            repeats = None
+            if periods is not None and not problems:
+                repeats, periods = [], None
+            else:
+                repeats = None
         return system._violations(lowered, lines, events, clocks, off, problems, True, None, None)
     assert machine.controller is not None
     return _limit_violations(lowered, machine.controller, clocks)

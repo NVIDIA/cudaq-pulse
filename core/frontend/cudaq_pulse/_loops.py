@@ -91,27 +91,74 @@ def _period(rep: _Rep, lines: Iterable[int]) -> int:
     return found.pop() if found else 0
 
 
+class _Shift:
+    """The cycles a copy starts after the first where the lines of a loop
+    move by periods of their own: ``base``, and for the time of the event
+    of each index in ``by``, that many more."""
+
+    __slots__ = ("base", "by")
+
+    def __init__(self, base: int, by: dict[int, int]) -> None:
+        self.base, self.by = base, by
+
+
+# The cycles a copy starts after the first: one for every event, or a _Shift.
+_Moved = int | _Shift
+
+
+def _at(piece: int | tuple[int, int], shift: _Moved) -> int:
+    """A time of a violation, *piece* (or (time, the index of the event
+    whose copy it moves with)), in a copy *shift* after the first."""
+    if isinstance(piece, int):
+        return piece + (shift if isinstance(shift, int) else shift.base)
+    value, key = piece
+    if isinstance(shift, int):
+        return value + shift
+    return value + shift.base + shift.by.get(key, 0)
+
+
+def _moved(shift: _Moved, offset: int, j: int, period: int | dict[int, int]) -> _Moved:
+    """*shift* moved to copy *j* of copies *offset* + j * *period* cycles
+    after the first, or by event index *period*."""
+    if isinstance(period, int):
+        if isinstance(shift, int):
+            return shift + offset + j * period
+        return _Shift(shift.base + offset + j * period, shift.by)
+    base, by = (shift, {}) if isinstance(shift, int) else (shift.base, shift.by)
+    moved = dict(by)
+    for key, step in period.items():
+        moved[key] = moved.get(key, 0) + j * step
+    return _Shift(base + offset, moved)
+
+
 class _Text:
     """A violation: its pieces joined, an int piece shifted by the cycles
-    its copy starts after the first."""
+    its copy starts after the first; a piece (time, index) by those the
+    copy of the event of that index starts after its first."""
 
     __slots__ = ("pieces",)
 
-    def __init__(self, *pieces: str | int) -> None:
+    def __init__(self, *pieces: str | int | tuple[int, int]) -> None:
         self.pieces = pieces
 
-    def render(self, shift: int) -> str:
-        return "".join(p if isinstance(p, str) else str(p + shift) for p in self.pieces)
+    def render(self, shift: _Moved) -> str:
+        return "".join(p if isinstance(p, str) else str(_at(p, shift)) for p in self.pieces)
 
 
 class _Copies:
     """The violations ``parts`` of copies ``first`` to ``count`` - 1 of a
-    loop, copy j shifted by ``offset`` + j * ``period`` cycles."""
+    loop, copy j shifted by ``offset`` + j * ``period`` cycles, or with
+    ``period`` by event index, each event's time by j times its own."""
 
     __slots__ = ("parts", "first", "count", "period", "offset", "inner", "size")
 
     def __init__(
-        self, parts: list[Any], first: int, count: int, period: int, offset: int = 0
+        self,
+        parts: list[Any],
+        first: int,
+        count: int,
+        period: int | dict[int, int],
+        offset: int = 0,
     ) -> None:
         self.parts, self.first, self.count = parts, first, count
         self.period, self.offset = period, offset
@@ -123,17 +170,17 @@ def _length(parts: Sequence[Any]) -> int:
     return sum(p.size if type(p) is _Copies else 1 for p in parts)
 
 
-def _render(part: Any, shift: int) -> str:
+def _render(part: Any, shift: _Moved) -> str:
     return part if type(part) is str else part.render(shift)
 
 
-def _each(parts: Sequence[Any], shift: int) -> Iterator[str]:
+def _each(parts: Sequence[Any], shift: _Moved) -> Iterator[str]:
     for part in parts:
         if type(part) is _Copies:
             if not part.size:
                 continue
             for j in range(part.first, part.count):
-                yield from _each(part.parts, shift + part.offset + j * part.period)
+                yield from _each(part.parts, _moved(shift, part.offset, j, part.period))
         else:
             yield _render(part, shift)
 
@@ -165,13 +212,14 @@ class Violations(Sequence[str]):
             k += self._size
         if not 0 <= k < self._size:
             raise IndexError("violation index out of range")
-        parts, shift = self._parts, 0
+        parts: Sequence[Any] = self._parts
+        shift: _Moved = 0
         while True:
             for part in parts:
                 if type(part) is _Copies:
                     if k < part.size:
                         j, k = divmod(k, part.inner)
-                        shift += part.offset + (part.first + j) * part.period
+                        shift = _moved(shift, part.offset, part.first + j, part.period)
                         parts = part.parts
                         break
                     k -= part.size
@@ -416,8 +464,19 @@ def _each_event(
                     on: Iterable[int] = lines
                 else:
                     on = {node.at[i] for i in made} if node.lines is not None else ()
-                parts.append(_Copies(body, 0, node.copies, _period(node, on)))
+                parts.append(_Copies(body, 0, node.copies, _period_of(node, on, made)))
     return parts
+
+
+def _period_of(rep: _Rep, lines: Iterable[int], made: Iterable[int]) -> int | dict[int, int]:
+    """The period of *rep*'s copies on *lines*, else (lines of different
+    periods) that of the line of each event of *made*, the indices of the
+    events whose violations it repeats, which tag their times."""
+    try:
+        return _period(rep, lines)
+    except UnsyncedError:
+        assert rep.lines is not None
+        return {i: rep.lines.get(rep.at[i], 0) for i in made}
 
 
 class _Budget:
@@ -653,7 +712,7 @@ class _Labeled:
     def __init__(self, label: str, part: Any) -> None:
         self.label, self.part = label, part
 
-    def render(self, shift: int) -> str:
+    def render(self, shift: _Moved) -> str:
         return self.label + _render(self.part, shift)
 
 
@@ -860,7 +919,7 @@ def parts(
                 return None
             return _Text(
                 f"the wait for {event['function']} at ",
-                event["start_cycles"],
+                (event["start_cycles"], i),
                 " has a timeout; the controller cannot stop waiting for an answer, so take it "
                 "with result() (no timeout)",
             )
@@ -877,7 +936,7 @@ def parts(
                 return None
             return _Text(
                 f"line {e['line']}: the {e['kind']} at ",
-                e["start_cycles"],
+                (e["start_cycles"], i),
                 f" plays samples made for {made_ghz:g} GHz, and the controller's lines play "
                 f"{plays_ghz:g} GHz",
             )
@@ -889,18 +948,18 @@ def parts(
 class _OnProgramClock:
     """A violation stated in program cycles of an event whose copies are
     shifted in a controller's own cycles: ``make`` of its start, ``at``,
-    shifted."""
+    shifted as the event of index ``key``."""
 
-    __slots__ = ("make", "at", "num", "den")
+    __slots__ = ("make", "at", "num", "den", "key")
 
-    def __init__(self, make: Callable[[int], str], at: int, ratio: Fraction) -> None:
-        self.make, self.at = make, at
+    def __init__(self, make: Callable[[int], str], at: int, ratio: Fraction, key: int) -> None:
+        self.make, self.at, self.key = make, at, key
         self.num, self.den = ratio.numerator, ratio.denominator
 
-    def render(self, shift: int) -> str:
+    def render(self, shift: _Moved) -> str:
         # The periods are whole own cycles of whole timesteps, so a shift
         # is whole program cycles.
-        return self.make(self.at + shift * self.den // self.num)
+        return self.make(self.at + _at((0, self.key), shift) * self.den // self.num)
 
 
 def _off_grid(
@@ -923,7 +982,7 @@ def _off_grid(
         start, duration = found
         line, kind = events[i]["line"], events[i]["kind"]
         return _OnProgramClock(
-            lambda s: message(own, lines[line], line, kind, s, duration), start, own.ratio
+            lambda s: message(own, lines[line], line, kind, s, duration), start, own.ratio, i
         )
 
     return _each_event(tree, make)
@@ -980,12 +1039,36 @@ def _pulse_lengths(
     return _each_event(items, off_length, (line["line"],))
 
 
+# The copies of a loop whose lines move by periods of their own that the
+# feedback check plays one by one, at most, where an event in a loop inside
+# it may start too early after a readout of its copy; past them the loops
+# are walked in full.
+_MAX_EARLY = 1 << 14
+
+
+def _moves(period: int | dict[int, int] | None, key: int) -> int:
+    """The cycles copies of *period* (``_Copies.period``) move a time of
+    the event of index *key* by per copy."""
+    if period is None:
+        return 0
+    return period if isinstance(period, int) else period.get(key, 0)
+
+
 class _Feedback:
     """The events that start before the readouts they depend on are ready
     (``Controller.feedback_latency_cycles``). A copy of a loop depends
     on the copies of the readouts in it, or in the copy before it, as the
     first copy does; on a readout before the loop only a few first copies
-    can be too early, and those are checked one by one."""
+    can be too early, and those are checked one by one.
+
+    Where the lines of a loop move by periods of their own, an event and
+    the readout of its copy on lines of different periods drift apart by
+    the difference every copy, so it is too early in the copies before, or
+    from, the copy where the drift crosses the latency: the loop's copies
+    are checked in runs between those copies, each run as its first copy.
+    Where that event is in a loop inside, whose first copies may then be
+    too early, the copies of the outer loop where they may are checked one
+    by one."""
 
     def __init__(
         self,
@@ -995,26 +1078,34 @@ class _Feedback:
         budget: _Budget,
     ) -> None:
         self.events, self.chains, self.latency, self.budget = events, chains, latency, budget
+        # The copy each run of copies of a loop is checked as, and the
+        # period of the copies of each loop being walked (``walk``).
+        self.at: dict[_Rep, int] = {}
+        self.moving: dict[_Rep, int | dict[int, int]] = {}
 
-    def apart(self, i: int, ref: int) -> tuple[list[_Rep], int]:
+    def apart(self, i: int, ref: int) -> tuple[list[_Rep], int, _Rep | None]:
         """The loops event *i* is in and readout *ref* is not, whose copy
-        decides how far apart the two are, and the cycles the readout's
-        copy (the last of each loop it is in alone) starts after its first."""
+        decides how far apart the two are, the cycles the readout's copy
+        (the last of each loop it is in alone) starts after its first, and
+        the loop whose copies move the two by different periods, if any.
+        ``UnsyncedError`` for two such loops, or one inside a loop the
+        readout is not in."""
         mine, theirs = self.chains[i], self.chains[ref]
         line, readout = self.events[i]["line"], self.events[ref]["line"]
-        separate = []
+        separate: list[_Rep] = []
+        drift = None
         for rep in mine:
-            if rep.lines is not None:
-                _period(rep, (line, readout))
-            if rep in theirs:
+            if rep not in theirs and not rep.begin - (rep.end - rep.begin) <= ref < rep.begin:
+                separate.append(rep)
                 continue
-            if rep.begin - (rep.end - rep.begin) <= ref < rep.begin:
-                continue
-            separate.append(rep)
+            if rep.lines is not None and _period(rep, (line,)) != _period(rep, (readout,)):
+                if drift is not None or separate:
+                    raise UnsyncedError
+                drift = rep
         later = sum(
             (rep.copies - 1) * _period(rep, (readout,)) for rep in theirs if rep not in mine
         )
-        return separate, later
+        return separate, later, drift
 
     def period(self, rep: _Rep, i: int) -> int:
         """The period of *rep*'s copies of event *i*."""
@@ -1027,6 +1118,37 @@ class _Feedback:
                 if readout["end_cycles"] is not None:
                     yield ref, readout
 
+    def timing(
+        self, i: int, ref: int, fixed: Mapping[_Rep, int | None]
+    ) -> tuple[int, int, int, _Rep | None, int, bool] | None:
+        """Event *i* and readout *ref* at the *fixed* copies of the loops
+        they are in (a loop not yet in *fixed* at its first copy): the
+        cycles the readout is ready after the event starts, the readout's
+        end as a violation states it, the index of the event whose copies
+        it moves with, the loop whose copies move the two apart and the
+        cycles they do per copy, and whether the event is in a loop inside
+        that one that the readout is not; ``None`` for copies of a loop
+        that are never early."""
+        separate, later, drift = self.apart(i, ref)
+        key = i if drift is None else ref
+        lead = back = 0
+        for rep in separate:
+            if rep not in fixed:
+                continue
+            j = fixed[rep]
+            if j is None:
+                return None
+            lead += j * self.period(rep, i)
+            back += j * (self.period(rep, i) if key == i else _moves(self.moving.get(rep), key))
+        end = self.events[ref]["end_cycles"] + later
+        room = end + self.latency - self.events[i]["start_cycles"] - lead
+        if drift is None:
+            return room, end - lead, key, None, 0, False
+        step = _period(drift, (self.events[ref]["line"],)) - self.period(drift, i)
+        j = fixed.get(drift)
+        at = self.at.get(drift, 0) if j is None else j
+        return room + at * step, end - back, key, drift, step, bool(separate)
+
     def walk(self, nodes: list[Any], fixed: dict[_Rep, int | None]) -> list[Any]:
         parts: list[Any] = []
         for node in nodes:
@@ -1034,85 +1156,128 @@ class _Feedback:
                 parts.extend(self.late(node, fixed))
                 continue
             rep = node.orig
+            period = self.body_period(node, rep)
             head = min(rep.copies, self.head(node, rep, fixed))
             if head:
                 self.budget.spend(head)
             for j in range(head):
+                self.moving[rep] = period
                 body = self.walk(node.body, {**fixed, rep: j})
                 if body:
-                    parts.append(_Copies(body, j, j + 1, self.body_period(node, rep)))
+                    parts.append(_Copies(body, j, j + 1, period))
             if head < rep.copies:
-                body = self.walk(node.body, {**fixed, rep: None})
-                if body:
-                    parts.append(_Copies(body, head, rep.copies, self.body_period(node, rep)))
+                cuts, busy = self.cuts(node, rep, fixed, head)
+                cuts = sorted({head, rep.copies, *cuts})
+                for first, end in zip(cuts, cuts[1:], strict=False):
+                    self.moving[rep] = period
+                    if any(lo <= first < hi for lo, hi in busy):
+                        if end - first > min(_MAX_EARLY, self.budget.left):
+                            raise UnsyncedError
+                        self.budget.spend(end - first)
+                        for j in range(first, end):
+                            body = self.walk(node.body, {**fixed, rep: j})
+                            if body:
+                                parts.append(_Copies(body, j, j + 1, period))
+                        continue
+                    self.at[rep] = first
+                    body = self.walk(node.body, {**fixed, rep: None})
+                    if body:
+                        parts.append(_Copies(body, first, end, period))
+                self.at.pop(rep, None)
+            self.moving.pop(rep, None)
         return parts
 
-    def body_period(self, node: _Rep, rep: _Rep) -> int:
+    def body_period(self, node: _Rep, rep: _Rep) -> int | dict[int, int]:
         """The period of *rep*'s copies of the events of *node* that
-        depend on readouts."""
+        depend on readouts, or by event index, where they and the readouts
+        of their copies move by different periods."""
         if rep.lines is None:
             return rep.period
-        lines = {
-            self.events[i]["line"] for i in _events_of(node.body) if self.events[i]["conditions"]
-        }
-        return _period(rep, lines)
+        lines = set()
+        for i in _events_of(node.body):
+            if self.events[i]["conditions"]:
+                lines.add(self.events[i]["line"])
+                for ref, readout in self.refs(i):
+                    if rep.begin - (rep.end - rep.begin) <= ref < rep.end:
+                        lines.add(readout["line"])
+        try:
+            return _period(rep, lines)
+        except UnsyncedError:
+            size = rep.end - rep.begin
+            return {
+                k: rep.lines.get(rep.at[k if k >= rep.begin else k + size], 0)
+                for k in range(rep.begin - size, rep.end)
+            }
+
+    def cuts(
+        self, node: _Rep, rep: _Rep, fixed: Mapping[_Rep, int | None], head: int
+    ) -> tuple[list[int], list[tuple[int, int]]]:
+        """The copies of *rep* after *head* where an event of *node* and a
+        readout it depends on, moving apart, become or stop being early,
+        and the runs of copies where an event in a loop inside may be."""
+        if rep.lines is None:
+            return [], []
+        found: list[int] = []
+        busy: list[tuple[int, int]] = []
+        saved = self.at.pop(rep, None)
+        for i in _events_of(node.body):
+            for ref, _ in self.refs(i):
+                timing = self.timing(i, ref, fixed)
+                if timing is None or timing[3] is not rep:
+                    continue
+                room, _, _, _, step, inside = timing
+                # Early at copy j: room + j * step > 0.
+                if step > 0:
+                    cut = -room // step + 1
+                    early = (cut, rep.copies)
+                else:
+                    cut = -(-room // -step)
+                    early = (0, cut)
+                if head < cut < rep.copies:
+                    found.append(cut)
+                if inside:
+                    busy.append(early)
+        if saved is not None:
+            self.at[rep] = saved
+        return found, busy
 
     def head(self, node: _Rep, rep: _Rep, fixed: Mapping[_Rep, int | None]) -> int:
         """The first copies of *rep* that may start too early after a readout
         outside it."""
         copies = 0
         for i in _events_of(node.body):
-            start = self.events[i]["start_cycles"]
-            for ref, readout in self.refs(i):
-                separate, later = self.apart(i, ref)
-                if rep not in separate:
+            for ref, _ in self.refs(i):
+                if rep not in self.apart(i, ref)[0]:
                     continue
-                shift = 0
-                for other in separate:
-                    if other in fixed:
-                        j = fixed[other]
-                        if j is None:
-                            break
-                        shift += j * self.period(other, i)
-                else:
-                    gap = readout["end_cycles"] + later + self.latency - start - shift
-                    if gap > 0:
-                        period = self.period(rep, i)
-                        copies = max(
-                            copies,
-                            math.ceil(gap / period) if period > 0 else rep.copies,
-                        )
+                timing = self.timing(i, ref, fixed)
+                if timing is not None and timing[0] > 0:
+                    period = self.period(rep, i)
+                    copies = max(
+                        copies,
+                        math.ceil(timing[0] / period) if period > 0 else rep.copies,
+                    )
         return copies
 
     def late(self, i: int, fixed: Mapping[_Rep, int | None]) -> list[_Text]:
         event = self.events[i]
-        start = event["start_cycles"]
         found = []
-        for ref, readout in self.refs(i):
-            separate, later = self.apart(i, ref)
-            shift = 0
-            for rep in separate:
-                j = fixed.get(rep)
-                if j is None:
-                    break
-                shift += j * self.period(rep, i)
-            else:
-                end = readout["end_cycles"] - shift + later
-                ready = end + self.latency
-                if start < ready:
-                    found.append(
-                        _Text(
-                            f"line {event['line']}: the {event['kind']} at ",
-                            start,
-                            " depends on the readout ending at ",
-                            end,
-                            f"; the controller needs {self.latency} cycles of feedback "
-                            "latency (start at ",
-                            ready,
-                            " or later; schedule with rcp and "
-                            "readout_latency_cycles >= feedback_latency_cycles)",
-                        )
-                    )
+        for ref, _ in self.refs(i):
+            timing = self.timing(i, ref, fixed)
+            if timing is None or timing[0] <= 0:
+                continue
+            _, end, key, _, _, _ = timing
+            found.append(
+                _Text(
+                    f"line {event['line']}: the {event['kind']} at ",
+                    (event["start_cycles"], i),
+                    " depends on the readout ending at ",
+                    (end, key),
+                    f"; the controller needs {self.latency} cycles of feedback latency (start at ",
+                    (end + self.latency, key),
+                    " or later; schedule with rcp and "
+                    "readout_latency_cycles >= feedback_latency_cycles)",
+                )
+            )
         return found
 
 
@@ -1157,7 +1322,7 @@ def summarized_check(
     pending: list[str] | None = [] if lowered.parameters or slots else None
     if system is not None:
         parts = system._summarized(
-            lowered, lines, events, repeats, clocks, off, pending, natives, rates
+            lowered, lines, events, repeats, clocks, off, pending, natives, rates, periods or ()
         )
         if parts is None:
             return None
