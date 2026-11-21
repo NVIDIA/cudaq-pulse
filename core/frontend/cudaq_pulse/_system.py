@@ -2019,22 +2019,28 @@ class ControlSystem:
         unresolved: list[str] | None,
         natives: Sequence[int] | None,
         rates: tuple[float, float] | None,
+        periods: Sequence[Sequence[int]] = (),
     ) -> list[Any] | None:
-        """``_violations`` of the events of a summarizing walk of loops of
-        one period, on a system that ``_lines_up``, as ``_loops.parts``
-        gives them, with *rates* those of
-        ``controller._sample_rate_violations``; ``None`` unless every copy of
-        a loop needs and forwards what its first does, each period is whole
-        timesteps of every controller, and *rates* come last. A sync lines
-        up the pulses of several controllers exactly, so ``_alignment``
-        finds nothing."""
+        """``_violations`` of the events of a summarizing walk, on a system
+        that ``_lines_up``, as ``_loops.parts`` gives them, with *rates* those
+        of ``controller._sample_rate_violations`` and *periods* the (repeat,
+        line, period) of loops whose lines move by periods of their own;
+        ``None`` unless every copy of a loop needs and forwards what its
+        first does, each period is whole timesteps of every controller, and
+        *rates* come last. A sync lines up the pulses of several controllers
+        exactly, so ``_alignment`` finds nothing."""
         from . import _clocks, _loops
         from .controller import _computes_at_run_time
 
         run_time = _computes_at_run_time(lowered)
+        # The period of each line of each loop whose lines have their own.
+        moves: dict[int, dict[int, int]] = {}
+        for index, line, period in periods:
+            moves.setdefault(index, {})[line] = period
         if clocks is not None and clocks.owners is not None:
             grids = {c.grid for c in clocks.controllers}
-            if any(r[3] % grid for r in repeats for grid in grids):
+            steps = [r[3] for r in repeats if r[3] >= 0] + [p[2] for p in periods]
+            if any(step % grid for step in steps for grid in grids):
                 return None
             if _clocks.off_grid(clocks, lines, events, run_time, False, run_time):
                 return None
@@ -2084,8 +2090,17 @@ class ControlSystem:
                 if forwards:
                     for ref in condition["readouts"]:
                         if owners[events[ref]["line"]] not in (None, user):
-                            for r in repeats:
+                            for k, r in enumerate(repeats):
                                 if r[0] <= ref < r[1] and not r[0] <= i < r[1]:
+                                    return None
+                                # Copies of lines of different periods drift apart.
+                                if (
+                                    r[3] < 0
+                                    and r[0] <= i < r[1]
+                                    and r[0] - (r[1] - r[0]) <= ref < r[1]
+                                    and moves.get(k, {}).get(event["line"])
+                                    != moves.get(k, {}).get(events[ref]["line"])
+                                ):
                                     return None
                 if checks:
                     for ref in condition["answers"]:
@@ -2101,6 +2116,9 @@ class ControlSystem:
         if self._shares:
             from . import _shared_lines
 
+            if moves:
+                # Shared lines are counted of loops of one period.
+                return None
             shared = _shared_lines.summarized(self, lowered, lines, events, repeats, unresolved)
             if shared is None:
                 return None
@@ -2108,21 +2126,24 @@ class ControlSystem:
         if not several:
             from .controller import _native_clock
 
-            found.extend(
-                _loops.parts(
-                    lowered,
-                    events,
-                    repeats,
-                    self.controllers[0],
-                    lines,
-                    unresolved,
-                    rates,
-                    (),
-                    _native_clock(clocks),
-                    off,
-                    natives,
+            try:
+                found.extend(
+                    _loops.parts(
+                        lowered,
+                        events,
+                        repeats,
+                        self.controllers[0],
+                        lines,
+                        unresolved,
+                        rates,
+                        periods,
+                        _native_clock(clocks),
+                        off,
+                        natives,
+                    )
                 )
-            )
+            except _loops.UnsyncedError:
+                return None
         else:
             if self._forwarding(events, owners, clocks, run_time):
                 return None
@@ -2133,24 +2154,23 @@ class ControlSystem:
                     else {**e, "end_cycles": None}
                     for e in events
                 ]
-                found.extend(
-                    _loops.labeled(
-                        _loops.parts(
-                            lowered,
-                            mine,
-                            repeats,
-                            controller,
-                            lines,
-                            unresolved,
-                            None,
-                            (),
-                            None,
-                            (),
-                            natives,
-                        ),
-                        f"{_label(index, controller)}: ",
+                try:
+                    own = _loops.parts(
+                        lowered,
+                        mine,
+                        repeats,
+                        controller,
+                        lines,
+                        unresolved,
+                        None,
+                        periods,
+                        None,
+                        (),
+                        natives,
                     )
-                )
+                except _loops.UnsyncedError:
+                    return None
+                found.extend(_loops.labeled(own, f"{_label(index, controller)}: "))
         if self._placement:
             if unresolved is None:
                 from .controller import usage
