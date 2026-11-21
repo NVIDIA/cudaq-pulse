@@ -35,6 +35,8 @@ TIMED = [
     (cal.binary_search_phase, (1e5, 120 * ns), (1e5, 120.0)),
     (cal.decay_time, (0.9, 0.6, 0.35, 5 * us, 50), (0.9, 0.6, 0.35, 5000.0, 50)),
     (cal.ramsey_detuning, (1e5, 3.0, 400 * ns), (1e5, 3.0, 400.0)),
+    (cal.survival_probability, (20 * us, 20.0), (20_000.0, 20.0)),
+    (cal.ramsey_probability, (250 * ns, 0.0, 2e6), (250.0, 0.0, 2e6)),
 ]
 
 
@@ -53,6 +55,29 @@ def test_keyword_and_default_times_may_be_times():
     assert cal.binary_search_update(0.0, 1e6, -1, 80 * ns, coherence_ns=4 * us) == (
         cal.binary_search_update(0.0, 1e6, -1, 80.0, coherence_ns=4000.0)
     )
+
+
+def test_the_probability_helpers_give_known_values():
+    assert cal.survival_probability(20_000.0, 20.0) == pytest.approx(math.exp(-1))
+    assert cal.survival_probability(20_000.0, 0.0) == 1.0
+    assert cal.ramsey_probability(250.0, 0.0, 2e6) == pytest.approx(1.0)
+    assert cal.rabi_probability(math.pi, 0.5) == pytest.approx(0.5)
+
+
+def test_the_estimators_reject_a_prior_that_is_not_positive():
+    with pytest.raises(pulse.InvalidValueError, match="alpha and beta must be positive"):
+        cal.t1_update(0.0, 1.0, True, 10.0)
+    with pytest.raises(pulse.InvalidValueError, match="sigma_hz must be positive"):
+        cal.frequency_update(1e5, 0.0, 1, 250.0, 0.3)
+
+
+def test_a_zero_wait_returns_the_prior():
+    assert cal.t1_update(2.0, 4000.0, False, 0.0) == (2.0, 4000.0)
+    assert cal.frequency_update(1e5, 2e5, 1, 0.0, 0.3) == (1e5, 2e5)
+
+
+def test_ramsey_setting_caps_the_wait():
+    assert cal.ramsey_setting(0.0, 2e5, 0.1, max_wait_ns=200.0)[0] == pytest.approx(200.0)
 
 
 def test_converting_a_time_costs_a_controller_nothing():
@@ -134,6 +159,7 @@ def test_three_point_decay_is_exact_for_any_amplitude_and_offset():
         p = [amplitude * math.exp(-(2.0 + k * 4.0) / t1) + offset for k in range(3)]
         assert cal.three_point_decay(*p, spacing=4.0) == pytest.approx(t1)
     assert cal.three_point_decay(0.5, 0.5, 0.5, 1.0) == math.inf
+    assert cal.three_point_decay(0.5, 0.6, 0.9, 1.0) == math.inf  # ratio outside (0, 1)
 
 
 def test_three_point_phase_is_exact_for_any_contrast():
