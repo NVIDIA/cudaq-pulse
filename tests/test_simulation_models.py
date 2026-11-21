@@ -107,3 +107,63 @@ def test_qudits_a_program_leaves_out_keep_the_levels_they_would_have(model, leve
     result = pulse.simulate(lowered, levels=levels)
     assert result.qudits == (2,)
     assert f"level_counts = [{expected}]" in lowered.mlir()
+
+
+def test_qudit_property_tables_keyed_by_qudit_index():
+    expected_t1 = {0: 45.0, 1: 60.0, 2: 80.0}
+    expected_t2 = {0: 30.0, 1: 20.0, 2: 50.0}
+    expected_alpha = {0: -280.0e6, 1: -310.0e6, 2: -330.0e6}
+    qs = pulse.quantum_system(
+        name="tables",
+        qudits={
+            i: PhysicalQudit(
+                i,
+                5.0e9 + 0.1e9 * i,
+                expected_t1[i],
+                expected_t2[i],
+                anharmonicity_hz=expected_alpha[i],
+            )
+            for i in expected_t1
+        },
+    )
+    for table, expected in (
+        (qs.t1_times, expected_t1),
+        (qs.t2_times, expected_t2),
+        (qs.anharmonicities, expected_alpha),
+    ):
+        assert type(table) is dict
+        assert table == pytest.approx(expected)
+
+
+def test_model_energies_and_transitions_hz():
+    f01 = 5.1e9
+    alpha = -290.0e6
+    qs = pulse.quantum_system(
+        name="energies",
+        qudits={0: PhysicalQudit(0, f01, 50.0, 30.0, anharmonicity_hz=alpha)},
+    )
+    q = qs.physical_qudits[0]
+
+    transmon = TransmonModel()
+    assert transmon.energies_hz(q, 3) == pytest.approx([0.0, f01, 2 * f01 + alpha])
+    assert transmon.transitions_hz(q, 3) == pytest.approx(
+        {(0, 1): f01, (0, 2): 2 * f01 + alpha, (1, 2): f01 + alpha}
+    )
+
+    plain = SimulationModel()
+    assert plain.energies_hz(q, 3) == pytest.approx([0.0, f01, 2 * f01])
+    assert plain.transitions_hz(q, 3) == pytest.approx({(0, 1): f01, (0, 2): 2 * f01, (1, 2): f01})
+
+
+def test_transmon_energies_without_anharmonicity():
+    f01 = 5.0e9
+    qs = pulse.quantum_system(
+        name="no_alpha",
+        qudits={0: PhysicalQudit(0, f01, 50.0, 30.0, anharmonicity_hz=None)},
+    )
+    q = qs.physical_qudits[0]
+
+    model = TransmonModel()
+    assert model.energies_hz(q, 2) == pytest.approx([0.0, f01])
+    with pytest.raises(pulse.InvalidValueError, match="gives no anharmonicity_hz"):
+        model.energies_hz(q, 3)
