@@ -13,6 +13,13 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 
 ### Added
 
+- **Challenges.** A `challenges/` folder with three starter problems, each with a
+  statement, a scorer and reference solutions: find a pi pulse of half the
+  calibrated length, measure a hidden qubit's T1 from shots, and find a
+  pulse's error by randomized benchmarking. A scorer loads a submission in a
+  process of its own and plays the pulses it reports itself, so the rules,
+  the tally and any hidden value stay out of a submission's process. The
+  folder is not part of the package or the built pages.
 - **Error codes.** Every `CompilationError` has a `code`, a
   `pulse.ErrorCode` (`unknown_name`, `wrong_argument`, `runtime_value`,
   `invalid_duration` and the others listed under Errors), so a program or

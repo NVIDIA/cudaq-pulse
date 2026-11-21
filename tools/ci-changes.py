@@ -8,7 +8,7 @@ lines, ``native=``, ``python=`` and ``docs=``, each ``true`` or ``false``:
 
 * ``native``: the change can reach the compiler, the runtime, the build or
   the workflows. Every job runs.
-* ``python``: it can reach the Python package, its tests, the examples, the
+* ``python``: it can reach the Python package, its tests, the examples, the challenges, the
   benchmarks or the tools. Every job but the old-compiler builds runs.
 * ``docs``: it can reach the built pages, or a file that tests read (the
   README, the changelog, the contributing guide, the license files). The
@@ -54,6 +54,7 @@ PYTHON = (
     "core/frontend/",
     "tests/",
     "examples/",
+    "challenges/",
     "benchmarks/",
     "tools/",
     "pyproject.toml",

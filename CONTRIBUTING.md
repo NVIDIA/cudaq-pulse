@@ -523,7 +523,7 @@ that classes the change by the paths it touches (`tools/ci-changes.py`):
 | The change touches | Class | What runs |
 | --- | --- | --- |
 | `core/mlir`, `core/runtime`, CMake files, `cmake/`, `packaging/`, `test/`, `.github/workflows` or `.github/actions`, or a path the tool does not name | native | every job |
-| `core/frontend`, `tests/`, `examples/`, `benchmarks/`, `tools/`, `pyproject.toml`, `pyrightconfig.json`, `uv.lock`, `.pre-commit-config.yaml` | python | every job but `old-compilers` |
+| `core/frontend`, `tests/`, `examples/`, `challenges/`, `benchmarks/`, `tools/`, `pyproject.toml`, `pyrightconfig.json`, `uv.lock`, `.pre-commit-config.yaml` | python | every job but `old-compilers` |
 | `docs/`, `README.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md`, the license and notice files | docs | lint, the docs build and `test-docs`, one job with the tests that read these files |
 | only files no test reads (`CITATION.cff`, `CODE_OF_CONDUCT.md`, `SUPPORT.md`, issue templates) | none | lint |
 
