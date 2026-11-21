@@ -128,6 +128,7 @@ __all__ = [
     "WaveformMemoryScope",
     "check",
     "evaluate_expression",
+    "evaluate_function",
     "export",
     "sample_waveform",
     "shape_key",
@@ -390,8 +391,24 @@ _COMPARISONS: Mapping[str, Any] = {
 }
 _INTEGER = frozenset({"floor_div", "rem"})
 _CONVERSIONS = frozenset({"to_float", "to_int", "controller_cycles"})
+# The terms of a classical function's body (an export's ``functions``): the
+# float functions, and Python's ``%``.
+_FLOAT_FUNCTIONS: Mapping[str, Callable[..., float]] = {
+    "exp": lambda x: _ieee(math.exp, x),
+    "log": lambda x: _ieee(math.log, x),
+    "sqrt": lambda x: _ieee(math.sqrt, x),
+    "sin": lambda x: _ieee(math.sin, x),
+    "cos": lambda x: _ieee(math.cos, x),
+    "atan2": math.atan2,
+    "pow": lambda x, y: _power(x, y),
+    "abs": math.fabs,
+    "floor": lambda x: float(math.floor(x)) if math.isfinite(x) else x,
+    "ceil": lambda x: float(math.ceil(x)) if math.isfinite(x) else x,
+}
 # Every op an exported expression of a run-time value may have (ExpressionTerm).
-_EXPRESSION_TERMS = frozenset({*_ARITHMETIC, *_COMPARISONS, *_INTEGER, *_CONVERSIONS, "select"})
+_EXPRESSION_TERMS = frozenset(
+    {*_ARITHMETIC, *_COMPARISONS, *_INTEGER, *_CONVERSIONS, "select", *_FLOAT_FUNCTIONS, "mod"}
+)
 _TYPES = {"int": int, "float": float, "bool": bool}
 _INT_MIN = -(1 << 63)
 
@@ -420,6 +437,7 @@ def _evaluate(
     expression: Any,
     readouts: Mapping[int, int],
     answers: Mapping[int, Sequence[float | int | bool]],
+    scope: _Scope | None = None,
 ) -> Any:
     if not isinstance(expression, Mapping):
         if isinstance(expression, (int, float)):
@@ -427,6 +445,12 @@ def _evaluate(
         raise InvalidValueError(f"not an expression: {expression!r}")
     if "const" in expression:
         return expression["const"]
+    if "argument" in expression or "local" in expression:
+        if scope is None:
+            raise InvalidValueError(
+                f"{expression!r} names an argument or a local, which only a function's body has"
+            )
+        return scope.read(expression)
     if "readout" in expression:
         index = expression["readout"]
         if index not in readouts:
@@ -441,7 +465,7 @@ def _evaluate(
     if op not in _EXPRESSION_TERMS:
         raise InvalidValueError(f"{op!r} is not a term of the expression vocabulary")
     kind = _TYPES[expression["type"]]
-    values = [_evaluate(x, readouts, answers) for x in expression["of"]]
+    values = [_evaluate(x, readouts, answers, scope) for x in expression["of"]]
     if op == "select":
         condition, then, other = values
         return kind(then if condition else other)
@@ -465,7 +489,17 @@ def _evaluate(
         return _COMPARISONS[op](*values)
     if op == "neg":
         return _integer(-values[0]) if kind is int else -values[0]
+    if op in _FLOAT_FUNCTIONS:
+        if kind is not float:
+            raise InvalidValueError(f"{op} is a term of floats, not of {expression['type']}")
+        return _FLOAT_FUNCTIONS[op](*values)
     a, b = values
+    if op == "mod":
+        if kind is float:
+            return math.nan if b == 0.0 else a % b
+        if b == 0:
+            raise _failed(f"mod of {a} by 0")
+        return a % b
     if op == "max":
         return a if a > b else b
     if op == "min":
@@ -498,6 +532,109 @@ def _integer(value: int) -> int:
 
 def _failed(what: str) -> ExecutionError:
     return ExecutionError(f"the controller fails the run: {what}")
+
+
+def _ieee(function: Callable[[float], float], x: float) -> float:
+    """*function* of *x* as IEEE 754 gives it where Python raises: NaN
+    outside its domain, an infinity past the largest float."""
+    try:
+        return function(x)
+    except OverflowError:
+        return math.inf
+    except ValueError:
+        if function is math.log and x == 0.0:
+            return -math.inf
+        return math.nan
+
+
+def _power(x: float, y: float) -> float:
+    """``x ** y`` as C's ``pow`` gives it, where Python raises too."""
+    try:
+        return math.pow(x, y)
+    except OverflowError:
+        odd = y.is_integer() and abs(y) < 2.0**53 and int(y) % 2 == 1
+        return -math.inf if x < 0 and odd else math.inf
+    except ValueError:
+        if x == 0.0 and y < 0:
+            odd = y.is_integer() and abs(y) < 2.0**53 and int(y) % 2 == 1
+            return math.copysign(math.inf, x) if odd else math.inf
+        return math.nan
+
+
+class _Scope:
+    """The arguments and the locals a function's body reads."""
+
+    __slots__ = ("arguments", "locals")
+
+    def __init__(self, arguments: Sequence[Any]) -> None:
+        self.arguments = arguments
+        self.locals: dict[str, Any] = {}
+
+    def read(self, leaf: Mapping[str, Any]) -> Any:
+        if "local" in leaf:
+            name = leaf["local"]
+            if name not in self.locals:
+                raise InvalidValueError(f"the local {name!r} is read before it is bound")
+            return self.locals[name]
+        k = leaf["argument"]
+        if not 0 <= k < len(self.arguments):
+            raise InvalidValueError(f"no argument {k}: the function takes {len(self.arguments)}")
+        value = self.arguments[k]
+        if "index" in leaf:
+            return value[leaf["index"]]
+        return value
+
+
+# What an argument of each descriptor is to a function's body.
+_ARGUMENT_TYPES = {"f64": float, "f32": float, "i64": int, "i32": int, "u8": int}
+
+
+def _argument(descriptor: str, value: Any) -> Any:
+    head = descriptor.split(":")[0].split("[")[0]
+    convert = _ARGUMENT_TYPES.get(head)
+    if head in ("bits", "levels"):
+        if descriptor == "bits:1" and not isinstance(value, Sequence):
+            return int(bool(value))
+        items = [int(bool(v)) if head == "bits" else int(v) for v in value]
+        return items
+    if convert is None:
+        raise InvalidValueError(
+            f"an argument of type {descriptor}, which a function body can't take"
+        )
+    if "[" in descriptor:
+        return [convert(v) for v in value]
+    return convert(value)
+
+
+def evaluate_function(
+    program: Mapping[str, Any], arguments: Sequence[Any]
+) -> tuple[float | int | bool, ...]:
+    """The results of an exported classical function's *program* (an entry
+    of an export's ``functions``) on *arguments*, as a controller must
+    compute them: its ``let`` bindings in order, then its ``results``,
+    each term as ``evaluate_expression`` computes it.
+
+    *arguments* are the function's, one per descriptor of its
+    ``arguments``: a number for a scalar, a sequence for a list (bits as
+    0 or 1). Raises ``ExecutionError`` where the controller must fail the
+    run and ``InvalidValueError`` for a program or arguments it can't
+    read, or a ``number_format`` other than ``"float64"``.
+    """
+    number_format = program.get("number_format", "float64")
+    if number_format != "float64":
+        raise InvalidValueError(
+            f"number_format {number_format!r}; this cudaq-pulse computes in 'float64'"
+        )
+    descriptors = program["arguments"]
+    if len(arguments) != len(descriptors):
+        raise InvalidValueError(
+            f"the function takes {len(descriptors)} arguments, got {len(arguments)}"
+        )
+    scope = _Scope([_argument(d, v) for d, v in zip(descriptors, arguments, strict=True)])
+    body = program["body"]
+    for binding in body["let"]:
+        scope.locals[binding["name"]] = _evaluate(binding["value"], {}, {}, scope)
+    return tuple(_evaluate(result, {}, {}, scope) for result in body["results"])
 
 
 def sample_waveform(
@@ -858,9 +995,31 @@ def export(
     its own tone (``_native_frequencies``).
     """
     program = _export(lowered, sample_rate_ghz, controller, version)
+    system = lowered.options.machine._system
+    if system is not None and system._placement and lowered.classical:
+        program = _with_functions(program, lowered)
     if lowered._role is None or lowered._role.slots == 0:
         _native_frequencies(program, lowered.quantum_system)
     return program
+
+
+def _with_functions(program: dict[str, Any], lowered: ScheduledKernel) -> dict[str, Any]:
+    """*program* with its ``functions``, after its ``manifest``: the body of
+    each classical function a processor of its controller computes, as a
+    program of run-time expressions (``evaluate_function``); unchanged when
+    there is none."""
+    from ._controller_functions import functions_table
+
+    called = {fn["name"] for fn in program["manifest"]["functions"]}
+    # A part of a control system of several names its controller by index.
+    index = program.get("controller")
+    table = functions_table(lowered, index if isinstance(index, int) else 0)
+    table = {name: entry for name, entry in table.items() if name in called}
+    if not table:
+        return program
+    items = list(program.items())
+    at = list(program).index("manifest") + 1
+    return dict([*items[:at], ("functions", table), *items[at:]])
 
 
 def _native_frequencies(program: dict[str, Any], quantum_system: Any) -> None:
@@ -3352,6 +3511,9 @@ class ControllerNames(Protocol):
         readouts: Mapping[int, int] | None = None,
         answers: Mapping[int, Sequence[float | int | bool]] | None = None,
     ) -> float | int | bool: ...
+    def evaluate_function(
+        self, program: Mapping[str, Any], arguments: Sequence[Any]
+    ) -> tuple[float | int | bool, ...]: ...
     def export(
         self,
         lowered: ScheduledKernel,

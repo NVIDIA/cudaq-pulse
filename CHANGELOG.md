@@ -65,6 +65,26 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   multiplies the samples by `exp(-i phase_rad)`. Each rule has a snippet
   that shows it; `tests/test_conventions.py` runs the snippets, checks what
   they print, and checks each rule.
+- **Classical functions in the export.** A program that calls a classical
+  function a processor of its controller computes exports its body as a
+  program the controller can run, in a new top-level `functions` table by
+  compiled name: its `arguments` and `results` descriptors, its
+  `number_format` (`"float64"`), and its `body`, `let` bindings and
+  results in the run-time expression vocabulary, with the leaves
+  `{"argument": k}` (and `"index"` for a list item) and `{"local": name}`
+  and the float terms `exp`, `log`, `sqrt`, `sin`, `cos`, `atan2`, `pow`,
+  `abs`, `floor`, `ceil` and Python's `%` as `mod` (`ExpressionTerm` names
+  them). The body is read as `controller_usage` reads it, so its
+  operations are the program's terms: `if` and conditional expressions
+  become selects, loops of a constant trip count are unrolled and helpers
+  inlined. `cudaq_pulse.controller.evaluate_function(program, arguments)`
+  computes one as the controller must, and gives what the Python body
+  gives to the last bit; `evaluate_expression` knows the new terms. A
+  body the program can't hold is an `UnsupportedError` at export naming
+  its line and construct, on a processor with `fixed_cost_only=True`;
+  on a link no processor serves it runs as before. Programs without such
+  functions export as before. A negative constant in a body (`-0.02`)
+  now costs nothing in `controller_usage`, as other constants do.
 - **Update buses.** `Controller(update_buses=[UpdateBus(drive_lines=[0, 1],
   cycles_per_update=8)])` (`cudaq_pulse.controller.UpdateBus`) states that
   a group of lines is retuned over one shared bus, one update at a time.

@@ -191,8 +191,10 @@ def test_every_term_is_exercised():
     exported = set()
     for body in (*_PHASES.values(), *_WAITS.values()):
         exported |= _ops(_value(pulse.compile(_kernel(body)).lower(Q[0]).export_to_controller()))
-    # The controller's cycles come from a controller clock, tested above.
-    assert exported | {"controller_cycles"} == set(ExpressionTerm)
+    # The controller's cycles come from a controller clock, tested above; the
+    # terms of a function's body, in tests/test_controller_functions.py.
+    body = {"mod", "exp", "log", "sqrt", "sin", "cos", "atan2", "pow", "abs", "floor", "ceil"}
+    assert exported | {"controller_cycles"} == set(ExpressionTerm) - body
 
 
 # ── Forms that mean the same ─────────────────────────────────────────────────

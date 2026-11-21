@@ -514,6 +514,8 @@ class _Walker:
                 cost.add(kind)
             return cost
         if isinstance(node, ast.UnaryOp):
+            if self.numeric(node) is not None:
+                return cost
             cost.extend(self.expression(node.operand))
             cost.add("compare" if isinstance(node.op, ast.Not) else "add")
             return cost

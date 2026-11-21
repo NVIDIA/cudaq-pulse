@@ -733,6 +733,8 @@ the program between two such waits. Any other program with calls is
 scheduled again whole after each answer, so its host time per interval
 grows with the rounds before it.
 
+.. _controller-costs:
+
 What it costs the controller
 ----------------------------
 
@@ -777,6 +779,18 @@ operations or bytes, or (with ``fixed_cost_only=True``) uses a ``while``
 loop, a list or an exception fails to compile with ``ControllerLimitError``
 naming it, the limit and the line. Without processors, compiling does not
 read function bodies.
+
+The export gives a backend each function a processor computes as a program
+it can run, in the export's ``functions``: the body read the same way, as
+``let`` bindings and results in the vocabulary of run-time expressions,
+with ``if`` as a select and loops unrolled (see :ref:`classical functions
+<controller-functions>` in the backends guide).
+``controller.evaluate_function(program, arguments)`` computes one as the
+controller must, and gives what the body gives to the last bit of float64.
+A body the program can't hold (a ``math.tan``, an index known only when the
+function runs, a bitwise operator) is an ``UnsupportedError`` at export
+naming its line and construct, for a processor with
+``fixed_cost_only=True``; on a link no processor serves it runs as before.
 
 Running on hardware
 -------------------

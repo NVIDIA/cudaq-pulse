@@ -317,6 +317,68 @@ opposite comparison (``not (n <= 3)`` is ``gt(n, 3)``) and of ``eq`` or
 of NaN and ``x > 0.1`` does not. There is no JSON schema; this section and
 ``evaluate_expression`` define the expressions.
 
+.. _controller-functions:
+
+Classical functions
+-------------------
+
+A program that calls a classical function a processor of its controller
+computes (a ``Processor`` serving the function's link) has ``functions``,
+after ``manifest``: for each such function, by the compiled name its calls
+and the manifest give, the program the controller runs for it. Other
+programs have no ``functions`` key.
+
+``arguments``
+    Its argument descriptors, as the manifest's ``argument_types``.
+``results``
+    Its result descriptors, as the manifest's ``result_types``.
+``number_format``
+    The arithmetic it is computed in: ``"float64"``, IEEE 754 binary64,
+    and 64-bit two's complement integers, as every run-time expression.
+``body``
+    ``{"let": [{"name": n, "value": e}, ...], "results": [e, ...]}``:
+    each ``let`` binds its name to its value, in order, then the results
+    are computed, one per result descriptor. Each value is an expression of
+    `Run-time expressions`_, whose leaves may also be ``{"argument": k}``,
+    argument ``k`` (a scalar), ``{"argument": k, "index": i}``, item ``i``
+    of a list argument (a bit is the integer 0 or 1), and ``{"local": n}``,
+    the value bound to ``n``. Its terms may also be:
+
+    ``mod``
+        Python's ``a % b``: the remainder with the sign of ``b``
+        (``a - b * floor(a / b)``, computed exactly). An integer ``mod`` by
+        0 fails the run; a float one is NaN.
+    ``exp``, ``log``, ``sqrt``, ``sin``, ``cos``, ``abs``, ``floor``, ``ceil``
+        The function of the float ``a``; ``atan2`` is ``atan2(a, b)`` and
+        ``pow`` is ``a`` to the power ``b``. Each is IEEE 754's: the C
+        library's ``exp``, ``log`` and so on, with NaN outside the domain
+        and ±inf past the largest float, where Python raises.
+
+The body is the function's Python body as the cost model reads it (see
+:ref:`what it costs the controller <controller-costs>`), and the
+operations ``controller_usage`` counts are its terms. A local the body
+assigns more than once has a name for each value (``x``, ``x.1``); a
+helper's locals are prefixed by its name (``ramsey_detuning.error``), and
+``#n`` names a value the program reads more than once. An ``if`` computes
+both arms and selects, so an arm that is not taken still computes (an
+integer division by 0 in it fails the run); a loop of a trip count known
+when the program compiles is unrolled, and a helper called is inlined.
+Python's ``%``, ``**`` and the ``math`` functions keep their meaning: ``x
+** 2`` is ``pow``, which the C library computes exactly as Python does.
+``controller.evaluate_function(program, arguments)`` computes a program as
+the controller must, and is the reference for a backend's own evaluation.
+
+A function on a processor with ``fixed_cost_only=True`` whose body the
+program can't hold is an ``UnsupportedError`` at export, naming the line
+and the construct; a function on another processor whose body it can't
+hold has no entry. The constructs are those ``fixed_cost_only`` accepts,
+less ``math.tan``, ``atan``, ``log2``, ``log10``, ``hypot`` and
+``copysign``, bitwise operators, a floor division of floats, an integer
+power whose exponent is not a constant from 0 to 16, an index known only
+when the function runs, a value one path through an ``if`` leaves
+unassigned, and complex arguments. An intrinsic (a helper with a
+``controller_cost``) is lowered from its body.
+
 The structured format
 ---------------------
 

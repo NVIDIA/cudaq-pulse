@@ -202,6 +202,10 @@ assert_type(pulse.Controller(instruction_cycles=2), Controller)
 assert_type(pulse.controller.FORMAT, str)
 assert_type(ExpressionTerm("select"), ExpressionTerm)
 assert_type(pulse.controller.evaluate_expression({"const": 1.0}), float | int | bool)
+assert_type(
+    pulse.controller.evaluate_function({"arguments": [], "body": {}}, []),
+    tuple[float | int | bool, ...],
+)
 assert_type(pulse.controller.unroll({"format": "cudaq-pulse.controller/2"}), dict[str, Any])
 assert_type(
     pulse.controller.sample_waveform({}, 40, samples_per_cycle=2.5), npt.NDArray[np.complex128]

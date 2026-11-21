@@ -32,7 +32,9 @@ class OpClass(enum.StrEnum):
 
 class ExpressionTerm(enum.StrEnum):
     """An ``op`` an exported expression of a run-time value may have; see
-    ``evaluate_expression`` and the controller backends guide."""
+    ``evaluate_expression`` and the controller backends guide. ``MOD`` and
+    the float functions from ``EXP`` on appear only in the body of a
+    classical function (an export's ``functions``)."""
 
     ADD = "add"
     SUB = "sub"
@@ -53,3 +55,14 @@ class ExpressionTerm(enum.StrEnum):
     TO_INT = "to_int"
     CONTROLLER_CYCLES = "controller_cycles"
     SELECT = "select"
+    MOD = "mod"
+    EXP = "exp"
+    LOG = "log"
+    SQRT = "sqrt"
+    SIN = "sin"
+    COS = "cos"
+    ATAN2 = "atan2"
+    POW = "pow"
+    ABS = "abs"
+    FLOOR = "floor"
+    CEIL = "ceil"

@@ -47,6 +47,8 @@ Export and limits
 
 .. autofunction:: cudaq_pulse.controller.evaluate_expression
 
+.. autofunction:: cudaq_pulse.controller.evaluate_function
+
 .. autoclass:: cudaq_pulse.controller.ExpressionTerm
    :members:
    :undoc-members:
