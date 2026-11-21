@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import re
+import sys
 from types import SimpleNamespace
 
 import cudaq_pulse as pulse
@@ -116,3 +118,11 @@ def test_timeline_takes_the_keywords_of_plot_schedule(lowered):
         lowered.timeline(dpi=100)  # type: ignore[call-arg]
     with pytest.raises(TypeError):
         compiled.timeline(dpi=100)  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize("missing", ["matplotlib.patches", "matplotlib.pyplot"])
+def test_plotting_without_matplotlib_names_the_viz_extra(lowered, monkeypatch, missing):
+    monkeypatch.setitem(sys.modules, missing, None)
+    with pytest.raises(ImportError, match=re.escape("cudaq-pulse[viz]")) as raised:
+        viz.plot_schedule(lowered)
+    assert isinstance(raised.value.__cause__, ImportError)
