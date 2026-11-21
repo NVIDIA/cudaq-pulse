@@ -406,8 +406,7 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 - Compiling for a `ControlSystem` checked a rolled loop whose lines move by
   periods of their own (lines that do not sync, a measured `if` whose arms
   take different times) iteration by iteration, in time and memory that grew
-  with its trip count: a loop of 200,000 iterations took 12 to 20 s and
-  1.3 GB, one of 1,000,000 more than 300 s. It is now checked from one copy
+  with its trip count without bound. It is now checked from one copy
   of its body and each line's period, as a bare `Controller` checks it, in
   the time of a few iterations whatever its trip count. So is a pulse that
   depends on a readout whose line has another period, which drifts towards
