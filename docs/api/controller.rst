@@ -51,6 +51,8 @@ Export and limits
    :members:
    :undoc-members:
 
+.. autofunction:: cudaq_pulse.controller.condition_table
+
 .. autofunction:: cudaq_pulse.controller.shape_key
 
 What classical functions cost

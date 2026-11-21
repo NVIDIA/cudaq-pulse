@@ -127,6 +127,7 @@ __all__ = [
     "UsageReport",
     "WaveformMemoryScope",
     "check",
+    "condition_table",
     "evaluate_expression",
     "export",
     "sample_waveform",
@@ -414,6 +415,46 @@ def evaluate_expression(
     """
     value: float | int | bool = _evaluate(expression, readouts or {}, answers or {})
     return value
+
+
+def condition_table(
+    conditions: Mapping[str, Any] | Sequence[Mapping[str, Any]], levels: int = 2
+) -> dict[tuple[int, ...], bool]:
+    """Whether an event plays, for every outcome of the readouts its
+    branch conditions read.
+
+    *conditions* is an event's ``conditions``, or one of them. The table
+    has a key for each combination of levels, 0 to *levels* - 1, of the
+    readouts the conditions read, in the order of their event indices; its
+    value is whether every condition is its ``arm`` for those levels, which
+    is when the event plays. It has ``levels ** n`` entries for *n*
+    readouts. Raises ``InvalidValueError`` for a condition computed from an
+    answer, whose values only the run gives (``evaluate_expression`` takes
+    them), and ``ExecutionError`` where the controller must fail the run.
+    """
+    if isinstance(levels, bool) or not isinstance(levels, int) or levels < 2:
+        raise InvalidValueError(f"levels must be an int of at least 2, got {levels!r}")
+    path = [conditions] if isinstance(conditions, Mapping) else list(conditions)
+    answers = sorted({a for condition in path for a in condition.get("answers") or ()})
+    if answers:
+        raise InvalidValueError(
+            f"the conditions read answer events {answers}, whose values only the run "
+            "gives; evaluate them with evaluate_expression once they are known"
+        )
+    from itertools import product
+
+    readouts = sorted({r for condition in path for r in condition["readouts"]})
+    table = {}
+    for outcome in product(range(levels), repeat=len(readouts)):
+        observed = dict(zip(readouts, outcome, strict=True))
+        table[outcome] = all(_holds(condition, observed) is condition["arm"] for condition in path)
+    return table
+
+
+def _holds(condition: Mapping[str, Any], readouts: Mapping[int, int]) -> bool:
+    if condition["test"] == "is_set":
+        return readouts[condition["readouts"][0]] != 0
+    return bool(_evaluate(condition["expression"], readouts, {}))
 
 
 def _evaluate(
@@ -3346,6 +3387,9 @@ class ControllerNames(Protocol):
         OpCycles: type[OpCycles]
 
     def check(self, lowered: ScheduledKernel, limits: _Limits | None = None) -> Sequence[str]: ...
+    def condition_table(
+        self, conditions: Mapping[str, Any] | Sequence[Mapping[str, Any]], levels: int = 2
+    ) -> dict[tuple[int, ...], bool]: ...
     def evaluate_expression(
         self,
         expression: Any,

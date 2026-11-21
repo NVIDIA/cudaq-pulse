@@ -94,7 +94,10 @@ depends on that line's native frequency. Each event has:
     the flag that the answer came in time and result ``k + 1`` the
     function's value ``k``. The event plays when every condition is its
     ``arm``. Events in the two arms of one branch may overlap in time; only
-    one arm plays.
+    one arm plays. ``cudaq_pulse.controller.condition_table(event["conditions"])``
+    gives whether the event plays for every outcome of the readouts its
+    conditions read, the table a controller that branches on a pattern of
+    readouts, or on a tree of single-readout tests, is programmed with.
 
 Drives and readouts also have:
 
