@@ -1936,6 +1936,9 @@ class ControlSystem:
                 if any(c.update_buses for c in self.controllers)
                 else [None] * len(self.controllers)
             )
+            # An envelope's peak depends on its tree alone, which holds any
+            # own-clock scaling: one sampling serves every controller.
+            peaks: dict[str, float | None] = {}
             for index, controller in enumerate(self.controllers):
                 label = _label(index, controller)
                 found.extend(
@@ -1955,6 +1958,7 @@ class ControlSystem:
                         timed=timed[index],
                         answers=answers,
                         updates=buses[index],
+                        peaks=peaks,
                     )
                 )
             found.extend(needs)

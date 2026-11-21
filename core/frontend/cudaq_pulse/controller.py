@@ -2425,6 +2425,7 @@ def _violations(
     timed: Sequence[Mapping[str, Any]] | None = None,
     answers: Sequence[Mapping[str, Any]] | None = None,
     updates: Sequence[Mapping[str, Any]] | None = None,
+    peaks: dict[str, float | None] | None = None,
 ) -> list[str]:
     """The limits *events* exceed. With *clocks*, the events are in the
     controller's own cycles: the native walk's, with *off* its line events
@@ -2441,7 +2442,9 @@ def _violations(
     has them, are the timed drives and readouts of *events* and its answers,
     in order; then only the update-bus check reads all of *events*, or only
     *updates*, the frame updates, drives and readouts of *events* on the
-    controller's lines, when the caller has them."""
+    controller's lines, when the caller has them. *peaks* holds the sampled
+    peak of each envelope (``_over_amplitude``), shared with the checks of
+    other controllers of the same events."""
     if clocks is None:
         found = []
     else:
@@ -2468,7 +2471,8 @@ def _violations(
     shared = limits.waveform_memory is WaveformMemoryScope.SHARED
     stored: dict[Any, int] = {}
     unknown_stored = 0
-    peaks: dict[str, float | None] = {}
+    if peaks is None:
+        peaks = {}
     for line, items in sorted(by_line.items()):
         for previous, event in _pairs(items):
             distance = event["start_cycles"] - previous["start_cycles"]

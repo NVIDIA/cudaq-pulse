@@ -995,6 +995,51 @@ def test_the_amplitude_check_samples_each_envelope_once_and_reports_every_pulse(
     assert all("amplitude 0.9;" in v for v in found)
 
 
+@pulse.kernel
+def two_envelopes_everywhere(*qudits):
+    for q in qudits:
+        d = get_drive_line(q)
+        drive(d, gaussian(40, 0.4, 10.0))
+        drive(d, drag(40, 0.2, 10.0, 2.0))
+
+
+def _samplings(count, clocks, monkeypatch):
+    """The envelopes the amplitude checks sample to compile a program on
+    *count* controllers of two qudits each (on *clocks* in turn) and export
+    every controller."""
+    from cudaq_pulse import controller
+
+    controllers = [
+        pulse.Controller(
+            drive_lines=[2 * k, 2 * k + 1], clock_ghz=clocks[k % len(clocks)], max_amplitude=0.5
+        )
+        for k in range(count)
+    ]
+    qpu = ladder_target(2 * count, control_system=pulse.ControlSystem(controllers=controllers))
+    sampled = []
+    peak = controller._peak_amplitude
+    monkeypatch.setattr(
+        controller, "_peak_amplitude", lambda tree: sampled.append(tree) or peak(tree)
+    )
+    lowered = pulse.compile(two_envelopes_everywhere, quantum_system=qpu).lower(
+        *(qpu.qudits[q] for q in range(2 * count))
+    )
+    for k in range(count):
+        lowered.export_to_controller(controller=k)
+    monkeypatch.undo()
+    return len(sampled)
+
+
+@pytest.mark.parametrize("clocks", [(1.0,), (1.0, 0.5)])
+def test_the_system_check_samples_each_envelope_once_for_every_controller(clocks, monkeypatch):
+    # Each controller's check takes the peaks the others sampled: the
+    # samplings do not grow with the controllers. On two clocks an envelope
+    # in each controller's cycles is its own.
+    few = _samplings(2, clocks, monkeypatch)
+    assert few > 0
+    assert _samplings(8, clocks, monkeypatch) == few
+
+
 # ── Budgets between controllers ──────────────────────────────────────────────
 #
 # Without a shared reference clock, each controller's start is known to one
