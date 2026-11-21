@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import cudaq_pulse
 import pytest
-from cudaq_pulse import _build_config, doctor
+from cudaq_pulse import _build_config, backends, doctor
 from cudaq_pulse.runtime import gpu
 
 compiler_only = pytest.mark.skipif(
@@ -272,6 +272,18 @@ def test_the_process_target_and_kernel_cache_are_reported(monkeypatch):
         "(env CUDAQ_PULSE_QUANTUM_SYSTEM=transmon_lattice:3" in out
     )
     assert "Kernel cache: 8 specializations per kernel (CUDAQ_PULSE_CACHE_SIZE=8)" in out
+
+
+def test_the_installed_controller_backends_are_listed(monkeypatch):
+    monkeypatch.setattr(doctor, "_diagnose_gpu", lambda write: gpu.GpuSupportNotBuiltError())
+    backends.register("doctor_listing_probe", object)
+    try:
+        code, out = _run("--allow-no-gpu")
+    finally:
+        backends.unregister("doctor_listing_probe")
+    assert code == 0
+    (line,) = [line for line in out.splitlines() if line.startswith("Controller backends")]
+    assert "doctor_listing_probe" in line.split(": ", 1)[1].split(", ")
 
 
 @pytest.mark.parametrize(

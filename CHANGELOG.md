@@ -156,6 +156,10 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 - `UdpChannel` and `InProcess` print what they're set up with:
   `UdpChannel(('127.0.0.1', 50123), slot_bytes=65536, timeout_s=2.0)` and
   `<InProcess serving decode, estimate>`.
+- **Doctor lists the controller backends.** `python -m cudaq_pulse.doctor`
+  prints the installed controller backends next to the quantum systems
+  (`none` when there are none), so the advice in `--system` to run the
+  doctor for them is true.
 
 ### Changed
 

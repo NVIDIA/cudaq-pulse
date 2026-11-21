@@ -212,6 +212,7 @@ def _context_budget(write: Callable[[str], None]) -> bool:
 
 def _kernel_settings(write: Callable[[str], None]) -> bool:
     """Print the process quantum system and cache size; return False if either is invalid."""
+    from . import backends
     from .kernel._kernel import CACHE_SIZE_ENV, _cache_size
     from .quantum_systems._registry import (
         ENV_VAR,
@@ -221,6 +222,7 @@ def _kernel_settings(write: Callable[[str], None]) -> bool:
 
     ok = True
     write(f"Quantum systems available: {', '.join(available_quantum_systems())}")
+    write(f"Controller backends installed: {', '.join(backends.available()) or 'none'}")
     if not os.environ.get(ENV_VAR):
         write(
             f"Process quantum system: none ({ENV_VAR} is not set; "
