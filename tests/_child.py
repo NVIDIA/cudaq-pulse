@@ -5,8 +5,12 @@ bounded: the code a test's child runs first."""
 
 # Linux's ru_maxrss carries the parent's peak across fork and exec, which a
 # long test run takes past any of these caps; VmHWM is this process's own.
+# An exit callback stops the watcher and joins it, after a last look at the
+# peak: a daemon thread that wakes while the interpreter finalizes can end
+# after it wrote the peak and before it exits with 3. A fork of the child
+# drops the callback, as it has no watcher to stop.
 _LIMITS = """
-import os, resource, signal, sys, threading, time
+import atexit, os, resource, signal, sys, threading
 signal.alarm({wall})
 resource.setrlimit(resource.RLIMIT_CPU, ({cpu}, {cpu}))
 def _peak():
@@ -17,14 +21,23 @@ def _peak():
             if line.startswith("VmHWM:"):
                 return int(line.split()[1]) << 10
     raise RuntimeError("no VmHWM in /proc/self/status")
+_exiting = threading.Event()
 def _watch():
-    while True:
+    last = False
+    while not last:
+        last = _exiting.wait(0.005)
         if (peak := _peak()) > {mb} << 20:
             os.write(2, f"peak RSS {{peak >> 20}} MB, past {mb} MB\\n".encode())
             os._exit(3)
-        time.sleep(0.005)
 _peak()
-threading.Thread(target=_watch, daemon=True).start()
+_watcher = threading.Thread(target=_watch, daemon=True)
+_watcher.start()
+@atexit.register
+def _stop():
+    _exiting.set()
+    _watcher.join()
+# A fork has no watcher, and may hold the Event's lock the watcher held.
+os.register_at_fork(after_in_child=lambda: atexit.unregister(_stop))
 """
 
 
