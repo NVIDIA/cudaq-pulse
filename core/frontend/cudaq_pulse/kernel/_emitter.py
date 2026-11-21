@@ -2485,13 +2485,10 @@ class PulseIREmitter:
             stack[:] = saved_stack
             self.locals.clear()
             self.locals.update(saved_locals)
-            for obj, copy in containers:
-                lines.restore_container(self, obj, copy)
-            if then_copies:
-                for obj, copy in then_copies:
-                    lines.restore_container(self, obj, copy)
             if len(held) != held_count:
-                _restore_channels(held, held_count, ())
+                # The channels an arm acquired (_restore_channels, inline).
+                for key in list(held)[held_count:]:
+                    del held[key]
             # Each channel's value after the then arm, and before the if.
             then_held: dict[Any, IRValue] = {}
             for cell in journal:
@@ -2502,9 +2499,50 @@ class PulseIREmitter:
                     before.chan = cell
             else_index = builder.mark()
             builder.emit("scf.else", (), ())
-            else_locals, else_slots, else_copies = self._trace_arm(
-                view, index, join, else_start, (containers, lazy)
-            )
+            else_slots: list[tuple[list[Any], int, IRValue]]
+            else_copies: list[tuple[Any, Any]]
+            # The containers the then arm changed, put back (after the
+            # channels: neither reads the other).
+            if containers:
+                for obj, copy in containers:
+                    # lines.restore_container, inline for lists, dicts and sets.
+                    if isinstance(obj, list):
+                        obj[:] = copy
+                        n = len(copy)
+                        if (
+                            n > 8
+                            and obj.__class__ is list
+                            and set(map(type, copy)) == {IRValue}
+                            and LINEAR_TYPES.issuperset(map(operator.attrgetter("vtype"), copy))
+                        ):
+                            entries = zip([obj] * n, range(n), copy, strict=False)
+                            self._slots.update(zip(map(id, copy), entries, strict=False))
+                        else:
+                            self._track_slots(obj, 0)
+                    elif obj.__class__ is dict or obj.__class__ is set:
+                        obj.clear()
+                        obj.update(copy)
+                    else:
+                        lines.restore_container(self, obj, copy)
+                if then_copies:
+                    for obj, copy in then_copies:
+                        lines.restore_container(self, obj, copy)
+                if else_start == join or view.instrs[else_start] == (JUMP, join):
+                    # An else arm that runs nothing but a jump to where the
+                    # arms join (an if without else) changes nothing: each
+                    # container holds the copy it was put back to just before.
+                    else_locals, else_slots, else_copies = dict(self.locals), [], []
+                else:
+                    else_locals, else_slots, else_copies = self._trace_arm(
+                        view, index, join, else_start, (containers, lazy)
+                    )
+            else:
+                if then_copies:
+                    for obj, copy in then_copies:
+                        lines.restore_container(self, obj, copy)
+                else_locals, else_slots, else_copies = self._trace_arm(
+                    view, index, join, else_start, (containers, lazy)
+                )
             # Names, and stack slots (ints), the arms leave different numbers,
             # waveforms or conditions on.
             chosen: list[tuple[str | int, Any, Any]] = []

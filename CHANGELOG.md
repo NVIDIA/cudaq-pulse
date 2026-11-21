@@ -159,6 +159,9 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 
 ### Changed
 
+- **Faster compiles of branches beside long lists of lines.** Tracing a
+  measurement-conditioned `if` in a kernel that keeps many lines or tones
+  in a list costs less; the programs compiled are unchanged.
 - **Measurements keep the kernel's numbers under every schedule.**
   `SimulationResult.measurements` gives each measurement the readout number
   (the kernel's order of its readouts) and loop iteration the kernel gave it,

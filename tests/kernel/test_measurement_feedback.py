@@ -836,3 +836,102 @@ def test_a_list_subclass_of_lines_is_read_as_often_as_before(case):
     _ReadCounted.reads = 0
     pulse.compile(kernel).lower(Q[0:qudits])
     assert _ReadCounted.reads == reads
+
+
+# Kernels whose lists of lines alias, are copied or held elsewhere, or change
+# between and inside measurement-conditioned ifs, each if the last statement
+# of its loop: its else arm only jumps back to the loop, and the if takes it
+# as changing nothing instead of tracing it. That must leave what tracing it
+# does.
+_EMPTY_ELSE = {
+    "copied, aliased and held in a dict": """\
+    lines = [get_drive_line(q) for q in qudits]
+    probes = [get_readout_line(q) for q in qudits]
+    copy = list(lines)
+    alias = lines
+    keyed = {"a": lines}
+    bits = [readout(probes[k], square(40, 0.05)) for k in range(4)]
+    for k in range(4):
+        drive(alias[k], square(8, 0.2))
+        if bits[k]:
+            drive(copy[k], square(8, 0.1))
+            drive(keyed["a"][-1], square(16, 0.1))
+            lines[0], lines[3] = lines[3], lines[0]
+    drive(lines[0], square(8, 0.3))
+""",
+    "a copy read between ifs": """\
+    lines = [get_drive_line(q) for q in qudits]
+    probes = [get_readout_line(q) for q in qudits]
+    copy = list(lines)
+    bits = [readout(probes[k], square(40, 0.05)) for k in range(4)]
+    x = lines[1]
+    for k in range(4):
+        wait(copy[1], 8)
+        if bits[k]:
+            drive(lines[k], square(8, 0.1))
+    drive(x, square(8, 0.2))
+    drive(lines[1], square(8, 0.3))
+""",
+    "every line synced through a list of all": """\
+    lines = [get_drive_line(q) for q in qudits] * 3
+    probes = [get_readout_line(q) for q in qudits]
+    sync(*lines, *probes)
+    bits = [readout(probes[k], square(40, 0.05)) for k in range(4)]
+    for k in range(4):
+        if bits[k]:
+            drive(lines[k + 12], square(8, 0.1))
+""",
+    "changed between ifs": """\
+    lines = [get_drive_line(q) for q in qudits]
+    probes = [get_readout_line(q) for q in qudits]
+    bits = [readout(probes[k], square(40, 0.05)) for k in range(4)]
+    for k in range(4):
+        lines[0], lines[2] = lines[2], lines[0]
+        lines[1:2] = [lines[3]]
+        lines += [lines[0]]
+        del lines[-1]
+        if bits[k]:
+            drive(lines[k], square(8, 0.1))
+    drive(lines[1], square(8, 0.2))
+""",
+    "changed in an arm": """\
+    lines = [get_drive_line(q) for q in qudits]
+    probes = [get_readout_line(q) for q in qudits]
+    bits = [readout(probes[k], square(40, 0.05)) for k in range(4)]
+    for k in range(4):
+        if bits[k]:
+            lines.append(lines[k])
+    drive(lines[0], square(8, 0.2))
+""",
+}
+
+
+def _traced(body: str, tag: str) -> str:
+    scope = dict(vars(pulse))
+    exec(compile("def k(qudits):\n" + body, f"<{tag}>", "exec"), scope)
+    try:
+        return pulse.compile(pulse.kernel(scope["k"])).lower(Q[0:12]).mlir()
+    except (CompilationError, RuntimeError) as e:
+        return f"error: {type(e).__name__}: {e}"
+
+
+@pytest.mark.parametrize("case", list(_EMPTY_ELSE))
+def test_an_else_arm_that_only_jumps_back_is_taken_as_traced(case, monkeypatch):
+    from cudaq_pulse.kernel import _emitter
+
+    body = _EMPTY_ELSE[case]
+    arms = []
+    trace_arm = _emitter.PulseIREmitter._trace_arm
+
+    def counted(self, view, branch, join, start, snapshot):
+        arms.append(start)
+        return trace_arm(self, view, branch, join, start, snapshot)
+
+    monkeypatch.setattr(_emitter.PulseIREmitter, "_trace_arm", counted)
+    taken = _traced(body, case)
+    skipped = len(arms)
+    arms.clear()
+    # No arm is a jump: every else arm is traced.
+    monkeypatch.setattr(_emitter, "JUMP", -1)
+    assert _traced(body, case) == taken
+    assert taken.startswith("error") or len(arms) > skipped
