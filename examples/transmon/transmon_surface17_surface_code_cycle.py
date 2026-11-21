@@ -22,7 +22,6 @@ import cudaq_pulse as pulse
 from cudaq_pulse.quantum_systems.transmon import CZ_LAYERS
 
 qs = pulse.quantum_system("transmon_surface17")
-clock_ghz = qs.clock_ghz  # the program clock the schedule counts cycles of
 labels = {q.index: q.label for q in qs.physical_qudits.values()}
 qudit_count = len(qs.physical_qudits)
 data_qudits = [i for i in range(qudit_count) if labels[i].startswith("D")]
@@ -90,9 +89,8 @@ def surface_code_cycle(qudits):
 
 
 scheduled = pulse.compile(surface_code_cycle, quantum_system=qs).lower(qs.qudits[:qudit_count])
-total_ns = max(e.end for e in scheduled.schedule) / clock_ghz
 print(
     f"\nCompiled and verified: {scheduled.metrics.op_count} ops, "
-    f"total = {total_ns:.0f} ns: 8 CZ steps of 98 ns and 6 single-qubit slots of 40 ns "
+    f"total = {scheduled.duration:.0f} ns: 8 CZ steps of 98 ns and 6 single-qubit slots of 40 ns "
     "(the quantum system's cycle, with readout, takes 1.1 us)"
 )

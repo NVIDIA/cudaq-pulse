@@ -23,7 +23,6 @@ qs = pulse.quantum_system("transmon_surface17")
 qudit_idx = 4  # D5 -- central data qubit
 
 qudit_d5 = qs.physical_qudits[qudit_idx]
-clock_ghz = qs.clock_ghz  # the program clock the schedule counts cycles of
 
 print(f"Quantum system: {qs.name} ({len(qs.physical_qudits)} qudits)")
 print(f"Qubit {qudit_d5.label} (idx {qudit_idx}):")
@@ -55,10 +54,7 @@ def rabi_d5(qudit):
 
 
 scheduled = pulse.compile(rabi_d5, quantum_system=qs).lower(qs.qudits[qudit_idx])
-total_cycles = max(e.end for e in scheduled.schedule)
-print(
-    f"\nCompiled {scheduled.metrics.op_count} ops, total length = {total_cycles / clock_ghz:.1f} ns"
-)
+print(f"\nCompiled {scheduled.metrics.op_count} ops, total length = {scheduled.duration:.1f} ns")
 
 # cudaq-pulse-opt, installed with the package, runs any pass on MLIR text.
 tool = shutil.which("cudaq-pulse-opt")

@@ -22,7 +22,6 @@ import cudaq_pulse as pulse
 from cudaq_pulse.quantum_systems.transmon import CZ_LAYERS
 
 qs = pulse.quantum_system("transmon_surface17")
-clock_ghz = qs.clock_ghz  # the program clock the schedule counts cycles of
 qudit_aux, qudit_data = qs.qudit("X1"), qs.qudit("D2")
 coupling = qs.coupling(qudit_aux, qudit_data)
 # The transmon_surface17 quantum system publishes each coupling's CZ; a generic coupling
@@ -61,8 +60,7 @@ def cz_pair(qudit_aux, qudit_data):
 
 print("=== Stage 1: compile (default passes, ALAP schedule) ===")
 scheduled = pulse.compile(cz_pair, quantum_system=qs).lower(qudit_aux, qudit_data)
-total_cycles = max(e.end for e in scheduled.schedule)
-print(f"  {scheduled.metrics.op_count} ops, {total_cycles / clock_ghz:.0f} ns total")
+print(f"  {scheduled.metrics.op_count} ops, {scheduled.duration:.0f} ns total")
 
 print("\n=== Stage 2: scheduled Pulse MLIR ===")
 print(scheduled.mlir())

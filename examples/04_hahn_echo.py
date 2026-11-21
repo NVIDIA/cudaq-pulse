@@ -1,10 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Canonical spin-echo example.
+"""Canonical spin-echo examples.
 
-Implements the Hahn echo sequence: pi/2 - tau - pi - tau - pi/2,
-which refocuses dephasing due to static frequency detuning and
-low-frequency noise.
+Implements the Hahn echo sequence, pi/2 - tau - pi - tau - pi/2, and its
+CPMG extension, pi/2_X - [tau - pi_Y - tau]^n - pi/2_X. Both refocus
+dephasing due to static frequency detuning and low-frequency noise.
 """
 
 import cudaq_pulse as pulse
@@ -81,6 +81,7 @@ def main():
     )
     total_hahn = 2 * (4 * sigma) + 4 * sigma + 2 * tau
     print(f"  Expected duration: {cycles(total_hahn):.0f} clock cycles")
+    print(f"  Scheduled duration: {cycles(scheduled.duration):.0f} clock cycles")
     print(scheduled.mlir())
     print(f"  Compile metrics: {scheduled.metrics}")
 
@@ -91,6 +92,7 @@ def main():
     )
     total_cpmg = 2 * (4 * sigma) + refocus_count * (4 * sigma + 2 * tau)
     print(f"  Expected duration: {cycles(total_cpmg):.0f} clock cycles")
+    print(f"  Scheduled duration: {cycles(scheduled.duration):.0f} clock cycles")
     print(scheduled.mlir())
     print(f"  Compile metrics: {scheduled.metrics}")
 
