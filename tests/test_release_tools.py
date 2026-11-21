@@ -2,12 +2,16 @@
 # SPDX-License-Identifier: Apache-2.0
 """The release tag checks, the release bundle check, the workflow pin check,
 the release hygiene check, the GPU CI matrix, the classical remnant check and
-the license header check (source tree only)."""
+the license header check, and the MLIR toolchain fetcher (source tree only)."""
 
+import argparse
+import hashlib
 import importlib.util
 import json
 import re
+import tarfile
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 
 import pytest
 
@@ -128,7 +132,6 @@ _DIST_PLATFORMS = [
 
 def _dist_file(dist, name, version, tags=None, *, meta_version=None, size=0):
     import io
-    import tarfile
     import zipfile
 
     metadata = f"Metadata-Version: 2.4\nName: {name}\nVersion: {meta_version or version}\n\n"
@@ -502,3 +505,122 @@ def test_tool_pins_agree():
     assert revs["ruff-pre-commit"] == _locked("ruff")
     assert set(re.findall(r"zizmor==(\S+)", ci)) == {revs["zizmor-pre-commit"]}
     assert set(re.findall(r"pyright==(\S+)", ci)) == {_locked("pyright")}
+
+
+@pytest.fixture
+def fetch_mlir():
+    return _load("fetch-mlir-toolchain")
+
+
+@pytest.mark.parametrize(
+    "system, machine, expected",
+    [("Darwin", "arm64", "macos-aarch64"), ("Windows", "AMD64", None)],
+)
+def test_mlir_host_platform(fetch_mlir, monkeypatch, system, machine, expected):
+    monkeypatch.setattr(fetch_mlir.platform, "system", lambda: system)
+    monkeypatch.setattr(fetch_mlir.platform, "machine", lambda: machine)
+    if expected is None:
+        with pytest.raises(fetch_mlir.FetchError, match=r"build-mlir-toolchain\.sh"):
+            fetch_mlir.host_platform()
+    else:
+        assert fetch_mlir.host_platform() == expected
+
+
+@pytest.mark.parametrize(
+    "name, explicit, expected, error",
+    [
+        ("pinned.tar.xz", None, "a" * 64, None),
+        ("local.tar.xz", "B" * 64, "b" * 64, None),
+        ("pinned.tar.xz", "b" * 64, None, "contradicts the pinned checksum"),
+        ("local.tar.xz", None, None, "pins no checksum"),
+    ],
+)
+def test_mlir_expected_sha256(fetch_mlir, name, explicit, expected, error):
+    lock = {"assets": {"pinned.tar.xz": "a" * 64}}
+    if error is None:
+        assert fetch_mlir.expected_sha256(lock, name, explicit) == expected
+    else:
+        with pytest.raises(fetch_mlir.FetchError, match=error):
+            fetch_mlir.expected_sha256(lock, name, explicit)
+
+
+_MLIR_CONFIG = "lib/cmake/mlir/MLIRConfig.cmake"
+
+
+def _mlir_archive(tmp_path, name, member=_MLIR_CONFIG):
+    archive = tmp_path / "local.tar.xz"
+    with tarfile.open(archive, "w:xz") as tar:
+        tar.addfile(tarfile.TarInfo(f"{name}/{member}"))
+    return archive, hashlib.sha256(archive.read_bytes()).hexdigest()
+
+
+def test_mlir_unpack_rejects_checksum_mismatch(fetch_mlir, tmp_path):
+    archive, _ = _mlir_archive(tmp_path, "toolchain")
+    cache = tmp_path / "cache"
+    with pytest.raises(fetch_mlir.FetchError, match="checksum mismatch"):
+        fetch_mlir.unpack(archive, "0" * 64, "toolchain", cache)
+    assert not cache.exists()
+
+
+def test_mlir_unpack_requires_mlir_config(fetch_mlir, tmp_path):
+    archive, digest = _mlir_archive(tmp_path, "toolchain", "README")
+    cache = tmp_path / "cache"
+    with pytest.raises(fetch_mlir.FetchError, match=r"does not contain .*MLIRConfig\.cmake"):
+        fetch_mlir.unpack(archive, digest, "toolchain", cache)
+    assert not (cache / "toolchain").exists()
+
+
+def test_mlir_unpack_reuses_the_cached_tree(fetch_mlir, tmp_path):
+    archive, digest = _mlir_archive(tmp_path, "toolchain")
+    cache = tmp_path / "cache"
+    target = fetch_mlir.unpack(archive, digest, "toolchain", cache)
+    assert target == cache / "toolchain"
+    assert (target / fetch_mlir.MARKER).read_text().strip() == digest
+    config = target / _MLIR_CONFIG
+    config.write_text("# keep this local change\n")
+    assert fetch_mlir.unpack(archive, digest, "toolchain", cache) == target
+    assert config.read_text() == "# keep this local change\n"
+
+
+@pytest.mark.parametrize(
+    "error, message",
+    [
+        (HTTPError("https://example.invalid", 404, "Not Found", {}, None), "HTTP 404"),
+        (TimeoutError(), "timed out: no data for 2.5 s"),
+        (URLError(ConnectionRefusedError()), "cannot connect"),
+    ],
+)
+def test_mlir_download_error(fetch_mlir, error, message):
+    result = fetch_mlir.download_error("https://example.invalid", error, 2.5)
+    assert isinstance(result, fetch_mlir.FetchError)
+    assert message in str(result)
+    assert "--from-file" in str(result)
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "inf", "abc"])
+def test_mlir_timeout_rejects_invalid_values(fetch_mlir, value):
+    with pytest.raises(argparse.ArgumentTypeError, match="expected a positive number"):
+        fetch_mlir.positive_seconds(value)
+
+
+def test_mlir_fetch_from_file(fetch_mlir, tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("CUDAQ_PULSE_MLIR_FETCH_TIMEOUT", raising=False)
+    monkeypatch.setattr(fetch_mlir, "download", lambda *_: pytest.fail("unexpected download"))
+    platform = "linux-x86_64"
+    name = fetch_mlir.toolchain_name(fetch_mlir.load_lock(), platform)
+    archive, digest = _mlir_archive(tmp_path, name)
+    cache = tmp_path / "cache"
+    args = [
+        "--from-file",
+        str(archive),
+        "--sha256",
+        digest,
+        "--platform",
+        platform,
+        "--cache-dir",
+        str(cache),
+    ]
+    assert fetch_mlir.main(args) == 0
+    target = cache / name
+    assert capsys.readouterr().out.strip() == str(target)
+    assert (target / _MLIR_CONFIG).is_file()
