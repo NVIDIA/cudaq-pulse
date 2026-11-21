@@ -4,11 +4,16 @@
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import io
 import json
+import math
+import pickle
 import tomllib
 import warnings
+from collections.abc import Mapping
+from fractions import Fraction
 
 import cudaq_pulse as pulse
 import pytest
@@ -121,6 +126,26 @@ def test_a_control_system_reports_every_wiring_problem_at_once():
         pulse.ControlSystem(controllers=[a], links={0: pulse.Link()})
 
 
+@pytest.mark.parametrize("count", [2, 10])
+def test_a_controller_listed_again_names_every_earlier_copy(count):
+    # Few controllers are checked pair by pair, many by id: the same errors.
+    boxes = [pulse.Controller(model=f"box{i}") for i in range(count)]
+    a, b = boxes[0], boxes[1]
+    with pytest.raises(QuantumSystemDefinitionError) as raised:
+        pulse.ControlSystem(controllers=[*boxes, a, b, a])
+    assert [str(p) for p in raised.value.problems] == [
+        f"controllers[{i}]: is the same Controller as controllers[{j}]; "
+        "give each controller of the system its own Controller"
+        for i, j in ((count, 0), (count + 1, 1), (count + 2, 0), (count + 2, count))
+    ]
+    # A link may list an equal Controller; it stands for the first equal one.
+    twin = dataclasses.replace(b)
+    system = pulse.ControlSystem(controllers=boxes, links={"f": pulse.Link(controllers=[twin, a])})
+    assert system.as_dict()["links"]["f"]["controllers"] == [1, 0]
+    with pytest.raises(QuantumSystemDefinitionError, match="not a controller of the system"):
+        pulse.ControlSystem(controllers=boxes, links={"f": pulse.Link(controllers=[Controller()])})
+
+
 def test_wiring_names_carriers_of_the_quantum_system():
     box = pulse.Controller(drive_lines=[0, 40], readout_lines=[41], detectors={42: 0})
     with pytest.raises(QuantumSystemDefinitionError) as raised:
@@ -166,6 +191,85 @@ def test_rcp_waits_the_feedback_latency_of_the_controllers():
     assert pulse.ControlSystem(controllers=[a, b, slow])._machine.readout_latency_cycles == 52
     shared = pulse.ControlSystem(controllers=[a, b, slow], reference_clock_ghz=0.5)
     assert shared._machine.readout_latency_cycles == 50
+
+
+def _slowest_outcome(system, clocks):
+    # Every reader and every other user, one pair at a time.
+    controllers = system.controllers
+    everyone = range(len(controllers))
+    readers = [i for i in everyone if controllers[i].readout_lines] or everyone
+    users = [i for i in everyone if controllers[i].drive_lines or controllers[i].readout_lines]
+    uncertainty = system._start_uncertainty(clocks)
+    longest = Fraction(0)
+    for reader in readers:
+        ratio = Fraction(1) if clocks is None else clocks.controllers[reader].ratio
+        source = controllers[reader]
+        longest = max(longest, source.feedback_latency_cycles / ratio)
+        for user in users or everyone:
+            if user != reader:
+                peers = source.peer_latency_cycles
+                peer = peers.get(user, 0) if isinstance(peers, Mapping) else peers
+                slack = uncertainty[reader] + uncertainty[user]
+                longest = max(longest, (source.feedback_latency_cycles + peer) / ratio + slack)
+    return math.ceil(longest)
+
+
+@pytest.mark.parametrize("peers", ["one", "some", "mixed"])
+def test_the_readout_latency_of_many_controllers_is_their_slowest_pair(peers):
+    # Start uncertainties with ties at the top, on readers and on other users.
+    count = 24
+    skew = [9 if i in (3, 17) else 7 if i == 20 else i % 4 for i in range(count)]
+    given = {
+        "one": lambda i: 5 + i % 3,
+        "some": lambda i: {j: (i + j) % 7 for j in (0, 3, 17, 20) if j != i},
+        "mixed": lambda i: {j: 4 for j in (3, 20) if j != i} if i % 2 else 2,
+    }[peers]
+    controllers = [
+        pulse.Controller(
+            drive_lines=[i] if i % 5 else [],
+            readout_lines=[i] if i % 3 == 0 else [],
+            clock_skew_cycles=skew[i],
+            peer_latency_cycles=given(i),
+            feedback_latency_cycles=10 + (i * 17) % 23,
+            clock_ghz=(1.0, 2.0, None)[i % 3],
+        )
+        for i in range(count)
+    ]
+    for reference in (None, 0.5):
+        system = pulse.ControlSystem(controllers=controllers, reference_clock_ghz=reference)
+        assert system._machine.readout_latency_cycles == _slowest_outcome(system, None)
+        plan = system._clock_plan(2.0)
+        assert plan.readout_latency_cycles == _slowest_outcome(system, plan)
+
+
+@pytest.mark.parametrize("count", [5, 12])
+def test_a_copied_or_unpickled_system_finds_its_own_controllers(count):
+    boxes = [pulse.Controller(drive_lines=[i], model=f"box{i}") for i in range(count)]
+    system = pulse.ControlSystem(
+        controllers=boxes, links={"f": pulse.Link(controllers=[boxes[-1], boxes[1]])}
+    )
+    everyone = list(range(count))
+    assert [system._index(c) for c in boxes] == everyone
+    for other in (
+        pickle.loads(pickle.dumps(system)),
+        copy.deepcopy(system),
+        copy.copy(system),
+        dataclasses.replace(system),
+    ):
+        # Many controllers are found by id: each system by its own, never the original's.
+        found = vars(other).get("_index")
+        assert (found is None) == (count <= 8)
+        if found is not None:
+            assert found.__self__ is not vars(system)["_index"].__self__
+            assert found.__self__._controllers is other.controllers
+        assert [other._index(c) for c in other.controllers] == everyone
+        assert other.as_dict() == system.as_dict()
+    swapped = dataclasses.replace(system, controllers=boxes[::-1])
+    assert [swapped._index(c) for c in boxes] == everyone[::-1]
+    assert swapped.as_dict()["links"]["f"]["controllers"] == [0, count - 2]
+    assert system._index(dataclasses.replace(boxes[2])) == 2
+    with pytest.raises(ValueError):
+        system._index(pulse.Controller(model="elsewhere"))
 
 
 # ── Compiling for a control system ───────────────────────────────────────────
