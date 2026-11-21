@@ -60,7 +60,10 @@ class SimulationModel:
                     f"levels must be a dict of levels by qudit index, as in "
                     f"{type(self).__name__}(levels={{0: 4}}); got {type(levels).__name__}"
                 )
-            for qudit, n in sorted(levels.items()):
+            # Validate before sorting: a mixed-type key such as {0: 4, "1": 2}
+            # cannot be ordered, and the bad key should get the clear message
+            # rather than a TypeError from sorted().
+            for qudit, n in levels.items():
                 if qudit.__class__ is not int or qudit < 0:
                     raise InvalidValueError(
                         f"levels keys are qudit indices (ints from 0), got {qudit!r}"
@@ -70,6 +73,8 @@ class SimulationModel:
                         f"qudit {qudit} needs 2 or more levels (an int), got {n!r}"
                     )
                 own[qudit] = n
+            # Keep the stored order deterministic for __hash__ and __repr__.
+            own = dict(sorted(own.items()))
         object.__setattr__(self, "_levels", MappingProxyType(own))
 
     def __setattr__(self, name: str, value: Any) -> None:

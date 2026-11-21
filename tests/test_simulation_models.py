@@ -57,6 +57,10 @@ def test_levels_are_overridden_by_qudit():
         ({0: 3.0}, "qudit 0 needs 2 or more levels"),
         ({-1: 3}, "levels keys are qudit indices"),
         ({True: 3}, "levels keys are qudit indices"),
+        # A bad key next to good ones must get the same clear error, not a
+        # TypeError from trying to sort mixed key types first.
+        ({0: 4, "1": 2}, "levels keys are qudit indices"),
+        ({0: 4, 1: "two"}, "qudit 1 needs 2 or more levels"),
     ]:
         with pytest.raises(pulse.InvalidValueError, match=message):
             TransmonModel(levels=wrong)
