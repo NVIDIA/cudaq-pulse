@@ -146,32 +146,49 @@ def ControllerAttr : AttrDef<PulseDialect, "Controller"> {
   let mnemonic = "controller";
   let summary = "A controller of a control system";
   let description = [{
-    What scheduling needs to know of one controller, every field optional:
+    What scheduling needs to know of one controller, every field optional
+    and left out at its default:
 
     - `grid_cycles`: the program cycles between the instants it can start an
       operation (default 1); each of its lines moves on that grid.
-    - `outcome_latency_cycles`: by controller, how long after a readout on
-      this one ends its outcome is usable there, in program cycles.
-    - `spread_cycles`: by controller, how far apart in time this one's start
-      and that one's may be, in program cycles.
-    - `uncertainty_ns`: how well its start is known.
+    - `clock_ratio`: its own cycles per program cycle, an exact fraction
+      (`clock_ratio = 3/5` is a 1.2 GHz controller of a 2 GHz program; a
+      whole ratio prints without `/1`; default 1). The latencies and the
+      start uncertainty below are in its own cycles.
+    - `feedback_latency_cycles`: from the end of one of its readouts until
+      the outcome is usable on it (default 0).
+    - `peer_latency_cycles`: from there until the outcome reaches another
+      controller: one value for every other controller, or by controller
+      index (`{1 = 10, 3 = 7}`), 0 for a controller it does not name
+      (default 0).
+    - `start_uncertainty_cycles`: how well its start is known (default 0).
     - `persistent_frames`: its tones keep their frames from one shot to the
       next.
     - `blocks_on_calls`: it plays nothing while one of its classical calls is
       out.
     - `max_duration_cycles`: scheduling fails if the program is longer.
 
-    The two tables are given on every controller of a control system of
-    several, or on none.
+    On a control system of several controllers, in program cycles, the
+    outcome of a readout on controller `r` is usable on `r`
+    `ceil(feedback_r / ratio_r)` after the readout ends, and on another
+    controller `u` `ceil((feedback_r + peer_r(u) + uncertainty_r) / ratio_r +
+    uncertainty_u / ratio_u)` after; the starts of two controllers may be
+    `ceil(uncertainty_a / ratio_a + uncertainty_b / ratio_b)` apart.
 
-    Example: `#pulse.controller<grid_cycles = 2, outcome_latency_cycles =
-    [100, 140], spread_cycles = [0, 3], uncertainty_ns = 0.5>`.
+    Example: `#pulse.controller<grid_cycles = 2, clock_ratio = 1/2,
+    feedback_latency_cycles = 50, peer_latency_cycles = {1 = 20},
+    start_uncertainty_cycles = 1>`.
   }];
   let parameters = (ins
     "int64_t":$grid_cycles,
-    OptionalArrayRefParameter<"int64_t">:$outcome_latency_cycles,
-    OptionalArrayRefParameter<"int64_t">:$spread_cycles,
-    APFloatParameter<"start uncertainty in ns, an f64">:$uncertainty_ns,
+    "int64_t":$clock_ratio_numerator,
+    "int64_t":$clock_ratio_denominator,
+    "int64_t":$feedback_latency_cycles,
+    "int64_t":$peer_latency_cycles,
+    OptionalArrayRefParameter<"std::pair<int64_t, int64_t>",
+        "peer latency by controller index, by increasing index">:
+        $peer_latency_by_controller,
+    "int64_t":$start_uncertainty_cycles,
     "bool":$persistent_frames,
     "bool":$blocks_on_calls,
     "int64_t":$max_duration_cycles

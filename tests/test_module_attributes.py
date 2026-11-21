@@ -119,11 +119,84 @@ def test_a_system_of_several_controllers_lists_each_line_and_controller():
         "#pulse.control_system<clock_period_fs = 500000, lines = ["
         "#pulse.line<drive, qudits = [0]>, #pulse.line<drive, qudits = [1], controller = 1>, "
         "#pulse.line<readout, qudits = [0]>, #pulse.line<readout, qudits = [1], controller = 1>], "
-        "controllers = [#pulse.controller<outcome_latency_cycles = "
+        "controllers = [#pulse.controller<start_uncertainty_cycles = 1>, "
+        "#pulse.controller<start_uncertainty_cycles = 1, blocks_on_calls>]>"
     )
     controllers = re.findall(r"#pulse\.controller<[^>]*>", system)
     assert len(controllers) == 2
     assert "blocks_on_calls" not in controllers[0] and "blocks_on_calls" in controllers[1]
+
+
+def test_each_controller_carries_the_facts_it_was_given():
+    # In its own cycles: feedback and peer latency (one value for every peer,
+    # or by controller index), and its start uncertainty (its clock skew, plus
+    # one cycle without a shared reference clock); the latencies and spreads
+    # between controllers are derived from them, not listed.
+    a = pulse.Controller(
+        drive_lines=[0], readout_lines=[0], feedback_latency_cycles=6, peer_latency_cycles={1: 10}
+    )
+    b = pulse.Controller(
+        drive_lines=[1], readout_lines=[1], peer_latency_cycles=4, blocks_on_calls=True
+    )
+    c = pulse.Controller(drive_lines=[2], readout_lines=[2], clock_skew_cycles=2)
+    machine = pulse.ControlSystem(controllers=[a, b, c])
+    text = pulse.compile(_two_lines, control_system=machine).lower(Q[0], Q[1]).mlir()
+    system = _attribute(text, "control_system")
+    assert system.endswith(
+        "controllers = ["
+        "#pulse.controller<feedback_latency_cycles = 6, peer_latency_cycles = {1 = 10}, "
+        "start_uncertainty_cycles = 1>, "
+        "#pulse.controller<peer_latency_cycles = 4, start_uncertainty_cycles = 1, "
+        "blocks_on_calls>, "
+        "#pulse.controller<start_uncertainty_cycles = 3>]>"
+    )
+    # With a shared reference clock, a controller without skew prints none.
+    shared = pulse.ControlSystem(controllers=[a, b], reference_clock_ghz=1.0)
+    text = pulse.compile(_two_lines, control_system=shared).lower(Q[0], Q[1]).mlir()
+    assert _attribute(text, "control_system").endswith(
+        "controllers = ["
+        "#pulse.controller<feedback_latency_cycles = 6, peer_latency_cycles = {1 = 10}>, "
+        "#pulse.controller<peer_latency_cycles = 4, blocks_on_calls>]>"
+    )
+
+
+def test_a_control_system_of_several_controllers_parses_back_as_it_printed():
+    # Mixed clocks (a 1.2 GHz controller of a 2 GHz program counts 3/5 of its
+    # cycles per program cycle), skew, peers by index and a reference clock.
+    from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline
+
+    a = pulse.Controller(
+        drive_lines=[0],
+        readout_lines=[0],
+        clock_ghz=1.0,
+        feedback_latency_cycles=7,
+        peer_latency_cycles={1: 3, 2: 0},
+        clock_skew_cycles=2,
+    )
+    b = pulse.Controller(drive_lines=[1], readout_lines=[1], peer_latency_cycles=5)
+    c = pulse.Controller(
+        drive_lines=[2],
+        readout_lines=[2],
+        clock_ghz=1.2,
+        feedback_latency_cycles=9,
+        peer_latency_cycles={0: 4},
+    )
+    for reference in (None, 0.2):
+        machine = pulse.ControlSystem(controllers=[a, b, c], reference_clock_ghz=reference)
+        text = pulse.compile(_two_lines, control_system=machine).lower(Q[0], Q[1]).mlir()
+        system = _attribute(text, "control_system")
+        assert (
+            "#pulse.controller<grid_cycles = 2, clock_ratio = 1/2, feedback_latency_cycles = 7, "
+            "peer_latency_cycles = {1 = 3, 2 = 0}, start_uncertainty_cycles = "
+            + ("2>" if reference else "3>")
+        ) in system
+        assert (
+            "#pulse.controller<grid_cycles = 5, clock_ratio = 3/5, feedback_latency_cycles = 9, "
+            "peer_latency_cycles = {0 = 4}"
+            + (">" if reference else ", start_uncertainty_cycles = 1>")
+        ) in system
+        again = MLIRPipeline().parse_to_module(text).print()
+        assert _attribute(again, "control_system") == system
 
 
 def test_a_compiled_module_gives_the_frequencies_it_is_compiled_for():

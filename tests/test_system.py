@@ -379,6 +379,34 @@ def test_a_controllers_cycles_are_its_own_not_a_time(name, value):
         pulse.Controller(**{name: value})
 
 
+def test_a_controllers_feedback_latency_is_a_whole_number_of_cycles():
+    # A whole float is that many cycles, as before; a fraction of a cycle and
+    # a bool are not cycles, as for the other *_cycles fields.
+    assert pulse.Controller(feedback_latency_cycles=6.0).feedback_latency_cycles == 6
+    assert type(pulse.Controller(feedback_latency_cycles=6.0).feedback_latency_cycles) is int
+    with pytest.raises(
+        pulse.InvalidValueError,
+        match=r"Controller.feedback_latency_cycles is a whole number of cycles, got 2.5",
+    ):
+        pulse.Controller(feedback_latency_cycles=2.5)
+    with pytest.raises(
+        pulse.InvalidTypeError,
+        match=r"Controller.feedback_latency_cycles is a whole number of cycles, got True",
+    ):
+        pulse.Controller(feedback_latency_cycles=True)
+    with pytest.raises(pulse.InvalidValueError, match="cannot be negative"):
+        pulse.Controller(feedback_latency_cycles=-1)
+    # On several controllers, 6.0 compiles to the program 6 does.
+    lowered = []
+    for feedback in (6, 6.0):
+        qpu = _qpu(*_two_boxes(feedback_latency_cycles=feedback))
+        compiled = pulse.compile(drive_and_branch, schedule="rcp", quantum_system=qpu)
+        lowered.append(compiled.lower(qpu.qudits[0], qpu.qudits[2]))
+    assert "feedback_latency_cycles = 6," in lowered[1].mlir()
+    assert lowered[1].mlir() == lowered[0].mlir()
+    assert lowered[1].schedule == lowered[0].schedule
+
+
 def test_several_controllers_on_their_own_clocks_schedule_on_their_grids():
     qpu = _qpu(*_two_boxes(clock_ghz=1.0), clock_ghz=2.0)
     lowered = pulse.compile(drive_and_branch, schedule="rcp", quantum_system=qpu).lower(

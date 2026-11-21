@@ -1043,6 +1043,72 @@ def _gap(qpu, schedule="rcp"):
     return drive.start - readout.end
 
 
+@pulse.kernel
+def slow_branch(a, b):
+    ra = get_readout_line(a)
+    db = get_drive_line(b)
+    m = readout(ra, square(10000, 0.05))
+    if m:
+        drive(db, square(10000, 0.1))
+
+
+@pytest.mark.parametrize(("clock_ghz", "gap"), [(1.234567, 10000), (1.0486, 50), (1.0485, 20)])
+def test_controllers_far_faster_than_the_program_clock_schedule_their_feedback(clock_ghz, gap):
+    # 1.234567 GHz controllers of a 10 MHz program count 1234567/10000 of
+    # their cycles per program cycle: a clock ratio of any size is exact.
+    controllers = [
+        pulse.Controller(
+            drive_lines=[0, 1],
+            readout_lines=[0, 1],
+            clock_ghz=clock_ghz,
+            feedback_latency_cycles=3,
+            peer_latency_cycles={1: 2},
+        ),
+        pulse.Controller(drive_lines=[2, 3], readout_lines=[2, 3], clock_ghz=clock_ghz),
+    ]
+    qpu = _device(system=pulse.ControlSystem(controllers=controllers), clock_ghz=0.01)
+    lowered = pulse.compile(slow_branch, schedule="rcp", quantum_system=qpu).lower(
+        qpu.qudits[0], qpu.qudits[2]
+    )
+    readout, drive = (e for e in lowered.schedule if e.kind in ("readout", "drive"))
+    assert drive.start - readout.end == gap
+
+
+@pytest.mark.parametrize(
+    ("facts", "gap"),
+    [
+        ({"feedback_latency_cycles": 2**41}, 4398046511112),
+        ({"clock_skew_cycles": 2**40}, 2199023255560),
+        ({"peer_latency_cycles": 2**41}, 4398046511112),
+    ],
+)
+def test_latencies_of_any_size_that_the_scheduler_counts_schedule(facts, gap):
+    controllers = [
+        pulse.Controller(drive_lines=[0, 1], readout_lines=[0, 1], clock_ghz=1.0, **facts),
+        pulse.Controller(drive_lines=[2, 3], readout_lines=[2, 3], clock_ghz=0.5),
+    ]
+    qpu = _device(system=pulse.ControlSystem(controllers=controllers), clock_ghz=2.0)
+    assert _gap(qpu) == gap
+
+
+def test_a_latency_past_what_the_scheduler_counts_names_its_controllers():
+    # 2**62 cycles of a 1 GHz controller are 2**63 cycles of a 2 GHz program.
+    controllers = [
+        pulse.Controller(
+            drive_lines=[0, 1], readout_lines=[0, 1], clock_ghz=1.0, feedback_latency_cycles=2**62
+        ),
+        pulse.Controller(drive_lines=[2, 3], readout_lines=[2, 3], clock_ghz=0.5),
+    ]
+    qpu = _device(system=pulse.ControlSystem(controllers=controllers), clock_ghz=2.0)
+    with pytest.raises(
+        pulse.InvalidValueError,
+        match=r"controllers\[0\].*: the outcome of its readout reaches .* program cycles after the "
+        r"readout ends, more than the 2\*\*63 - 1 the scheduler counts; lower its "
+        "feedback_latency_cycles",
+    ):
+        _gap(qpu)
+
+
 def test_an_outcome_sent_to_another_controller_is_budgeted_with_both_start_uncertainties():
     qpu = _forwarding()
     # Feedback 3 and peer 2 cycles at 1 GHz are 10 program cycles; the start

@@ -18,9 +18,9 @@ module attributes {pulse.qudit_count = 3 : i64,
                #pulse.line<readout, qudits = [1], controller = 1>,
                #pulse.line<readout, qudits = [2], controller = 2>],
       controllers = [
-        #pulse.controller<outcome_latency_cycles = [0, 0, 0], spread_cycles = [0, 0, 0]>,
-        #pulse.controller<outcome_latency_cycles = [0, 0, 0], spread_cycles = [0, 0, 0], blocks_on_calls>,
-        #pulse.controller<outcome_latency_cycles = [0, 0, 0], spread_cycles = [0, 0, 0], blocks_on_calls>]>} {
+        #pulse.controller<>,
+        #pulse.controller<blocks_on_calls>,
+        #pulse.controller<blocks_on_calls>]>} {
 
 classical.callable @decode {dispatch_key = 1, device = 0 : i64,
     args = ["bits:1"], results = ["f64"], latency_min_ns = 0.0,

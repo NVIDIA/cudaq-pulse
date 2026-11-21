@@ -23,8 +23,8 @@ module attributes {pulse.qudit_count = 3 : i64,
                #pulse.line<readout, qudits = [0], delay_cycles = 5>,
                #pulse.line<readout, qudits = [2]>],
       controllers = [
-        #pulse.controller<outcome_latency_cycles = [10, 20], spread_cycles = [0, 0], uncertainty_ns = 0.0>,
-        #pulse.controller<outcome_latency_cycles = [10, 10], spread_cycles = [0, 0], uncertainty_ns = 0.0>]>} {
+        #pulse.controller<feedback_latency_cycles = 10, peer_latency_cycles = 10>,
+        #pulse.controller<feedback_latency_cycles = 10>]>} {
 
 // The drive on controllers[1] starts 20 after the delayed readout ends.
 // CHECK-LABEL: func.func @across

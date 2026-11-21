@@ -411,48 +411,93 @@ void LineAttr::print(AsmPrinter &printer) const {
 
 LogicalResult ControllerAttr::verify(
     function_ref<InFlightDiagnostic()> emitError, int64_t gridCycles,
-    ArrayRef<int64_t> outcomeLatencyCycles, ArrayRef<int64_t> spreadCycles,
-    llvm::APFloat uncertaintyNs, bool persistentFrames, bool blocksOnCalls,
+    int64_t clockRatioNumerator, int64_t clockRatioDenominator,
+    int64_t feedbackLatencyCycles, int64_t peerLatencyCycles,
+    ArrayRef<std::pair<int64_t, int64_t>> peerLatencyByController,
+    int64_t startUncertaintyCycles, bool persistentFrames, bool blocksOnCalls,
     int64_t maxDurationCycles) {
   if (gridCycles < 1)
     return emitError() << "grid_cycles is 1 or more, got " << gridCycles;
-  for (auto [name, table] :
-       {std::pair<StringRef, ArrayRef<int64_t>>{"outcome_latency_cycles",
-                                                outcomeLatencyCycles},
-        {"spread_cycles", spreadCycles}})
-    for (int64_t cycles : table)
-      if (cycles < 0)
-        return emitError() << name << " entries are 0 or more, got " << cycles;
-  if (&uncertaintyNs.getSemantics() != &llvm::APFloat::IEEEdouble())
-    return emitError() << "uncertainty_ns must be an f64";
-  if (!uncertaintyNs.isFinite() || uncertaintyNs.isNegative())
-    return emitError() << "uncertainty_ns is finite and 0 or more";
-  if (maxDurationCycles < 0)
-    return emitError() << "max_duration_cycles is 0 or more, got "
-                       << maxDurationCycles;
+  if (clockRatioNumerator < 1 || clockRatioDenominator < 1)
+    return emitError() << "clock_ratio is positive, got " << clockRatioNumerator
+                       << "/" << clockRatioDenominator;
+  if (std::gcd(clockRatioNumerator, clockRatioDenominator) != 1)
+    return emitError() << "clock_ratio " << clockRatioNumerator << "/"
+                       << clockRatioDenominator << " is not in lowest terms";
+  for (auto [name, cycles] :
+       {std::pair<StringRef, int64_t>{"feedback_latency_cycles",
+                                      feedbackLatencyCycles},
+        {"peer_latency_cycles", peerLatencyCycles},
+        {"start_uncertainty_cycles", startUncertaintyCycles},
+        {"max_duration_cycles", maxDurationCycles}})
+    if (cycles < 0)
+      return emitError() << name << " is 0 or more, got " << cycles;
+  if (!peerLatencyByController.empty() && peerLatencyCycles != 0)
+    return emitError()
+           << "peer_latency_cycles is one value or one by controller, not both";
+  int64_t previous = -1;
+  for (auto [controller, cycles] : peerLatencyByController) {
+    if (controller <= previous)
+      return emitError() << "peer_latency_cycles names controllers by "
+                            "increasing index, got "
+                         << controller << " after " << previous;
+    if (cycles < 0)
+      return emitError() << "peer_latency_cycles is 0 or more, got " << cycles;
+    previous = controller;
+  }
   return success();
 }
 
+// #pulse.controller<clock_ratio = 3/5, peer_latency_cycles = {1 = 10}>
 Attribute ControllerAttr::parse(AsmParser &parser, Type) {
-  int64_t grid = 1, budget = 0;
-  SmallVector<int64_t> latency, spread;
-  llvm::APFloat uncertainty(0.0);
+  int64_t grid = 1, numerator = 1, denominator = 1, feedback = 0, peer = 0,
+          uncertainty = 0, budget = 0;
+  SmallVector<std::pair<int64_t, int64_t>> peers;
   bool persistent = false, blocks = false;
   FieldParser fields{parser, "controller"};
+  // `N`, or `{index = N, ...}`. An unreachable peer (`index = none`) is kept
+  // for later.
+  auto peerLatency = [&]() -> ParseResult {
+    if (failed(parser.parseOptionalLBrace()))
+      return parser.parseInteger(peer);
+    if (succeeded(parser.parseOptionalRBrace()))
+      return success();
+    do {
+      auto &[controller, cycles] = peers.emplace_back();
+      if (parser.parseInteger(controller) || parser.parseEqual())
+        return failure();
+      SMLoc loc = parser.getCurrentLocation();
+      if (succeeded(parser.parseOptionalKeyword("none")))
+        return parser.emitError(loc)
+               << "unreachable peers are not supported yet";
+      if (parser.parseInteger(cycles))
+        return failure();
+    } while (succeeded(parser.parseOptionalComma()));
+    return parser.parseRBrace();
+  };
   if (fields.parse(
           {
               {"grid_cycles", [&] { return fields.integer(grid); }},
-              {"outcome_latency_cycles",
-               [&] { return fields.integers(latency); }},
-              {"spread_cycles", [&] { return fields.integers(spread); }},
-              {"uncertainty_ns", [&] { return fields.real(uncertainty); }},
+              {"clock_ratio",
+               [&]() -> ParseResult {
+                 if (parser.parseInteger(numerator))
+                   return failure();
+                 if (succeeded(parser.parseOptionalSlash()))
+                   return parser.parseInteger(denominator);
+                 return success();
+               }},
+              {"feedback_latency_cycles",
+               [&] { return fields.integer(feedback); }},
+              {"peer_latency_cycles", peerLatency},
+              {"start_uncertainty_cycles",
+               [&] { return fields.integer(uncertainty); }},
               {"max_duration_cycles", [&] { return fields.integer(budget); }},
           },
           {{"persistent_frames", &persistent}, {"blocks_on_calls", &blocks}}))
     return {};
-  return parser.getChecked<ControllerAttr>(parser.getContext(), grid, latency,
-                                           spread, uncertainty, persistent,
-                                           blocks, budget);
+  return parser.getChecked<ControllerAttr>(
+      parser.getContext(), grid, numerator, denominator, feedback, peer, peers,
+      uncertainty, persistent, blocks, budget);
 }
 
 void ControllerAttr::print(AsmPrinter &printer) const {
@@ -460,14 +505,25 @@ void ControllerAttr::print(AsmPrinter &printer) const {
   FieldPrinter fields{printer};
   if (getGridCycles() != 1)
     fields.integer("grid_cycles", getGridCycles());
-  if (!getOutcomeLatencyCycles().empty())
-    fields.integers("outcome_latency_cycles", getOutcomeLatencyCycles());
-  if (!getSpreadCycles().empty())
-    fields.integers("spread_cycles", getSpreadCycles());
-  if (!getUncertaintyNs().isZero()) {
-    fields.key("uncertainty_ns");
-    printer.printFloat(getUncertaintyNs());
+  if (getClockRatioNumerator() != 1 || getClockRatioDenominator() != 1) {
+    fields.key("clock_ratio") << getClockRatioNumerator();
+    if (getClockRatioDenominator() != 1)
+      printer << '/' << getClockRatioDenominator();
   }
+  if (getFeedbackLatencyCycles() != 0)
+    fields.integer("feedback_latency_cycles", getFeedbackLatencyCycles());
+  if (!getPeerLatencyByController().empty()) {
+    fields.key("peer_latency_cycles") << '{';
+    llvm::interleaveComma(getPeerLatencyByController(), printer,
+                          [&](const std::pair<int64_t, int64_t> &entry) {
+                            printer << entry.first << " = " << entry.second;
+                          });
+    printer << '}';
+  } else if (getPeerLatencyCycles() != 0) {
+    fields.integer("peer_latency_cycles", getPeerLatencyCycles());
+  }
+  if (getStartUncertaintyCycles() != 0)
+    fields.integer("start_uncertainty_cycles", getStartUncertaintyCycles());
   fields.flag("persistent_frames", getPersistentFrames());
   fields.flag("blocks_on_calls", getBlocksOnCalls());
   if (getMaxDurationCycles() != 0)
@@ -532,6 +588,66 @@ ControlSystemAttr::periodFs(double clockGHz) {
   return std::nullopt;
 }
 
+// The latencies between the controllers of a system of several, in program
+// cycles, fit 64 bits: ceil((feedback_r + peer_r(u) + uncertainty_r) *
+// den_r / num_r + uncertainty_u * den_u / num_u), which bounds the latency on
+// a controller itself and the spreads too. Every product below fits 128 bits.
+static LogicalResult latenciesFit(function_ref<InFlightDiagnostic()> emitError,
+                                  ArrayRef<ControllerAttr> controllers) {
+  using Unsigned = unsigned __int128;
+  if (controllers.size() < 2)
+    return success();
+  constexpr auto kMost = Unsigned(INT64_MAX);
+  auto late = [](ControllerAttr c, int64_t peer) {
+    return (Unsigned(c.getFeedbackLatencyCycles()) + peer +
+            c.getStartUncertaintyCycles()) *
+           c.getClockRatioDenominator();
+  };
+  auto start = [](ControllerAttr c) {
+    return Unsigned(c.getStartUncertaintyCycles()) *
+           c.getClockRatioDenominator();
+  };
+  auto ceilOf = [](Unsigned value, int64_t by) {
+    return value / Unsigned(by) + Unsigned(value % Unsigned(by) != 0);
+  };
+  // A bound first: the latest reader plus the least known start.
+  Unsigned latest = 0, least = 0;
+  for (ControllerAttr c : controllers) {
+    int64_t peer = c.getPeerLatencyCycles();
+    for (auto [index, cycles] : c.getPeerLatencyByController())
+      peer = std::max(peer, cycles);
+    latest =
+        std::max(latest, ceilOf(late(c, peer), c.getClockRatioNumerator()));
+    least = std::max(least, ceilOf(start(c), c.getClockRatioNumerator()));
+  }
+  if (latest + least <= kMost)
+    return success();
+  // Then every pair, exactly: whole parts and the carry of the remainders.
+  for (auto [r, reader] : llvm::enumerate(controllers)) {
+    Unsigned num = Unsigned(reader.getClockRatioNumerator());
+    for (auto [u, user] : llvm::enumerate(controllers)) {
+      if (r == u)
+        continue;
+      int64_t peer = reader.getPeerLatencyCycles();
+      for (auto [index, cycles] : reader.getPeerLatencyByController())
+        if (index == static_cast<int64_t>(u))
+          peer = cycles;
+      Unsigned a = late(reader, peer), x = start(user);
+      Unsigned userNum = Unsigned(user.getClockRatioNumerator());
+      Unsigned aRest = a % num, xRest = x % userNum;
+      Unsigned total = a / num + x / userNum;
+      if (aRest || xRest)
+        total += 1 + Unsigned(aRest * userNum + xRest * num > num * userNum);
+      if (total > kMost)
+        return emitError()
+               << "the outcome of a readout on controller " << r
+               << " reaches controller " << u
+               << " more than 2^63 - 1 program cycles after the readout ends";
+    }
+  }
+  return success();
+}
+
 LogicalResult
 ControlSystemAttr::verify(function_ref<InFlightDiagnostic()> emitError,
                           int64_t numerator, int64_t denominator,
@@ -547,25 +663,19 @@ ControlSystemAttr::verify(function_ref<InFlightDiagnostic()> emitError,
     return emitError() << "clock_period_fs " << numerator << "/" << denominator
                        << " has no exact clock";
   auto count = static_cast<int64_t>(controllers.size());
-  bool tables = false;
-  for (ControllerAttr controller : controllers) {
-    bool has = !controller.getOutcomeLatencyCycles().empty() ||
-               !controller.getSpreadCycles().empty();
-    tables |= has;
-    if (has &&
-        (static_cast<int64_t>(controller.getOutcomeLatencyCycles().size()) !=
-             count ||
-         static_cast<int64_t>(controller.getSpreadCycles().size()) != count))
-      return emitError() << "each controller's outcome_latency_cycles and "
-                            "spread_cycles list all "
-                         << count << " controllers";
+  for (auto [index, controller] : llvm::enumerate(controllers)) {
+    for (auto [peer, cycles] : controller.getPeerLatencyByController()) {
+      if (peer == static_cast<int64_t>(index))
+        return emitError() << "controller " << index
+                           << "'s peer_latency_cycles names itself";
+      if (peer >= count)
+        return emitError() << "controller " << index
+                           << "'s peer_latency_cycles names controller " << peer
+                           << ", of " << count;
+    }
   }
-  if (tables)
-    for (ControllerAttr controller : controllers)
-      if (controller.getOutcomeLatencyCycles().empty())
-        return emitError() << "each controller's outcome_latency_cycles and "
-                              "spread_cycles list all "
-                           << count << " controllers";
+  if (failed(latenciesFit(emitError, controllers)))
+    return failure();
   llvm::SmallSet<std::pair<int64_t, int64_t>, 16> reached;
   for (LineAttr line : lines) {
     if (line.getController() >= std::max<int64_t>(count, 1))

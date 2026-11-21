@@ -159,6 +159,46 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 
 ### Changed
 
+- **Controllers in the printed MLIR carry what they were given.** In
+  `pulse.control_system`, each `#pulse.controller` of a system of several
+  controllers gives the controller's own facts, in its own cycles, where it
+  listed its outcome latency to and start spread from every controller and
+  its start uncertainty in ns: `clock_ratio` (its cycles per program cycle,
+  an exact fraction), `feedback_latency_cycles`, `peer_latency_cycles` (one
+  value, or by controller index) and `start_uncertainty_cycles` (its clock
+  skew, plus one cycle without a shared reference clock), each left out at
+  its default. The scheduler derives the latencies and spreads from them as
+  before, so programs schedule as before, and the attribute grows with the
+  number of controllers where it grew with its square: compiling for 1,921
+  controllers no longer prints and parses 7.4 million numbers. For
+  `Controller(feedback_latency_cycles=6, peer_latency_cycles={1: 10})`, the
+  first of three controllers without a reference clock, where `mlir()`
+  printed
+
+  ```
+  #pulse.controller<outcome_latency_cycles = [6, 18, 8], spread_cycles = [0, 2, 2], uncertainty_ns = 5.000000e-01>
+  ```
+
+  it now prints
+
+  ```
+  #pulse.controller<feedback_latency_cycles = 6, peer_latency_cycles = {1 = 10}, start_uncertainty_cycles = 1>
+  ```
+
+  MLIR text with `outcome_latency_cycles`, `spread_cycles` or
+  `uncertainty_ns` no longer parses. In hand-written MLIR, a control system
+  of several controllers that give none of these facts is now scheduled as
+  several controllers whose latencies and spreads are 0, where without
+  tables it was scheduled as if on one controller (the compiler always wrote
+  the tables). `Controller.feedback_latency_cycles` must be a whole number
+  of cycles, like the other `*_cycles` fields: a whole value of another
+  type (`6.0`, `Fraction(6)`, `Decimal(6)`, numpy's `int64(6)`) is 6 as
+  before, while `2.5`, `inf` and `nan`, which it accepted (`inf` then failed
+  to compile), now raise `InvalidValueError`, and `True` and numpy's
+  `True_` raise `InvalidTypeError`. A system whose latency between two
+  controllers exceeds 2**63 - 1 program cycles, which failed with an
+  unreadable MLIR error, now raises `InvalidValueError` naming the two
+  controllers.
 - **Measurements keep the kernel's numbers under every schedule.**
   `SimulationResult.measurements` gives each measurement the readout number
   (the kernel's order of its readouts) and loop iteration the kernel gave it,

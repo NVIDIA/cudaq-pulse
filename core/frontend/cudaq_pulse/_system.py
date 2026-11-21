@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
+import numbers
 import os
 import re
 import warnings
@@ -433,12 +434,36 @@ def _lines(value: Iterable[Any], name: str, cls: type[_Line]) -> tuple[Any, ...]
     return tuple(lines)
 
 
-def _cycles(value: Any, name: str) -> int:
+# numpy's bools, which are not ints: like True, not a number of cycles.
+_BOOL_TYPES = frozenset({"bool_", "bool"})
+
+
+def _cycles(value: Any, name: str, *, whole_floats: bool = False) -> int:
     if value.__class__ is Time:
         raise InvalidTypeError(
             f"Controller.{name} is a whole number of the controller's own cycles, "
             f"got the time {value}; divide it by the controller's cycle time"
         )
+    if (
+        whole_floats
+        and not isinstance(value, (bool, int))
+        and type(value).__name__ not in _BOOL_TYPES
+        and isinstance(value, numbers.Number)
+        # Real, or a number not complex at all, as Decimal is.
+        and (isinstance(value, numbers.Real) or not isinstance(value, numbers.Complex))
+    ):
+        # A whole number of another type (6.0, numpy's int64, Fraction(6),
+        # Decimal(6)) is that number of cycles; a fraction of a cycle, an
+        # infinity or a NaN is not.
+        number: Any = value
+        whole: int | None
+        try:
+            whole = int(number)
+        except (OverflowError, ValueError):
+            whole = None
+        if whole is None or whole != number:
+            raise InvalidValueError(f"Controller.{name} is a whole number of cycles, got {value!r}")
+        value = whole
     if isinstance(value, bool) or not isinstance(value, int):
         raise InvalidTypeError(f"Controller.{name} is a whole number of cycles, got {value!r}")
     if value < 0:
@@ -857,9 +882,14 @@ class Controller:
             )
         if self.instruction_cycles < 1:
             raise InvalidValueError("Controller.instruction_cycles must be at least 1")
-        for name in ("min_idle_cycles", "detector_recovery_cycles", "feedback_latency_cycles"):
+        for name in ("min_idle_cycles", "detector_recovery_cycles"):
             if getattr(self, name) < 0:
                 raise InvalidValueError(f"Controller.{name} cannot be negative")
+        object.__setattr__(
+            self,
+            "feedback_latency_cycles",
+            _cycles(self.feedback_latency_cycles, "feedback_latency_cycles", whole_floats=True),
+        )
         least = self.min_pulse_cycles
         if isinstance(least, bool) or not isinstance(least, int) or least < 0:
             raise InvalidValueError(
@@ -1561,58 +1591,105 @@ class ControlSystem:
             for i, c in enumerate(self.controllers)
         ]
 
-    def _outcome_latencies(self, clocks: _clocks.ClockPlan | None) -> list[list[int]]:
-        """By reader, then user: how long after a readout ends its outcome is
-        usable on each controller, in program cycles (its feedback latency on
-        the reader; with its ``peer_latency_cycles`` and both controllers'
-        start uncertainty on another)."""
-        from fractions import Fraction
-
-        controllers = self.controllers
-        uncertainty = self._start_uncertainty(clocks)
-        table = []
-        for reader, source in enumerate(controllers):
-            ratio = Fraction(1) if clocks is None else clocks.controllers[reader].ratio
-            peers = source.peer_latency_cycles
-            row = []
-            for user in range(len(controllers)):
-                if user == reader:
-                    row.append(math.ceil(source.feedback_latency_cycles / ratio))
-                    continue
-                peer = peers.get(user, 0) if isinstance(peers, Mapping) else peers
-                latency = (source.feedback_latency_cycles + peer) / ratio
-                row.append(math.ceil(latency + uncertainty[reader] + uncertainty[user]))
-            table.append(row)
-        return table
-
     def _controllers_attribute(self, program_ghz: float, max_duration_cycles: int | None) -> str:
         """The ``controllers`` of the control system of a program at
         *program_ghz* (``#pulse.control_system``): each controller's grid,
-        how long after one of its readouts the outcome is usable on each
-        controller and how far apart their starts may be (in program
-        cycles), its start uncertainty in ns, whether it blocks on calls, and
-        *max_duration_cycles*."""
-        from fractions import Fraction
-
+        the facts the scheduler derives the latencies and spreads between
+        controllers from, in its own cycles (its cycles per program cycle,
+        its feedback and peer latency, and its start uncertainty: its
+        ``clock_skew_cycles``, plus one cycle when the system shares no
+        reference clock), whether it blocks on calls, and
+        *max_duration_cycles*; each fact left out at its default."""
         clocks = self._clock_plan(program_ghz)
-        uncertainty = self._start_uncertainty(clocks)
-        latencies = self._outcome_latencies(clocks)
-        everyone = range(len(self.controllers))
+        extra = 0 if self.reference_clock_ghz is not None else 1
+        self._latencies_fit(clocks, extra)
         entries = []
         for a, controller in enumerate(self.controllers):
             fields = []
-            if clocks is not None and clocks.controllers[a].grid > 1:
-                fields.append(f"grid_cycles = {clocks.controllers[a].grid}")
-            spread = (0 if a == b else math.ceil(uncertainty[a] + uncertainty[b]) for b in everyone)
-            fields.append(f"outcome_latency_cycles = [{', '.join(map(str, latencies[a]))}]")
-            fields.append(f"spread_cycles = [{', '.join(map(str, spread))}]")
-            fields.append(f"uncertainty_ns = {float(uncertainty[a] / Fraction(program_ghz))!r}")
+            if clocks is not None:
+                clock = clocks.controllers[a]
+                if clock.grid > 1:
+                    fields.append(f"grid_cycles = {clock.grid}")
+                if clock.ratio != 1:
+                    fields.append(f"clock_ratio = {clock.ratio}")
+            if controller.feedback_latency_cycles:
+                fields.append(f"feedback_latency_cycles = {controller.feedback_latency_cycles}")
+            peers = controller.peer_latency_cycles
+            if isinstance(peers, Mapping):
+                if peers:
+                    given = ", ".join(f"{k} = {v}" for k, v in sorted(peers.items()))
+                    fields.append(f"peer_latency_cycles = {{{given}}}")
+            elif peers:
+                fields.append(f"peer_latency_cycles = {peers}")
+            if uncertainty := controller.clock_skew_cycles + extra:
+                fields.append(f"start_uncertainty_cycles = {uncertainty}")
             if controller.blocks_on_calls:
                 fields.append("blocks_on_calls")
             if max_duration_cycles is not None:
                 fields.append(f"max_duration_cycles = {int(max_duration_cycles)}")
             entries.append(f"#pulse.controller<{', '.join(fields)}>")
         return f"[{', '.join(entries)}]"
+
+    def _latencies_fit(self, clocks: _clocks.ClockPlan | None, extra: int) -> None:
+        """Raise unless every outcome latency between controllers, in program
+        cycles, fits the 64 bits the scheduler counts in: the reader's
+        feedback and peer latency and both start uncertainties (*extra*: the
+        cycle each adds without a shared reference clock)."""
+        most = 2**63 - 1
+        ratios = (
+            [(1, 1)] * len(self.controllers)
+            if clocks is None
+            else [(c.ratio.numerator, c.ratio.denominator) for c in clocks.controllers]
+        )
+
+        def late(controller: Controller, peer: int, num: int, den: int) -> tuple[int, int]:
+            return divmod(
+                (controller.feedback_latency_cycles + peer + controller.clock_skew_cycles + extra)
+                * den,
+                num,
+            )
+
+        def start(controller: Controller, num: int, den: int) -> tuple[int, int]:
+            return divmod((controller.clock_skew_cycles + extra) * den, num)
+
+        def peers(controller: Controller) -> Mapping[int, int]:
+            given = controller.peer_latency_cycles
+            return given if isinstance(given, Mapping) else {}
+
+        def default(controller: Controller) -> int:
+            given = controller.peer_latency_cycles
+            return 0 if isinstance(given, Mapping) else given
+
+        # A bound first, in O(C): the latest reader plus the least known start.
+        latest = least = 0
+        for controller, (num, den) in zip(self.controllers, ratios, strict=True):
+            peer = max([default(controller), *peers(controller).values()])
+            whole, rest = late(controller, peer, num, den)
+            latest = max(latest, whole + (rest > 0))
+            whole, rest = start(controller, num, den)
+            least = max(least, whole + (rest > 0))
+        if latest + least <= most:
+            return
+        # Then every pair, exactly.
+        for r, reader in enumerate(self.controllers):
+            num, den = ratios[r]
+            for u, user in enumerate(self.controllers):
+                if u == r:
+                    continue
+                user_num, user_den = ratios[u]
+                a, a_rest = late(reader, peers(reader).get(u, default(reader)), num, den)
+                x, x_rest = start(user, user_num, user_den)
+                total = a + x
+                if a_rest or x_rest:
+                    total += 1 + (a_rest * user_num + x_rest * num > num * user_num)
+                if total > most:
+                    raise InvalidValueError(
+                        f"{_label(r, reader)}: the outcome of its readout reaches "
+                        f"{_label(u, user)} {total} program cycles after the readout ends, "
+                        "more than the 2**63 - 1 the scheduler counts; lower its "
+                        "feedback_latency_cycles or peer_latency_cycles, or the "
+                        "clock_skew_cycles of either"
+                    )
 
     def _links_attribute(
         self, machine: _MachineModel, used: Sequence[int], program_ghz: float

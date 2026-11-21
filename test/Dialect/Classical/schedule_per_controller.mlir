@@ -13,8 +13,8 @@ module attributes {pulse.qudit_count = 2 : i64,
       lines = [#pulse.line<drive, qudits = [0]>, #pulse.line<drive, qudits = [1], controller = 1>,
                #pulse.line<readout, qudits = [0]>, #pulse.line<readout, qudits = [1], controller = 1>],
       controllers = [
-        #pulse.controller<outcome_latency_cycles = [0, 0], spread_cycles = [0, 0], uncertainty_ns = 0.5>,
-        #pulse.controller<outcome_latency_cycles = [0, 0], spread_cycles = [0, 0], uncertainty_ns = 0.5>]>,
+        #pulse.controller<clock_ratio = 2, start_uncertainty_cycles = 1>,
+        #pulse.controller<clock_ratio = 2, start_uncertainty_cycles = 1>]>,
     classical.links = {"0" = {fixed_ns = 0.0 : f64, bytes_per_ns = 0.0 : f64,
       feedback_ns = 0.0 : f64, slots = 1 : i64, slot_bytes = 1024 : i64,
       per_controller, name = "decoder"}}} {

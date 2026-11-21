@@ -1455,9 +1455,10 @@ def _clocked_module(
     max_duration_cycles: int | None,
 ) -> Mapping[tuple[str, int], float] | None:
     """Give *module* its control system (``pulse.control_system``): the
-    controller and delay of each line, and each controller's grid, outcome
-    latencies, start uncertainty, frames, calls and *max_duration_cycles*,
-    where any differs from the default; the fine delays."""
+    controller and delay of each line, and each controller's grid, clock
+    ratio, feedback and peer latency, start uncertainty, frames, calls and
+    *max_duration_cycles*, where any differs from the default; the fine
+    delays."""
     from . import _clocks
 
     shifts: Mapping[tuple[str, int], int] = {}
