@@ -1106,7 +1106,15 @@ def _sync_lines(fname: str, call_args: list[Any]) -> list[IRValue]:
             code="wrong_argument",
         )
     if len({id(v) for v in lines}) != len(lines):
-        raise CompilationError(f"{fname}(): a line is passed more than once", code="wrong_argument")
+        places: dict[int, int] = {}
+        for place, line in enumerate(lines, 1):
+            first = places.setdefault(id(line), place)
+            if first != place:
+                raise CompilationError(
+                    f"{fname}(): lines {first} and {place} are the same line; a line is in "
+                    "step with itself, so pass it once",
+                    code="wrong_argument",
+                )
     return lines
 
 
