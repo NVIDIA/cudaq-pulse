@@ -243,6 +243,15 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 
 ### Fixed
 
+- `sync()` with one line passed twice, as `sync(a, b, a)` or
+  `sync(*controls, *targets)` with a line in both lists, is a
+  `CompilationError` at the call that names the two places (`sync(): lines
+  1 and 3 are the same line; a line is in step with itself, so pass it
+  once`). It failed in the pass pipeline with `linear pulse value is
+  consumed more than once` and no kernel line, or at a later `drive()` with
+  `argument 3 must be a tone, got NoneType None`, and without the verify
+  pass it compiled with the sync left out. A list that repeats a line,
+  `sync([a, b, a])`, was already refused, and now names the places too.
 - A name, or a place of a list, that the two arms of an `if` on a
   measurement bind to different lines or tones (as `a, b = b, a` in one arm
   does) is not one line after the `if`. An operation on it could compile
