@@ -637,6 +637,25 @@ struct Extrapolation {
   }
 };
 
+/// Iterations `lo` < i < `hi` of one run of `loop` (in the iterations
+/// `outer` of the loops around it) that the scheduler did not simulate
+/// although the pass compares a loop's lanes over its first iterations only
+/// and would otherwise have simulated them (see Scheduler::LaneCycle): each
+/// starts every op, nested ones too, `period` per iteration after it does
+/// in iteration `anchor` (or, with `periods`, its own period). The schedule
+/// is written as if they had been simulated.
+struct Cover {
+  mlir::scf::ForOp loop;
+  llvm::SmallVector<int64_t, 2> outer;
+  int64_t anchor, lo, hi, period;
+  /// With `periods`, each op's period of its own, as in Extrapolation.
+  std::shared_ptr<const llvm::DenseMap<mlir::Operation *, int64_t>> periods;
+
+  int64_t periodOf(mlir::Operation *op) const {
+    return periods ? periods->lookup(op) : period;
+  }
+};
+
 /// The carried values of a loop in groups that no op of its body relates:
 /// each op's timing depends on the values of one group only, so each group
 /// may move by a period of its own. `ofArg` has each carried value's group
@@ -1194,6 +1213,7 @@ public:
     }
     samples.clear();
     extrapolations.clear();
+    covers.clear();
     resetLanes(makespan);
     return backwardBlock(region->front());
   }
@@ -1201,6 +1221,8 @@ public:
   int64_t makespan = 0;
   llvm::DenseMap<mlir::Operation *, llvm::SmallVector<Sample, 1>> samples;
   llvm::SmallVector<Extrapolation> extrapolations;
+  /// The iterations a LaneCycle skipped (see Cover).
+  llvm::SmallVector<Cover> covers;
   /// An iteration the backward pass did not simulate starts an op before
   /// zero.
   bool skippedNegative = false;
@@ -1841,6 +1863,7 @@ private:
   /// `readoutDistance`.
   void moveLanesBy(const LaneState &before, int64_t driveDistance,
                    int64_t readoutDistance) {
+    notePicksSkipped();
     for (size_t t = 0; t < driveLanes.size(); ++t) {
       if (driveUses[t] != before.driveUses[t])
         for (int64_t &lane : driveLanes[t])
@@ -1850,6 +1873,633 @@ private:
           lane += readoutDistance;
     }
   }
+
+  // ── Lanes past the iterations they are compared over ──────────────────
+
+  /// The times of the lanes the ops of an iteration took, in the order they
+  /// took them, and whether a lane held one back: its time was later than
+  /// the op could start (forward), or earlier than it could end (backward).
+  /// Not `complete` when a loop in it moved lanes past iterations it did
+  /// not simulate.
+  struct LanePicks {
+    llvm::SmallVector<int64_t, 4> drives, readouts;
+    bool held = false, complete = true;
+    void clear() {
+      drives.clear();
+      readouts.clear();
+      held = false;
+      complete = true;
+    }
+  };
+
+  /// Note that an op took a drive (or readout) lane of time `lane`, which
+  /// held it back when `held`, in the iteration of each loop watched.
+  void notePick(bool isDrive, int64_t lane, bool held) {
+    for (LanePicks *picks : picking) {
+      (isDrive ? picks->drives : picks->readouts).push_back(lane);
+      picks->held |= held;
+    }
+  }
+
+  /// Lanes moved past iterations not simulated: the iterations watched
+  /// around them did not note every lane taken.
+  void notePicksSkipped() {
+    for (LanePicks *picks : picking)
+      picks->complete = false;
+  }
+
+  /// A loop's lanes where the steady test finds them not moved as the
+  /// iteration did: past the iterations the lanes are compared over
+  /// (laneTriesPerLoop), after which the pass would simulate every iteration
+  /// left, or, for a loop whose carried values move by periods of their own
+  /// (LoopGroups), where its lanes did not move with them. For a loop on one
+  /// controller and timeline, with no call. It stands in for the lanes'
+  /// part of the steady test only (see `steady`). After an iteration that
+  /// moved every op, nested ones too, as it moved them in the one before
+  /// (by the shift, or by the shift of its group), each kind of lane by the
+  /// shift of the ops that take it, it is steady when
+  ///  - the lanes it did not take that are later (forward; earlier,
+  ///    backward) than every lane it gave a time to stay apart, and the
+  ///    others moved by the shift (lane by lane; as a multiset where lanes
+  ///    of equal times are interchangeable, lanesByTime). Without the lanes
+  ///    apart every iteration after plays as this one moved. It then also
+  ///    does with them while it gives no lane a time as late as theirs: if
+  ///    that holds to the last iteration, or there are none, it is steady
+  ///    and they stay; else the loop skips, moved, to the last iteration
+  ///    that does and goes on from there. And where lanes of equal times are
+  ///    interchangeable, the iteration noted every lane it took and none held
+  ///    an op back, every iteration after plays as it moved as well: without
+  ///    the lanes apart none waits, and with them each op takes a lane at
+  ///    least as early. Each op hands the earliest lane on to a later time,
+  ///    so the lanes left at the end are the latest of the lanes before and
+  ///    those the ops gave times to: those of the last iterations, and the
+  ///    lanes apart or the last the iterations took;
+  ///  - or its lanes moved by n times the shift over its last n iterations
+  ///    (n from 2 to twice the product of the numbers of drive and readout
+  ///    lanes and their sum, and 2), each of which moved every op as the
+  ///    last did: they repeat every n iterations.
+  /// The iterations not simulated are noted as Covers, and the schedule is
+  /// written as when every iteration is simulated.
+  class LaneCycle {
+    using Shifts = llvm::SmallVector<std::optional<int64_t>, 4>;
+
+  public:
+    LaneCycle(Scheduler &scheduler, mlir::scf::ForOp loop, int64_t count,
+              int64_t sign)
+        : s(scheduler), loop(loop), count(count), sign(sign),
+          outer(scheduler.iteration.begin(),
+                std::prev(scheduler.iteration.end())) {
+      on = s.resources.enabled && !s.several() && !s.classical &&
+           !s.holding() && s.floors.size() == 1 &&
+           !loop.getBody()
+                ->walk([](pulse::ScheduleBlockOp) {
+                  return mlir::WalkResult::interrupt();
+                })
+                .wasInterrupted();
+      if (!on)
+        return;
+      forEachScheduled(loop.getRegion(),
+                       [&](mlir::Operation *op) { ops.push_back(op); });
+      // Each kind of lane repeats after at most as many iterations as it
+      // has lanes, both after the product.
+      int64_t drives = static_cast<int64_t>(s.driveLanes[0].size()),
+              readouts = static_cast<int64_t>(s.readoutLanes[0].size());
+      longest = 2 * (drives * readouts + drives + readouts) + 2;
+      steps.resize(static_cast<size_t>(longest) + 1);
+    }
+    LaneCycle(const LaneCycle &) = delete;
+    LaneCycle &operator=(const LaneCycle &) = delete;
+    ~LaneCycle() { llvm::erase(s.picking, &picks); }
+
+    /// After iteration `k`: whether the loop is steady, or (`skip`) how many
+    /// iterations it may skip. It decides the lanes' part of the steady test
+    /// only. `shift` is none unless every other part held for the
+    /// iteration: each carried value (line, tone, link or other) moved by
+    /// `shift` as in the one before, on every grid, with the links' slots
+    /// moved too and every value then past what the body reads from outside
+    /// the loop (`bounded`, which forward also tells for an iteration whose
+    /// other parts did not hold).
+    bool steady(int64_t k, std::optional<int64_t> shift, bool bounded) {
+      Moves moves;
+      if (shift)
+        moves = {true, *shift, *shift, *shift, nullptr, {}, {*shift}};
+      return decide(k, moves, bounded);
+    }
+
+    /// `steady` for a loop whose carried values move by periods of their
+    /// own (`groups`): `shifts` is none unless every other part of the
+    /// steady test of such a loop held, the lanes' part (groupLanesMoved)
+    /// aside.
+    bool steadyGroups(int64_t k, const LoopGroups &groups, const Shifts *shifts,
+                      bool bounded) {
+      Moves moves;
+      if (shifts) {
+        auto shiftOf =
+            [&](const llvm::SmallBitVector &kind) -> std::optional<int64_t> {
+          std::optional<int64_t> found;
+          for (unsigned group : kind.set_bits()) {
+            int64_t moved = (*shifts)[group].value_or(0);
+            if (found && *found != moved)
+              return std::nullopt;
+            found = moved;
+          }
+          return found.value_or(0);
+        };
+        std::optional<int64_t> drives = shiftOf(groups.driveGroups),
+                               readouts = shiftOf(groups.readoutGroups);
+        if (drives && readouts) {
+          moves = {true, *drives, *readouts, 0, &groups, *shifts, {}};
+          for (const std::optional<int64_t> &shift : *shifts)
+            moves.key.push_back(shift ? *shift : kNever);
+        }
+      }
+      return decide(k, moves, bounded);
+    }
+
+    /// Whether the decision on iteration `k` found the loop steady.
+    bool found(int64_t k) const { return took && filled > 0 && step(0).k == k; }
+
+    /// How many iterations the last decision found the loop may skip, or 0.
+    int64_t skip() const { return skipBy; }
+
+    /// For a loop of groups, how far its groups move over `copies`
+    /// iterations; none past 2**63.
+    std::optional<llvm::SmallVector<int64_t, 4>>
+    groupDistances(int64_t copies) const {
+      return Scheduler::groupDistances(moves.shifts, copies);
+    }
+    const LoopGroups *groups() const { return moves.groups; }
+
+    /// Move the lanes as the `copies` iterations after the last one
+    /// simulated, to the loop's end, do.
+    void move(int64_t copies) {
+      took = false;
+      const Step &now = step(0);
+      int64_t k = now.k;
+      s.covers.push_back({loop, outer, k, sign > 0 ? k : -1,
+                          sign > 0 ? count : k, 0, periods()});
+      s.notePicksSkipped();
+      if (cycle > 0) {
+        // The iteration of the last cycle that the last one skipped
+        // repeats.
+        int64_t back = (cycle - copies % cycle) % cycle;
+        const LaneState &from = step(back).lanes;
+        const LaneState &first = step(cycle).lanes;
+        auto kind = [&](llvm::SmallVectorImpl<int64_t> &lanes,
+                        llvm::ArrayRef<int64_t> was, int64_t firstUses,
+                        int64_t uses, int64_t shift) {
+          if (firstUses != uses)
+            for (auto [lane, before] : llvm::zip(lanes, was))
+              lane = before + (copies + back) * shift;
+        };
+        kind(s.driveLanes[0], from.drives[0], first.driveUses[0],
+             s.driveUses[0], moves.drives);
+        kind(s.readoutLanes[0], from.readouts[0], first.readoutUses[0],
+             s.readoutUses[0], moves.readouts);
+        return;
+      }
+      const LaneState &was = step(1).lanes;
+      if (was.driveUses[0] != now.lanes.driveUses[0])
+        moveApart(s.driveLanes[0], drivesApart, now.picks.drives, copies,
+                  moves.drives);
+      if (was.readoutUses[0] != now.lanes.readoutUses[0])
+        moveApart(s.readoutLanes[0], readoutsApart, now.picks.readouts, copies,
+                  moves.readouts);
+    }
+
+    /// Skip the iterations the last decision found the loop may, moving
+    /// the lanes as they do; the iteration last skipped keeps its samples,
+    /// those of the last one simulated moved.
+    void skipIterations() {
+      int64_t copies = skipBy, k = step(0).k, to = k + sign * copies;
+      skipBy = 0;
+      s.covers.push_back(
+          {loop, outer, k, sign > 0 ? k : to, sign > 0 ? to : k, 0, periods()});
+      s.notePicksSkipped();
+      const LaneState &was = step(1).lanes;
+      const Step &now = step(0);
+      auto moveKind = [&](llvm::SmallVectorImpl<int64_t> &lanes,
+                          llvm::ArrayRef<size_t> apart, int64_t wasUses,
+                          int64_t isUses, int64_t shift) {
+        if (wasUses == isUses)
+          return;
+        for (auto [i, lane] : llvm::enumerate(lanes))
+          if (!llvm::is_contained(apart, i))
+            lane += copies * shift;
+      };
+      moveKind(s.driveLanes[0], drivesApart, was.driveUses[0],
+               now.lanes.driveUses[0], moves.drives);
+      moveKind(s.readoutLanes[0], readoutsApart, was.readoutUses[0],
+               now.lanes.readoutUses[0], moves.readouts);
+      // The samples and covers of the iteration last skipped.
+      size_t depth = outer.size();
+      for (mlir::Operation *op : ops) {
+        auto it = s.samples.find(op);
+        if (it == s.samples.end())
+          continue;
+        auto &list = it->second;
+        auto [begin, end] = runOf(list, list.size(), k);
+        int64_t by = copies * opShift(op);
+        for (size_t i = begin; i < end; ++i) {
+          Sample moved = list[i];
+          moved.iteration[depth] = to;
+          moved.start += by;
+          list.push_back(std::move(moved));
+        }
+      }
+      for (size_t i = 0, n = s.covers.size(); i < n; ++i)
+        if (inIteration(s.covers[i].outer, k)) {
+          Cover moved = s.covers[i];
+          moved.outer[depth] = to;
+          s.covers.push_back(std::move(moved));
+        }
+      filled = 0;
+    }
+
+  private:
+    /// How an iteration moved what the lanes' part of the test depends on:
+    /// each kind of lane by the shift of the ops that take it, and each op
+    /// by `all` or, in a loop of `groups`, by its group's of `shifts`; `key`
+    /// tells two iterations that moved alike.
+    struct Moves {
+      bool ok = false;
+      int64_t drives = 0, readouts = 0, all = 0;
+      const LoopGroups *groups = nullptr;
+      Shifts shifts;
+      llvm::SmallVector<int64_t, 4> key;
+    };
+
+    struct Step {
+      int64_t k = 0;
+      bool ok = false, bounded = false, logged = false;
+      llvm::SmallVector<int64_t, 4> key;
+      /// How many iterations up to this one moved alike.
+      int64_t run = 0;
+      LaneState lanes;
+      /// The sums of the times of the drive and readout lanes.
+      int64_t driveSum = 0, readoutSum = 0;
+      LanePicks picks;
+    };
+
+    /// The iteration `back` iterations before the last one noted.
+    Step &step(int64_t back) {
+      return steps[static_cast<size_t>((next + steps.size() - 1 - back) %
+                                       steps.size())];
+    }
+    const Step &step(int64_t back) const {
+      return steps[static_cast<size_t>((next + steps.size() - 1 - back) %
+                                       steps.size())];
+    }
+
+    int64_t opShift(mlir::Operation *op) const {
+      if (!moves.groups)
+        return moves.all;
+      return moves.shifts[moves.groups->groupOf(op, sign < 0)].value_or(0);
+    }
+
+    /// The period of each op along the loop, for its Covers.
+    std::shared_ptr<const llvm::DenseMap<mlir::Operation *, int64_t>>
+    periods() const {
+      auto found =
+          std::make_shared<llvm::DenseMap<mlir::Operation *, int64_t>>();
+      for (mlir::Operation *op : ops)
+        (*found)[op] = sign * opShift(op);
+      return found;
+    }
+
+    bool decide(int64_t k, const Moves &now, bool bounded) {
+      took = false;
+      skipBy = 0;
+      if (!on)
+        return false;
+      // An iteration asked about again (as a loop of groups after its
+      // steady test) keeps what was noted of it.
+      bool again = filled > 0 && step(0).k == k;
+      if (!again && filled > 0 && step(0).k != k - sign)
+        filled = 0;
+      if (!again) {
+        bool logged = llvm::is_contained(s.picking, &picks);
+        next = (next + 1) % steps.size();
+        filled =
+            std::min<int64_t>(filled + 1, static_cast<int64_t>(steps.size()));
+        Step &noted = step(0);
+        noted.k = k;
+        noted.logged = logged;
+        noted.lanes.drives = s.driveLanes;
+        noted.lanes.readouts = s.readoutLanes;
+        noted.lanes.driveUses = s.driveUses;
+        noted.lanes.readoutUses = s.readoutUses;
+        noted.driveSum = sum(s.driveLanes[0]);
+        noted.readoutSum = sum(s.readoutLanes[0]);
+        std::swap(noted.picks, picks);
+        picks.clear();
+        if (!logged)
+          s.picking.push_back(&picks);
+      }
+      Step &noted = step(0);
+      noted.ok = now.ok;
+      noted.bounded = bounded;
+      noted.key = now.key;
+      // How many iterations up to this one moved alike.
+      noted.run = 0;
+      if (now.ok)
+        noted.run = filled > 1 && step(1).ok && step(1).key == now.key
+                        ? step(1).run + 1
+                        : 1;
+      if (!now.ok || sign * now.drives < 0 || sign * now.readouts < 0 ||
+          (now.drives == 0 && now.readouts == 0))
+        return false;
+      if constexpr (Gridded)
+        if (now.drives % s.grid.lcm() != 0 || now.readouts % s.grid.lcm() != 0)
+          return false;
+      int64_t left = sign > 0 ? count - 1 - k : k;
+      if (left < 1)
+        return false;
+      moves = now;
+      cycle = 0;
+      closed = false;
+      if (movedApart()) {
+        const Step &last = step(0);
+        // Lanes apart are taken again as the loop reaches them; for a loop
+        // of groups the steady test may find it steady after, so the loop
+        // is not ended before.
+        if ((drivesApart.empty() && readoutsApart.empty()) ||
+            (!now.groups && s.lanesByTime() && last.picks.complete &&
+             !last.picks.held)) {
+          closed = true;
+          took = true;
+        } else if (int64_t reach = reached(); reach >= left) {
+          took = true;
+        } else if (reach >= 1) {
+          skipBy = reach;
+        }
+      }
+      if (!took && !skipBy)
+        took = repeats();
+      return took;
+    }
+
+    static bool samePeriods(const Cover &a, const Cover &b) {
+      if (!a.periods || !b.periods)
+        return a.periods == b.periods;
+      if (a.periods->size() != b.periods->size())
+        return false;
+      for (auto [op, period] : *a.periods)
+        if (b.periods->lookup(op) != period || !b.periods->contains(op))
+          return false;
+      return true;
+    }
+
+    static int64_t sum(llvm::ArrayRef<int64_t> lanes) {
+      int64_t total = 0;
+      for (int64_t lane : lanes)
+        total += lane;
+      return total;
+    }
+
+    /// Whether `iteration` is in iteration `k` of this run of the loop.
+    bool inIteration(llvm::ArrayRef<int64_t> iteration, int64_t k) const {
+      return iteration.size() > outer.size() &&
+             iteration.take_front(outer.size()) == llvm::ArrayRef(outer) &&
+             iteration[outer.size()] == k;
+    }
+
+    /// The samples of `list` before `end` in iteration `k`, the last ones.
+    std::pair<size_t, size_t> runOf(llvm::ArrayRef<Sample> list, size_t end,
+                                    int64_t k) const {
+      size_t begin = end;
+      while (begin > 0 && inIteration(list[begin - 1].iteration, k))
+        --begin;
+      return {begin, end};
+    }
+
+    /// Whether every op of the last `n` iterations, nested ones too, started
+    /// as much after it did in the iteration before as the last iteration
+    /// moved it, and the loops in them skipped the same iterations.
+    bool opsMoved(int64_t n) const {
+      int64_t k = step(0).k;
+      size_t depth = outer.size();
+      for (mlir::Operation *op : ops) {
+        auto it = s.samples.find(op);
+        if (it == s.samples.end())
+          continue;
+        int64_t shift = opShift(op);
+        llvm::ArrayRef<Sample> list = it->second;
+        auto later = runOf(list, list.size(), k);
+        for (int64_t i = 1; i <= n; ++i) {
+          auto earlier = runOf(list, later.first, k - sign * i);
+          if (later.second - later.first != earlier.second - earlier.first)
+            return false;
+          for (size_t j = 0; j < later.second - later.first; ++j) {
+            const Sample &a = list[earlier.first + j];
+            const Sample &b = list[later.first + j];
+            if (llvm::ArrayRef(a.iteration).drop_front(depth + 1) !=
+                    llvm::ArrayRef(b.iteration).drop_front(depth + 1) ||
+                b.start - a.start != shift)
+              return false;
+          }
+          later = earlier;
+        }
+      }
+      auto coversIn = [&](int64_t kk) {
+        llvm::SmallVector<const Cover *> found;
+        for (const Cover &cover : s.covers)
+          if (inIteration(cover.outer, kk))
+            found.push_back(&cover);
+        return found;
+      };
+      auto now = coversIn(k);
+      for (int64_t i = 1; i <= n; ++i) {
+        auto before = coversIn(k - sign * i);
+        if (before.size() != now.size())
+          return false;
+        for (auto [a, b] : llvm::zip(before, now))
+          if (a->loop != b->loop || a->anchor != b->anchor || a->lo != b->lo ||
+              a->hi != b->hi || a->period != b->period ||
+              !samePeriods(*a, *b) ||
+              llvm::ArrayRef(a->outer).drop_front(depth + 1) !=
+                  llvm::ArrayRef(b->outer).drop_front(depth + 1))
+            return false;
+      }
+      return true;
+    }
+
+    /// For the lanes of one kind before (`was`) and after (`is`) an
+    /// iteration that took some of them: the lanes it did not take that are
+    /// later (forward; earlier, backward) than every lane it gave a time
+    /// to, in `apart`, if the others moved by `shift`, as a multiset when
+    /// `byTime`, else lane by lane.
+    bool apartFrom(llvm::ArrayRef<int64_t> was, llvm::ArrayRef<int64_t> is,
+                   llvm::SmallVectorImpl<size_t> &apart, bool byTime,
+                   int64_t shift) const {
+      apart.clear();
+      std::optional<int64_t> edge;
+      for (auto [before, after] : llvm::zip(was, is))
+        if (before != after && (!edge || sign * (after - *edge) > 0))
+          edge = after;
+      if (!edge)
+        return false;
+      llvm::SmallVector<int64_t, 8> from, to;
+      for (auto [i, before, after] : llvm::enumerate(was, is)) {
+        if (before == after && sign * (after - *edge) > 0) {
+          apart.push_back(i);
+          continue;
+        }
+        if (!byTime && after != before + shift)
+          return false;
+        from.push_back(before);
+        to.push_back(after);
+      }
+      if (byTime) {
+        llvm::sort(from);
+        llvm::sort(to);
+        for (auto [x, y] : llvm::zip(from, to))
+          if (y != x + shift)
+            return false;
+      }
+      return true;
+    }
+
+    /// The first case of the class comment: the lanes apart and the others
+    /// moved by the shift.
+    bool movedApart() {
+      drivesApart.clear();
+      readoutsApart.clear();
+      if (filled < 2)
+        return false;
+      const Step &before = step(1), &now = step(0);
+      if (!now.logged || !before.ok || !before.bounded || !now.bounded ||
+          before.key != now.key)
+        return false;
+      bool byTime = s.lanesByTime();
+      auto kind = [&](const Lanes &was, const Lanes &is, int64_t wasUses,
+                      int64_t isUses, llvm::SmallVectorImpl<size_t> &apart,
+                      int64_t shift) {
+        apart.clear();
+        return wasUses == isUses ||
+               apartFrom(was[0], is[0], apart, byTime, shift);
+      };
+      return kind(before.lanes.drives, now.lanes.drives,
+                  before.lanes.driveUses[0], now.lanes.driveUses[0],
+                  drivesApart, moves.drives) &&
+             kind(before.lanes.readouts, now.lanes.readouts,
+                  before.lanes.readoutUses[0], now.lanes.readoutUses[0],
+                  readoutsApart, moves.readouts) &&
+             opsMoved(1);
+    }
+
+    /// How many iterations after the last one the loop plays as it did,
+    /// moved, giving no lane a time as late (forward; early, backward) as
+    /// those apart: every lane it took was at most as late as the latest it
+    /// left.
+    int64_t reached() const {
+      int64_t most = std::numeric_limits<int64_t>::max();
+      auto kind = [&](llvm::ArrayRef<int64_t> lanes,
+                      llvm::ArrayRef<size_t> apart, int64_t shift) {
+        if (apart.empty() || shift == 0)
+          return;
+        std::optional<int64_t> edge, near;
+        for (auto [i, lane] : llvm::enumerate(lanes)) {
+          bool isApart = llvm::is_contained(apart, i);
+          std::optional<int64_t> &bound = isApart ? near : edge;
+          if (!bound || (isApart ? sign * (lane - *bound) < 0
+                                 : sign * (lane - *bound) > 0))
+            bound = lane;
+        }
+        int64_t gap = sign * (*near - *edge) - 1;
+        most = std::min(most, gap < 0 ? 0 : gap / (sign * shift));
+      };
+      kind(s.driveLanes[0], drivesApart, moves.drives);
+      kind(s.readoutLanes[0], readoutsApart, moves.readouts);
+      return most;
+    }
+
+    /// The second case of the class comment.
+    bool repeats() {
+      int64_t most = std::min(longest, filled - 1);
+      const Step &now = step(0);
+      for (int64_t n = 2; n <= most && n <= now.run; ++n) {
+        const Step &first = step(n);
+        if (!first.bounded)
+          continue;
+        // The sums of the lanes taken move as they do.
+        if ((first.lanes.driveUses[0] != now.lanes.driveUses[0] &&
+             now.driveSum - first.driveSum !=
+                 static_cast<int64_t>(s.driveLanes[0].size()) * n *
+                     moves.drives) ||
+            (first.lanes.readoutUses[0] != now.lanes.readoutUses[0] &&
+             now.readoutSum - first.readoutSum !=
+                 static_cast<int64_t>(s.readoutLanes[0].size()) * n *
+                     moves.readouts))
+          continue;
+        if (s.lanesMovedBy(first.lanes, n * moves.drives, n * moves.readouts) &&
+            opsMoved(n)) {
+          cycle = n;
+          return true;
+        }
+      }
+      return false;
+    }
+
+    /// Move the lanes of one kind as `copies` iterations that took lanes at
+    /// `taken` (the last iteration's, in order) moved by `shift` do. Lanes
+    /// in `apart` stay where the iterations do not reach them; else
+    /// (`closed`) they take the latest of themselves and of the lanes the
+    /// iterations gave up last.
+    void moveApart(llvm::SmallVectorImpl<int64_t> &lanes,
+                   llvm::ArrayRef<size_t> apart, llvm::ArrayRef<int64_t> taken,
+                   int64_t copies, int64_t shift) const {
+      if (!closed) {
+        for (auto [i, lane] : llvm::enumerate(lanes))
+          if (!llvm::is_contained(apart, i))
+            lane += copies * shift;
+        return;
+      }
+      llvm::SmallVector<int64_t, 8> latest;
+      for (size_t i : apart)
+        latest.push_back(lanes[i]);
+      for (int64_t copy = copies;
+           copy >= 1 && !taken.empty() && latest.size() < 2 * apart.size();
+           --copy)
+        for (int64_t lane : llvm::reverse(taken)) {
+          if (latest.size() == 2 * apart.size())
+            break;
+          latest.push_back(lane + copy * shift);
+        }
+      if (sign > 0)
+        llvm::sort(latest, std::greater<int64_t>());
+      else
+        llvm::sort(latest);
+      size_t at = 0;
+      for (auto [i, lane] : llvm::enumerate(lanes)) {
+        if (at < apart.size() && apart[at] == i)
+          lane = latest[at++];
+        else
+          lane += copies * shift;
+      }
+    }
+
+    Scheduler &s;
+    mlir::scf::ForOp loop;
+    int64_t count, sign;
+    /// The iterations of the loops around this run.
+    llvm::SmallVector<int64_t, 2> outer;
+    bool on = false, took = false, closed = false;
+    int64_t skipBy = 0;
+    /// The most iterations the lanes may repeat after.
+    int64_t longest = 2;
+    /// The iterations the lanes repeat after, or 0 for the first case.
+    int64_t cycle = 0;
+    Moves moves;
+    llvm::SmallVector<mlir::Operation *> ops;
+    /// The last iterations noted, a ring: `next` follows the last one, and
+    /// `filled` of them are of this run, one after another.
+    llvm::SmallVector<Step, 0> steps;
+    size_t next = 0;
+    int64_t filled = 0;
+    LanePicks picks;
+    llvm::SmallVector<size_t, 2> drivesApart, readoutsApart;
+  };
 
   // ── Loops whose lines move by periods of their own ────────────────────
 
@@ -2214,6 +2864,22 @@ private:
     for (auto [time, before, kind] : llvm::zip(carried, previous, kinds))
       if (kind == Carried::Timed || (kind == Carried::Tone && time != before))
         time += distance;
+  }
+
+  /// Move the carried values as the iterations `cycle` skips do, the way
+  /// the pass runs (`backward`); false, leaving them, past 2**63.
+  static bool skipCarried(const LaneCycle &cycle,
+                          llvm::MutableArrayRef<int64_t> carried,
+                          llvm::ArrayRef<int64_t> previous,
+                          llvm::ArrayRef<Carried> kinds, int64_t shift,
+                          bool backward) {
+    if (const LoopGroups *groups = cycle.groups()) {
+      auto distances = cycle.groupDistances(cycle.skip());
+      return distances && extrapolateGroups(carried, previous, kinds, *groups,
+                                            backward, *distances);
+    }
+    extrapolate(carried, previous, kinds, cycle.skip() * shift);
+    return true;
   }
 
   static Carried carriedKind(mlir::Type type, bool timed) {
@@ -2798,6 +3464,7 @@ private:
               best = i;
             }
           }
+          notePick(isDrive, free, free > start);
           start = std::max(start, free);
           if (step > 1)
             start = pulse::LineGrid::roundUp(start, step);
@@ -2805,6 +3472,7 @@ private:
           owners[best] = owner;
         } else {
           auto lane = std::min_element(lanes.begin(), lanes.end());
+          notePick(isDrive, *lane, *lane > start);
           start = std::max(start, *lane);
           if (step > 1)
             start = pulse::LineGrid::roundUp(start, step);
@@ -2922,6 +3590,7 @@ private:
     iteration.push_back(0);
     std::optional<int64_t> lastShift;
     int64_t laneTries = laneTriesPerLoop();
+    std::optional<LaneCycle> cycle;
     const LoopGroups *groups = nullptr;
     bool grouped = false;
     std::optional<Unshifted> unshifted;
@@ -2989,6 +3658,22 @@ private:
             (kind == Carried::Tone && after != before))
           bounded = bounded && after >= bound;
       steady = steady && bounded;
+      // Past their tries, a LaneCycle stands in for the lanes' part of the
+      // test only: it is told the shift only when every other part holds.
+      if (resources.enabled && !steady && laneTries <= 0) {
+        if (!cycle)
+          cycle.emplace(*this, loop, count, 1);
+        bool others = !lanesBound && repeated && shift >= 0 &&
+                      (!Gridded || shift % grid.lcm() == 0) &&
+                      slotsHoldSteadyState(loop, shift) &&
+                      slotsMoved(links, slotsBefore, false,
+                                 [&](llvm::ArrayRef<mlir::Operation *>) {
+                                   return shift;
+                                 }) &&
+                      bounded;
+        steady = cycle->steady(k, others ? std::optional(shift) : std::nullopt,
+                               bounded);
+      }
       lastShift = shifted ? std::optional<int64_t>(shift) : std::nullopt;
       // Lines that move by periods of their own repeat too, group by group.
       std::optional<GroupShifts> nowGroups;
@@ -3017,6 +3702,23 @@ private:
                                 return requestsShift(loop, *groups, *nowGroups,
                                                      ops, false);
                               });
+      // A LaneCycle may stand in for the lanes' part of that test, and only
+      // for it, too.
+      bool cycleMixed = false;
+      if (resources.enabled && nowGroups && !mixed && groupsApply()) {
+        if (!cycle)
+          cycle.emplace(*this, loop, count, 1);
+        bool others = bounded && lastGroups == nowGroups &&
+                      groupsSteady(*groups, *nowGroups, 1) &&
+                      slotsHoldGroups(loop, *groups, *nowGroups, 1) &&
+                      slotsMoved(links, slotsBefore, false,
+                                 [&](llvm::ArrayRef<mlir::Operation *> ops) {
+                                   return requestsShift(loop, *groups,
+                                                        *nowGroups, ops, false);
+                                 });
+        cycleMixed = mixed = cycle->steadyGroups(
+            k, *groups, others ? &*nowGroups : nullptr, bounded);
+      }
       bool groupsRepeated = nowGroups && lastGroups == nowGroups;
       lastGroups = std::move(nowGroups);
       llvm::SmallVector<int64_t> previous = std::move(carried);
@@ -3025,7 +3727,10 @@ private:
         auto distances = groupDistances(*lastGroups, count - 1 - k);
         if (distances && extrapolateGroups(carried, previous, kinds, *groups,
                                            false, *distances)) {
-          moveGroupLanes(groupLanes, *groups, *distances);
+          if (cycleMixed)
+            cycle->move(count - 1 - k);
+          else
+            moveGroupLanes(groupLanes, *groups, *distances);
           moveSlots(links, false, [&](llvm::ArrayRef<mlir::Operation *> ops) {
             return *requestsShift(loop, *groups, *lastGroups, ops, false) *
                    (count - 1 - k);
@@ -3078,7 +3783,9 @@ private:
             now += distance;
         moveChanged(heldFloors, heldFloorsBefore, distance);
         moveChanged(heldEnds, heldEndsBefore, distance);
-        if (resources.enabled)
+        if (cycle && cycle->found(k))
+          cycle->move(remaining);
+        else if (resources.enabled)
           moveLanes(lanesBefore, distance);
         extrapolations.push_back({loop, shift, nullptr});
         break;
@@ -3098,6 +3805,15 @@ private:
         noteRecentLanes(laneHistory, loop, shift, count - 1 - k);
         if (regroup)
           break;
+      }
+      // Iterations that play as this one moved, short of lanes the loop
+      // has not reached (see LaneCycle).
+      if (cycle && cycle->skip() > 0) [[unlikely]] {
+        int64_t copies = cycle->skip();
+        if (skipCarried(*cycle, carried, previous, kinds, shift, false)) {
+          cycle->skipIterations();
+          k += copies;
+        }
       }
     }
     iteration.pop_back();
@@ -3455,6 +4171,7 @@ private:
               best = i;
             }
           }
+          notePick(!isReadout, free, free < end);
           end = std::min(end, free);
           if (step > 1)
             end = pulse::LineGrid::roundDown(end - duration, step) + duration;
@@ -3462,6 +4179,7 @@ private:
           owners[best] = owner;
         } else {
           auto lane = std::max_element(lanes.begin(), lanes.end());
+          notePick(!isReadout, *lane, *lane < end);
           end = std::min(end, *lane);
           if (step > 1)
             end = pulse::LineGrid::roundDown(end - duration, step) + duration;
@@ -3601,6 +4319,7 @@ private:
     iteration.push_back(0);
     std::optional<int64_t> lastShift;
     int64_t laneTries = laneTriesPerLoop();
+    std::optional<LaneCycle> cycle;
     const LoopGroups *groups = nullptr;
     bool grouped = false;
     std::optional<Unshifted> unshifted;
@@ -3674,6 +4393,21 @@ private:
           (!resources.enabled || lanesSteady(lanesBefore, shift, laneTries)) &&
           slotsMoved(links, slotsBefore, true,
                      [&](llvm::ArrayRef<mlir::Operation *>) { return shift; });
+      // Past their tries, a LaneCycle stands in for the lanes' part of the
+      // test only: it is told the shift only when every other part holds.
+      if (resources.enabled && !steady && laneTries <= 0) {
+        if (!cycle)
+          cycle.emplace(*this, loop, count, -1);
+        bool others = !lanesBound && repeated && shift <= 0 &&
+                      (!Gridded || shift % grid.lcm() == 0) &&
+                      slotsHoldSteadyState(loop, -shift) &&
+                      slotsMoved(links, slotsBefore, true,
+                                 [&](llvm::ArrayRef<mlir::Operation *>) {
+                                   return shift;
+                                 });
+        steady = cycle->steady(k, others ? std::optional(shift) : std::nullopt,
+                               true);
+      }
       lastShift = shifted ? std::optional<int64_t>(shift) : std::nullopt;
       // Lines that move by periods of their own repeat too, group by group.
       std::optional<GroupShifts> nowGroups;
@@ -3714,13 +4448,22 @@ private:
         for (auto [shift, earliest] : llvm::zip(*nowGroups, track.earliest))
           if (shift.value_or(0) != 0 && earliest == kNever)
             mixed = false;
-      mixed = mixed && slotsHoldGroups(loop, *groups, *nowGroups, -1) &&
-              groupLanesMoved(groupLanes, *groups, *nowGroups) &&
-              slotsMoved(links, slotsBefore, true,
-                         [&](llvm::ArrayRef<mlir::Operation *> ops) {
-                           return requestsShift(loop, *groups, *nowGroups, ops,
-                                                true);
-                         });
+      bool others = mixed && slotsHoldGroups(loop, *groups, *nowGroups, -1) &&
+                    slotsMoved(links, slotsBefore, true,
+                               [&](llvm::ArrayRef<mlir::Operation *> ops) {
+                                 return requestsShift(loop, *groups, *nowGroups,
+                                                      ops, true);
+                               });
+      mixed = others && groupLanesMoved(groupLanes, *groups, *nowGroups);
+      // A LaneCycle may stand in for the lanes' part of that test, and only
+      // for it, too.
+      bool cycleMixed = false;
+      if (resources.enabled && nowGroups && !mixed && groupsApply()) {
+        if (!cycle)
+          cycle.emplace(*this, loop, count, -1);
+        cycleMixed = mixed = cycle->steadyGroups(
+            k, *groups, others ? &*nowGroups : nullptr, true);
+      }
       if (mixed && k > 0 && !pinned.empty()) {
         const GroupShifts &shifts = *nowGroups;
         int64_t head = pinnedHead(loop, k, [&](mlir::Operation *op) {
@@ -3748,7 +4491,10 @@ private:
         auto distances = groupDistances(*lastGroups, copies);
         if (distances && extrapolateGroups(carried, previous, kinds, *groups,
                                            true, *distances)) {
-          moveGroupLanes(groupLanes, *groups, *distances);
+          if (cycleMixed)
+            cycle->move(copies);
+          else
+            moveGroupLanes(groupLanes, *groups, *distances);
           moveSlots(links, true, [&](llvm::ArrayRef<mlir::Operation *> ops) {
             return *requestsShift(loop, *groups, *lastGroups, ops, true) *
                    copies;
@@ -3800,7 +4546,9 @@ private:
           if (before == linksBefore.end() || before->second != time)
             time += distance;
         }
-        if (resources.enabled)
+        if (cycle && cycle->found(k))
+          cycle->move(readsOutside ? k - 1 : k);
+        else if (resources.enabled)
           moveLanes(lanesBefore, distance);
         extrapolations.push_back({loop, -shift, nullptr});
         if (readsOutside) {
@@ -3823,6 +4571,15 @@ private:
         if (regroup)
           break;
       }
+      // Iterations that play as this one moved, short of lanes the loop
+      // has not reached (see LaneCycle).
+      if (cycle && cycle->skip() > 0) [[unlikely]] {
+        int64_t copies = cycle->skip();
+        if (skipCarried(*cycle, carried, previous, kinds, shift, true)) {
+          cycle->skipIterations();
+          k -= copies;
+        }
+      }
     }
     // The first iteration was simulated for what it bounds before the loop;
     // its samples would leave a gap the extrapolation already spans.
@@ -3843,6 +4600,10 @@ private:
             skippedNegative = true;
           list.pop_back();
         }
+      });
+      llvm::erase_if(covers, [&](const Cover &cover) {
+        return cover.outer.size() > depth && cover.outer[depth] == 0 &&
+               llvm::ArrayRef(cover.outer).take_front(depth) == outer;
       });
     }
     iteration.pop_back();
@@ -4017,6 +4778,9 @@ private:
   /// Per timeline, how many ops have taken its drive and readout lanes.
   llvm::SmallVector<int64_t, 1> driveUses, readoutUses;
   bool lanesKnown = false, lanesInterchangeable = false;
+  /// Where the iterations of the loops being watched (LaneCycle) note the
+  /// lanes they take, innermost last.
+  llvm::SmallVector<LanePicks *, 2> picking;
 };
 
 // ── Writing the schedule ─────────────────────────────────────────────────
@@ -4037,7 +4801,17 @@ struct NotAffine {
 /// more. None when there is no such run.
 static NotAffine peelAround(mlir::scf::ForOp loop,
                             llvm::ArrayRef<std::pair<int64_t, int64_t>> line,
-                            int64_t trips) {
+                            int64_t trips, llvm::ArrayRef<bool> covered = {}) {
+  // Two starts run on when their iterations follow each other, or when the
+  // iterations between them are covered (see Cover), per iteration.
+  auto next = [&](size_t i) {
+    return line[i].first == line[i - 1].first + 1 ||
+           (!covered.empty() && covered[i]);
+  };
+  auto stepTo = [&](size_t i) {
+    return (line[i].second - line[i - 1].second) /
+           (line[i].first - line[i - 1].first);
+  };
   bool before = line.front().first > 0, after = line.back().first < trips - 1;
   if (before && after)
     return {loop};
@@ -4046,13 +4820,12 @@ static NotAffine peelAround(mlir::scf::ForOp loop,
   bool extended = false;
   for (size_t from = 0; from + 1 < line.size();) {
     size_t to = from + 1;
-    if (line[to].first != line[from].first + 1) {
+    if (!next(to)) {
       from = to;
       continue;
     }
-    int64_t step = line[to].second - line[from].second;
-    while (to + 1 < line.size() && line[to + 1].first == line[to].first + 1 &&
-           line[to + 1].second - line[to].second == step)
+    int64_t step = stepTo(to);
+    while (to + 1 < line.size() && next(to + 1) && stepTo(to + 1) == step)
       ++to;
     // The run at the end extrapolated past spans the iterations past it too.
     bool extends = (before && from == 0) || (after && to == line.size() - 1);
@@ -4072,10 +4845,86 @@ static NotAffine peelAround(mlir::scf::ForOp loop,
           extended && after ? 0 : trips - 1 - line[last].first};
 }
 
+/// The start of an op at `iteration` of the loops around it (`loops`): the
+/// sample there, or, in iterations a Cover spans, the start in its anchor
+/// moved by its period. None where neither is.
+static std::optional<int64_t>
+coveredStart(mlir::Operation *op, llvm::ArrayRef<int64_t> iteration,
+             llvm::ArrayRef<mlir::scf::ForOp> loops,
+             const llvm::DenseMap<llvm::ArrayRef<int64_t>, int64_t> &at,
+             llvm::ArrayRef<Cover> covers) {
+  if (auto it = at.find(iteration); it != at.end())
+    return it->second;
+  for (const Cover &cover : covers) {
+    auto level =
+        static_cast<size_t>(llvm::find(loops, cover.loop) - loops.begin());
+    if (level >= loops.size() || cover.outer.size() != level ||
+        iteration.take_front(level) != llvm::ArrayRef(cover.outer) ||
+        iteration[level] <= cover.lo || iteration[level] >= cover.hi)
+      continue;
+    llvm::SmallVector<int64_t, 2> anchor(iteration.begin(), iteration.end());
+    anchor[level] = cover.anchor;
+    if (auto start = coveredStart(op, anchor, loops, at, covers))
+      return *start + (iteration[level] - cover.anchor) * cover.periodOf(op);
+  }
+  return std::nullopt;
+}
+
+/// Complete `line`, the starts along loop `level` through `iteration` that
+/// samples give, with those of the iterations Covers span, as when every
+/// iteration is simulated: the first and last of a covered run of the loop
+/// itself (markCovered marks the iterations between), and every other
+/// iteration of the loop some sample is in.
+static void
+coveredLine(llvm::SmallVectorImpl<std::pair<int64_t, int64_t>> &line,
+            mlir::Operation *op, llvm::ArrayRef<mlir::scf::ForOp> loops,
+            int64_t level, llvm::ArrayRef<int64_t> iteration,
+            llvm::ArrayRef<Sample> samples,
+            const llvm::DenseMap<llvm::ArrayRef<int64_t>, int64_t> &at,
+            llvm::ArrayRef<Cover> covers, int64_t trips) {
+  auto outer = iteration.take_front(static_cast<size_t>(level));
+  llvm::SmallVector<int64_t> candidates;
+  for (const Sample &other : samples)
+    if (llvm::ArrayRef(other.iteration).take_front(outer.size()) == outer)
+      candidates.push_back(other.iteration[static_cast<size_t>(level)]);
+  for (const Cover &cover : covers)
+    if (cover.loop == loops[static_cast<size_t>(level)] &&
+        llvm::ArrayRef(cover.outer) == outer && cover.lo + 1 <= cover.hi - 1) {
+      candidates.push_back(cover.lo + 1);
+      candidates.push_back(cover.hi - 1);
+    }
+  llvm::sort(candidates);
+  candidates.erase(std::unique(candidates.begin(), candidates.end()),
+                   candidates.end());
+  llvm::SmallVector<int64_t, 2> at_(iteration.begin(), iteration.end());
+  for (int64_t k : candidates) {
+    if (k < 0 || k >= trips)
+      continue;
+    at_[static_cast<size_t>(level)] = k;
+    if (auto start = coveredStart(op, at_, loops, at, covers))
+      line.push_back({k, *start});
+  }
+}
+
+/// Mark each start of `line` (sorted, one per iteration) that follows the
+/// one before over iterations a Cover of `loop` in `outer` spans.
+static void markCovered(llvm::ArrayRef<std::pair<int64_t, int64_t>> line,
+                        llvm::SmallVectorImpl<bool> &covered,
+                        mlir::scf::ForOp loop, llvm::ArrayRef<int64_t> outer,
+                        llvm::ArrayRef<Cover> covers) {
+  covered.assign(line.size(), false);
+  for (size_t i = 1; i < line.size(); ++i)
+    for (const Cover &cover : covers)
+      if (cover.loop == loop && llvm::ArrayRef(cover.outer) == outer &&
+          line[i - 1].first == cover.lo + 1 && line[i].first == cover.hi - 1)
+        covered[i] = true;
+}
+
 static std::optional<NotAffine>
 writeTiming(mlir::Operation *op, mlir::Operation *root,
             llvm::ArrayRef<Sample> samples,
-            llvm::ArrayRef<Extrapolation> extrapolations) {
+            llvm::ArrayRef<Extrapolation> extrapolations,
+            llvm::ArrayRef<Cover> covers = {}) {
   auto loops = pulse::enclosingLoops(op, root);
   int64_t duration = durationOf(op);
   auto write = [&](std::optional<int64_t> start,
@@ -4143,15 +4992,25 @@ writeTiming(mlir::Operation *op, mlir::Operation *root,
             other.iteration[level] < trips)
           line.push_back({other.iteration[level], at.lookup(other.iteration)});
       }
+      llvm::SmallVector<bool> covered;
+      if (!covers.empty())
+        coveredLine(line, op, loops, level, sample.iteration, samples, at,
+                    covers, trips);
       llvm::sort(line);
       line.erase(std::unique(line.begin(), line.end(),
                              [](const auto &a, const auto &b) {
                                return a.first == b.first;
                              }),
                  line.end());
+      if (!covers.empty())
+        markCovered(line, covered, loops[level],
+                    llvm::ArrayRef(sample.iteration).take_front(level), covers);
       llvm::SmallVector<int64_t> steps;
       for (size_t i = 1; i < line.size(); ++i)
-        steps.push_back(line[i].second - line[i - 1].second);
+        steps.push_back((line[i].second - line[i - 1].second) /
+                        (covered.empty() || !covered[i]
+                             ? 1
+                             : line[i].first - line[i - 1].first));
       if (llvm::all_equal(steps) &&
           (steps.empty() || steps[0] == periods[level]))
         continue;
@@ -4161,7 +5020,7 @@ writeTiming(mlir::Operation *op, mlir::Operation *root,
                   llvm::all_equal(llvm::ArrayRef(steps).drop_back());
       if (front || back)
         return NotAffine{loops[level], front, !front && back};
-      return peelAround(loops[level], line, trips);
+      return peelAround(loops[level], line, trips, covered);
     }
     return NotAffine{loops.back()};
   }
@@ -5275,7 +6134,8 @@ scheduleRounds(mlir::Region &region, mlir::Operation *root, Resources resources,
       llvm::ArrayRef<Sample> samples;
       if (it != scheduler.samples.end())
         samples = it->second;
-      auto problem = writeTiming(op, root, samples, scheduler.extrapolations);
+      auto problem = writeTiming(op, root, samples, scheduler.extrapolations,
+                                 scheduler.covers);
       if (!problem || !apart(problem->loop))
         return;
       problems.push_back(*problem);
