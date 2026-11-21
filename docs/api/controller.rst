@@ -45,6 +45,8 @@ Export and limits
 
 .. autofunction:: cudaq_pulse.controller.sample_waveform
 
+.. autofunction:: cudaq_pulse.controller.resample_samples
+
 .. autofunction:: cudaq_pulse.controller.evaluate_expression
 
 .. autoclass:: cudaq_pulse.controller.ExpressionTerm

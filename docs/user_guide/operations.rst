@@ -240,8 +240,10 @@ A ``custom_samples`` array is made for one rate and plays only at that
 rate: one sample per clock cycle, or ``sample_rate_ghz``. On lines whose
 controller plays another rate (its ``sample_rate_ghz``)
 it is a compile error, never a pulse that lasts longer or shorter than the
-samples were made for; resample the array for the line and pass its rate,
-or use ``custom``:
+samples were made for; resample the array for the line and pass its rate
+(``cudaq_pulse.controller.resample_samples(samples, from_ghz, to_ghz)``
+does, interpolating between the middles of the samples, or holding each
+with ``method="hold"``), or use ``custom``:
 
 .. code-block:: python
    :class: fragment
@@ -252,6 +254,9 @@ or use ``custom``:
        # 1 GHz samples, for a controller at half of a 2 GHz program clock:
        # 8 samples last 16 clock cycles.
        drive(d, custom_samples(samples_1ghz, sample_rate_ghz=1.0))
+       # Samples made at the 2 GHz program clock, made again for it.
+       again = pulse.controller.resample_samples(samples_2ghz, 2.0, 1.0)
+       drive(d, custom_samples(again, sample_rate_ghz=1.0))
 
 Waveform Arithmetic
 -------------------

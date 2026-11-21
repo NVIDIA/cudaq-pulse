@@ -207,6 +207,7 @@ assert_type(
     pulse.controller.sample_waveform({}, 40, samples_per_cycle=2.5), npt.NDArray[np.complex128]
 )
 assert_type(pulse.controller.sample_waveform({}, 40).real, npt.NDArray[np.float64])
+assert_type(pulse.controller.resample_samples([0.0, 1.0], 2.0, 1.0, method="hold"), list[float])
 assert_type(pulse.controller.export(lowered, version=2), dict[str, Any])
 assert_type(pulse.controller.WaveformMemoryScope("program"), WaveformMemoryScope)
 pulse.controller.sample_waveform({}, 40, samples_per_cycles=2)  # type: ignore[call-arg]

@@ -143,6 +143,14 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   within both formats, so the format names are unchanged; `unroll` carries
   it, and a kernel with qudit parameters gives it as the slot's symbols
   instead, as before.
+- **Resampling samples for a line, explicitly.**
+  `cudaq_pulse.controller.resample_samples(samples, from_ghz, to_ghz,
+  method="linear")` makes samples made at one rate again at another, for
+  `custom_samples(..., sample_rate_ghz=to_ghz)` on lines that play it: by
+  linear interpolation between the middles of the samples, or with
+  `method="hold"` the sample held at the middle of each new one. The samples
+  last as long at the new rate, or it raises. `custom_samples` still never
+  resamples on its own.
 - **Animated tutorial figures.** T-State Injection plays its tomography
   axes one at a time, its heralded loop once per answer with a playhead,
   and the branches post-selection keeps one readout at a time. Adaptive

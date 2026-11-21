@@ -129,6 +129,7 @@ __all__ = [
     "check",
     "evaluate_expression",
     "export",
+    "resample_samples",
     "sample_waveform",
     "shape_key",
     "usage",
@@ -520,6 +521,74 @@ def sample_waveform(
     samples.real = real
     samples.imag = imag
     return samples
+
+
+def resample_samples(
+    samples: Iterable[float], from_ghz: float, to_ghz: float, *, method: str = "linear"
+) -> list[float]:
+    """*samples*, made at *from_ghz*, made again at *to_ghz*, for
+    ``custom_samples(..., sample_rate_ghz=to_ghz)`` on lines at that rate.
+
+    Nothing resamples on its own: ``custom_samples`` refuses samples made
+    for another rate than its lines play. The samples last as long at the
+    new rate, so ``len(samples) * to_ghz / from_ghz`` must be a whole
+    number; else, or for a rate that is not a positive number or has no
+    whole ratio to the other, ``InvalidValueError``. Each sample stands for
+    the envelope at the middle of the time it is held, as ``custom()``
+    samples one. ``method="linear"`` interpolates between those points,
+    holding the first and the last value beyond them; ``method="hold"``
+    takes the sample held at the middle of each new one, which plays the
+    same held waveform when *to_ghz* is a whole multiple of *from_ghz*.
+    """
+    from fractions import Fraction
+
+    from . import _clocks
+
+    if method not in ("linear", "hold"):
+        raise InvalidValueError(f"method must be 'linear' or 'hold', got {method!r}")
+    for name, rate in (("from_ghz", from_ghz), ("to_ghz", to_ghz)):
+        if (
+            isinstance(rate, bool)
+            or not isinstance(rate, (int, float))
+            or not math.isfinite(rate)
+            or not rate > 0
+        ):
+            raise InvalidValueError(f"{name} must be a positive number, got {rate!r}")
+    ratio = Fraction(to_ghz / from_ghz).limit_denominator(_clocks._MAX_DENOMINATOR)
+    if abs(float(ratio) * from_ghz - to_ghz) > _clocks._TOLERANCE * to_ghz:
+        raise InvalidValueError(f"{to_ghz:g} GHz has no whole ratio to {from_ghz:g} GHz")
+    try:
+        given = [float(x) for x in samples]
+    except (TypeError, ValueError):
+        raise InvalidTypeError("samples must be real numbers") from None
+    if not given or not all(map(math.isfinite, given)):
+        raise InvalidValueError("samples must be at least one finite real number")
+    n, d = ratio.numerator, ratio.denominator
+    if len(given) * n % d:
+        raise InvalidValueError(
+            f"{len(given)} samples at {from_ghz:g} GHz last {len(given) * n / d:g} samples "
+            f"at {to_ghz:g} GHz, not a whole number"
+        )
+    out = []
+    last = len(given) - 1
+    for k in range(len(given) * n // d):
+        # The middle of new sample k, (k + 1/2) * d / n old samples from the
+        # start, exactly: as a number of old samples, num / den.
+        num, den = (2 * k + 1) * d, 2 * n
+        if method == "hold":
+            out.append(given[num // den])
+            continue
+        # From the middle of old sample 0, where its value stands.
+        num -= n
+        if num <= 0:
+            out.append(given[0])
+            continue
+        i, rest = divmod(num, den)
+        if i >= last:
+            out.append(given[last])
+        else:
+            out.append(given[i] + (given[i + 1] - given[i]) * rest / den)
+    return out
 
 
 def _sample(node: Mapping[str, Any], duration_cycles: int, ratio: Fraction | int) -> _Samples:
@@ -3359,6 +3428,9 @@ class ControllerNames(Protocol):
         controller: int | None = None,
         version: int = 1,
     ) -> dict[str, Any]: ...
+    def resample_samples(
+        self, samples: Iterable[float], from_ghz: float, to_ghz: float, *, method: str = "linear"
+    ) -> list[float]: ...
     def sample_waveform(
         self, node: Mapping[str, Any], duration_cycles: int, samples_per_cycle: float = 1
     ) -> npt.NDArray[np.complex128]: ...
