@@ -729,6 +729,7 @@ class Kernel[**P]:
         return CacheInfo(len(d._entries), d.misses, d.evictions, d._capacity)
 
     def cache_clear(self) -> None:
+        """Clear the specializations and traced programs cached by this kernel."""
         self._dispatch.clear()
         self._traced.clear()
 
@@ -1022,6 +1023,7 @@ class CompiledKernel[**P]:
 
     @property
     def schedule(self) -> Sequence[Any]:
+        """The scheduled events; see ``ScheduledKernel.schedule``."""
         return self._view().schedule
 
     def timeline(self, *, figsize: tuple[float, float] = (14, 4), title: str | None = None) -> Any:
@@ -1030,6 +1032,7 @@ class CompiledKernel[**P]:
 
     @property
     def metrics(self) -> Any:
+        """The compile metrics; see ``ScheduledKernel.metrics``."""
         return self._view().metrics
 
     @property
@@ -1040,6 +1043,10 @@ class CompiledKernel[**P]:
         return tuple(kernel._names[i] for i in kernel._split[1] if kinds[i] in (_FLOAT, _VECTOR))
 
     def cache_info(self) -> CacheInfo:
+        """Return cache statistics for calls to ``ck(...)``.
+
+        Compiled-kernel specializations are never evicted, so ``capacity`` is ``None``.
+        """
         d = self._dispatch
         return CacheInfo(len(d._entries), d.misses, d.evictions, None)
 
