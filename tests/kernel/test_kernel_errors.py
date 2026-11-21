@@ -100,7 +100,8 @@ def test_sync_flattens_lists_and_tuples_from_the_friction_log():
         ("sync([d0])", r"sync\(\) got one line, .* as in sync\(d, r\), or remove the call"),
         ("sync()", r"sync\(\) got no lines; it aligns two or more lines, as in sync\(d, r\)"),
         ("sync([])", r"sync\(\) got no lines"),
-        ("sync([d0], d0)", r"sync\(\): a line is passed more than once"),
+        ("sync([d0], d0)", r"sync\(\): lines 1 and 2 are the same line; a line is in step"),
+        ("sync([d0, d1, d0])", r"sync\(\): lines 1 and 3 are the same line"),
     ],
 )
 def test_sync_rejects_anything_but_lines(body, message):
@@ -111,6 +112,63 @@ def test_sync_rejects_anything_but_lines(body, message):
     )
     with pytest.raises(CompilationError, match=message):
         python_ir(pulse.kernel(namespace["k"]), Q[0], Q[1])
+
+
+@pytest.mark.parametrize(
+    ("body", "places", "line"),
+    [
+        (["sync(d0, d0)"], "1 and 2", 5),
+        (["sync(d0, d1, d0)"], "1 and 3", 5),
+        (["drive(d0, square(8, 0.1))", "sync(d1, d0, r0, d1)"], "1 and 4", 6),
+        (["both = [d0, d1]", "sync(*both, *both[1:])"], "2 and 3", 6),
+        # The tracer loses track of the repeated line: the next drive on it
+        # failed with "argument 3 must be a tone, got NoneType None".
+        (["sync(d0, d1, d0)", "drive(d0, square(8, 0.1))"], "1 and 3", 5),
+        (
+            ["for _ in range(20):", "    drive(d0, square(8, 0.1))", "    sync(d1, d1)"],
+            "1 and 2",
+            7,
+        ),
+    ],
+)
+@pytest.mark.parametrize("passes", [None, ()])
+def test_a_line_passed_to_one_sync_twice_is_an_error_at_the_call(body, places, line, passes):
+    # Without the verify pass these compiled, and the sync was lost; with it
+    # they failed in the pass pipeline, with no kernel line.
+    namespace: dict = {"pulse": pulse}
+    source = (
+        "@pulse.kernel\n"
+        "def k(q0, q1):\n"
+        "    d0 = get_drive_line(q0)\n"
+        "    d1, r0 = get_drive_line(q1), get_readout_line(q0)\n"
+    )
+    exec(source + "".join(f"    {text}\n" for text in body), namespace)  # noqa: S102
+    options = {} if passes is None else {"passes": passes}
+    with pytest.raises(CompilationError) as raised:
+        pulse.compile(namespace["k"], **options).lower(Q[0], Q[1])
+    assert str(raised.value).startswith(
+        f"sync(): lines {places} are the same line; a line is in step with itself, so pass it once"
+    )
+    assert raised.value.code == pulse.ErrorCode.WRONG_ARGUMENT
+    assert raised.value.location.line == line
+
+
+def test_lines_passed_once_each_sync_as_before():
+    @pulse.kernel
+    def k(q0, q1):
+        lines = [get_drive_line(q0), get_drive_line(q1)]
+        probe = get_readout_line(q0)
+        drive(lines[0], square(40, 0.1))
+        sync(*lines, probe)
+        sync(lines[1], lines[0])
+        sync(lines)
+        drive(lines[1], square(8, 0.1))
+
+    program = pulse.compile(k).lower(Q[0], Q[1])
+    assert [(e.kind, e.qudit, e.start, e.end) for e in program.schedule] == [
+        ("drive", 0, 0, 40),
+        ("drive", 1, 40, 48),
+    ]
 
 
 # ── Errors point at the kernel's source ──────────────────────────────

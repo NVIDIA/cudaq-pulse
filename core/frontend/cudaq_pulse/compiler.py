@@ -1254,7 +1254,7 @@ def _cause_in_program(
             lost_lines=lost,
         )
     except PackedValueError as error:
-        if error.args[0].startswith("arms:"):
+        if error.args[0].startswith(("arms:", "sync():")):
             return _rejected_literal(fn, trace_args, builder, error)
     except Exception:  # noqa: S110
         # What was traced ends where the trace failed: not a whole program.

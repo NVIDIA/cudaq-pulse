@@ -481,6 +481,18 @@ struct MixedResult {
                          from.word);
 }
 
+// A line passed to one sync twice: it would be consumed twice, and a line
+// is in step with itself. `first` and `second` count from one, as the
+// call's lines do once its lists are flattened.
+[[noreturn, gnu::cold, gnu::noinline]] void
+rejectRepeatedLine(int64_t first, int64_t second, size_t word) {
+  throw PackedValueError("sync(): lines " + std::to_string(first) + " and " +
+                             std::to_string(second) +
+                             " are the same line; a line is in step with "
+                             "itself, so pass it once",
+                         word);
+}
+
 [[noreturn, gnu::cold, gnu::noinline]] void
 rejectFloat(const char *what, const char *rule, double got, size_t word) {
   rejectPacked(what, rule, pythonFloat(got), word);
@@ -7154,6 +7166,17 @@ public:
           int64_t vtype = p[3 + 3 * j];
           outTypes.push_back(vtype == 1 ? mlir::Type(readoutTy)
                                         : mlir::Type(driveTy));
+        }
+        if (n == 2) {
+          if (inVals[0] == inVals[1]) [[unlikely]]
+            rejectRepeatedLine(1, 2, cur);
+        } else if (n > 2) {
+          llvm::SmallDenseMap<mlir::Value, int64_t, 16> places;
+          for (int64_t j = 0; j < n; ++j) {
+            auto [seen, added] = places.try_emplace(inVals[j], j);
+            if (!added) [[unlikely]]
+              rejectRepeatedLine(seen->second + 1, j + 1, cur);
+          }
         }
         auto syncOp = pulse::SyncOp::create(*builder_, loc, outTypes, inVals);
         for (int64_t j = 0; j < n; ++j)
