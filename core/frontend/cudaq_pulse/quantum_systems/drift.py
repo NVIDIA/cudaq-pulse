@@ -43,7 +43,7 @@ import numpy as np
 from .._device import QuantumSystem, Qudit, _Handles
 from .._errors import InvalidTypeError, InvalidValueError, UnsupportedError
 from .._units import Time
-from .base import MicrowaveDrive, PhysicalQudit
+from .base import MicrowaveDrive, PhysicalQudit, _qudit_value_problems
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -312,10 +312,20 @@ def _drifting(system: QuantumSystem, parameter_drift: Any, seed: int | None) -> 
 
 
 def _checked(qudit: Any, carrier: int, method: str) -> PhysicalQudit:
+    """*qudit*, what a drift model's *method* returned for qudit *carrier*,
+    if it is that qudit's ``PhysicalQudit`` with values a quantum system can
+    have: checked here, so the error names the model's method and not the
+    system's definition at the next ``simulate``."""
     if qudit.__class__ is not PhysicalQudit or qudit.index != carrier:
         raise InvalidTypeError(
             f"a drift model's {method}() returns the qudit's PhysicalQudit (index {carrier}), "
             f"as true.replace(...) makes; got {qudit!r}"
+        )
+    problems = _qudit_value_problems(qudit, f"{method}()")
+    if problems:
+        raise InvalidValueError(
+            f"a drift model's {method}() returned qudit {carrier} with values a quantum system "
+            "cannot have:\n" + "\n".join(f"  {problem}" for problem in problems)
         )
     return qudit
 
@@ -415,6 +425,10 @@ class _DriftingQuantumSystem(QuantumSystem):
         calibrated = self._description.qudits
         with self._drift_lock:
             true = self._true
+            # Every qudit moves on, or none does: a model's bad value leaves
+            # the true values and the clock as they were (the random streams
+            # of the models before it have still moved on).
+            moved = {}
             for carrier, model in self._models.items():
                 qudit = model.advance(
                     true[carrier], calibrated[carrier], seconds, self._rngs[carrier]
@@ -422,7 +436,8 @@ class _DriftingQuantumSystem(QuantumSystem):
                 # The built-in model returns true.replace(...), which needs no check.
                 if model.__class__ is not ParameterDrift:
                     qudit = _checked(qudit, carrier, "advance")
-                true[carrier] = qudit
+                moved[carrier] = qudit
+            true.update(moved)
             self._clock_ns += ns
             self._played = None
 

@@ -281,6 +281,68 @@ def test_a_user_model_plugs_in():
         broken.advance(1 * pulse.s)
 
 
+@dataclasses.dataclass(frozen=True)
+class DecayingT1:
+    """A user model whose T1 falls by a fixed amount a second, past zero."""
+
+    us_per_s: float
+
+    def start(self, calibrated, rng):
+        return calibrated
+
+    def advance(self, true, calibrated, seconds, rng):
+        return true.replace(t1_us=true.t1_us - self.us_per_s * seconds)
+
+
+def test_a_model_value_a_system_cannot_have_names_the_model_method():
+    qs = _target(t1_us=20.0).replace(parameter_drift={0: DecayingT1(10.0)})
+    qs.advance(1 * pulse.s)
+    assert qs.true_qudits[0].t1_us == 10.0
+    with pytest.raises(pulse.InvalidValueError) as raised:
+        qs.advance(3 * pulse.s)
+    assert str(raised.value) == (
+        "a drift model's advance() returned qudit 0 with values a quantum system cannot have:\n"
+        "  advance().t1_us: -20.0 is not a finite number of microseconds, 0 or more; "
+        "give T1 in microseconds, 0 or more (0 is no decay)"
+    )
+
+
+def test_a_bad_model_value_moves_no_qudit_and_not_the_clock():
+    qs = _target(qudit_count=2).replace(
+        parameter_drift={0: LinearFrequencyDrift(1e3), 1: DecayingT1(10.0)}
+    )
+    qs.advance(1 * pulse.s)
+    before = dict(qs.true_qudits)
+    with pytest.raises(pulse.InvalidValueError, match=r"advance\(\) returned qudit 1"):
+        qs.advance(5 * pulse.s)
+    assert dict(qs.true_qudits) == before
+    assert qs.parameter_drift_time == 1 * pulse.s
+
+
+@pytest.mark.parametrize(
+    ("changes", "field"),
+    [
+        ({"frequency_hz": -5e9}, "frequency_hz"),
+        ({"t2_star_us": math.inf}, "t2_star_us"),
+        ({"t2_echo_us": -1.0}, "t2_echo_us"),
+        ({"thermal_population": math.nan}, "thermal_population"),
+    ],
+)
+def test_a_model_start_value_a_system_cannot_have_names_start(changes, field):
+    @dataclasses.dataclass(frozen=True)
+    class StartsBroken:
+        def start(self, calibrated, rng):
+            return calibrated.replace(**changes)
+
+        def advance(self, true, calibrated, seconds, rng):
+            return true
+
+    with pytest.raises(
+        pulse.InvalidValueError, match=rf"^a drift model's start\(\) .*\n  start\(\)\.{field}: "
+    ):
+        _target().replace(parameter_drift=StartsBroken())
+
+
 def test_a_model_may_start_away_from_the_calibration():
     @dataclasses.dataclass(frozen=True)
     class Miscalibrated:

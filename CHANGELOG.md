@@ -283,6 +283,12 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   at its path (`qudits[0].t1_us`) with the value. Such values used to build
   without an error, and a negative T1 or T2 was taken as 0 (no decay) when
   simulating.
+- A parameter drift model's values are checked where the model returns
+  them: a `start()` or `advance()` that returns a qudit with a value a
+  quantum system cannot have raises `InvalidValueError`, which names the
+  method and lists each problem (`advance().t1_us`) with the value. It
+  used to surface at the next `simulate` as a problem in the system's
+  definition. A failed `advance()` moves no qudit and not the drift clock.
 - A frame change made after a wait on its tone's line acted where the
   tone's previous drive or readout ended, before the wait:
   `shift_frequency(tone, +d)`, a wait of `T` and `shift_frequency(tone, -d)`
