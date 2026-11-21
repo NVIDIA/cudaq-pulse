@@ -579,6 +579,83 @@ def test_the_launcher_sets_the_process_target(tmp_path: Path):
     assert bad.returncode != 0 and "no registered quantum system 'nope'" in bad.stderr
 
 
+def _launch_module(tmp_path: Path, *argv: str) -> subprocess.CompletedProcess[str]:
+    """Run ``python -m cudaq_pulse *argv`` with a probe module ``launcher_probe`` importable."""
+    (tmp_path / "launcher_probe.py").write_text(
+        textwrap.dedent(
+            """
+            import sys
+            import cudaq_pulse as pulse
+            print(pulse.quantum_system().name, sys.argv[1:])
+            """
+        )
+    )
+    env = {k: v for k, v in os.environ.items() if k != ENV_VAR}
+    env["PYTHONPATH"] = os.pathsep.join(
+        p for p in (str(tmp_path), os.environ.get("PYTHONPATH", "")) if p
+    )
+    return subprocess.run(
+        [sys.executable, "-m", "cudaq_pulse", *argv],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+
+def test_the_launcher_passes_a_modules_arguments_through(tmp_path: Path):
+    plain = _launch_module(
+        tmp_path, "--quantum-system", "transmon_lattice:3", "-m", "launcher_probe", "data.json"
+    )
+    assert plain.returncode == 0, plain.stderr
+    assert plain.stdout.strip() == "transmon_lattice:3 ['data.json']"
+    assert "quantum system transmon_lattice:3" in plain.stderr
+    dashed = _launch_module(
+        tmp_path,
+        "--quantum-system",
+        "transmon_lattice:3",
+        "-m",
+        "launcher_probe",
+        "--sort-keys",
+        "--quiet",
+        "data.json",
+    )
+    assert dashed.returncode == 0, dashed.stderr
+    assert dashed.stdout.strip() == "transmon_lattice:3 ['--sort-keys', '--quiet', 'data.json']"
+    # the module's --quiet is not the launcher's
+    assert "quantum system transmon_lattice:3" in dashed.stderr
+    attached = _launch_module(
+        tmp_path, "--quantum-system", "transmon_lattice:3", "-mlauncher_probe", "data.json"
+    )
+    assert attached.returncode == 0, attached.stderr
+    assert attached.stdout.strip() == "transmon_lattice:3 ['data.json']"
+    assert "quantum system transmon_lattice:3" in attached.stderr
+
+
+def test_the_launcher_quiet_option_drops_the_quantum_system_banner(tmp_path: Path):
+    run = _launch_module(
+        tmp_path, "--quantum-system", "transmon_lattice:3", "--quiet", "-m", "launcher_probe", "-x"
+    )
+    assert run.returncode == 0, run.stderr
+    assert run.stdout.strip() == "transmon_lattice:3 ['-x']"
+    assert "quantum system" not in run.stderr
+
+
+def test_the_launcher_needs_a_script_or_a_module(tmp_path: Path):
+    neither = _launch_module(tmp_path, "--quantum-system", "transmon_lattice:3")
+    assert neither.returncode != 0 and "give either a script path or -m MODULE" in neither.stderr
+    bare = _launch_module(tmp_path, "--quantum-system", "transmon_lattice:3", "-m")
+    assert bare.returncode != 0 and "argument -m: expected a module name" in bare.stderr
+
+
+def test_the_launcher_lists_the_quantum_systems_for_a_bad_quantum_system_argument(tmp_path: Path):
+    run = _launch_module(
+        tmp_path, "--quantum-system", "transmon_lattice:four", "-m", "launcher_probe"
+    )
+    assert run.returncode != 0
+    assert "available quantum systems:" in run.stderr and "transmon_surface17" in run.stderr
+
+
 # ── Floats that shape the program are specialized on ─────────────────────
 
 

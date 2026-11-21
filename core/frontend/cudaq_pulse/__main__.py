@@ -3,7 +3,10 @@
 """Run a script on a quantum system: ``python -m cudaq_pulse --quantum-system NAME script.py``.
 
 Sets ``CUDAQ_PULSE_QUANTUM_SYSTEM`` for the script and runs it as ``__main__``. The
-script's own arguments follow its path and are passed through unparsed.
+script's own arguments follow its path and are passed through unparsed. With
+``-m MODULE`` in place of the path, the launcher runs a module instead, as ``python -m``
+does: everything after the module name, dashes included, is the module's own arguments,
+so the launcher's options (``--quantum-system``, ``--quiet``) come before ``-m``.
 """
 
 from __future__ import annotations
@@ -29,11 +32,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--quiet", action="store_true", help="do not print the quantum system banner"
     )
-    parser.add_argument("-m", dest="module", help="run a module instead of a script")
+    parser.add_argument(
+        "-m",
+        dest="module",
+        nargs=argparse.REMAINDER,
+        metavar="MODULE",
+        help="run a module instead of a script; the arguments after it are the module's",
+    )
     parser.add_argument("script", nargs="?", help="path of the script")
     parser.add_argument("args", nargs=argparse.REMAINDER, help="arguments of the script")
     ns = parser.parse_args(argv)
-    if (ns.module is None) == (ns.script is None):
+    if ns.module == []:
+        parser.error("argument -m: expected a module name")
+    if ns.module is None and ns.script is None:
         parser.error("give either a script path or -m MODULE")
     try:
         make_quantum_system(ns.quantum_system)
@@ -45,9 +56,13 @@ def main(argv: list[str] | None = None) -> int:
     if not ns.quiet:
         print(f"cudaq-pulse: quantum system {ns.quantum_system} ({ENV_VAR})", file=sys.stderr)
     if ns.module is not None:
-        args = [ns.script] if ns.script is not None else []
-        sys.argv = [ns.module, *args, *ns.args]
-        runpy.run_module(ns.module, run_name="__main__", alter_sys=True)
+        # -m stops the launcher's parsing: the rest is the module's. ("-mNAME arg" leaves
+        # the first argument in ``script``, so it is put back in front of the others.)
+        module, *module_args = ns.module
+        if ns.script is not None:
+            module_args += [ns.script, *ns.args]
+        sys.argv = [module, *module_args]
+        runpy.run_module(module, run_name="__main__", alter_sys=True)
     else:
         sys.argv = [ns.script, *ns.args]
         runpy.run_path(ns.script, run_name="__main__")

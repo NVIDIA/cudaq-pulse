@@ -184,9 +184,13 @@ quantum system*:
 
    CUDAQ_PULSE_QUANTUM_SYSTEM=transmon_surface17 python script.py
    python -m cudaq_pulse --quantum-system transmon_lattice:4 script.py --script-args
+   python -m cudaq_pulse --quantum-system transmon_lattice:4 --quiet -m package.module --module-args
 
 The launcher sets ``CUDAQ_PULSE_QUANTUM_SYSTEM`` for the script and passes the
-script's own arguments through unparsed. ``pulse.quantum_system()`` with no
+script's own arguments through unparsed. With ``-m MODULE`` it runs a module instead,
+as ``python -m`` does, and everything after the module name, dashes included, goes to
+the module; the launcher's own options (``--quantum-system``, ``--quiet``, which drops
+the banner it prints to stderr) come before ``-m``. ``pulse.quantum_system()`` with no
 argument returns the process quantum system, whose handles the script then
 passes to its kernels; a kernel call with no qudit handles always raises
 ``NoQuantumSystemError``.
