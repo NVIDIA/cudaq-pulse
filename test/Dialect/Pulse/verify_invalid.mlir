@@ -40,7 +40,7 @@ func.func @readout_line_acquired_twice(%q: !pulse.qudit) {
 func.func @one_line_of_each_kind(%q: !pulse.qudit, %p: !pulse.qudit) {
   %d, %td = pulse.get_drive_line %q : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %r, %tr = pulse.get_readout_line %q : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
-  %e, %te = pulse.get_drive_line %p : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
+  %e, %tp = pulse.get_drive_line %p : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
   %s:3 = pulse.sync %d, %r, %e : !pulse.drive_line, !pulse.readout_line, !pulse.drive_line -> !pulse.drive_line, !pulse.readout_line, !pulse.drive_line
   return
 }

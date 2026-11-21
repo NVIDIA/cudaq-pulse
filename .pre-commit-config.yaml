@@ -16,6 +16,11 @@ repos:
       - id: trailing-whitespace
         exclude: ^LICENSES/  # third-party license texts stay verbatim
 
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.3
+    hooks:
+      - id: codespell
+
   # Keep in step with the ruff version in uv.lock (tests/test_release_tools.py).
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.17.4
