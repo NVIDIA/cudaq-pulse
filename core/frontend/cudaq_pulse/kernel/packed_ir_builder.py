@@ -1625,6 +1625,7 @@ class PackedIRBuilder:
         found.word = word
         found.unroll_threshold = self.unroll_threshold
         found.machine = self.machine
+        found.line_tones = self.line_tones
         found.locate_structural = self.locate_structural
         return found
 
@@ -1687,6 +1688,9 @@ class _RecordFinder(PackedIRBuilder):
     word = -1
     frames: list[Any] | None = None
     host_frames: list[Any] | None = None
+    # When the record at ``word`` ends an if: what each of its results is
+    # carried by, a name or a list place, in the order of the results.
+    labels: list[str] | None = None
 
     @property
     def impure(self) -> bool:
@@ -1703,6 +1707,11 @@ class _RecordFinder(PackedIRBuilder):
 
         self.host_frames = tracing_frames()
         raise _Stop
+
+    def _region(self, kind: str, operands: Any, results: Any, attrs: dict[str, Any]) -> Any:
+        if kind == "scf.if_end" and self._cur == self.word:
+            self.labels = list(attrs.get("result_names") or ())
+        return super()._region(kind, operands, results, attrs)
 
     def _ensure(self, n: int) -> None:
         if self._cur == self.word:
