@@ -246,6 +246,10 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 
 ### Fixed
 
+- A list place or name bound in an arm of a measured `if` to an older name of
+  its line (`t = a; drive(a, w); if m: lines[0] = t`) holds the line, as
+  outside an `if`, instead of failing to compile; and a helper that binds a
+  parameter to another value (`x = y`) no longer rebinds the caller's name.
 - The schedule passes and `Pass.SIMPLIFY_CONTROL_FLOW` no longer crash on
   two inputs. A schedule block that yields one of its own arguments, passing
   an input through, is inlined with that input as its result; the passes

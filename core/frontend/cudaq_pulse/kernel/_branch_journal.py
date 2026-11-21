@@ -17,7 +17,7 @@ import operator
 from typing import Any
 
 from .._native._cudaq_pulse_native import identity_keys
-from ._emitter import PulseIREmitter, StackVal, _Held, _Lines, _slot_holds
+from ._emitter import PulseIREmitter, StackVal, _Chan, _Held, _Lines, _slot_holds
 from .ir_builder import LINEAR_TYPES, IRValue
 
 
@@ -36,6 +36,73 @@ class JournalLines(_Lines):
         held = _Held(values, key)
         held.seq = len(self.held)
         self.held[key] = held
+
+    @staticmethod
+    def now(
+        a: IRValue, b: IRValue, then_held: dict[_Chan, IRValue], journal: dict[_Chan, IRValue]
+    ) -> tuple[IRValue, IRValue]:
+        """What an if's then arm left on a line or tone *a*, and its else arm
+        on *b*, once the else arm is traced: the value each one's channel had
+        at that arm's end (for *a*, what the then arm left on a channel it
+        changed, in *then_held*, else what the channel held entering the if),
+        or the value itself if it is no channel's."""
+        chan = a.chan
+        if chan is not None:
+            if chan in then_held:
+                a = then_held[chan]
+            elif chan in journal:
+                a = journal[chan]
+            else:
+                a = chan.value
+        chan = b.chan
+        return a, b if chan is None else chan.value
+
+    @classmethod
+    def join_name(
+        cls,
+        name: str,
+        a: IRValue,
+        b: IRValue,
+        then_held: dict[_Chan, IRValue],
+        journal: dict[_Chan, IRValue],
+        named: dict[_Chan, str],
+        twins: list[tuple[str, str]],
+        merged: dict[str, Any],
+        results: list[tuple[str, IRValue, IRValue]],
+    ) -> None:
+        """Join the values *a* and *b* of one line or tone that an if's arms
+        left on *name*, one an old value or the pair another name carries:
+        an old value stands for its channel's value at that arm's end
+        (``now``), as an op on it would take; *name* then holds one value
+        (*merged*), takes the result of the name that carries the same pair
+        (*twins*), or carries it (*named*, *results*)."""
+        chan = a.chan
+        a, b = cls.now(a, b, then_held, journal)
+        if a is b:
+            merged[name] = a
+        elif chan in named:
+            twins.append((name, named[chan]))
+        else:
+            named[chan] = name
+            results.append((name, a, b))
+
+    @classmethod
+    def list_now(
+        cls,
+        listed: list[Any],
+        obj: Any,
+        key: tuple[int, int],
+        a: IRValue,
+        b: IRValue,
+        then_held: dict[_Chan, IRValue],
+        journal: dict[_Chan, IRValue],
+    ) -> None:
+        """Note in *listed* the list place *obj[key[1]]* an if's arms left on
+        values *a* and *b* of one line or tone, one an old value, as its
+        channel's values at the arms' ends (``now``), unless they are one."""
+        a, b = cls.now(a, b, then_held, journal)
+        if a is not b:
+            listed.append((obj, key[1], a, b, None))
 
     def rebind_linear(
         self,

@@ -935,3 +935,169 @@ def test_an_else_arm_that_only_jumps_back_is_taken_as_traced(case, monkeypatch):
     monkeypatch.setattr(_emitter, "JUMP", -1)
     assert _traced(body, case) == taken
     assert taken.startswith("error") or len(arms) > skipped
+
+
+# An old value of a line: `t` names line 0 as it was before the drive, which
+# was through `a`. Each kernel binds a list place or a name to it in an arm
+# of a measurement-conditioned if, where it is the line's current value, as
+# get_drive_line(q0) is: every name and place holds line 0 on both paths, and
+# the kernel is the one written with get_drive_line(q0) in its place.
+_BEFORE_OLD_LINE = """\
+    lines = [get_drive_line(q0), get_drive_line(q1)]
+    a = lines[0]
+    t = a
+    drive({first}, square(16, 0.1))
+    m = readout(get_readout_line(q0), square(40, 0.05))
+"""
+_OLD_LINE = {
+    "a place, driven after": (
+        "a",
+        "    if m:\n        lines[0] = {old}\n    drive(lines[0], square(16, 0.1))\n",
+    ),
+    "a place, waited on after": (
+        "a",
+        "    if m:\n        lines[0] = {old}\n    wait(lines[0], 16)\n",
+    ),
+    "a place, the other name driven after": (
+        "a",
+        "    if m:\n        lines[0] = {old}\n    drive(a, square(16, 0.1))\n",
+    ),
+    "a place, the old name driven first": (
+        "t",
+        "    if m:\n        lines[0] = {old}\n    drive(lines[0], square(16, 0.1))\n",
+    ),
+    "a place, the old name driven first, waited on after": (
+        "t",
+        "    if m:\n        lines[0] = {old}\n    wait(lines[0], 16)\n",
+    ),
+    "a place, the old name driven first and the other after": (
+        "t",
+        "    if m:\n        lines[0] = {old}\n    drive(a, square(16, 0.1))\n",
+    ),
+    "a place and the old name swapped": (
+        "t",
+        "    if m:\n        t, lines[0] = lines[0], {old}\n"
+        "    drive(lines[0], square(16, 0.1))\n    drive(t, square(16, 0.1))\n",
+    ),
+    "a place, driven in the arm": (
+        "a",
+        "    if m:\n        lines[0] = {old}\n        drive(lines[0], square(16, 0.1))\n"
+        "    drive(lines[0], square(16, 0.1))\n    drive(a, square(16, 0.1))\n",
+    ),
+    "a place, the line driven in the arm through another name": (
+        "a",
+        "    if m:\n        lines[0] = {old}\n        drive(a, square(16, 0.1))\n"
+        "    drive(lines[0], square(16, 0.1))\n",
+    ),
+    "a place, in the else arm": (
+        "a",
+        "    if m:\n        drive(lines[1], square(16, 0.1))\n    else:\n        lines[0] = {old}\n"
+        "    drive(lines[0], square(16, 0.1))\n",
+    ),
+    "a name, in each arm": (
+        "a",
+        "    if m:\n        u = {old}\n    else:\n        u = a\n    drive(u, square(16, 0.1))\n",
+    ),
+}
+
+
+def _paths(source: str, **options):
+    """The schedule of kernel ``k(q0, q1, q2)`` of *source*, and the drives
+    it plays when its measurements are set and when they are not."""
+    scope = dict(vars(pulse))
+    exec(compile(source, "<k>", "exec"), scope)
+    lowered = pulse.compile(pulse.kernel(scope["k"]), **options).lower(Q[0], Q[1], Q[2])
+    events = [(e.kind, e.qudit, e.start_cycles, e.duration_cycles) for e in lowered.schedule]
+    return events, [lowered._concrete().drive_frames([], outcome)[0] for outcome in (1, 0)]
+
+
+@pytest.mark.parametrize("case", list(_OLD_LINE))
+def test_an_old_value_of_a_line_bound_in_an_arm_is_its_current_value(case):
+    first, body = _OLD_LINE[case]
+    head = "def k(q0, q1, q2):\n" + _BEFORE_OLD_LINE.format(first=first)
+    for options in ({}, {"passes": ()}):
+        old = _paths(head + body.format(old="t"), **options)
+        assert old == _paths(head + body.format(old="get_drive_line(q0)"), **options)
+
+
+# Two names bound in an arm to one line, which they then hold on both paths:
+# the if makes one result for them, as for one name.
+_ONE_LINE_TWO_NAMES = {
+    "bound in the then arm": (
+        "    if m:\n        drive(a, square(16, 0.1))\n        t = a\n"
+        "    drive(t, square(16, 0.1))\n",
+        "    if m:\n        drive(a, square(16, 0.1))\n    drive(a, square(16, 0.1))\n",
+    ),
+    "bound in both arms": (
+        "    if m:\n        drive(a, square(16, 0.1))\n        t = a\n    else:\n        t = a\n"
+        "    drive(t, square(16, 0.1))\n    drive(a, square(16, 0.1))\n",
+        "    if m:\n        drive(a, square(16, 0.1))\n"
+        "    drive(a, square(16, 0.1))\n    drive(a, square(16, 0.1))\n",
+    ),
+}
+
+
+@pytest.mark.parametrize("case", list(_ONE_LINE_TWO_NAMES))
+def test_two_names_an_arm_binds_to_one_line_take_one_result(case):
+    two, one = _ONE_LINE_TWO_NAMES[case]
+    head = (
+        "def k(q0, q1, q2):\n    a = get_drive_line(q0)\n    t = a\n"
+        "    m = readout(get_readout_line(q0), square(40, 0.05))\n"
+    )
+    for options in ({}, {"passes": ()}):
+        assert _paths(head + two, **options) == _paths(head + one, **options)
+
+
+# A helper that binds its parameter to another value leaves the names its
+# caller passed as they were, as in Python: a line or tone follows only what
+# the helper does to it.
+_HELPERS = """\
+def rebind(x, y):
+    x = y
+    drive(x, square(16, 0.1))
+
+def rebind_only(x, y):
+    x = y
+
+def another_waveform(w):
+    w = square(8, 0.2)
+
+def rebind_in_an_arm(x, y, m):
+    if m:
+        x = y
+        drive(x, square(16, 0.1))
+
+"""
+_REBOUND_PARAMETER = {
+    "rebound and driven": (
+        "    rebind(a, b)\n    wait(a, 8)\n",
+        "    drive(b, square(16, 0.1))\n    wait(a, 8)\n",
+    ),
+    "rebound only": (
+        "    rebind_only(a, b)\n    wait(a, 8)\n    wait(b, 8)\n",
+        "    wait(a, 8)\n    wait(b, 8)\n",
+    ),
+    "a waveform": (
+        "    w = square(16, 0.1)\n    another_waveform(w)\n    drive(a, w)\n",
+        "    w = square(16, 0.1)\n    drive(a, w)\n",
+    ),
+}
+
+
+@pytest.mark.parametrize("case", list(_REBOUND_PARAMETER))
+def test_a_helper_binding_its_parameter_leaves_the_callers_names(case):
+    called, written = _REBOUND_PARAMETER[case]
+    head = _HELPERS + "def k(q0, q1, q2):\n    a = get_drive_line(q0)\n    b = get_drive_line(q1)\n"
+    assert _paths(head + called) == _paths(head + written)
+
+
+def test_a_helper_binding_its_parameter_in_an_arm_leaves_the_callers_line():
+    # The helper's name holds another line on each path after its if, so the
+    # if may not be verified; the caller's wait is on its own line either way.
+    head = _HELPERS + (
+        "def k(q0, q1, q2):\n    a = get_drive_line(q0)\n    b = get_drive_line(q1)\n"
+        "    m = readout(get_readout_line(q0), square(40, 0.05))\n"
+    )
+    called = _paths(head + "    rebind_in_an_arm(a, b, m)\n    wait(a, 8)\n", passes=())
+    written = "    if m:\n        drive(b, square(16, 0.1))\n    wait(a, 8)\n"
+    assert called == _paths(head + written, passes=())
