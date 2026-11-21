@@ -52,11 +52,14 @@ def test_levels_are_overridden_by_qudit():
     assert repr(model) == "TransmonModel(levels={0: 4, 2: 2})"
     assert model == TransmonModel(levels={2: 2, 0: 4}) != TransmonModel()
     assert hash(model) == hash(TransmonModel(levels={2: 2, 0: 4}))
+    assert repr(TransmonModel(levels={2: 2, 0: 4})) == repr(model)
     for wrong, message in [
         ({0: 1}, "qudit 0 needs 2 or more levels"),
         ({0: 3.0}, "qudit 0 needs 2 or more levels"),
         ({-1: 3}, "levels keys are qudit indices"),
         ({True: 3}, "levels keys are qudit indices"),
+        ({0: 4, "1": 2}, r"levels keys are qudit indices \(ints from 0\), got '1'"),
+        ({0: 4, None: 2}, r"levels keys are qudit indices \(ints from 0\), got None"),
     ]:
         with pytest.raises(pulse.InvalidValueError, match=message):
             TransmonModel(levels=wrong)
