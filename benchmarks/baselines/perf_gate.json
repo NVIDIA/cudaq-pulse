@@ -20,7 +20,7 @@
   "cases": {
     "bind_cached": {
       "op_count": 8,
-      "instructions": 19176,
+      "instructions": 18986,
       "estimated_cycles": 29446,
       "python_work": {
         "bytecodes": 371.06,
@@ -30,7 +30,7 @@
     },
     "bind_new_value": {
       "op_count": 8,
-      "instructions": 19879,
+      "instructions": 19682,
       "estimated_cycles": 30706,
       "python_work": {
         "bytecodes": 377.06,
@@ -41,7 +41,7 @@
     "compile_bell": {
       "op_count": 15,
       "packed_bytes": 744,
-      "instructions": 1477798,
+      "instructions": 1463166,
       "estimated_cycles": 2381470,
       "python_work": {
         "bytecodes": 15899.2,
@@ -52,7 +52,7 @@
     "compile_calls_large": {
       "op_count": 1025,
       "packed_bytes": 59872,
-      "instructions": 67926758,
+      "instructions": 67254216,
       "estimated_cycles": 104930059,
       "python_work": {
         "bytecodes": 838691.0,
@@ -63,7 +63,7 @@
     "compile_calls_small": {
       "op_count": 12,
       "packed_bytes": 640,
-      "instructions": 1349794,
+      "instructions": 1336430,
       "estimated_cycles": 2280353,
       "python_work": {
         "bytecodes": 13292.4,
@@ -74,7 +74,7 @@
     "compile_cnot_cr": {
       "op_count": 12,
       "packed_bytes": 616,
-      "instructions": 1154989,
+      "instructions": 1143553,
       "estimated_cycles": 1890528,
       "python_work": {
         "bytecodes": 12369.2,
@@ -85,7 +85,7 @@
     "compile_dd_cpmg8": {
       "op_count": 7,
       "packed_bytes": 296,
-      "instructions": 952761,
+      "instructions": 943328,
       "estimated_cycles": 1607976,
       "python_work": {
         "bytecodes": 9184.2,
@@ -96,7 +96,7 @@
     "compile_qaoa4": {
       "op_count": 52,
       "packed_bytes": 2656,
-      "instructions": 4602348,
+      "instructions": 4556780,
       "estimated_cycles": 7117170,
       "python_work": {
         "bytecodes": 57529.4,
@@ -107,7 +107,7 @@
     "compile_surface_d5": {
       "op_count": 295,
       "packed_bytes": 17248,
-      "instructions": 28727650,
+      "instructions": 28443218,
       "estimated_cycles": 43308059,
       "python_work": {
         "bytecodes": 653457.0,
@@ -118,7 +118,7 @@
     "compile_syndrome": {
       "op_count": 53,
       "packed_bytes": 2736,
-      "instructions": 4695035,
+      "instructions": 4648550,
       "estimated_cycles": 7251517,
       "python_work": {
         "bytecodes": 59609.4,
@@ -129,7 +129,7 @@
     "compile_tone_list": {
       "op_count": 9,
       "packed_bytes": 440,
-      "instructions": 1365117,
+      "instructions": 1351601,
       "estimated_cycles": 2271375,
       "python_work": {
         "bytecodes": 17608.4,
@@ -140,7 +140,7 @@
     "compile_vqe_hea": {
       "op_count": 58,
       "packed_bytes": 2872,
-      "instructions": 4954676,
+      "instructions": 4905620,
       "estimated_cycles": 7660882,
       "python_work": {
         "bytecodes": 68994.4,
@@ -150,7 +150,7 @@
     },
     "export_to_controller": {
       "export_bytes": 87794,
-      "instructions": 4691595,
+      "instructions": 4645144,
       "estimated_cycles": 7256412,
       "python_work": {
         "bytecodes": 1368.0,
@@ -160,7 +160,7 @@
     },
     "export_to_controller_sampled": {
       "export_bytes": 49449,
-      "instructions": 1512387,
+      "instructions": 1497413,
       "estimated_cycles": 2383102,
       "python_work": {
         "bytecodes": 5295.0,
@@ -170,7 +170,7 @@
     },
     "export_to_emulator": {
       "export_bytes": 39736,
-      "instructions": 5807295,
+      "instructions": 5749797,
       "estimated_cycles": 8720526,
       "python_work": {
         "bytecodes": 34561.0,
@@ -181,7 +181,7 @@
     "first_compile": {
       "op_count": 15,
       "packed_bytes": 744,
-      "instructions": 12137885,
+      "instructions": 12017708,
       "estimated_cycles": 19170568,
       "python_work": {
         "bytecodes": 56954.0,
@@ -192,7 +192,7 @@
     "simulate_setup": {
       "density_matrix_entries": 4,
       "time_points": 2,
-      "instructions": 1198989,
+      "instructions": 1187118,
       "estimated_cycles": 2049163,
       "python_work": {
         "bytecodes": 4946.0,
@@ -203,7 +203,7 @@
     },
     "specialize_amplitude": {
       "mlir_bytes": 1303,
-      "instructions": 413192,
+      "instructions": 409101,
       "estimated_cycles": 648863,
       "python_work": {
         "bytecodes": 439.6,
@@ -214,7 +214,7 @@
     "specialize_wait": {
       "schedule_cycles": 145,
       "schedule_events": 3,
-      "instructions": 360045,
+      "instructions": 356480,
       "estimated_cycles": 559139,
       "python_work": {
         "bytecodes": 640.6,
@@ -226,7 +226,7 @@
       "call_args": 6,
       "call_results": 1,
       "result_milli": 2500,
-      "instructions": 6214,
+      "instructions": 6152,
       "estimated_cycles": 9141,
       "python_work": {
         "bytecodes": 73.024,
