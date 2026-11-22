@@ -300,7 +300,7 @@ jobs:
           BEFORE: ${{ github.event.before }}
         run: |
           base="$BEFORE"
-          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then base="$(git rev-parse HEAD^1)"; fi
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] || [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then base="$(git rev-parse HEAD^1)"; fi
           uv run --no-sync python tools/perf-gate.py --processes "$PROCESSES" \
             ${base:+--base-commit "$base"} \
             --out perf-gate/perf_gate.json --dumps perf-gate/callgrind \
