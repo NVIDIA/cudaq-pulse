@@ -45,11 +45,16 @@ add_custom_command(
     "${CUDAQ_PULSE_SOURCE_DIR}/cmake/write_build_stamp.cmake"
   COMMENT "Stamping the native extension's build")
 
+set(_cudaq_pulse_nostrip)
+if(CUDAQ_PULSE_KEEP_SYMBOLS)
+  set(_cudaq_pulse_nostrip NOSTRIP)
+endif()
 nanobind_add_module(
   _cudaq_pulse_native
   NB_STATIC
   STABLE_ABI
   ${_cudaq_pulse_free_threaded}
+  ${_cudaq_pulse_nostrip}
   bindings.cpp
   "${_build_stamp}"
   LengthInference.cpp

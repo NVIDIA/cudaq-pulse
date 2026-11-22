@@ -1,0 +1,5597 @@
+{
+ "identical code: 813a2b59 / eb6e6619": {
+  "bind_cached": {
+   "base": {
+    "instructions": 19497,
+    "python_work": {
+     "bytecodes": 371.06,
+     "python_calls": 15.0,
+     "c_calls": 9.01
+    }
+   },
+   "tree": {
+    "instructions": 19507,
+    "python_work": {
+     "bytecodes": 371.06,
+     "python_calls": 15.0,
+     "c_calls": 9.01
+    }
+   },
+   "calls": []
+  },
+  "bind_new_value": {
+   "base": {
+    "instructions": 20203,
+    "python_work": {
+     "bytecodes": 377.06,
+     "python_calls": 15.0,
+     "c_calls": 10.01
+    }
+   },
+   "tree": {
+    "instructions": 20214,
+    "python_work": {
+     "bytecodes": 377.06,
+     "python_calls": 15.0,
+     "c_calls": 10.01
+    }
+   },
+   "calls": []
+  },
+  "compile_bell": {
+   "base": {
+    "instructions": 1474921,
+    "python_work": {
+     "bytecodes": 15899.2,
+     "python_calls": 248.0,
+     "c_calls": 666.2
+    }
+   },
+   "tree": {
+    "instructions": 1475480,
+    "python_work": {
+     "bytecodes": 15899.2,
+     "python_calls": 248.0,
+     "c_calls": 666.2
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "_PyObject_Realloc.warm",
+     1,
+     0
+    ],
+    [
+     "???",
+     "set_add.cold",
+     0,
+     1
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     79,
+     72
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a25c0",
+     1310,
+     1303
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     169,
+     170
+    ],
+    [
+     "libc.so.6",
+     "0x00000000001a1000",
+     5031,
+     5032
+    ],
+    [
+     "libc.so.6",
+     "malloc",
+     1290,
+     1291
+    ],
+    [
+     "python3.12",
+     "_PyMem_RawMalloc",
+     60,
+     61
+    ],
+    [
+     "python3.12",
+     "_PyObject_Free",
+     5542,
+     5543
+    ],
+    [
+     "python3.12",
+     "_PyObject_Malloc",
+     5420,
+     5421
+    ],
+    [
+     "python3.12",
+     "_PyObject_Realloc",
+     891,
+     890
+    ],
+    [
+     "python3.12",
+     "assign_version_tag",
+     0,
+     40
+    ],
+    [
+     "python3.12",
+     "set_add",
+     90,
+     91
+    ]
+   ]
+  },
+  "compile_calls_large": {
+   "base": {
+    "instructions": 67829809,
+    "python_work": {
+     "bytecodes": 838691.0,
+     "python_calls": 14493.0,
+     "c_calls": 37540.0
+    }
+   },
+   "tree": {
+    "instructions": 67947827,
+    "python_work": {
+     "bytecodes": 838691.0,
+     "python_calls": 14493.0,
+     "c_calls": 37540.0
+    }
+   },
+   "calls": [
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::DictionaryAttrStorage, llvm::ArrayRef<mlir::NamedAttribute>&>(llvm::function_ref<void (mlir::detail::DictionaryAttrStorage*)>, mlir::TypeID, llvm::ArrayRef<mlir::NamedAttribute>&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     1040,
+     910
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     1850,
+     1855
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     1797,
+     1798
+    ],
+    [
+     "python3.12",
+     "_PyDict_GetItem_KnownHash",
+     15,
+     14
+    ]
+   ]
+  },
+  "compile_calls_small": {
+   "base": {
+    "instructions": 1351964,
+    "python_work": {
+     "bytecodes": 13292.4,
+     "python_calls": 251.0,
+     "c_calls": 636.4
+    }
+   },
+   "tree": {
+    "instructions": 1351821,
+    "python_work": {
+     "bytecodes": 13292.4,
+     "python_calls": 251.0,
+     "c_calls": 636.4
+    }
+   },
+   "calls": [
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::DictionaryAttrStorage, llvm::ArrayRef<mlir::NamedAttribute>&>(llvm::function_ref<void (mlir::detail::DictionaryAttrStorage*)>, mlir::TypeID, llvm::ArrayRef<mlir::NamedAttribute>&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     110,
+     85
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "std::_Rb_tree<std::pair<mlir::Operation*, llvm::SmallVector<long, 2u> >, std::pair<std::pair<mlir::Operation*, llvm::SmallVector<long, 2u> > const, long>, std::_Select1st<std::pair<std::pair<mlir::Operation*, llvm::SmallVector<long, 2u> > const, long> >, std::less<std::pair<mlir::Operation*, llvm::SmallVector<long, 2u> > >, std::allocator<std::pair<std::pair<mlir::Operation*, llvm::SmallVector<long, 2u> > const, long> > >::_M_erase(std::_Rb_tree_node<std::pair<std::pair<mlir::Operation*, llvm::SmallVector<long, 2u> > const, long> >*) [clone .isra.0]",
+     5,
+     10
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "std::common_comparison_category<decltype (std::__detail::__synth3way((declval<mlir::Operation*&>)(), (declval<mlir::Operation*&>)())), decltype (std::__detail::__synth3way((declval<llvm::SmallVector<long, 2u>&>)(), (declval<llvm::SmallVector<long, 2u>&>)()))>::type std::operator<=><mlir::Operation*, llvm::SmallVector<long, 2u> >(std::pair<mlir::Operation*, llvm::SmallVector<long, 2u> > const&, std::pair<mlir::Operation*, llvm::SmallVector<long, 2u> > const&)",
+     20,
+     10
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1710",
+     5,
+     10
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     51,
+     56
+    ],
+    [
+     "python3.12",
+     "_PyDict_GetItem_KnownHash",
+     40,
+     59
+    ],
+    [
+     "python3.12",
+     "assign_version_tag",
+     41,
+     61
+    ]
+   ]
+  },
+  "compile_cnot_cr": {
+   "base": {
+    "instructions": 1155085,
+    "python_work": {
+     "bytecodes": 12369.2,
+     "python_calls": 203.0,
+     "c_calls": 505.2
+    }
+   },
+   "tree": {
+    "instructions": 1155438,
+    "python_work": {
+     "bytecodes": 12369.2,
+     "python_calls": 203.0,
+     "c_calls": 505.2
+    }
+   },
+   "calls": [
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     84,
+     58
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     125,
+     124
+    ],
+    [
+     "python3.12",
+     "assign_version_tag",
+     0,
+     40
+    ]
+   ]
+  },
+  "compile_dd_cpmg8": {
+   "base": {
+    "instructions": 953205,
+    "python_work": {
+     "bytecodes": 9184.2,
+     "python_calls": 160.0,
+     "c_calls": 419.2
+    }
+   },
+   "tree": {
+    "instructions": 955791,
+    "python_work": {
+     "bytecodes": 9184.2,
+     "python_calls": 160.0,
+     "c_calls": 419.2
+    }
+   },
+   "calls": [
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::DictionaryAttrStorage, llvm::ArrayRef<mlir::NamedAttribute>&>(llvm::function_ref<void (mlir::detail::DictionaryAttrStorage*)>, mlir::TypeID, llvm::ArrayRef<mlir::NamedAttribute>&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     130,
+     200
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     22,
+     121
+    ],
+    [
+     "python3.12",
+     "_PyDict_GetItem_KnownHash",
+     30,
+     58
+    ],
+    [
+     "python3.12",
+     "assign_version_tag",
+     20,
+     80
+    ]
+   ]
+  },
+  "compile_qaoa4": {
+   "base": {
+    "instructions": 4592811,
+    "python_work": {
+     "bytecodes": 57529.4,
+     "python_calls": 704.0,
+     "c_calls": 2264.4
+    }
+   },
+   "tree": {
+    "instructions": 4600275,
+    "python_work": {
+     "bytecodes": 57529.4,
+     "python_calls": 704.0,
+     "c_calls": 2264.4
+    }
+   },
+   "calls": [
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     459,
+     469
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a25c0",
+     1938,
+     1937
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     457,
+     465
+    ],
+    [
+     "python3.12",
+     "assign_version_tag",
+     0,
+     20
+    ]
+   ]
+  },
+  "compile_surface_d5": {
+   "base": {
+    "instructions": 28912597,
+    "python_work": {
+     "bytecodes": 653457.0,
+     "python_calls": 4752.0,
+     "c_calls": 24523.0
+    }
+   },
+   "tree": {
+    "instructions": 28903554,
+    "python_work": {
+     "bytecodes": 653457.0,
+     "python_calls": 4752.0,
+     "c_calls": 24523.0
+    }
+   },
+   "calls": [
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::DictionaryAttrStorage, llvm::ArrayRef<mlir::NamedAttribute>&>(llvm::function_ref<void (mlir::detail::DictionaryAttrStorage*)>, mlir::TypeID, llvm::ArrayRef<mlir::NamedAttribute>&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     263,
+     242
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     450,
+     429
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     355,
+     349
+    ],
+    [
+     "python3.12",
+     "assign_version_tag",
+     198,
+     202
+    ]
+   ]
+  },
+  "compile_syndrome": {
+   "base": {
+    "instructions": 4690929,
+    "python_work": {
+     "bytecodes": 59609.4,
+     "python_calls": 730.0,
+     "c_calls": 2373.4
+    }
+   },
+   "tree": {
+    "instructions": 4691771,
+    "python_work": {
+     "bytecodes": 59609.4,
+     "python_calls": 730.0,
+     "c_calls": 2373.4
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "0x0000000004972620",
+     113,
+     110
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::DictionaryAttrStorage, llvm::ArrayRef<mlir::NamedAttribute>&>(llvm::function_ref<void (mlir::detail::DictionaryAttrStorage*)>, mlir::TypeID, llvm::ArrayRef<mlir::NamedAttribute>&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     185,
+     155
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     561,
+     579
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1710",
+     34,
+     35
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a25c0",
+     1910,
+     1909
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     456,
+     448
+    ],
+    [
+     "libc.so.6",
+     "0x00000000001a0840",
+     3320,
+     3317
+    ],
+    [
+     "python3.12",
+     "assign_version_tag",
+     0,
+     20
+    ]
+   ]
+  },
+  "compile_tone_list": {
+   "base": {
+    "instructions": 1371524,
+    "python_work": {
+     "bytecodes": 17608.4,
+     "python_calls": 241.0,
+     "c_calls": 765.4
+    }
+   },
+   "tree": {
+    "instructions": 1372558,
+    "python_work": {
+     "bytecodes": 17608.4,
+     "python_calls": 241.0,
+     "c_calls": 765.4
+    }
+   },
+   "calls": [
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::DictionaryAttrStorage, llvm::ArrayRef<mlir::NamedAttribute>&>(llvm::function_ref<void (mlir::detail::DictionaryAttrStorage*)>, mlir::TypeID, llvm::ArrayRef<mlir::NamedAttribute>&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     80,
+     90
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1710",
+     7,
+     5
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     72,
+     70
+    ],
+    [
+     "python3.12",
+     "_PyDict_GetItem_KnownHash",
+     15,
+     30
+    ],
+    [
+     "python3.12",
+     "assign_version_tag",
+     10,
+     40
+    ]
+   ]
+  },
+  "compile_vqe_hea": {
+   "base": {
+    "instructions": 4947774,
+    "python_work": {
+     "bytecodes": 68994.4,
+     "python_calls": 793.0,
+     "c_calls": 2682.4
+    }
+   },
+   "tree": {
+    "instructions": 4952565,
+    "python_work": {
+     "bytecodes": 68994.4,
+     "python_calls": 793.0,
+     "c_calls": 2682.4
+    }
+   },
+   "calls": [
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::DictionaryAttrStorage, llvm::ArrayRef<mlir::NamedAttribute>&>(llvm::function_ref<void (mlir::detail::DictionaryAttrStorage*)>, mlir::TypeID, llvm::ArrayRef<mlir::NamedAttribute>&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     245,
+     200
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     546,
+     553
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1710",
+     29,
+     30
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     442,
+     419
+    ],
+    [
+     "python3.12",
+     "assign_version_tag",
+     10,
+     30
+    ]
+   ]
+  },
+  "export_to_controller": {
+   "base": {
+    "instructions": 4640235,
+    "python_work": {
+     "bytecodes": 1368.0,
+     "python_calls": 30.0,
+     "c_calls": 75.667
+    }
+   },
+   "tree": {
+    "instructions": 4636362,
+    "python_work": {
+     "bytecodes": 1368.0,
+     "python_calls": 30.0,
+     "c_calls": 75.667
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "_PyObject_LookupAttr.warm",
+     3,
+     0
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     925,
+     939
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     750,
+     759
+    ],
+    [
+     "python3.12",
+     "_PyDict_GetItem_KnownHash",
+     21,
+     0
+    ],
+    [
+     "python3.12",
+     "_PyObject_LookupAttr",
+     21,
+     18
+    ],
+    [
+     "python3.12",
+     "assign_version_tag",
+     12,
+     0
+    ]
+   ]
+  },
+  "export_to_controller_sampled": {
+   "base": {
+    "instructions": 1496744,
+    "python_work": {
+     "bytecodes": 5295.0,
+     "python_calls": 41.0,
+     "c_calls": 162.667
+    }
+   },
+   "tree": {
+    "instructions": 1496994,
+    "python_work": {
+     "bytecodes": 5295.0,
+     "python_calls": 41.0,
+     "c_calls": 162.667
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "_PyObject_LookupAttr.warm",
+     3,
+     0
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     183,
+     202
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1710",
+     10,
+     7
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     168,
+     176
+    ],
+    [
+     "python3.12",
+     "_PyDict_GetItem_KnownHash",
+     21,
+     0
+    ],
+    [
+     "python3.12",
+     "_PyObject_LookupAttr",
+     66,
+     63
+    ],
+    [
+     "python3.12",
+     "assign_version_tag",
+     12,
+     0
+    ]
+   ]
+  },
+  "export_to_emulator": {
+   "base": {
+    "instructions": 5846318,
+    "python_work": {
+     "bytecodes": 34561.0,
+     "python_calls": 625.0,
+     "c_calls": 2383.667
+    }
+   },
+   "tree": {
+    "instructions": 5838494,
+    "python_work": {
+     "bytecodes": 34561.0,
+     "python_calls": 625.0,
+     "c_calls": 2383.667
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "0x0000000004972620",
+     27,
+     15
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     207,
+     204
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     108,
+     96
+    ],
+    [
+     "libc.so.6",
+     "0x00000000001a0840",
+     1055,
+     1043
+    ],
+    [
+     "python3.12",
+     "assign_version_tag",
+     7,
+     6
+    ]
+   ]
+  },
+  "first_compile": {
+   "base": {
+    "instructions": 12285070,
+    "python_work": {
+     "bytecodes": 56864.0,
+     "python_calls": 860.0,
+     "c_calls": 2734.0
+    }
+   },
+   "tree": {
+    "instructions": 12284971,
+    "python_work": {
+     "bytecodes": 56864.0,
+     "python_calls": 860.0,
+     "c_calls": 2734.0
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "_PyEval_EvalFrameDefault.warm",
+     774,
+     773
+    ],
+    [
+     "python3.12",
+     "_PyDict_GetItem_KnownHash",
+     415,
+     404
+    ],
+    [
+     "python3.12",
+     "_PyEval_EvalFrameDefault",
+     1382,
+     1381
+    ],
+    [
+     "python3.12",
+     "_PyObject_Free",
+     3176,
+     3174
+    ],
+    [
+     "python3.12",
+     "assign_version_tag",
+     401,
+     399
+    ],
+    [
+     "python3.12",
+     "unicode_dealloc",
+     931,
+     929
+    ]
+   ]
+  },
+  "simulate_setup": {
+   "base": {
+    "instructions": 1206359,
+    "python_work": {
+     "bytecodes": 4946.0,
+     "python_calls": 122.0,
+     "c_calls": 364.667
+    }
+   },
+   "tree": {
+    "instructions": 1204331,
+    "python_work": {
+     "bytecodes": 4946.0,
+     "python_calls": 122.0,
+     "c_calls": 364.667
+    }
+   },
+   "calls": [
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::DictionaryAttrStorage, llvm::ArrayRef<mlir::NamedAttribute>&>(llvm::function_ref<void (mlir::detail::DictionaryAttrStorage*)>, mlir::TypeID, llvm::ArrayRef<mlir::NamedAttribute>&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     6,
+     3
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1710",
+     1,
+     0
+    ],
+    [
+     "libc.so.6",
+     "0x0000000000199b00",
+     608,
+     590
+    ],
+    [
+     "python3.12",
+     "_PyDict_GetItem_KnownHash",
+     24,
+     2
+    ],
+    [
+     "python3.12",
+     "assign_version_tag",
+     15,
+     4
+    ]
+   ]
+  },
+  "specialize_amplitude": {
+   "base": {
+    "instructions": 400130,
+    "python_work": {
+     "bytecodes": 439.6,
+     "python_calls": 16.0,
+     "c_calls": 16.1
+    }
+   },
+   "tree": {
+    "instructions": 399090,
+    "python_work": {
+     "bytecodes": 439.6,
+     "python_calls": 16.0,
+     "c_calls": 16.1
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "0x0000000004972620",
+     1038,
+     1040
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::DictionaryAttrStorage, llvm::ArrayRef<mlir::NamedAttribute>&>(llvm::function_ref<void (mlir::detail::DictionaryAttrStorage*)>, mlir::TypeID, llvm::ArrayRef<mlir::NamedAttribute>&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     698,
+     492
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     776,
+     778
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1710",
+     140,
+     121
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a25c0",
+     3493,
+     3495
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     635,
+     622
+    ],
+    [
+     "libc.so.6",
+     "0x00000000001a0840",
+     3824,
+     3826
+    ]
+   ]
+  },
+  "specialize_wait": {
+   "base": {
+    "instructions": 356587,
+    "python_work": {
+     "bytecodes": 640.6,
+     "python_calls": 22.0,
+     "c_calls": 37.1
+    }
+   },
+   "tree": {
+    "instructions": 357336,
+    "python_work": {
+     "bytecodes": 640.6,
+     "python_calls": 22.0,
+     "c_calls": 37.1
+    }
+   },
+   "calls": [
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     506,
+     538
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     508,
+     541
+    ]
+   ]
+  },
+  "submit": {
+   "base": {
+    "instructions": 6304,
+    "python_work": {
+     "bytecodes": 73.024,
+     "python_calls": 6.0,
+     "c_calls": 4.004
+    }
+   },
+   "tree": {
+    "instructions": 6304,
+    "python_work": {
+     "bytecodes": 73.024,
+     "python_calls": 6.0,
+     "c_calls": 4.004
+    }
+   },
+   "calls": []
+  }
+ },
+ "a comment in a Python source: eb85adf6 / + comment": {
+  "bind_cached": {
+   "base": {
+    "instructions": 19450,
+    "python_work": {
+     "bytecodes": 371.06,
+     "python_calls": 15.0,
+     "c_calls": 9.01
+    }
+   },
+   "tree": {
+    "instructions": 19445,
+    "python_work": {
+     "bytecodes": 371.06,
+     "python_calls": 15.0,
+     "c_calls": 9.01
+    }
+   },
+   "calls": []
+  },
+  "bind_new_value": {
+   "base": {
+    "instructions": 20143,
+    "python_work": {
+     "bytecodes": 377.06,
+     "python_calls": 15.0,
+     "c_calls": 10.01
+    }
+   },
+   "tree": {
+    "instructions": 20199,
+    "python_work": {
+     "bytecodes": 377.06,
+     "python_calls": 15.0,
+     "c_calls": 10.01
+    }
+   },
+   "calls": []
+  },
+  "compile_bell": {
+   "base": {
+    "instructions": 1478552,
+    "python_work": {
+     "bytecodes": 15899.2,
+     "python_calls": 248.0,
+     "c_calls": 666.2
+    }
+   },
+   "tree": {
+    "instructions": 1479518,
+    "python_work": {
+     "bytecodes": 15899.2,
+     "python_calls": 248.0,
+     "c_calls": 666.2
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "set_add.cold",
+     0,
+     3
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::DictionaryAttrStorage, llvm::ArrayRef<mlir::NamedAttribute>&>(llvm::function_ref<void (mlir::detail::DictionaryAttrStorage*)>, mlir::TypeID, llvm::ArrayRef<mlir::NamedAttribute>&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     140,
+     160
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::FloatAttrStorage, mlir::Type&, llvm::APFloat const&>(llvm::function_ref<void (mlir::detail::FloatAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APFloat const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     160,
+     170
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::IntegerAttrStorage, mlir::Type&, llvm::APInt const&>(llvm::function_ref<void (mlir::detail::IntegerAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APInt const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     80,
+     70
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::StringAttrStorage, llvm::StringRef, mlir::NoneType>(llvm::function_ref<void (mlir::detail::StringAttrStorage*)>, mlir::TypeID, llvm::StringRef&&, mlir::NoneType&&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     390,
+     500
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "llvm::detail::IEEEFloat::bitwiseIsEqual(llvm::detail::IEEEFloat const&) const",
+     160,
+     170
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     76,
+     80
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1710",
+     11,
+     10
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a25c0",
+     1310,
+     1306
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     167,
+     173
+    ],
+    [
+     "libc.so.6",
+     "0x0000000000199b00",
+     2256,
+     2266
+    ],
+    [
+     "libc.so.6",
+     "0x00000000001a1000",
+     5031,
+     5032
+    ],
+    [
+     "libc.so.6",
+     "malloc",
+     1290,
+     1291
+    ],
+    [
+     "python3.12",
+     "_PyDict_GetItem_KnownHash",
+     0,
+     8
+    ],
+    [
+     "python3.12",
+     "_PyMem_RawMalloc",
+     60,
+     61
+    ],
+    [
+     "python3.12",
+     "_PyObject_Free",
+     5542,
+     5543
+    ],
+    [
+     "python3.12",
+     "_PyObject_Malloc",
+     5420,
+     5421
+    ],
+    [
+     "python3.12",
+     "set_add",
+     90,
+     93
+    ]
+   ]
+  },
+  "compile_calls_large": {
+   "base": {
+    "instructions": 68029890,
+    "python_work": {
+     "bytecodes": 838691.0,
+     "python_calls": 14493.0,
+     "c_calls": 37540.0
+    }
+   },
+   "tree": {
+    "instructions": 67971463,
+    "python_work": {
+     "bytecodes": 838691.0,
+     "python_calls": 14493.0,
+     "c_calls": 37540.0
+    }
+   },
+   "calls": [
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::DictionaryAttrStorage, llvm::ArrayRef<mlir::NamedAttribute>&>(llvm::function_ref<void (mlir::detail::DictionaryAttrStorage*)>, mlir::TypeID, llvm::ArrayRef<mlir::NamedAttribute>&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     909,
+     911
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::FloatAttrStorage, mlir::Type&, llvm::APFloat const&>(llvm::function_ref<void (mlir::detail::FloatAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APFloat const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     525,
+     597
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::IntegerAttrStorage, mlir::Type&, llvm::APInt const&>(llvm::function_ref<void (mlir::detail::IntegerAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APInt const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     2452,
+     1553
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::StringAttrStorage, llvm::StringRef, mlir::NoneType>(llvm::function_ref<void (mlir::detail::StringAttrStorage*)>, mlir::TypeID, llvm::StringRef&&, mlir::NoneType&&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     152,
+     178
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "llvm::detail::IEEEFloat::bitwiseIsEqual(llvm::detail::IEEEFloat const&) const",
+     525,
+     597
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     1834,
+     1837
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1710",
+     23,
+     21
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a2ff0",
+     2,
+     1
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     1793,
+     1794
+    ],
+    [
+     "libc.so.6",
+     "0x0000000000199b00",
+     22647,
+     22646
+    ],
+    [
+     "libc.so.6",
+     "__default_morecore",
+     5,
+     4
+    ],
+    [
+     "libc.so.6",
+     "brk",
+     3,
+     2
+    ],
+    [
+     "libc.so.6",
+     "sbrk",
+     5,
+     4
+    ],
+    [
+     "python3.12",
+     "_PyDict_GetItem_KnownHash",
+     14,
+     16
+    ],
+    [
+     "python3.12",
+     "assign_version_tag",
+     26,
+     24
+    ]
+   ]
+  },
+  "compile_calls_small": {
+   "base": {
+    "instructions": 1358935,
+    "python_work": {
+     "bytecodes": 13292.4,
+     "python_calls": 251.0,
+     "c_calls": 636.4
+    }
+   },
+   "tree": {
+    "instructions": 1360627,
+    "python_work": {
+     "bytecodes": 13292.4,
+     "python_calls": 251.0,
+     "c_calls": 636.4
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "_PyObject_Realloc.warm",
+     0,
+     1
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::FloatAttrStorage, mlir::Type&, llvm::APFloat const&>(llvm::function_ref<void (mlir::detail::FloatAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APFloat const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     65,
+     85
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::IntegerAttrStorage, mlir::Type&, llvm::APInt const&>(llvm::function_ref<void (mlir::detail::IntegerAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APInt const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     80,
+     90
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::StringAttrStorage, llvm::StringRef, mlir::NoneType>(llvm::function_ref<void (mlir::detail::StringAttrStorage*)>, mlir::TypeID, llvm::StringRef&&, mlir::NoneType&&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     550,
+     585
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "llvm::detail::IEEEFloat::bitwiseIsEqual(llvm::detail::IEEEFloat const&) const",
+     65,
+     85
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "std::_Rb_tree<std::pair<mlir::Operation*, llvm::SmallVector<long, 2u> >, std::pair<std::pair<mlir::Operation*, llvm::SmallVector<long, 2u> > const, long>, std::_Select1st<std::pair<std::pair<mlir::Operation*, llvm::SmallVector<long, 2u> > const, long> >, std::less<std::pair<mlir::Operation*, llvm::SmallVector<long, 2u> > >, std::allocator<std::pair<std::pair<mlir::Operation*, llvm::SmallVector<long, 2u> > const, long> > >::_M_erase(std::_Rb_tree_node<std::pair<std::pair<mlir::Operation*, llvm::SmallVector<long, 2u> > const, long> >*) [clone .isra.0]",
+     5,
+     10
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "std::common_comparison_category<decltype (std::__detail::__synth3way((declval<mlir::Operation*&>)(), (declval<mlir::Operation*&>)())), decltype (std::__detail::__synth3way((declval<llvm::SmallVector<long, 2u>&>)(), (declval<llvm::SmallVector<long, 2u>&>)()))>::type std::operator<=><mlir::Operation*, llvm::SmallVector<long, 2u> >(std::pair<mlir::Operation*, llvm::SmallVector<long, 2u> > const&, std::pair<mlir::Operation*, llvm::SmallVector<long, 2u> > const&)",
+     20,
+     10
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     64,
+     75
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1710",
+     11,
+     20
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     59,
+     75
+    ],
+    [
+     "libc.so.6",
+     "0x0000000000199b00",
+     2037,
+     2032
+    ],
+    [
+     "python3.12",
+     "_PyDict_GetItem_KnownHash",
+     38,
+     44
+    ],
+    [
+     "python3.12",
+     "_PyObject_Realloc",
+     515,
+     516
+    ],
+    [
+     "python3.12",
+     "assign_version_tag",
+     52,
+     70
+    ]
+   ]
+  },
+  "compile_cnot_cr": {
+   "base": {
+    "instructions": 1158168,
+    "python_work": {
+     "bytecodes": 12369.2,
+     "python_calls": 203.0,
+     "c_calls": 505.2
+    }
+   },
+   "tree": {
+    "instructions": 1158313,
+    "python_work": {
+     "bytecodes": 12369.2,
+     "python_calls": 203.0,
+     "c_calls": 505.2
+    }
+   },
+   "calls": [
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::DictionaryAttrStorage, llvm::ArrayRef<mlir::NamedAttribute>&>(llvm::function_ref<void (mlir::detail::DictionaryAttrStorage*)>, mlir::TypeID, llvm::ArrayRef<mlir::NamedAttribute>&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     140,
+     160
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::FloatAttrStorage, mlir::Type&, llvm::APFloat const&>(llvm::function_ref<void (mlir::detail::FloatAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APFloat const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     120,
+     130
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::IntegerAttrStorage, mlir::Type&, llvm::APInt const&>(llvm::function_ref<void (mlir::detail::IntegerAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APInt const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     80,
+     70
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::StringAttrStorage, llvm::StringRef, mlir::NoneType>(llvm::function_ref<void (mlir::detail::StringAttrStorage*)>, mlir::TypeID, llvm::StringRef&&, mlir::NoneType&&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     220,
+     230
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "llvm::detail::IEEEFloat::bitwiseIsEqual(llvm::detail::IEEEFloat const&) const",
+     120,
+     130
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     52,
+     48
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     117,
+     119
+    ],
+    [
+     "libc.so.6",
+     "0x0000000000199b00",
+     1773,
+     1783
+    ],
+    [
+     "python3.12",
+     "_PyDict_GetItem_KnownHash",
+     0,
+     10
+    ]
+   ]
+  },
+  "compile_dd_cpmg8": {
+   "base": {
+    "instructions": 957581,
+    "python_work": {
+     "bytecodes": 9184.2,
+     "python_calls": 160.0,
+     "c_calls": 419.2
+    }
+   },
+   "tree": {
+    "instructions": 957653,
+    "python_work": {
+     "bytecodes": 9184.2,
+     "python_calls": 160.0,
+     "c_calls": 419.2
+    }
+   },
+   "calls": [
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::IntegerAttrStorage, mlir::Type&, llvm::APInt const&>(llvm::function_ref<void (mlir::detail::IntegerAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APInt const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     90,
+     100
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     93,
+     114
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     123,
+     125
+    ],
+    [
+     "libc.so.6",
+     "0x0000000000199b00",
+     1621,
+     1631
+    ],
+    [
+     "python3.12",
+     "_PyDict_GetItem_KnownHash",
+     38,
+     40
+    ],
+    [
+     "python3.12",
+     "assign_version_tag",
+     63,
+     60
+    ]
+   ]
+  },
+  "compile_qaoa4": {
+   "base": {
+    "instructions": 4602755,
+    "python_work": {
+     "bytecodes": 57529.4,
+     "python_calls": 704.0,
+     "c_calls": 2264.4
+    }
+   },
+   "tree": {
+    "instructions": 4602130,
+    "python_work": {
+     "bytecodes": 57529.4,
+     "python_calls": 704.0,
+     "c_calls": 2264.4
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "0x0000000004972620",
+     125,
+     128
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::DictionaryAttrStorage, llvm::ArrayRef<mlir::NamedAttribute>&>(llvm::function_ref<void (mlir::detail::DictionaryAttrStorage*)>, mlir::TypeID, llvm::ArrayRef<mlir::NamedAttribute>&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     140,
+     145
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::FloatAttrStorage, mlir::Type&, llvm::APFloat const&>(llvm::function_ref<void (mlir::detail::FloatAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APFloat const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     325,
+     370
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::StringAttrStorage, llvm::StringRef, mlir::NoneType>(llvm::function_ref<void (mlir::detail::StringAttrStorage*)>, mlir::TypeID, llvm::StringRef&&, mlir::NoneType&&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     250,
+     285
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "llvm::detail::IEEEFloat::bitwiseIsEqual(llvm::detail::IEEEFloat const&) const",
+     325,
+     370
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     452,
+     462
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1710",
+     20,
+     22
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a25c0",
+     1936,
+     1937
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     449,
+     465
+    ],
+    [
+     "libc.so.6",
+     "0x0000000000199b00",
+     2407,
+     2412
+    ],
+    [
+     "libc.so.6",
+     "0x00000000001a0840",
+     3237,
+     3240
+    ],
+    [
+     "python3.12",
+     "_PyDict_GetItem_KnownHash",
+     0,
+     5
+    ]
+   ]
+  },
+  "compile_surface_d5": {
+   "base": {
+    "instructions": 28928436,
+    "python_work": {
+     "bytecodes": 653457.0,
+     "python_calls": 4752.0,
+     "c_calls": 24523.0
+    }
+   },
+   "tree": {
+    "instructions": 28908723,
+    "python_work": {
+     "bytecodes": 653457.0,
+     "python_calls": 4752.0,
+     "c_calls": 24523.0
+    }
+   },
+   "calls": [
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::DenseArrayAttrStorage, mlir::Type&, unsigned long, llvm::ArrayRef<char>&>(llvm::function_ref<void (mlir::detail::DenseArrayAttrStorage*)>, mlir::TypeID, mlir::Type&, unsigned long&&, llvm::ArrayRef<char>&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     1,
+     2
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::DictionaryAttrStorage, llvm::ArrayRef<mlir::NamedAttribute>&>(llvm::function_ref<void (mlir::detail::DictionaryAttrStorage*)>, mlir::TypeID, llvm::ArrayRef<mlir::NamedAttribute>&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     230,
+     223
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::FloatAttrStorage, mlir::Type&, llvm::APFloat const&>(llvm::function_ref<void (mlir::detail::FloatAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APFloat const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     109,
+     94
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::IntegerAttrStorage, mlir::Type&, llvm::APInt const&>(llvm::function_ref<void (mlir::detail::IntegerAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APInt const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     78,
+     67
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<pulse::detail::QuantumSystemAttrStorage, mlir::detail::DenseArrayAttrImpl<double>, mlir::detail::DenseArrayAttrImpl<long>, mlir::detail::DenseArrayAttrImpl<double>, mlir::detail::DenseArrayAttrImpl<double>, mlir::detail::DenseArrayAttrImpl<double>, mlir::detail::DenseArrayAttrImpl<double>, mlir::ArrayAttr>(llvm::function_ref<void (pulse::detail::QuantumSystemAttrStorage*)>, mlir::TypeID, mlir::detail::DenseArrayAttrImpl<double>&&, mlir::detail::DenseArrayAttrImpl<long>&&, mlir::detail::DenseArrayAttrImpl<double>&&, mlir::detail::DenseArrayAttrImpl<double>&&, mlir::detail::DenseArrayAttrImpl<double>&&, mlir::detail::DenseArrayAttrImpl<double>&&, mlir::ArrayAttr&&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     3,
+     1
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "llvm::detail::IEEEFloat::bitwiseIsEqual(llvm::detail::IEEEFloat const&) const",
+     109,
+     94
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     430,
+     434
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     355,
+     354
+    ],
+    [
+     "libc.so.6",
+     "0x0000000000199b00",
+     1256,
+     1250
+    ],
+    [
+     "python3.12",
+     "_PyDict_GetItem_KnownHash",
+     101,
+     102
+    ]
+   ]
+  },
+  "compile_syndrome": {
+   "base": {
+    "instructions": 4697367,
+    "python_work": {
+     "bytecodes": 59609.4,
+     "python_calls": 730.0,
+     "c_calls": 2373.4
+    }
+   },
+   "tree": {
+    "instructions": 4698962,
+    "python_work": {
+     "bytecodes": 59609.4,
+     "python_calls": 730.0,
+     "c_calls": 2373.4
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "0x0000000004972620",
+     110,
+     111
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::DictionaryAttrStorage, llvm::ArrayRef<mlir::NamedAttribute>&>(llvm::function_ref<void (mlir::detail::DictionaryAttrStorage*)>, mlir::TypeID, llvm::ArrayRef<mlir::NamedAttribute>&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     175,
+     150
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::FloatAttrStorage, mlir::Type&, llvm::APFloat const&>(llvm::function_ref<void (mlir::detail::FloatAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APFloat const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     345,
+     340
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::StringAttrStorage, llvm::StringRef, mlir::NoneType>(llvm::function_ref<void (mlir::detail::StringAttrStorage*)>, mlir::TypeID, llvm::StringRef&&, mlir::NoneType&&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     200,
+     175
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "llvm::detail::IEEEFloat::bitwiseIsEqual(llvm::detail::IEEEFloat const&) const",
+     345,
+     340
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     512,
+     599
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1710",
+     34,
+     35
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     428,
+     465
+    ],
+    [
+     "libc.so.6",
+     "0x00000000001a0840",
+     3317,
+     3318
+    ],
+    [
+     "python3.12",
+     "_PyDict_GetItem_KnownHash",
+     0,
+     5
+    ]
+   ]
+  },
+  "compile_tone_list": {
+   "base": {
+    "instructions": 1374329,
+    "python_work": {
+     "bytecodes": 17608.4,
+     "python_calls": 241.0,
+     "c_calls": 765.4
+    }
+   },
+   "tree": {
+    "instructions": 1375009,
+    "python_work": {
+     "bytecodes": 17608.4,
+     "python_calls": 241.0,
+     "c_calls": 765.4
+    }
+   },
+   "calls": [
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::DictionaryAttrStorage, llvm::ArrayRef<mlir::NamedAttribute>&>(llvm::function_ref<void (mlir::detail::DictionaryAttrStorage*)>, mlir::TypeID, llvm::ArrayRef<mlir::NamedAttribute>&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     100,
+     200
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::IntegerAttrStorage, mlir::Type&, llvm::APInt const&>(llvm::function_ref<void (mlir::detail::IntegerAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APInt const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     40,
+     45
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::StringAttrStorage, llvm::StringRef, mlir::NoneType>(llvm::function_ref<void (mlir::detail::StringAttrStorage*)>, mlir::TypeID, llvm::StringRef&&, mlir::NoneType&&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     195,
+     205
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     70,
+     78
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     65,
+     66
+    ],
+    [
+     "libc.so.6",
+     "0x0000000000199b00",
+     931,
+     936
+    ],
+    [
+     "python3.12",
+     "_PyDict_GetItem_KnownHash",
+     15,
+     20
+    ]
+   ]
+  },
+  "compile_vqe_hea": {
+   "base": {
+    "instructions": 4957705,
+    "python_work": {
+     "bytecodes": 68994.4,
+     "python_calls": 793.0,
+     "c_calls": 2682.4
+    }
+   },
+   "tree": {
+    "instructions": 4957498,
+    "python_work": {
+     "bytecodes": 68994.4,
+     "python_calls": 793.0,
+     "c_calls": 2682.4
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "0x0000000004972620",
+     115,
+     111
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::DictionaryAttrStorage, llvm::ArrayRef<mlir::NamedAttribute>&>(llvm::function_ref<void (mlir::detail::DictionaryAttrStorage*)>, mlir::TypeID, llvm::ArrayRef<mlir::NamedAttribute>&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     370,
+     355
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::FloatAttrStorage, mlir::Type&, llvm::APFloat const&>(llvm::function_ref<void (mlir::detail::FloatAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APFloat const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     410,
+     375
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::StringAttrStorage, llvm::StringRef, mlir::NoneType>(llvm::function_ref<void (mlir::detail::StringAttrStorage*)>, mlir::TypeID, llvm::StringRef&&, mlir::NoneType&&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     300,
+     420
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "llvm::detail::IEEEFloat::bitwiseIsEqual(llvm::detail::IEEEFloat const&) const",
+     410,
+     375
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     526,
+     525
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1710",
+     28,
+     30
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     424,
+     437
+    ],
+    [
+     "libc.so.6",
+     "0x0000000000199b00",
+     2644,
+     2649
+    ],
+    [
+     "libc.so.6",
+     "0x00000000001a0840",
+     3442,
+     3438
+    ],
+    [
+     "python3.12",
+     "_PyDict_GetItem_KnownHash",
+     15,
+     19
+    ]
+   ]
+  },
+  "export_to_controller": {
+   "base": {
+    "instructions": 4638520,
+    "python_work": {
+     "bytecodes": 1368.0,
+     "python_calls": 30.0,
+     "c_calls": 75.667
+    }
+   },
+   "tree": {
+    "instructions": 4634617,
+    "python_work": {
+     "bytecodes": 1368.0,
+     "python_calls": 30.0,
+     "c_calls": 75.667
+    }
+   },
+   "calls": [
+    [
+     "libc.so.6",
+     "0x00000000000a1710",
+     10,
+     9
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     768,
+     759
+    ]
+   ]
+  },
+  "export_to_controller_sampled": {
+   "base": {
+    "instructions": 1495840,
+    "python_work": {
+     "bytecodes": 5295.0,
+     "python_calls": 41.0,
+     "c_calls": 162.667
+    }
+   },
+   "tree": {
+    "instructions": 1497475,
+    "python_work": {
+     "bytecodes": 5295.0,
+     "python_calls": 41.0,
+     "c_calls": 162.667
+    }
+   },
+   "calls": [
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     168,
+     229
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1710",
+     10,
+     7
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     147,
+     184
+    ]
+   ]
+  },
+  "export_to_emulator": {
+   "base": {
+    "instructions": 5863841,
+    "python_work": {
+     "bytecodes": 34561.0,
+     "python_calls": 625.0,
+     "c_calls": 2383.667
+    }
+   },
+   "tree": {
+    "instructions": 5845840,
+    "python_work": {
+     "bytecodes": 34561.0,
+     "python_calls": 625.0,
+     "c_calls": 2383.667
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "0x0000000004972620",
+     21,
+     24
+    ],
+    [
+     "???",
+     "_PyObject_Realloc.warm",
+     0,
+     3
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::StringAttrStorage, llvm::StringRef, mlir::NoneType>(llvm::function_ref<void (mlir::detail::StringAttrStorage*)>, mlir::TypeID, llvm::StringRef&&, mlir::NoneType&&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     243,
+     291
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     195,
+     198
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1710",
+     0,
+     6
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a25c0",
+     412,
+     417
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     102,
+     105
+    ],
+    [
+     "libc.so.6",
+     "0x00000000001a0840",
+     1049,
+     1052
+    ],
+    [
+     "python3.12",
+     "_PyDict_GetItem_KnownHash",
+     0,
+     3
+    ],
+    [
+     "python3.12",
+     "_PyObject_Realloc",
+     417,
+     420
+    ],
+    [
+     "python3.12",
+     "assign_version_tag",
+     384,
+     12
+    ]
+   ]
+  },
+  "first_compile": {
+   "base": {
+    "instructions": 12324083,
+    "python_work": {
+     "bytecodes": 56864.0,
+     "python_calls": 860.0,
+     "c_calls": 2734.0
+    }
+   },
+   "tree": {
+    "instructions": 12319956,
+    "python_work": {
+     "bytecodes": 56864.0,
+     "python_calls": 860.0,
+     "c_calls": 2734.0
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "0x0000000004972620",
+     65,
+     67
+    ],
+    [
+     "???",
+     "_PyObject_LookupAttr.warm",
+     2,
+     3
+    ],
+    [
+     "???",
+     "_PyObject_LookupSpecial.warm",
+     6,
+     4
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::DictionaryAttrStorage, llvm::ArrayRef<mlir::NamedAttribute>&>(llvm::function_ref<void (mlir::detail::DictionaryAttrStorage*)>, mlir::TypeID, llvm::ArrayRef<mlir::NamedAttribute>&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     4,
+     8
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::FloatAttrStorage, mlir::Type&, llvm::APFloat const&>(llvm::function_ref<void (mlir::detail::FloatAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APFloat const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     7,
+     10
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::IntegerAttrStorage, mlir::Type&, llvm::APInt const&>(llvm::function_ref<void (mlir::detail::IntegerAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APInt const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     5,
+     2
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::StringAttrStorage, llvm::StringRef, mlir::NoneType>(llvm::function_ref<void (mlir::detail::StringAttrStorage*)>, mlir::TypeID, llvm::StringRef&&, mlir::NoneType&&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     6892,
+     6857
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "llvm::detail::IEEEFloat::bitwiseIsEqual(llvm::detail::IEEEFloat const&) const",
+     7,
+     10
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     694,
+     679
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     4241,
+     4243
+    ],
+    [
+     "libc.so.6",
+     "0x00000000001a0840",
+     7157,
+     7159
+    ],
+    [
+     "python3.12",
+     "_PyObject_Free",
+     3170,
+     3166
+    ],
+    [
+     "python3.12",
+     "_PyObject_LookupAttr",
+     262,
+     263
+    ],
+    [
+     "python3.12",
+     "_PyObject_LookupSpecial",
+     38,
+     37
+    ],
+    [
+     "python3.12",
+     "assign_version_tag",
+     407,
+     397
+    ],
+    [
+     "python3.12",
+     "unicode_dealloc",
+     925,
+     921
+    ]
+   ]
+  },
+  "simulate_setup": {
+   "base": {
+    "instructions": 1205484,
+    "python_work": {
+     "bytecodes": 4946.0,
+     "python_calls": 122.0,
+     "c_calls": 364.667
+    }
+   },
+   "tree": {
+    "instructions": 1204451,
+    "python_work": {
+     "bytecodes": 4946.0,
+     "python_calls": 122.0,
+     "c_calls": 364.667
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "_PyObject_LookupSpecial.warm",
+     3,
+     0
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::DictionaryAttrStorage, llvm::ArrayRef<mlir::NamedAttribute>&>(llvm::function_ref<void (mlir::detail::DictionaryAttrStorage*)>, mlir::TypeID, llvm::ArrayRef<mlir::NamedAttribute>&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     3,
+     6
+    ],
+    [
+     "libc.so.6",
+     "0x0000000000199b00",
+     566,
+     584
+    ],
+    [
+     "python3.12",
+     "_PyDict_GetItem_KnownHash",
+     3,
+     6
+    ],
+    [
+     "python3.12",
+     "_PyObject_Free",
+     1847,
+     1848
+    ],
+    [
+     "python3.12",
+     "_PyObject_LookupSpecial",
+     69,
+     66
+    ],
+    [
+     "python3.12",
+     "assign_version_tag",
+     9,
+     10
+    ],
+    [
+     "python3.12",
+     "unicode_dealloc",
+     135,
+     136
+    ]
+   ]
+  },
+  "specialize_amplitude": {
+   "base": {
+    "instructions": 405095,
+    "python_work": {
+     "bytecodes": 439.6,
+     "python_calls": 16.0,
+     "c_calls": 16.1
+    }
+   },
+   "tree": {
+    "instructions": 403474,
+    "python_work": {
+     "bytecodes": 439.6,
+     "python_calls": 16.0,
+     "c_calls": 16.1
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "0x0000000004972620",
+     1036,
+     1039
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::DictionaryAttrStorage, llvm::ArrayRef<mlir::NamedAttribute>&>(llvm::function_ref<void (mlir::detail::DictionaryAttrStorage*)>, mlir::TypeID, llvm::ArrayRef<mlir::NamedAttribute>&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     754,
+     498
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::FloatAttrStorage, mlir::Type&, llvm::APFloat const&>(llvm::function_ref<void (mlir::detail::FloatAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APFloat const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     86,
+     77
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "llvm::detail::IEEEFloat::bitwiseIsEqual(llvm::detail::IEEEFloat const&) const",
+     166,
+     157
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     816,
+     771
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1710",
+     141,
+     140
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a25c0",
+     3491,
+     3494
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     687,
+     703
+    ],
+    [
+     "libc.so.6",
+     "0x0000000000199b00",
+     4564,
+     4568
+    ],
+    [
+     "libc.so.6",
+     "0x00000000001a0840",
+     3822,
+     3825
+    ]
+   ]
+  },
+  "specialize_wait": {
+   "base": {
+    "instructions": 360346,
+    "python_work": {
+     "bytecodes": 640.6,
+     "python_calls": 22.0,
+     "c_calls": 37.1
+    }
+   },
+   "tree": {
+    "instructions": 357574,
+    "python_work": {
+     "bytecodes": 640.6,
+     "python_calls": 22.0,
+     "c_calls": 37.1
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "0x0000000004972620",
+     499,
+     500
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::FloatAttrStorage, mlir::Type&, llvm::APFloat const&>(llvm::function_ref<void (mlir::detail::FloatAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APFloat const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     202,
+     170
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::IntegerAttrStorage, mlir::Type&, llvm::APInt const&>(llvm::function_ref<void (mlir::detail::IntegerAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APInt const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     30,
+     49
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "llvm::detail::IEEEFloat::bitwiseIsEqual(llvm::detail::IEEEFloat const&) const",
+     202,
+     170
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     634,
+     471
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     590,
+     481
+    ],
+    [
+     "libc.so.6",
+     "0x0000000000199b00",
+     2079,
+     2064
+    ],
+    [
+     "libc.so.6",
+     "0x00000000001a0840",
+     1221,
+     1222
+    ]
+   ]
+  },
+  "submit": {
+   "base": {
+    "instructions": 6304,
+    "python_work": {
+     "bytecodes": 73.024,
+     "python_calls": 6.0,
+     "c_calls": 4.004
+    }
+   },
+   "tree": {
+    "instructions": 6304,
+    "python_work": {
+     "bytecodes": 73.024,
+     "python_calls": 6.0,
+     "c_calls": 4.004
+    }
+   },
+   "calls": []
+  }
+ },
+ "a native change, #163: eb6e6619 / eb85adf6": {
+  "bind_cached": {
+   "base": {
+    "instructions": 19507,
+    "python_work": {
+     "bytecodes": 371.06,
+     "python_calls": 15.0,
+     "c_calls": 9.01
+    }
+   },
+   "tree": {
+    "instructions": 19450,
+    "python_work": {
+     "bytecodes": 371.06,
+     "python_calls": 15.0,
+     "c_calls": 9.01
+    }
+   },
+   "calls": []
+  },
+  "bind_new_value": {
+   "base": {
+    "instructions": 20214,
+    "python_work": {
+     "bytecodes": 377.06,
+     "python_calls": 15.0,
+     "c_calls": 10.01
+    }
+   },
+   "tree": {
+    "instructions": 20143,
+    "python_work": {
+     "bytecodes": 377.06,
+     "python_calls": 15.0,
+     "c_calls": 10.01
+    }
+   },
+   "calls": []
+  },
+  "compile_bell": {
+   "base": {
+    "instructions": 1475480,
+    "python_work": {
+     "bytecodes": 15899.2,
+     "python_calls": 248.0,
+     "c_calls": 666.2
+    }
+   },
+   "tree": {
+    "instructions": 1478552,
+    "python_work": {
+     "bytecodes": 15899.2,
+     "python_calls": 248.0,
+     "c_calls": 666.2
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "0x0000000009111ba0",
+     10,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091120d0",
+     640,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091122e0",
+     640,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091126a0",
+     220,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112a80",
+     220,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112b30",
+     1730,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112c30",
+     1090,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009113d10",
+     220,
+     0
+    ],
+    [
+     "???",
+     "0x000000000911cba0",
+     0,
+     10
+    ],
+    [
+     "???",
+     "0x000000000911d0d0",
+     0,
+     640
+    ],
+    [
+     "???",
+     "0x000000000911d2e0",
+     0,
+     640
+    ],
+    [
+     "???",
+     "0x000000000911d6a0",
+     0,
+     220
+    ],
+    [
+     "???",
+     "0x000000000911da80",
+     0,
+     220
+    ],
+    [
+     "???",
+     "0x000000000911db30",
+     0,
+     1730
+    ],
+    [
+     "???",
+     "0x000000000911dc30",
+     0,
+     1090
+    ],
+    [
+     "???",
+     "0x000000000911ed10",
+     0,
+     220
+    ],
+    [
+     "???",
+     "set_add.cold",
+     1,
+     0
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::DictionaryAttrStorage, llvm::ArrayRef<mlir::NamedAttribute>&>(llvm::function_ref<void (mlir::detail::DictionaryAttrStorage*)>, mlir::TypeID, llvm::ArrayRef<mlir::NamedAttribute>&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     160,
+     140
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::FloatAttrStorage, mlir::Type&, llvm::APFloat const&>(llvm::function_ref<void (mlir::detail::FloatAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APFloat const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     190,
+     160
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::IntegerAttrStorage, mlir::Type&, llvm::APInt const&>(llvm::function_ref<void (mlir::detail::IntegerAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APInt const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     70,
+     80
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::StringAttrStorage, llvm::StringRef, mlir::NoneType>(llvm::function_ref<void (mlir::detail::StringAttrStorage*)>, mlir::TypeID, llvm::StringRef&&, mlir::NoneType&&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     430,
+     390
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "char* llvm::hashing::detail::hash_combine_recursive_helper::combine_data<unsigned long>(unsigned long&, char*, char*, unsigned long)",
+     330,
+     320
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "llvm::detail::IEEEFloat::bitwiseIsEqual(llvm::detail::IEEEFloat const&) const",
+     190,
+     160
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "mlir::ModuleOp mlir::Operation::getParentOfType<mlir::ModuleOp>()",
+     40,
+     30
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     72,
+     76
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1710",
+     10,
+     11
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a25c0",
+     1303,
+     1310
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     170,
+     167
+    ],
+    [
+     "libc.so.6",
+     "0x0000000000199b00",
+     2266,
+     2256
+    ],
+    [
+     "libc.so.6",
+     "0x00000000001a1000",
+     5032,
+     5031
+    ],
+    [
+     "libc.so.6",
+     "malloc",
+     1291,
+     1290
+    ],
+    [
+     "python3.12",
+     "_PyMem_RawMalloc",
+     61,
+     60
+    ],
+    [
+     "python3.12",
+     "_PyObject_Free",
+     5543,
+     5542
+    ],
+    [
+     "python3.12",
+     "_PyObject_Malloc",
+     5421,
+     5420
+    ],
+    [
+     "python3.12",
+     "set_add",
+     91,
+     90
+    ]
+   ]
+  },
+  "compile_calls_large": {
+   "base": {
+    "instructions": 67947827,
+    "python_work": {
+     "bytecodes": 838691.0,
+     "python_calls": 14493.0,
+     "c_calls": 37540.0
+    }
+   },
+   "tree": {
+    "instructions": 68029890,
+    "python_work": {
+     "bytecodes": 838691.0,
+     "python_calls": 14493.0,
+     "c_calls": 37540.0
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "0x0000000009111ba0",
+     1,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091120d0",
+     2516,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091122e0",
+     2516,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091126a0",
+     56,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112a80",
+     56,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112b30",
+     2697,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112c30",
+     181,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009113d10",
+     56,
+     0
+    ],
+    [
+     "???",
+     "0x000000000911cba0",
+     0,
+     1
+    ],
+    [
+     "???",
+     "0x000000000911d0d0",
+     0,
+     2516
+    ],
+    [
+     "???",
+     "0x000000000911d2e0",
+     0,
+     2516
+    ],
+    [
+     "???",
+     "0x000000000911d6a0",
+     0,
+     56
+    ],
+    [
+     "???",
+     "0x000000000911da80",
+     0,
+     56
+    ],
+    [
+     "???",
+     "0x000000000911db30",
+     0,
+     2697
+    ],
+    [
+     "???",
+     "0x000000000911dc30",
+     0,
+     181
+    ],
+    [
+     "???",
+     "0x000000000911ed10",
+     0,
+     56
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::DictionaryAttrStorage, llvm::ArrayRef<mlir::NamedAttribute>&>(llvm::function_ref<void (mlir::detail::DictionaryAttrStorage*)>, mlir::TypeID, llvm::ArrayRef<mlir::NamedAttribute>&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     910,
+     909
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::FloatAttrStorage, mlir::Type&, llvm::APFloat const&>(llvm::function_ref<void (mlir::detail::FloatAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APFloat const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     1041,
+     525
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::IntegerAttrStorage, mlir::Type&, llvm::APInt const&>(llvm::function_ref<void (mlir::detail::IntegerAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APInt const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     2322,
+     2452
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::StringAttrStorage, llvm::StringRef, mlir::NoneType>(llvm::function_ref<void (mlir::detail::StringAttrStorage*)>, mlir::TypeID, llvm::StringRef&&, mlir::NoneType&&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     134,
+     152
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "char* llvm::hashing::detail::hash_combine_recursive_helper::combine_data<unsigned long>(unsigned long&, char*, char*, unsigned long)",
+     2598,
+     2597
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "llvm::detail::IEEEFloat::bitwiseIsEqual(llvm::detail::IEEEFloat const&) const",
+     1041,
+     525
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "mlir::ModuleOp mlir::Operation::getParentOfType<mlir::ModuleOp>()",
+     6,
+     5
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "pulse::Controllers::~Controllers()",
+     6,
+     7
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     1855,
+     1834
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     1798,
+     1793
+    ],
+    [
+     "libc.so.6",
+     "0x0000000000199b00",
+     22645,
+     22647
+    ],
+    [
+     "python3.12",
+     "assign_version_tag",
+     18,
+     26
+    ]
+   ]
+  },
+  "compile_calls_small": {
+   "base": {
+    "instructions": 1351821,
+    "python_work": {
+     "bytecodes": 13292.4,
+     "python_calls": 251.0,
+     "c_calls": 636.4
+    }
+   },
+   "tree": {
+    "instructions": 1358935,
+    "python_work": {
+     "bytecodes": 13292.4,
+     "python_calls": 251.0,
+     "c_calls": 636.4
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "0x0000000009111ba0",
+     5,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091120d0",
+     360,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091122e0",
+     360,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091126a0",
+     175,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112a80",
+     175,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112b30",
+     1105,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112c30",
+     745,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009113d10",
+     175,
+     0
+    ],
+    [
+     "???",
+     "0x000000000911cba0",
+     0,
+     5
+    ],
+    [
+     "???",
+     "0x000000000911d0d0",
+     0,
+     360
+    ],
+    [
+     "???",
+     "0x000000000911d2e0",
+     0,
+     360
+    ],
+    [
+     "???",
+     "0x000000000911d6a0",
+     0,
+     175
+    ],
+    [
+     "???",
+     "0x000000000911da80",
+     0,
+     175
+    ],
+    [
+     "???",
+     "0x000000000911db30",
+     0,
+     1105
+    ],
+    [
+     "???",
+     "0x000000000911dc30",
+     0,
+     745
+    ],
+    [
+     "???",
+     "0x000000000911ed10",
+     0,
+     175
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::FloatAttrStorage, mlir::Type&, llvm::APFloat const&>(llvm::function_ref<void (mlir::detail::FloatAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APFloat const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     105,
+     65
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::IntegerAttrStorage, mlir::Type&, llvm::APInt const&>(llvm::function_ref<void (mlir::detail::IntegerAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APInt const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     100,
+     80
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::StringAttrStorage, llvm::StringRef, mlir::NoneType>(llvm::function_ref<void (mlir::detail::StringAttrStorage*)>, mlir::TypeID, llvm::StringRef&&, mlir::NoneType&&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     430,
+     550
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "char* llvm::hashing::detail::hash_combine_recursive_helper::combine_data<unsigned long>(unsigned long&, char*, char*, unsigned long)",
+     170,
+     165
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "llvm::detail::DenseMapPair<mlir::Value, long> const* llvm::DenseMapBase<llvm::DenseMap<mlir::Value, long, llvm::DenseMapInfo<mlir::Value, void>, llvm::detail::DenseMapPair<mlir::Value, long> >, mlir::Value, long, llvm::DenseMapInfo<mlir::Value, void>, llvm::detail::DenseMapPair<mlir::Value, long> >::doFind<mlir::Value>(mlir::Value const&) const",
+     200,
+     190
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "llvm::detail::IEEEFloat::bitwiseIsEqual(llvm::detail::IEEEFloat const&) const",
+     105,
+     65
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "mlir::ModuleOp mlir::Operation::getParentOfType<mlir::ModuleOp>()",
+     30,
+     25
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "pulse::Controllers::~Controllers()",
+     30,
+     35
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "std::_Rb_tree<std::pair<mlir::Operation*, llvm::SmallVector<long, 2u> >, std::pair<std::pair<mlir::Operation*, llvm::SmallVector<long, 2u> > const, long>, std::_Select1st<std::pair<std::pair<mlir::Operation*, llvm::SmallVector<long, 2u> > const, long> >, std::less<std::pair<mlir::Operation*, llvm::SmallVector<long, 2u> > >, std::allocator<std::pair<std::pair<mlir::Operation*, llvm::SmallVector<long, 2u> > const, long> > >::_M_erase(std::_Rb_tree_node<std::pair<std::pair<mlir::Operation*, llvm::SmallVector<long, 2u> > const, long> >*) [clone .isra.0]",
+     10,
+     5
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "std::common_comparison_category<decltype (std::__detail::__synth3way((declval<mlir::Operation*&>)(), (declval<mlir::Operation*&>)())), decltype (std::__detail::__synth3way((declval<llvm::SmallVector<long, 2u>&>)(), (declval<llvm::SmallVector<long, 2u>&>)()))>::type std::operator<=><mlir::Operation*, llvm::SmallVector<long, 2u> >(std::pair<mlir::Operation*, llvm::SmallVector<long, 2u> > const&, std::pair<mlir::Operation*, llvm::SmallVector<long, 2u> > const&)",
+     10,
+     20
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "std::pair<llvm::detail::DenseSetPair<mlir::Value>*, bool> llvm::DenseMapBase<llvm::DenseMap<mlir::Value, llvm::detail::DenseSetEmpty, llvm::DenseMapInfo<mlir::Value, void>, llvm::detail::DenseSetPair<mlir::Value> >, mlir::Value, llvm::detail::DenseSetEmpty, llvm::DenseMapInfo<mlir::Value, void>, llvm::detail::DenseSetPair<mlir::Value> >::lookupOrInsertIntoBucket<mlir::Value const&>(mlir::Value const&)",
+     15,
+     0
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     60,
+     64
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1710",
+     10,
+     11
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     56,
+     59
+    ],
+    [
+     "libc.so.6",
+     "0x0000000000199b00",
+     2027,
+     2037
+    ],
+    [
+     "python3.12",
+     "_PyDict_GetItem_KnownHash",
+     59,
+     38
+    ],
+    [
+     "python3.12",
+     "assign_version_tag",
+     61,
+     52
+    ]
+   ]
+  },
+  "compile_cnot_cr": {
+   "base": {
+    "instructions": 1155438,
+    "python_work": {
+     "bytecodes": 12369.2,
+     "python_calls": 203.0,
+     "c_calls": 505.2
+    }
+   },
+   "tree": {
+    "instructions": 1158168,
+    "python_work": {
+     "bytecodes": 12369.2,
+     "python_calls": 203.0,
+     "c_calls": 505.2
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "0x0000000009111ba0",
+     10,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091120d0",
+     540,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091122e0",
+     540,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091126a0",
+     180,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112a80",
+     180,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112b30",
+     1470,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112c30",
+     930,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009113d10",
+     180,
+     0
+    ],
+    [
+     "???",
+     "0x000000000911cba0",
+     0,
+     10
+    ],
+    [
+     "???",
+     "0x000000000911d0d0",
+     0,
+     540
+    ],
+    [
+     "???",
+     "0x000000000911d2e0",
+     0,
+     540
+    ],
+    [
+     "???",
+     "0x000000000911d6a0",
+     0,
+     180
+    ],
+    [
+     "???",
+     "0x000000000911da80",
+     0,
+     180
+    ],
+    [
+     "???",
+     "0x000000000911db30",
+     0,
+     1470
+    ],
+    [
+     "???",
+     "0x000000000911dc30",
+     0,
+     930
+    ],
+    [
+     "???",
+     "0x000000000911ed10",
+     0,
+     180
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::FloatAttrStorage, mlir::Type&, llvm::APFloat const&>(llvm::function_ref<void (mlir::detail::FloatAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APFloat const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     150,
+     120
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::IntegerAttrStorage, mlir::Type&, llvm::APInt const&>(llvm::function_ref<void (mlir::detail::IntegerAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APInt const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     70,
+     80
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::StringAttrStorage, llvm::StringRef, mlir::NoneType>(llvm::function_ref<void (mlir::detail::StringAttrStorage*)>, mlir::TypeID, llvm::StringRef&&, mlir::NoneType&&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     210,
+     220
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "char* llvm::hashing::detail::hash_combine_recursive_helper::combine_data<unsigned long>(unsigned long&, char*, char*, unsigned long)",
+     290,
+     280
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "llvm::detail::IEEEFloat::bitwiseIsEqual(llvm::detail::IEEEFloat const&) const",
+     150,
+     120
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "mlir::ModuleOp mlir::Operation::getParentOfType<mlir::ModuleOp>()",
+     40,
+     30
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     58,
+     52
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     124,
+     117
+    ]
+   ]
+  },
+  "compile_dd_cpmg8": {
+   "base": {
+    "instructions": 955791,
+    "python_work": {
+     "bytecodes": 9184.2,
+     "python_calls": 160.0,
+     "c_calls": 419.2
+    }
+   },
+   "tree": {
+    "instructions": 957581,
+    "python_work": {
+     "bytecodes": 9184.2,
+     "python_calls": 160.0,
+     "c_calls": 419.2
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "0x0000000009111ba0",
+     10,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091120d0",
+     530,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091122e0",
+     530,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091126a0",
+     230,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112a80",
+     230,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112b30",
+     1610,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112c30",
+     1080,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009113d10",
+     230,
+     0
+    ],
+    [
+     "???",
+     "0x000000000911cba0",
+     0,
+     10
+    ],
+    [
+     "???",
+     "0x000000000911d0d0",
+     0,
+     530
+    ],
+    [
+     "???",
+     "0x000000000911d2e0",
+     0,
+     530
+    ],
+    [
+     "???",
+     "0x000000000911d6a0",
+     0,
+     230
+    ],
+    [
+     "???",
+     "0x000000000911da80",
+     0,
+     230
+    ],
+    [
+     "???",
+     "0x000000000911db30",
+     0,
+     1610
+    ],
+    [
+     "???",
+     "0x000000000911dc30",
+     0,
+     1080
+    ],
+    [
+     "???",
+     "0x000000000911ed10",
+     0,
+     230
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "(anonymous namespace)::Scheduler<false>::forwardBlock(mlir::Block&)",
+     30,
+     0
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::DictionaryAttrStorage, llvm::ArrayRef<mlir::NamedAttribute>&>(llvm::function_ref<void (mlir::detail::DictionaryAttrStorage*)>, mlir::TypeID, llvm::ArrayRef<mlir::NamedAttribute>&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     200,
+     140
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::FloatAttrStorage, mlir::Type&, llvm::APFloat const&>(llvm::function_ref<void (mlir::detail::FloatAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APFloat const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     50,
+     40
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::IntegerAttrStorage, mlir::Type&, llvm::APInt const&>(llvm::function_ref<void (mlir::detail::IntegerAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APInt const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     80,
+     90
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "char* llvm::hashing::detail::hash_combine_recursive_helper::combine_data<unsigned long>(unsigned long&, char*, char*, unsigned long)",
+     220,
+     210
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "llvm::detail::IEEEFloat::bitwiseIsEqual(llvm::detail::IEEEFloat const&) const",
+     50,
+     40
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "mlir::ModuleOp mlir::Operation::getParentOfType<mlir::ModuleOp>()",
+     40,
+     30
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     121,
+     93
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     112,
+     123
+    ],
+    [
+     "python3.12",
+     "_PyDict_GetItem_KnownHash",
+     58,
+     38
+    ],
+    [
+     "python3.12",
+     "assign_version_tag",
+     80,
+     63
+    ]
+   ]
+  },
+  "compile_qaoa4": {
+   "base": {
+    "instructions": 4600275,
+    "python_work": {
+     "bytecodes": 57529.4,
+     "python_calls": 704.0,
+     "c_calls": 2264.4
+    }
+   },
+   "tree": {
+    "instructions": 4602755,
+    "python_work": {
+     "bytecodes": 57529.4,
+     "python_calls": 704.0,
+     "c_calls": 2264.4
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "0x0000000004972620",
+     128,
+     125
+    ],
+    [
+     "???",
+     "0x0000000009111ba0",
+     5,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091120d0",
+     985,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091122e0",
+     985,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091126a0",
+     185,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112a80",
+     185,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112b30",
+     1740,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112c30",
+     755,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009113d10",
+     185,
+     0
+    ],
+    [
+     "???",
+     "0x000000000911cba0",
+     0,
+     5
+    ],
+    [
+     "???",
+     "0x000000000911d0d0",
+     0,
+     985
+    ],
+    [
+     "???",
+     "0x000000000911d2e0",
+     0,
+     985
+    ],
+    [
+     "???",
+     "0x000000000911d6a0",
+     0,
+     185
+    ],
+    [
+     "???",
+     "0x000000000911da80",
+     0,
+     185
+    ],
+    [
+     "???",
+     "0x000000000911db30",
+     0,
+     1740
+    ],
+    [
+     "???",
+     "0x000000000911dc30",
+     0,
+     755
+    ],
+    [
+     "???",
+     "0x000000000911ed10",
+     0,
+     185
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::FloatAttrStorage, mlir::Type&, llvm::APFloat const&>(llvm::function_ref<void (mlir::detail::FloatAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APFloat const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     395,
+     325
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::StringAttrStorage, llvm::StringRef, mlir::NoneType>(llvm::function_ref<void (mlir::detail::StringAttrStorage*)>, mlir::TypeID, llvm::StringRef&&, mlir::NoneType&&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     305,
+     250
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "char* llvm::hashing::detail::hash_combine_recursive_helper::combine_data<unsigned long>(unsigned long&, char*, char*, unsigned long)",
+     475,
+     470
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "llvm::detail::IEEEFloat::bitwiseIsEqual(llvm::detail::IEEEFloat const&) const",
+     395,
+     325
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "mlir::ModuleOp mlir::Operation::getParentOfType<mlir::ModuleOp>()",
+     20,
+     15
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     469,
+     452
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a25c0",
+     1937,
+     1936
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     465,
+     449
+    ],
+    [
+     "libc.so.6",
+     "0x00000000001a0840",
+     3240,
+     3237
+    ]
+   ]
+  },
+  "compile_surface_d5": {
+   "base": {
+    "instructions": 28903554,
+    "python_work": {
+     "bytecodes": 653457.0,
+     "python_calls": 4752.0,
+     "c_calls": 24523.0
+    }
+   },
+   "tree": {
+    "instructions": 28928436,
+    "python_work": {
+     "bytecodes": 653457.0,
+     "python_calls": 4752.0,
+     "c_calls": 24523.0
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "0x0000000009111ba0",
+     1,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091120d0",
+     265,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091122e0",
+     265,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091126a0",
+     39,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112a80",
+     39,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112b30",
+     400,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112c30",
+     135,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009113d10",
+     39,
+     0
+    ],
+    [
+     "???",
+     "0x000000000911cba0",
+     0,
+     1
+    ],
+    [
+     "???",
+     "0x000000000911d0d0",
+     0,
+     265
+    ],
+    [
+     "???",
+     "0x000000000911d2e0",
+     0,
+     265
+    ],
+    [
+     "???",
+     "0x000000000911d6a0",
+     0,
+     39
+    ],
+    [
+     "???",
+     "0x000000000911da80",
+     0,
+     39
+    ],
+    [
+     "???",
+     "0x000000000911db30",
+     0,
+     400
+    ],
+    [
+     "???",
+     "0x000000000911dc30",
+     0,
+     135
+    ],
+    [
+     "???",
+     "0x000000000911ed10",
+     0,
+     39
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::DictionaryAttrStorage, llvm::ArrayRef<mlir::NamedAttribute>&>(llvm::function_ref<void (mlir::detail::DictionaryAttrStorage*)>, mlir::TypeID, llvm::ArrayRef<mlir::NamedAttribute>&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     242,
+     230
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::FloatAttrStorage, mlir::Type&, llvm::APFloat const&>(llvm::function_ref<void (mlir::detail::FloatAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APFloat const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     80,
+     109
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::StringAttrStorage, llvm::StringRef, mlir::NoneType>(llvm::function_ref<void (mlir::detail::StringAttrStorage*)>, mlir::TypeID, llvm::StringRef&&, mlir::NoneType&&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     68,
+     69
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<pulse::detail::QuantumSystemAttrStorage, mlir::detail::DenseArrayAttrImpl<double>, mlir::detail::DenseArrayAttrImpl<long>, mlir::detail::DenseArrayAttrImpl<double>, mlir::detail::DenseArrayAttrImpl<double>, mlir::detail::DenseArrayAttrImpl<double>, mlir::detail::DenseArrayAttrImpl<double>, mlir::ArrayAttr>(llvm::function_ref<void (pulse::detail::QuantumSystemAttrStorage*)>, mlir::TypeID, mlir::detail::DenseArrayAttrImpl<double>&&, mlir::detail::DenseArrayAttrImpl<long>&&, mlir::detail::DenseArrayAttrImpl<double>&&, mlir::detail::DenseArrayAttrImpl<double>&&, mlir::detail::DenseArrayAttrImpl<double>&&, mlir::detail::DenseArrayAttrImpl<double>&&, mlir::ArrayAttr&&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     1,
+     3
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "char* llvm::hashing::detail::hash_combine_recursive_helper::combine_data<unsigned long>(unsigned long&, char*, char*, unsigned long)",
+     120,
+     119
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "llvm::detail::IEEEFloat::bitwiseIsEqual(llvm::detail::IEEEFloat const&) const",
+     80,
+     109
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "mlir::ModuleOp mlir::Operation::getParentOfType<mlir::ModuleOp>()",
+     4,
+     3
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     429,
+     430
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     349,
+     355
+    ],
+    [
+     "libc.so.6",
+     "0x0000000000199b00",
+     1241,
+     1256
+    ]
+   ]
+  },
+  "compile_syndrome": {
+   "base": {
+    "instructions": 4691771,
+    "python_work": {
+     "bytecodes": 59609.4,
+     "python_calls": 730.0,
+     "c_calls": 2373.4
+    }
+   },
+   "tree": {
+    "instructions": 4697367,
+    "python_work": {
+     "bytecodes": 59609.4,
+     "python_calls": 730.0,
+     "c_calls": 2373.4
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "0x0000000009111ba0",
+     5,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091120d0",
+     1000,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091122e0",
+     1000,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091126a0",
+     150,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112a80",
+     150,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112b30",
+     1630,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112c30",
+     630,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009113d10",
+     150,
+     0
+    ],
+    [
+     "???",
+     "0x000000000911cba0",
+     0,
+     5
+    ],
+    [
+     "???",
+     "0x000000000911d0d0",
+     0,
+     1000
+    ],
+    [
+     "???",
+     "0x000000000911d2e0",
+     0,
+     1000
+    ],
+    [
+     "???",
+     "0x000000000911d6a0",
+     0,
+     150
+    ],
+    [
+     "???",
+     "0x000000000911da80",
+     0,
+     150
+    ],
+    [
+     "???",
+     "0x000000000911db30",
+     0,
+     1630
+    ],
+    [
+     "???",
+     "0x000000000911dc30",
+     0,
+     630
+    ],
+    [
+     "???",
+     "0x000000000911ed10",
+     0,
+     150
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::DictionaryAttrStorage, llvm::ArrayRef<mlir::NamedAttribute>&>(llvm::function_ref<void (mlir::detail::DictionaryAttrStorage*)>, mlir::TypeID, llvm::ArrayRef<mlir::NamedAttribute>&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     155,
+     175
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::FloatAttrStorage, mlir::Type&, llvm::APFloat const&>(llvm::function_ref<void (mlir::detail::FloatAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APFloat const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     405,
+     345
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::IntegerAttrStorage, mlir::Type&, llvm::APInt const&>(llvm::function_ref<void (mlir::detail::IntegerAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APInt const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     145,
+     140
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::StringAttrStorage, llvm::StringRef, mlir::NoneType>(llvm::function_ref<void (mlir::detail::StringAttrStorage*)>, mlir::TypeID, llvm::StringRef&&, mlir::NoneType&&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     165,
+     200
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "char* llvm::hashing::detail::hash_combine_recursive_helper::combine_data<unsigned long>(unsigned long&, char*, char*, unsigned long)",
+     490,
+     485
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "llvm::detail::IEEEFloat::bitwiseIsEqual(llvm::detail::IEEEFloat const&) const",
+     405,
+     345
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "mlir::ModuleOp mlir::Operation::getParentOfType<mlir::ModuleOp>()",
+     20,
+     15
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     579,
+     512
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1710",
+     35,
+     34
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a25c0",
+     1909,
+     1910
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     448,
+     428
+    ],
+    [
+     "libc.so.6",
+     "0x0000000000199b00",
+     2387,
+     2392
+    ]
+   ]
+  },
+  "compile_tone_list": {
+   "base": {
+    "instructions": 1372558,
+    "python_work": {
+     "bytecodes": 17608.4,
+     "python_calls": 241.0,
+     "c_calls": 765.4
+    }
+   },
+   "tree": {
+    "instructions": 1374329,
+    "python_work": {
+     "bytecodes": 17608.4,
+     "python_calls": 241.0,
+     "c_calls": 765.4
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "0x0000000009111ba0",
+     5,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091120d0",
+     290,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091122e0",
+     290,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091126a0",
+     150,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112a80",
+     150,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112b30",
+     960,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112c30",
+     670,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009113d10",
+     150,
+     0
+    ],
+    [
+     "???",
+     "0x000000000911cba0",
+     0,
+     5
+    ],
+    [
+     "???",
+     "0x000000000911d0d0",
+     0,
+     290
+    ],
+    [
+     "???",
+     "0x000000000911d2e0",
+     0,
+     290
+    ],
+    [
+     "???",
+     "0x000000000911d6a0",
+     0,
+     150
+    ],
+    [
+     "???",
+     "0x000000000911da80",
+     0,
+     150
+    ],
+    [
+     "???",
+     "0x000000000911db30",
+     0,
+     960
+    ],
+    [
+     "???",
+     "0x000000000911dc30",
+     0,
+     670
+    ],
+    [
+     "???",
+     "0x000000000911ed10",
+     0,
+     150
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "(anonymous namespace)::Scheduler<false>::forwardBlock(mlir::Block&)",
+     10,
+     0
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::DictionaryAttrStorage, llvm::ArrayRef<mlir::NamedAttribute>&>(llvm::function_ref<void (mlir::detail::DictionaryAttrStorage*)>, mlir::TypeID, llvm::ArrayRef<mlir::NamedAttribute>&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     90,
+     100
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::FloatAttrStorage, mlir::Type&, llvm::APFloat const&>(llvm::function_ref<void (mlir::detail::FloatAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APFloat const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     40,
+     35
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::IntegerAttrStorage, mlir::Type&, llvm::APInt const&>(llvm::function_ref<void (mlir::detail::IntegerAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APInt const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     35,
+     40
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::StringAttrStorage, llvm::StringRef, mlir::NoneType>(llvm::function_ref<void (mlir::detail::StringAttrStorage*)>, mlir::TypeID, llvm::StringRef&&, mlir::NoneType&&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     235,
+     195
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "char* llvm::hashing::detail::hash_combine_recursive_helper::combine_data<unsigned long>(unsigned long&, char*, char*, unsigned long)",
+     120,
+     115
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "llvm::detail::IEEEFloat::bitwiseIsEqual(llvm::detail::IEEEFloat const&) const",
+     40,
+     35
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "mlir::ModuleOp mlir::Operation::getParentOfType<mlir::ModuleOp>()",
+     20,
+     15
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     80,
+     70
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     70,
+     65
+    ],
+    [
+     "python3.12",
+     "_PyDict_GetItem_KnownHash",
+     30,
+     15
+    ],
+    [
+     "python3.12",
+     "assign_version_tag",
+     40,
+     30
+    ]
+   ]
+  },
+  "compile_vqe_hea": {
+   "base": {
+    "instructions": 4952565,
+    "python_work": {
+     "bytecodes": 68994.4,
+     "python_calls": 793.0,
+     "c_calls": 2682.4
+    }
+   },
+   "tree": {
+    "instructions": 4957705,
+    "python_work": {
+     "bytecodes": 68994.4,
+     "python_calls": 793.0,
+     "c_calls": 2682.4
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "0x0000000009111ba0",
+     5,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091120d0",
+     1035,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091122e0",
+     1035,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091126a0",
+     150,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112a80",
+     150,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112b30",
+     1665,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112c30",
+     630,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009113d10",
+     150,
+     0
+    ],
+    [
+     "???",
+     "0x000000000911cba0",
+     0,
+     5
+    ],
+    [
+     "???",
+     "0x000000000911d0d0",
+     0,
+     1035
+    ],
+    [
+     "???",
+     "0x000000000911d2e0",
+     0,
+     1035
+    ],
+    [
+     "???",
+     "0x000000000911d6a0",
+     0,
+     150
+    ],
+    [
+     "???",
+     "0x000000000911da80",
+     0,
+     150
+    ],
+    [
+     "???",
+     "0x000000000911db30",
+     0,
+     1665
+    ],
+    [
+     "???",
+     "0x000000000911dc30",
+     0,
+     630
+    ],
+    [
+     "???",
+     "0x000000000911ed10",
+     0,
+     150
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::DictionaryAttrStorage, llvm::ArrayRef<mlir::NamedAttribute>&>(llvm::function_ref<void (mlir::detail::DictionaryAttrStorage*)>, mlir::TypeID, llvm::ArrayRef<mlir::NamedAttribute>&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     200,
+     370
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::FloatAttrStorage, mlir::Type&, llvm::APFloat const&>(llvm::function_ref<void (mlir::detail::FloatAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APFloat const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     435,
+     410
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::StringAttrStorage, llvm::StringRef, mlir::NoneType>(llvm::function_ref<void (mlir::detail::StringAttrStorage*)>, mlir::TypeID, llvm::StringRef&&, mlir::NoneType&&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     355,
+     300
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "char* llvm::hashing::detail::hash_combine_recursive_helper::combine_data<unsigned long>(unsigned long&, char*, char*, unsigned long)",
+     495,
+     490
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "llvm::detail::IEEEFloat::bitwiseIsEqual(llvm::detail::IEEEFloat const&) const",
+     435,
+     410
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "mlir::ModuleOp mlir::Operation::getParentOfType<mlir::ModuleOp>()",
+     20,
+     15
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     553,
+     526
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1710",
+     30,
+     28
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     419,
+     424
+    ]
+   ]
+  },
+  "export_to_controller": {
+   "base": {
+    "instructions": 4636362,
+    "python_work": {
+     "bytecodes": 1368.0,
+     "python_calls": 30.0,
+     "c_calls": 75.667
+    }
+   },
+   "tree": {
+    "instructions": 4638520,
+    "python_work": {
+     "bytecodes": 1368.0,
+     "python_calls": 30.0,
+     "c_calls": 75.667
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "0x00000000091120d0",
+     1461,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091122e0",
+     1461,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091124a0",
+     3,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091126a0",
+     270,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112a80",
+     270,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112b30",
+     2220,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112c30",
+     759,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009113d10",
+     270,
+     0
+    ],
+    [
+     "???",
+     "0x000000000911d0d0",
+     0,
+     1461
+    ],
+    [
+     "???",
+     "0x000000000911d2e0",
+     0,
+     1461
+    ],
+    [
+     "???",
+     "0x000000000911d4a0",
+     0,
+     3
+    ],
+    [
+     "???",
+     "0x000000000911d6a0",
+     0,
+     270
+    ],
+    [
+     "???",
+     "0x000000000911da80",
+     0,
+     270
+    ],
+    [
+     "???",
+     "0x000000000911db30",
+     0,
+     2220
+    ],
+    [
+     "???",
+     "0x000000000911dc30",
+     0,
+     759
+    ],
+    [
+     "???",
+     "0x000000000911ed10",
+     0,
+     270
+    ],
+    [
+     "???",
+     "_PyObject_LookupSpecial.warm",
+     0,
+     3
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     939,
+     934
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     759,
+     768
+    ],
+    [
+     "python3.12",
+     "_PyDict_GetItem_KnownHash",
+     0,
+     9
+    ],
+    [
+     "python3.12",
+     "_PyObject_LookupSpecial",
+     3,
+     6
+    ],
+    [
+     "python3.12",
+     "assign_version_tag",
+     0,
+     12
+    ]
+   ]
+  },
+  "export_to_controller_sampled": {
+   "base": {
+    "instructions": 1496994,
+    "python_work": {
+     "bytecodes": 5295.0,
+     "python_calls": 41.0,
+     "c_calls": 162.667
+    }
+   },
+   "tree": {
+    "instructions": 1495840,
+    "python_work": {
+     "bytecodes": 5295.0,
+     "python_calls": 41.0,
+     "c_calls": 162.667
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "0x00000000055a38d8",
+     96,
+     0
+    ],
+    [
+     "???",
+     "0x00000000055a38f8",
+     0,
+     96
+    ],
+    [
+     "???",
+     "0x00000000091120d0",
+     456,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091122e0",
+     456,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091124a0",
+     3,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091126a0",
+     105,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112a80",
+     105,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112b30",
+     741,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112c30",
+     285,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009113d10",
+     105,
+     0
+    ],
+    [
+     "???",
+     "0x000000000911d0d0",
+     0,
+     456
+    ],
+    [
+     "???",
+     "0x000000000911d2e0",
+     0,
+     456
+    ],
+    [
+     "???",
+     "0x000000000911d4a0",
+     0,
+     3
+    ],
+    [
+     "???",
+     "0x000000000911d6a0",
+     0,
+     105
+    ],
+    [
+     "???",
+     "0x000000000911da80",
+     0,
+     105
+    ],
+    [
+     "???",
+     "0x000000000911db30",
+     0,
+     741
+    ],
+    [
+     "???",
+     "0x000000000911dc30",
+     0,
+     285
+    ],
+    [
+     "???",
+     "0x000000000911ed10",
+     0,
+     105
+    ],
+    [
+     "???",
+     "_PyObject_LookupSpecial.warm",
+     0,
+     3
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     202,
+     168
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1710",
+     7,
+     10
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     176,
+     147
+    ],
+    [
+     "python3.12",
+     "_PyDict_GetItem_KnownHash",
+     0,
+     9
+    ],
+    [
+     "python3.12",
+     "_PyObject_LookupSpecial",
+     6,
+     9
+    ],
+    [
+     "python3.12",
+     "assign_version_tag",
+     0,
+     12
+    ]
+   ]
+  },
+  "export_to_emulator": {
+   "base": {
+    "instructions": 5838494,
+    "python_work": {
+     "bytecodes": 34561.0,
+     "python_calls": 625.0,
+     "c_calls": 2383.667
+    }
+   },
+   "tree": {
+    "instructions": 5863841,
+    "python_work": {
+     "bytecodes": 34561.0,
+     "python_calls": 625.0,
+     "c_calls": 2383.667
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "0x0000000004972620",
+     15,
+     21
+    ],
+    [
+     "???",
+     "0x00000000091120d0",
+     120,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091122e0",
+     120,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091126a0",
+     240,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112a80",
+     240,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112b30",
+     831,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112c30",
+     711,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009113d10",
+     240,
+     0
+    ],
+    [
+     "???",
+     "0x000000000911d0d0",
+     0,
+     120
+    ],
+    [
+     "???",
+     "0x000000000911d2e0",
+     0,
+     120
+    ],
+    [
+     "???",
+     "0x000000000911d6a0",
+     0,
+     240
+    ],
+    [
+     "???",
+     "0x000000000911da80",
+     0,
+     240
+    ],
+    [
+     "???",
+     "0x000000000911db30",
+     0,
+     831
+    ],
+    [
+     "???",
+     "0x000000000911dc30",
+     0,
+     711
+    ],
+    [
+     "???",
+     "0x000000000911ed10",
+     0,
+     240
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::StringAttrStorage, llvm::StringRef, mlir::NoneType>(llvm::function_ref<void (mlir::detail::StringAttrStorage*)>, mlir::TypeID, llvm::StringRef&&, mlir::NoneType&&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     291,
+     243
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     204,
+     195
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a25c0",
+     417,
+     412
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     96,
+     102
+    ],
+    [
+     "libc.so.6",
+     "0x00000000001a0840",
+     1043,
+     1049
+    ],
+    [
+     "python3.12",
+     "assign_version_tag",
+     6,
+     384
+    ]
+   ]
+  },
+  "first_compile": {
+   "base": {
+    "instructions": 12284971,
+    "python_work": {
+     "bytecodes": 56864.0,
+     "python_calls": 860.0,
+     "c_calls": 2734.0
+    }
+   },
+   "tree": {
+    "instructions": 12324083,
+    "python_work": {
+     "bytecodes": 56864.0,
+     "python_calls": 860.0,
+     "c_calls": 2734.0
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "0x0000000004972620",
+     69,
+     65
+    ],
+    [
+     "???",
+     "0x0000000009111ba0",
+     195,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091120d0",
+     1714,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091122e0",
+     241,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091126a0",
+     1070,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112a80",
+     1070,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112b30",
+     583,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112c30",
+     342,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112cb0",
+     2,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009113d10",
+     1070,
+     0
+    ],
+    [
+     "???",
+     "0x000000000911cba0",
+     0,
+     195
+    ],
+    [
+     "???",
+     "0x000000000911d0d0",
+     0,
+     1714
+    ],
+    [
+     "???",
+     "0x000000000911d2e0",
+     0,
+     241
+    ],
+    [
+     "???",
+     "0x000000000911d6a0",
+     0,
+     1070
+    ],
+    [
+     "???",
+     "0x000000000911da80",
+     0,
+     1070
+    ],
+    [
+     "???",
+     "0x000000000911db30",
+     0,
+     583
+    ],
+    [
+     "???",
+     "0x000000000911dc30",
+     0,
+     342
+    ],
+    [
+     "???",
+     "0x000000000911dcb0",
+     0,
+     2
+    ],
+    [
+     "???",
+     "0x000000000911ed10",
+     0,
+     1070
+    ],
+    [
+     "???",
+     "_PyEval_EvalFrameDefault.warm",
+     773,
+     772
+    ],
+    [
+     "???",
+     "_PyObject_LookupSpecial.warm",
+     7,
+     6
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::DictionaryAttrStorage, llvm::ArrayRef<mlir::NamedAttribute>&>(llvm::function_ref<void (mlir::detail::DictionaryAttrStorage*)>, mlir::TypeID, llvm::ArrayRef<mlir::NamedAttribute>&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     8,
+     4
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::FloatAttrStorage, mlir::Type&, llvm::APFloat const&>(llvm::function_ref<void (mlir::detail::FloatAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APFloat const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     16,
+     7
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::IntegerAttrStorage, mlir::Type&, llvm::APInt const&>(llvm::function_ref<void (mlir::detail::IntegerAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APInt const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     2,
+     5
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::StringAttrStorage, llvm::StringRef, mlir::NoneType>(llvm::function_ref<void (mlir::detail::StringAttrStorage*)>, mlir::TypeID, llvm::StringRef&&, mlir::NoneType&&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     6782,
+     6892
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "char* llvm::hashing::detail::hash_combine_recursive_helper::combine_data<unsigned long>(unsigned long&, char*, char*, unsigned long)",
+     35,
+     34
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "llvm::detail::IEEEFloat::bitwiseIsEqual(llvm::detail::IEEEFloat const&) const",
+     16,
+     7
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "mlir::ModuleOp mlir::Operation::getParentOfType<mlir::ModuleOp>()",
+     4,
+     3
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "mlir::Pass::~Pass()",
+     3,
+     1
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a0e80",
+     0,
+     1
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     670,
+     694
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a2390",
+     0,
+     1
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a25c0",
+     497,
+     496
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a2ff0",
+     0,
+     1
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     4246,
+     4241
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a49d0",
+     68,
+     67
+    ],
+    [
+     "libc.so.6",
+     "0x0000000000199b00",
+     6326,
+     6324
+    ],
+    [
+     "libc.so.6",
+     "0x00000000001a0840",
+     7161,
+     7157
+    ],
+    [
+     "libc.so.6",
+     "mmap",
+     1,
+     2
+    ],
+    [
+     "libc.so.6",
+     "munmap",
+     0,
+     1
+    ],
+    [
+     "python3.12",
+     "_PyDict_GetItem_KnownHash",
+     404,
+     410
+    ],
+    [
+     "python3.12",
+     "_PyEval_EvalFrameDefault",
+     1381,
+     1380
+    ],
+    [
+     "python3.12",
+     "_PyObject_Free",
+     3174,
+     3170
+    ],
+    [
+     "python3.12",
+     "_PyObject_LookupSpecial",
+     39,
+     38
+    ],
+    [
+     "python3.12",
+     "assign_version_tag",
+     399,
+     407
+    ],
+    [
+     "python3.12",
+     "unicode_dealloc",
+     929,
+     925
+    ]
+   ]
+  },
+  "simulate_setup": {
+   "base": {
+    "instructions": 1204331,
+    "python_work": {
+     "bytecodes": 4946.0,
+     "python_calls": 122.0,
+     "c_calls": 364.667
+    }
+   },
+   "tree": {
+    "instructions": 1205484,
+    "python_work": {
+     "bytecodes": 4946.0,
+     "python_calls": 122.0,
+     "c_calls": 364.667
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "0x00000000091120d0",
+     72,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091122e0",
+     72,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091126a0",
+     12,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112a80",
+     12,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112b30",
+     114,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112c30",
+     42,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009113d10",
+     12,
+     0
+    ],
+    [
+     "???",
+     "0x000000000911d0d0",
+     0,
+     72
+    ],
+    [
+     "???",
+     "0x000000000911d2e0",
+     0,
+     72
+    ],
+    [
+     "???",
+     "0x000000000911d6a0",
+     0,
+     12
+    ],
+    [
+     "???",
+     "0x000000000911da80",
+     0,
+     12
+    ],
+    [
+     "???",
+     "0x000000000911db30",
+     0,
+     114
+    ],
+    [
+     "???",
+     "0x000000000911dc30",
+     0,
+     42
+    ],
+    [
+     "???",
+     "0x000000000911ed10",
+     0,
+     12
+    ],
+    [
+     "???",
+     "_PyObject_LookupSpecial.warm",
+     0,
+     3
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "std::_Tuple_impl<1ul, std::vector<std::tuple<double, double, int, std::vector<double, std::allocator<double> >, std::vector<std::tuple<long, long, std::vector<double, std::allocator<double> > >, std::allocator<std::tuple<long, long, std::vector<double, std::allocator<double> > > > > >, std::allocator<std::tuple<double, double, int, std::vector<double, std::allocator<double> >, std::vector<std::tuple<long, long, std::vector<double, std::allocator<double> > >, std::allocator<std::tuple<long, long, std::vector<double, std::allocator<double> > > > > > > >, std::vector<std::tuple<double, double, int, std::vector<double, std::allocator<double> >, std::vector<std::tuple<long, long, std::vector<double, std::allocator<double> > >, std::allocator<std::tuple<long, long, std::vector<double, std::allocator<double> > > > > >, std::allocator<std::tuple<double, double, int, std::vector<double, std::allocator<double> >, std::vector<std::tuple<long, long, std::vector<double, std::allocator<double> > >, std::allocator<std::tuple<long, long, std::vector<double, std::allocator<double> > > > > > > >, double, double, long, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >::~_Tuple_impl()",
+     3,
+     0
+    ],
+    [
+     "libc.so.6",
+     "0x0000000000199b00",
+     590,
+     566
+    ],
+    [
+     "python3.12",
+     "_PyDict_GetItem_KnownHash",
+     2,
+     3
+    ],
+    [
+     "python3.12",
+     "_PyObject_Free",
+     1848,
+     1847
+    ],
+    [
+     "python3.12",
+     "_PyObject_LookupSpecial",
+     66,
+     69
+    ],
+    [
+     "python3.12",
+     "assign_version_tag",
+     4,
+     9
+    ],
+    [
+     "python3.12",
+     "unicode_dealloc",
+     136,
+     135
+    ]
+   ]
+  },
+  "specialize_amplitude": {
+   "base": {
+    "instructions": 399090,
+    "python_work": {
+     "bytecodes": 439.6,
+     "python_calls": 16.0,
+     "c_calls": 16.1
+    }
+   },
+   "tree": {
+    "instructions": 405095,
+    "python_work": {
+     "bytecodes": 439.6,
+     "python_calls": 16.0,
+     "c_calls": 16.1
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "0x0000000004972620",
+     1040,
+     1036
+    ],
+    [
+     "???",
+     "0x0000000009111ba0",
+     955,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091120d0",
+     1695,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091122e0",
+     1695,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091126a0",
+     801,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112a80",
+     801,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112b30",
+     4895,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112c30",
+     3200,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009113d10",
+     801,
+     0
+    ],
+    [
+     "???",
+     "0x000000000911cba0",
+     0,
+     955
+    ],
+    [
+     "???",
+     "0x000000000911d0d0",
+     0,
+     1695
+    ],
+    [
+     "???",
+     "0x000000000911d2e0",
+     0,
+     1695
+    ],
+    [
+     "???",
+     "0x000000000911d6a0",
+     0,
+     801
+    ],
+    [
+     "???",
+     "0x000000000911da80",
+     0,
+     801
+    ],
+    [
+     "???",
+     "0x000000000911db30",
+     0,
+     4895
+    ],
+    [
+     "???",
+     "0x000000000911dc30",
+     0,
+     3200
+    ],
+    [
+     "???",
+     "0x000000000911ed10",
+     0,
+     801
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::DictionaryAttrStorage, llvm::ArrayRef<mlir::NamedAttribute>&>(llvm::function_ref<void (mlir::detail::DictionaryAttrStorage*)>, mlir::TypeID, llvm::ArrayRef<mlir::NamedAttribute>&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     492,
+     754
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::FloatAttrStorage, mlir::Type&, llvm::APFloat const&>(llvm::function_ref<void (mlir::detail::FloatAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APFloat const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     81,
+     86
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "llvm::detail::IEEEFloat::bitwiseIsEqual(llvm::detail::IEEEFloat const&) const",
+     161,
+     166
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "mlir::ModuleOp mlir::Operation::getParentOfType<mlir::ModuleOp>()",
+     80,
+     60
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     778,
+     816
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1710",
+     121,
+     141
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a25c0",
+     3495,
+     3491
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     622,
+     687
+    ],
+    [
+     "libc.so.6",
+     "0x0000000000199b00",
+     4566,
+     4564
+    ],
+    [
+     "libc.so.6",
+     "0x00000000001a0840",
+     3826,
+     3822
+    ]
+   ]
+  },
+  "specialize_wait": {
+   "base": {
+    "instructions": 357336,
+    "python_work": {
+     "bytecodes": 640.6,
+     "python_calls": 22.0,
+     "c_calls": 37.1
+    }
+   },
+   "tree": {
+    "instructions": 360346,
+    "python_work": {
+     "bytecodes": 640.6,
+     "python_calls": 22.0,
+     "c_calls": 37.1
+    }
+   },
+   "calls": [
+    [
+     "???",
+     "0x0000000004972620",
+     500,
+     499
+    ],
+    [
+     "???",
+     "0x0000000009111ba0",
+     380,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091120d0",
+     940,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091122e0",
+     940,
+     0
+    ],
+    [
+     "???",
+     "0x00000000091126a0",
+     461,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112a80",
+     461,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112b30",
+     2842,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009112c30",
+     1902,
+     0
+    ],
+    [
+     "???",
+     "0x0000000009113d10",
+     461,
+     0
+    ],
+    [
+     "???",
+     "0x000000000911cba0",
+     0,
+     380
+    ],
+    [
+     "???",
+     "0x000000000911d0d0",
+     0,
+     940
+    ],
+    [
+     "???",
+     "0x000000000911d2e0",
+     0,
+     940
+    ],
+    [
+     "???",
+     "0x000000000911d6a0",
+     0,
+     461
+    ],
+    [
+     "???",
+     "0x000000000911da80",
+     0,
+     461
+    ],
+    [
+     "???",
+     "0x000000000911db30",
+     0,
+     2842
+    ],
+    [
+     "???",
+     "0x000000000911dc30",
+     0,
+     1902
+    ],
+    [
+     "???",
+     "0x000000000911ed10",
+     0,
+     461
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::FloatAttrStorage, mlir::Type&, llvm::APFloat const&>(llvm::function_ref<void (mlir::detail::FloatAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APFloat const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     176,
+     202
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>::callback_fn<mlir::StorageUniquer::get<mlir::detail::IntegerAttrStorage, mlir::Type&, llvm::APInt const&>(llvm::function_ref<void (mlir::detail::IntegerAttrStorage*)>, mlir::TypeID, mlir::Type&, llvm::APInt const&)::{lambda(mlir::StorageUniquer::BaseStorage const*)#1}>(long, mlir::StorageUniquer::BaseStorage const*)",
+     60,
+     30
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "llvm::detail::IEEEFloat::bitwiseIsEqual(llvm::detail::IEEEFloat const&) const",
+     176,
+     202
+    ],
+    [
+     "_cudaq_pulse_native.cpython-312-x86_64-linux-gnu.so",
+     "mlir::ModuleOp mlir::Operation::getParentOfType<mlir::ModuleOp>()",
+     80,
+     60
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a1630",
+     538,
+     634
+    ],
+    [
+     "libc.so.6",
+     "0x00000000000a38d0",
+     541,
+     590
+    ],
+    [
+     "libc.so.6",
+     "0x0000000000199b00",
+     2069,
+     2079
+    ],
+    [
+     "libc.so.6",
+     "0x00000000001a0840",
+     1222,
+     1221
+    ]
+   ]
+  },
+  "submit": {
+   "base": {
+    "instructions": 6304,
+    "python_work": {
+     "bytecodes": 73.024,
+     "python_calls": 6.0,
+     "c_calls": 4.004
+    }
+   },
+   "tree": {
+    "instructions": 6304,
+    "python_work": {
+     "bytecodes": 73.024,
+     "python_calls": 6.0,
+     "c_calls": 4.004
+    }
+   },
+   "calls": []
+  }
+ }
+}

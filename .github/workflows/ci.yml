@@ -278,12 +278,10 @@ jobs:
       - run: uv sync --locked --no-default-groups --group build
       - uses: ./.github/actions/mlir-toolchain
 
+      # The gate builds a base it compares by calls the same way (GATE_CMAKE_ARGS),
+      # with the extension's symbols kept so that its functions have names.
       - name: Build
-        run: |
-          uv run --no-sync cmake -S . -B build/dev -G Ninja \
-            -DCUDAQ_PULSE_BUILD_TESTS=OFF \
-            -DPython3_EXECUTABLE="$PWD/.venv/bin/python"
-          uv run --no-sync cmake --build build/dev --target pulse
+        run: uv run --no-sync python tools/perf-gate.py --build build/dev
 
       # Identical Callgrind runs side by side: the summary shows how far
       # they differ (the spread) next to each case's change. A run taken as

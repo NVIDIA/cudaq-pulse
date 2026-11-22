@@ -172,6 +172,56 @@ AS_BASE = (
     "and the change moved its count by layout only: reported, not failed, and not a gain "
     "to keep"
 )
+AS_NATIVE_BASE = (
+    "the change touches native code; on its base, built in this job, the case ran the same "
+    "Python work and the same calls of every named native function outside the layout "
+    "classes, and the change moved its count by layout only: reported, not failed, and not "
+    "a gain to keep"
+)
+# What a change may touch and still be judged against a base this job builds
+# (native code and its build files may differ): not the gate, its cases, the
+# job or the toolchain pin, which would measure the base differently.
+NATIVE_BASE_REFUSED = (
+    "tools/perf-gate.py",
+    "benchmarks/perf_gate/*",
+    ".github/workflows/ci.yml",
+    "tools/mlir-toolchain.lock.json",
+    "tools/fetch-mlir-toolchain.py",
+    "pyproject.toml",
+    "uv.lock",
+)
+# How the job builds the tree, and so the base: the package only, with the
+# extension's symbols kept so that its functions have names in the dumps (its
+# code is the same; strip only drops the names).
+GATE_CMAKE_ARGS = (
+    "-G",
+    "Ninja",
+    "-DCUDAQ_PULSE_BUILD_TESTS=OFF",
+    "-DCUDAQ_PULSE_KEEP_SYMBOLS=ON",
+)
+# A native function whose number of calls may change with layout alone, as
+# (class, object pattern, function pattern); either pattern may be None. Two
+# builds of identical native code, and one build with and without a comment in
+# a Python source, ran different numbers of calls only in these
+# (_scratch evidence: the call counts of 20 cases on three pairs).
+LAYOUT_CLASSES = (
+    # MLIR finds a type or attribute by probing a hash table of pointers and
+    # calls an equality callback on each probe: the probes, and so the calls,
+    # follow the addresses hashed. FloatAttr's callback compares floats.
+    (
+        "uniquing",
+        None,
+        r"function_ref<bool \(mlir::StorageUniquer::BaseStorage const\*\)>::callback_fn<"
+        r"|^llvm::detail::IEEEFloat::bitwiseIsEqual\(",
+    ),
+    # The interpreter's dict and set probes, type version tags and method
+    # caches follow addresses and hashes too; what Python runs (bytecodes,
+    # Python and C calls) is compared on its own.
+    ("interpreter", r"^(python3(\.\d+)?|libpython3[.\d]*\.so.*)$", None),
+    # libc (malloc's own steps, memory copies) and the code it enters the
+    # kernel through, in no mapped object, follow allocation sizes.
+    ("allocator and kernel", r"^(libc\.so.*|ld-linux.*\.so.*|\?\?\?)$", None),
+)
 
 # Callgrind's cache model, fixed so the estimate does not depend on the
 # runner's CPU: 32 KiB 8-way L1 instruction and data caches, 8 MiB 16-way
@@ -596,6 +646,10 @@ class Row:
     # (None: no base was given; "": it is).
     own: float | None = None
     scope: str | None = None
+    # Against a base this job built (a change to native code): the named
+    # native functions whose calls differed, each with its layout class
+    # (None: outside them); None where no such base was measured.
+    calls: list[tuple[str, str | None]] | None = None
 
     @property
     def work(self) -> str:
@@ -617,6 +671,8 @@ def compare(
     python_work: PythonWork | None = None,
     base: Base | None = None,
     scope: str | None = None,
+    native: NativeBase | None = None,
+    tree_calls: dict[str, Calls] | None = None,
 ) -> list[Row]:
     """One row per case of the baseline or of this run, with its verdict:
     ``ok``, ``faster`` (within ``IMPROVEMENT``) or a failure: ``slower``,
@@ -627,7 +683,10 @@ def compare(
     only`` row is ``layout``, which passes, when the change keeps its
     base's measured code (*scope* is empty) and moved the case's count
     from its *base*'s, measured with the same Python work, by at most
-    ``OWN_SHIFT``."""
+    ``OWN_SHIFT``; or, for a change to native code, when its *native* base
+    (built in this job) ran the same Python work, the count moved by at most
+    ``OWN_SHIFT`` from it, and every function outside the layout classes was
+    called as many times in this tree (*tree_calls*) as there."""
     cases = baseline.get("cases", {})
     bootstrap = baseline.get("bootstrap") is True
     rows = []
@@ -691,6 +750,17 @@ def compare(
                 and abs(row.own) <= OWN_SHIFT
             ):
                 row.verdict = "layout"
+            if native is not None and name in native and tree_calls is not None:
+                count, native_work, calls = native[name]
+                if count and row.measured and work is not None and native_work == work:
+                    row.own = row.measured / count - 1
+                    row.calls = call_differences(tree_calls.get(name, {}), calls)
+                    if (
+                        failure_kind(row) == "layout only"
+                        and abs(row.own) <= OWN_SHIFT
+                        and all(cls is not None for _, cls in row.calls)
+                    ):
+                        row.verdict = "layout"
         rows.append(row)
     return rows
 
@@ -749,7 +819,20 @@ def failure_reason(r: Row) -> str:
         if r.work_changes:
             merged = ", ".join(r.work_changes)
             reason += f"; the same Python work as its base's, not the baseline's: {merged}"
-        if r.scope:
+        if r.calls is not None:
+            outside = [what for what, cls in r.calls if cls is None]
+            if outside:
+                more = f" and {len(outside) - 5} more" if len(outside) > 5 else ""
+                reason += (
+                    "; on its base, built in this job, these native functions outside the "
+                    f"layout classes ran other numbers of calls: {', '.join(outside[:5])}{more}"
+                )
+            elif r.own is not None and abs(r.own) > OWN_SHIFT:
+                reason += (
+                    f"; {_pct(r.own)} from its base built in this job, beyond the "
+                    f"{100 * OWN_SHIFT:g}% either way that a change's own layout shift may take"
+                )
+        elif r.scope:
             reason += f"; not compared with its base: {r.scope}"
         elif r.scope == "" and r.own is None:
             reason += "; its base ran other Python work"
@@ -771,6 +854,12 @@ def layout_notes(rows: list[Row]) -> list[str]:
         f"{r.name}: layout, {_pct(r.delta)} instructions (limit "
         + (f"+{100 * r.tolerance:g}%" if r.delta > 0 else f"-{100 * IMPROVEMENT:g}%")
         + f"; {_pct(r.own)} from its base, within {100 * OWN_SHIFT:g}% either way)"
+        + (
+            ""
+            if r.calls is None
+            else "; calls that differed from its base, all in layout classes: "
+            + (", ".join(f"{what} [{cls}]" for what, cls in r.calls) or "none")
+        )
         for r in rows
         if r.verdict == "layout" and r.delta is not None and r.own is not None
     ]
@@ -902,6 +991,163 @@ def measure_base(
     if work is None:
         return None, f"on the base, {why}"
     return {n: (min(m.instructions), work.get(n)) for n, m in measured.items()}, ""
+
+
+# A native function, as (object file name, function name).
+Function = tuple[str, str]
+Calls = dict[Function, int]
+# Each case's count, Python work and calls on a base built in this job.
+NativeBase = dict[str, tuple[float, dict[str, float] | None, Calls]]
+
+
+def dump_calls(text: str) -> Calls:
+    """The calls made to each function in one Callgrind dump, from its
+    ``calls=`` lines: the callee is the ``cfn=`` before it, in the object
+    of the ``cob=`` before that or else of its caller (``ob=``). Names and
+    objects are compressed to ``(id)`` after their first use; a recursion
+    level's ``'n`` suffix counts with its function."""
+    names: dict[str, str] = {}
+    objects: dict[str, str] = {}
+
+    def expand(table: dict[str, str], value: str) -> str:
+        m = re.match(r"\((\d+)\)(?: (.*))?$", value)
+        if m is None:
+            return value
+        if m.group(2) is not None:
+            table[m.group(1)] = m.group(2)
+        return table.get(m.group(1), value)
+
+    calls: Calls = {}
+    ob = cob = cfn = ""
+    for line in text.splitlines():
+        if line.startswith("ob="):
+            ob = expand(objects, line[3:].strip())
+        elif line.startswith("cob="):
+            cob = expand(objects, line[4:].strip())
+        elif line.startswith("fn="):
+            expand(names, line[3:].strip())
+            cob = ""
+        elif line.startswith("cfn="):
+            cfn = expand(names, line[4:].strip())
+        elif line.startswith("calls="):
+            key = (Path(cob or ob).name, re.sub(r"'\d+$", "", cfn))
+            calls[key] = calls.get(key, 0) + int(line[6:].split()[0])
+            cob = ""
+    return calls
+
+
+def layout_class(function: Function) -> str | None:
+    """The layout class of *function* (LAYOUT_CLASSES), or None."""
+    obj, name = function
+    for label, obj_pattern, name_pattern in LAYOUT_CLASSES:
+        if (obj_pattern is None or re.search(obj_pattern, obj)) and (
+            name_pattern is None or re.search(name_pattern, name)
+        ):
+            return label
+    return None
+
+
+def call_differences(tree: Calls, base: Calls) -> list[tuple[str, str | None]]:
+    """The functions called a different number of times in *tree* than in
+    *base*, each as "object:name (base -> tree)" with its layout class."""
+    differ = []
+    for function in sorted(set(tree) | set(base)):
+        before, after = base.get(function, 0), tree.get(function, 0)
+        if before != after:
+            obj, name = function
+            differ.append((f"{obj}:{name} ({before} -> {after})", layout_class(function)))
+    return differ
+
+
+def case_calls(dumps: Path) -> dict[str, Calls]:
+    """Each case's calls, from the dumps of one Callgrind run."""
+    out: dict[str, Calls] = {}
+    for path in sorted(dumps.glob("callgrind.out*")):
+        text = path.read_text(errors="replace")
+        trigger = re.search(r"^desc: Trigger: Client Request: (.+)$", text, re.MULTILINE)
+        if trigger is not None:
+            out[trigger.group(1).strip()] = dump_calls(text)
+    return out
+
+
+def build_tree(source: Path, build: Path, python: str) -> None:
+    """Configures and builds the package in *source* as the perf-gate job
+    builds it (GATE_CMAKE_ARGS)."""
+    subprocess.run(
+        [
+            "cmake",
+            "-S",
+            str(source),
+            "-B",
+            str(build),
+            *GATE_CMAKE_ARGS,
+            f"-DPython3_EXECUTABLE={python}",
+        ],
+        check=True,
+    )
+    subprocess.run(["cmake", "--build", str(build), "--target", "pulse"], check=True)
+
+
+def native_base_scope(commit: str) -> str:
+    """Why a change to native code cannot be judged against its base built
+    in this job: it touches what would measure the base differently
+    (NATIVE_BASE_REFUSED), or git cannot tell; "" when it can."""
+    out = _git("diff", "--name-only", "--no-renames", commit, "HEAD", "--")
+    if out is None:
+        return f"git cannot compare this tree with its base {commit[:8]}"
+    refused = [
+        f for f in out.splitlines() if any(fnmatch.fnmatchcase(f, p) for p in NATIVE_BASE_REFUSED)
+    ]
+    if refused and set(refused) <= set(BUILD_FILES):
+        before, after = build_inputs(commit), build_inputs("HEAD")
+        if before is not None and before == after:
+            refused = []
+    return f"the change touches {', '.join(refused[:3])}" if refused else ""
+
+
+def measure_native_base(
+    commit: str, python: str, workdir: Path, dumps: Path
+) -> tuple[NativeBase | None, str]:
+    """Each case's count, Python work and calls on the base, checked out
+    beside the tree and built as the job builds it; or None and why not."""
+    source = workdir / "base-tree"
+    if _git("worktree", "add", "--detach", str(source), commit) is None:
+        return None, f"git cannot check out the base {commit[:8]}"
+    try:
+        cache = ROOT / ".cache"
+        if cache.exists():
+            (source / ".cache").symlink_to(cache)
+        build = source / "build" / "dev"
+        try:
+            build_tree(source, build, python)
+        except (OSError, subprocess.CalledProcessError) as e:
+            return None, f"the base could not be built: {e}"
+        pythonpath = str(build / "python")
+        native = sorted((build / "python" / "cudaq_pulse" / "_native").glob("_cudaq_pulse_native*"))
+        nm = shutil.which("nm")
+        if (
+            not native
+            or nm is None
+            or not subprocess.run(
+                [nm, str(native[0])], capture_output=True, text=True
+            ).stdout.strip()
+        ):
+            return None, "the base's extension has no symbols (built before they were kept)"
+        env = _run_env(pythonpath, str(workdir))
+        try:
+            _byte_compile(python, env, pythonpath)
+            measured, _, _ = measure_instructions(python, env, 1, workdir, dumps)
+            work, why = measure_python_work(python, env)
+        except (GateError, subprocess.CalledProcessError) as e:
+            return None, f"the base could not be measured: {str(e).splitlines()[0]}"
+        if work is None:
+            return None, f"on the base, {why}"
+        calls = case_calls(dumps / "run0")
+        return {
+            n: (min(m.instructions), work.get(n), calls.get(n, {})) for n, m in measured.items()
+        }, ""
+    finally:
+        _git("worktree", "remove", "--force", str(source))
 
 
 def failure_counts(rows: list[Row]) -> str:
@@ -1194,6 +1440,32 @@ base comparison:
   A gain that passes this way is not kept: a later change can give it
   back. The base is measured only when a row could pass, in about half a
   minute; its dumps are in the base directory of the dumps.
+
+native base comparison:
+  A change to native code moves the build's layout too, and its base's
+  Python sources cannot run on its build. When such a change has a
+  failure the base could judge, the gate checks the base out beside the
+  tree, builds it as the job builds the tree (--build, with the
+  extension's symbols kept: the same code, with names), and runs it once
+  under Callgrind (2 to 3 minutes in all). A row passes as "layout" when
+  the case ran the same Python work on the base, its count moved by at
+  most 0.95% from the base's, and every named native function outside
+  three layout classes was called as many times in the tree as on the
+  base. The classes are functions whose number of calls follows
+  addresses and not the program: MLIR's uniquing equality callbacks (one
+  per probe of a hash table of pointers), the interpreter's own
+  functions (its dict probes, version tags and caches; what Python runs
+  is compared on its own), and libc and the kernel's entry code
+  (malloc's steps, memory copies). The row's notice lists every function
+  whose calls differed, with its class, to audit. What passes this way:
+  native work that changes no named function's number of calls, such as
+  a longer loop inside one function or a costlier inline computation,
+  up to 0.95% from the base per change; and more probing of a hash table
+  whose calls stay the same. A new type or attribute changes the calls
+  of the uniquer itself and fails. A change to the gate, its cases, the
+  job or the pins is not compared this way, nor a base whose extension
+  has no symbols (built before they were kept); its dumps are in the
+  native-base directory of the dumps.
 """
 
 
@@ -1224,7 +1496,17 @@ def main() -> int:
     parser.add_argument(
         "--dumps", type=Path, help="keep Callgrind's dumps and logs in this new directory"
     )
+    parser.add_argument(
+        "--build",
+        type=Path,
+        metavar="DIR",
+        help="only build the package into DIR as the perf-gate job does (GATE_CMAKE_ARGS), "
+        "as it builds a base it compares by calls",
+    )
     args = parser.parse_args()
+    if args.build:
+        build_tree(ROOT, (ROOT / args.build).resolve(), args.python)
+        return 0
     if args.dumps and args.dumps.exists() and any(args.dumps.iterdir()):
         parser.error(f"--dumps {args.dumps} is not empty")
 
@@ -1243,6 +1525,8 @@ def main() -> int:
         instructions = None
         python_work: PythonWork | None = None
         base: Base | None = None
+        native: NativeBase | None = None
+        tree_calls: dict[str, Calls] | None = None
         scope = None
         note = work_note = ""
         if args.sizes_only:
@@ -1287,8 +1571,19 @@ def main() -> int:
                             workdir,
                             dumps / "base",
                         )
+                    elif scope.startswith("the change touches measured code"):
+                        # A change to native code: judged on its base built
+                        # here, by the calls its native functions made.
+                        why = native_base_scope(args.base_commit)
+                        if not why:
+                            native, why = measure_native_base(
+                                args.base_commit, args.python, workdir, dumps / "native-base"
+                            )
+                            tree_calls = case_calls(dumps / "run0")
+                        if why:
+                            scope += f"; and not against its base built here: {why}"
 
-    rows = compare(baseline, sizes, instructions, python_work, base, scope)
+    rows = compare(baseline, sizes, instructions, python_work, base, scope, native, tree_calls)
     notes = layout_notes(rows)
     # Counts that failed the checks are reported but never become a baseline.
     measured = as_baseline(
@@ -1353,9 +1648,11 @@ def main() -> int:
         print(f"::warning title=Perf gate::{line}")
     if os.environ.get("GITHUB_ACTIONS"):
         for line in notes:
-            print(f"::notice title=Perf gate::{line}: {AS_BASE}")
+            why = AS_NATIVE_BASE if native is not None else AS_BASE
+            print(f"::notice title=Perf gate::{line}: {why}")
     if notes:
-        print("\nLayout:\n" + "".join(f"  {line}\n" for line in notes) + f"  ({AS_BASE})")
+        why = AS_NATIVE_BASE if native is not None else AS_BASE
+        print("\nLayout:\n" + "".join(f"  {line}\n" for line in notes) + f"  ({why})")
     if bootstrapped and not problems:
         print(
             "\nBOOTSTRAP MODE: the baseline has no instruction counts for "
@@ -1444,8 +1741,8 @@ def main() -> int:
                     "> [!NOTE]\n"
                     f"> **Layout ({len(notes)}).** "
                     + " ".join(f"{line}." for line in notes)
-                    + f" In each, {AS_BASE} (`python tools/perf-gate.py --help`, base "
-                    "comparison).\n\n"
+                    + f" In each, {AS_NATIVE_BASE if native is not None else AS_BASE} "
+                    "(`python tools/perf-gate.py --help`, base comparison).\n\n"
                 )
             own = ", ".join(f"{n} +{100 * t:g}%" for n, t in sorted(tolerances.items()))
             f.write(

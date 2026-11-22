@@ -32,6 +32,9 @@ include(GNUInstallDirs)
 # cudaq-pulse-tools the cudaq-pulse-opt driver (packaging/cudaq-pulse-tools).
 option(CUDAQ_PULSE_BUILD_PYTHON "Build the cudaq_pulse Python package and its native extension" ON)
 option(CUDAQ_PULSE_BUILD_OPT "Build the cudaq-pulse-opt MLIR driver" ON)
+# The perf gate names the native functions in its Callgrind dumps, which a
+# stripped extension does not; keeping the symbols leaves its code the same.
+option(CUDAQ_PULSE_KEEP_SYMBOLS "Keep the native extension's symbols (no strip)" OFF)
 if(NOT CUDAQ_PULSE_BUILD_PYTHON AND NOT CUDAQ_PULSE_BUILD_OPT)
   message(FATAL_ERROR "CUDAQ_PULSE_BUILD_PYTHON and CUDAQ_PULSE_BUILD_OPT are both OFF")
 endif()

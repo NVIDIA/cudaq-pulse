@@ -1172,3 +1172,141 @@ def test_the_gate_measures_no_base_without_a_row_it_could_pass(fake_gate, repo, 
     monkeypatch.setattr(gate, "measure_base", None)
     code, log, _, _ = fake_gate(1_002_000, _WORK, base_commit=base)
     assert code == 0 and log.endswith("Perf gate passed.\n")
+
+
+# Native base comparison: the calls each native function received, and the
+# classes of functions whose calls follow layout rather than the program.
+
+_CALLS_DUMP = """\
+version: 1
+creator: callgrind-3.22.0
+events: Ir
+desc: Trigger: Client Request: case
+ob=(1) /usr/lib/x86_64-linux-gnu/libc.so.6
+ob=(2) /x/_cudaq_pulse_native.so
+fn=(1) build
+1 5
+cob=(1)
+cfn=(2) malloc
+calls=3 0
+1 30
+cfn=(3) helper
+calls=2 0
+2 20
+fn=(3)
+cfn=(3) helper'2
+calls=4 0
+1 8
+totals: 63
+"""
+
+
+def test_the_calls_to_each_function_are_counted_with_its_object():
+    calls = gate.dump_calls(_CALLS_DUMP)
+    # A cob= names the callee's object for one call; a recursion level's
+    # 'n counts with its function; a call without cob= stays in its caller's.
+    assert calls == {
+        ("libc.so.6", "malloc"): 3,
+        ("_cudaq_pulse_native.so", "helper"): 6,
+    }
+
+
+@pytest.mark.parametrize(
+    ("function", "label"),
+    [
+        (
+            (
+                "_cudaq_pulse_native.so",
+                "bool llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>"
+                "::callback_fn<mlir::StorageUniquer::get<mlir::detail::FloatAttrStorage>>",
+            ),
+            "uniquing",
+        ),
+        (
+            ("_cudaq_pulse_native.so", "llvm::detail::IEEEFloat::bitwiseIsEqual(x) const"),
+            "uniquing",
+        ),
+        (("python3.12", "assign_version_tag"), "interpreter"),
+        (("libpython3.12.so.1.0", "set_add"), "interpreter"),
+        (("libc.so.6", "0x00000000000a38d0"), "allocator and kernel"),
+        (("???", "0x0000000004972620"), "allocator and kernel"),
+        # The uniquer itself, and the program's own functions, are compared.
+        (("_cudaq_pulse_native.so", "mlir::StorageUniquer::getParametricStorageTypeImpl"), None),
+        (("_cudaq_pulse_native.so", "mlir::ModuleOp mlir::Operation::getParentOfType()"), None),
+        (("_cudaq_pulse_native.so", "0x0000000000123456"), None),
+    ],
+)
+def test_the_layout_class_of_a_function(function, label):
+    assert gate.layout_class(function) == label
+
+
+_PAIRS = json.loads((Path(__file__).parent / "perf_gate_call_pairs.json").read_text())
+
+
+def _judge_pair(label):
+    """The rows of one recorded pair, each case made 1% slower than a
+    baseline with the tree's Python work, judged against its base by calls."""
+    cases = _PAIRS[label]
+    baseline = {
+        "format": 2,
+        "cases": {
+            n: {
+                "instructions": c["tree"]["instructions"] / 1.01,
+                "python_work": c["tree"]["python_work"],
+            }
+            for n, c in cases.items()
+        },
+    }
+    instructions = {
+        n: gate.Measured([float(c["tree"]["instructions"])], [0.0]) for n, c in cases.items()
+    }
+    work = {n: c["tree"]["python_work"] for n, c in cases.items()}
+    native, tree_calls = {}, {}
+    for n, c in cases.items():
+        base_calls = {(o, f): b for o, f, b, _ in c["calls"]}
+        tree_calls[n] = {(o, f): t for o, f, _, t in c["calls"]}
+        native[n] = (float(c["base"]["instructions"]), c["base"]["python_work"], base_calls)
+    scope = "the change touches measured code: core/mlir/x.cpp"
+    rows = gate.compare(
+        baseline, {n: {} for n in cases}, instructions, work, None, scope, native, tree_calls
+    )
+    return {r.name: r for r in rows}
+
+
+@pytest.mark.parametrize(
+    "label",
+    ["identical code: 813a2b59 / eb6e6619", "a comment in a Python source: eb85adf6 / + comment"],
+)
+def test_a_layout_pair_passes_every_row_by_its_calls(label):
+    rows = _judge_pair(label)
+    assert len(rows) == 20
+    assert {n for n, r in rows.items() if r.verdict != "layout"} == set()
+    # The notice lists each function whose calls differed, with its class.
+    notes = gate.layout_notes(list(rows.values()))
+    assert len(notes) == 20
+    assert any("[uniquing]" in line for line in notes)
+
+
+def test_a_native_change_fails_where_its_code_runs_and_passes_where_it_does_not():
+    rows = _judge_pair("a native change, #163: eb6e6619 / eb85adf6")
+    passed = {n for n, r in rows.items() if r.verdict == "layout"}
+    # #163 adds controller facts: what binds, exports or submits a compiled
+    # program does not reach them.
+    assert passed == {
+        "bind_cached",
+        "bind_new_value",
+        "export_to_controller",
+        "export_to_controller_sampled",
+        "export_to_emulator",
+        "submit",
+    }
+    reason = gate.failure_reason(rows["specialize_wait"])
+    assert "outside the layout classes ran other numbers of calls" in reason
+    assert "getParentOfType" in reason
+
+
+def test_a_change_to_the_gate_or_the_pins_is_not_judged_against_a_built_base(repo):
+    repo(**{"core__mlir__lib__Foo.cpp": "int g();\n"})
+    assert gate.native_base_scope(repo.base) == ""
+    repo(**{"tools__perf-gate.py": "", "core__mlir__lib__Foo.cpp": "int h();\n"})
+    assert gate.native_base_scope(repo.base) == "the change touches tools/perf-gate.py"
