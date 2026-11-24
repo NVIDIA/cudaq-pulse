@@ -270,6 +270,20 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 - **Faster compiles of branches beside long lists of lines.** Tracing a
   measurement-conditioned `if` in a kernel that keeps many lines or tones
   in a list costs less; the programs compiled are unchanged.
+- **`alap` and `alap_rcp` end a program at its last operation.** They placed
+  every line as late as the forward schedule's end, and that end could come
+  after the last operation: under `rcp` a readout holds its line for the
+  feedback latency after it ends, and a sync in a branch arm waits for the
+  outcome, though neither plays anything. A program then ended up to a
+  feedback latency, or a branch outcome's latency, after its last pulse:
+  with 400 cycles of feedback, a drive played beside a 400-cycle readout ran
+  at 760-800 under `alap_rcp`, an 800-cycle program, and now at 360-400. The
+  hold still makes the next operation on the readout line wait. This changes
+  the output of `alap` and `alap_rcp` on one controller too, always to a
+  program that is no longer; `asap` and `rcp` are unchanged, and so are
+  programs that call a kernel with its own `schedule=`. A tail after the
+  last readout used as a guard before the next shot needs
+  `simulate(reset_time=...)` or an explicit `wait()`.
 - **Measurements keep the kernel's numbers under every schedule.**
   `SimulationResult.measurements` gives each measurement the readout number
   (the kernel's order of its readouts) and loop iteration the kernel gave it,
