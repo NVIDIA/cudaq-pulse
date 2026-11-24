@@ -688,8 +688,27 @@ def test_text_nested_too_deep_is_refused_before_it_is_parsed(system):
         "module {", "module attributes {made.by = " + "[" * 300 + "]" * 300 + "} {", 1
     )
     assert deep != MODULE
-    with pytest.raises(pulse.CompilationError, match="nests brackets deeper than 256"):
+    with pytest.raises(pulse.CompilationError, match="nests deeper than 256"):
         pulse.load(deep, entry="round", qudits=system.qudits[:2])
+    # The scan reads as the lexer does: a quote or a closer in a comment, and
+    # the `>` of `>=`, hide nothing; a run of minus signs nests too.
+    hidden = '// "\n' + deep + '// "\n'
+    with pytest.raises(pulse.CompilationError, match="nests deeper than 256"):
+        pulse.load(hidden, entry="round", qudits=system.qudits[:2])
+    closed = MODULE.replace(
+        "module {", "module attributes {made.by = " + "[ // ]\n" * 300 + "]" * 300 + "} {", 1
+    )
+    with pytest.raises(pulse.CompilationError, match="nests deeper than 256"):
+        pulse.load(closed, entry="round", qudits=system.qudits[:2])
+    minus = MODULE.replace(
+        "module {",
+        "module attributes {made.by = affine_map<(d0) -> (" + "- " * 300 + "d0)>} {",
+        1,
+    )
+    with pytest.raises(pulse.CompilationError, match="nests deeper than 256"):
+        pulse.load(minus, entry="round", qudits=system.qudits[:2])
+    commented = "// ((((" * 100 + "\n" + MODULE
+    assert pulse.load(commented, entry="round", qudits=system.qudits[:2]).schedule
     shallow = MODULE.replace("module {", "module attributes {made.by = [[[1]]]} {", 1)
     assert pulse.load(shallow, entry="round", qudits=system.qudits[:2]).schedule
 
@@ -699,6 +718,32 @@ def test_a_module_inside_the_module_is_refused(system):
     nested = "module {\n" + inner.replace("module {", "module @inner {", 1) + "\n}\n"
     with pytest.raises(pulse.CompilationError, match="holds another module"):
         pulse.load(nested, entry="round", qudits=system.qudits[:2])
+
+
+def test_a_module_inside_a_function_is_refused(system):
+    inside = MODULE.replace(
+        "    %n = arith.constant 16 : i64",
+        "    builtin.module {\n    }\n    %n = arith.constant 16 : i64",
+    )
+    assert inside != MODULE
+    with pytest.raises(pulse.CompilationError, match="holds another module"):
+        pulse.load(inside, entry="round", qudits=system.qudits[:2])
+
+
+def test_a_call_states_one_period_per_loop_around_it(system):
+    many = re.sub(
+        r"pulse\.period_cycles =\s+20 :\s+i64", "pulse.period_cycles = array<i64: 20, 20>", LOOP
+    )
+    assert many != LOOP
+    with pytest.raises(pulse.CompilationError, match=r"inside 1 loop\(s\) and states 2 period"):
+        pulse.load(many, entry="shot", qudits=system.qudits[:1])
+    outside = CALLS.replace(
+        "{pulse.start_cycles = 40 : i64}",
+        "{pulse.start_cycles = 40 : i64, pulse.period_cycles = 9 : i64}",
+    )
+    assert outside != CALLS
+    with pytest.raises(pulse.CompilationError, match=r"inside 0 loop\(s\) and states 1 period"):
+        pulse.load(outside, entry="shot", qudits=system.qudits[:2])
 
 
 def test_the_entry_is_a_function(system):

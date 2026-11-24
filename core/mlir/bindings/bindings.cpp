@@ -7585,43 +7585,80 @@ public:
   /// qudits as slots, in argument order: what place_carriers() binds. The
   /// function's results and its attributes other than its schedule state are
   /// dropped.
-  /// A module another compiler wrote, parsed and verified. Refused before
-  /// parsing: text whose brackets nest deeper than a module of scheduled
-  /// functions does (the text parser recurses once per level). Refused after:
-  /// a module that holds another module, so every symbol is one of the
-  /// module's own table.
+  /// A module another compiler wrote, parsed and verified.
+  ///
+  /// Before parsing, text is scanned as the lexer reads it (strings and
+  /// `//` comments skipped) and refused when its brackets, or a run of
+  /// minus signs, nest deeper than a module of scheduled functions does:
+  /// the text parser recurses once per level. The scan is a guard for the
+  /// nesting it knows, not a proof: a parse of text or of bytecode that
+  /// nests deeper than the thread's stack holds still ends the process, as
+  /// any MLIR parse does.
+  ///
+  /// After parsing, the module's regions are measured without recursion:
+  /// one nested deeper than kMostNesting is refused before anything walks
+  /// or copies it, and so is any operation with a symbol table of its own
+  /// below the module, so every symbol is one of the module's own table.
+  static constexpr int kMostNesting = 256;
   static mlir::OwningOpRef<mlir::ModuleOp>
   parseForeign(const std::string &text, mlir::MLIRContext *ctx) {
+    auto tooDeep = [] {
+      return std::invalid_argument("load: the module nests deeper than " +
+                                   std::to_string(kMostNesting));
+    };
     if (!llvm::StringRef(text).starts_with("ML\xefR")) {
-      constexpr int kMostNesting = 256;
-      int depth = 0;
-      bool quoted = false;
+      int depth = 0, minus = 0;
       for (size_t i = 0; i < text.size(); ++i) {
         char c = text[i];
-        if (quoted) {
-          if (c == '\\')
+        if (c == '"') {
+          // A string ends at its closing quote; a backslash keeps the next
+          // character in it.
+          for (++i; i < text.size() && text[i] != '"'; ++i)
+            if (text[i] == '\\')
+              ++i;
+          minus = 0;
+        } else if (c == '/' && i + 1 < text.size() && text[i + 1] == '/') {
+          while (i < text.size() && text[i] != '\n')
             ++i;
-          else if (c == '"')
-            quoted = false;
-        } else if (c == '"') {
-          quoted = true;
         } else if (c == '(' || c == '[' || c == '{' || c == '<') {
+          minus = 0;
           if (++depth > kMostNesting)
-            throw std::invalid_argument(
-                "load: the module nests brackets deeper than " +
-                std::to_string(kMostNesting));
-        } else if (c == ')' || c == ']' || c == '}' ||
-                   (c == '>' && (i == 0 || text[i - 1] != '-'))) {
-          depth = std::max(depth - 1, 0);
+            throw tooDeep();
+        } else if (c == ')' || c == ']' || c == '}' || c == '>') {
+          // The `>` of `->` and of `>=` closes nothing.
+          bool closes =
+              c != '>' || !((i > 0 && text[i - 1] == '-') ||
+                            (i + 1 < text.size() && text[i + 1] == '='));
+          if (closes)
+            depth = std::max(depth - 1, 0);
+          minus = 0;
+        } else if (c == '-') {
+          if (++minus > kMostNesting)
+            throw tooDeep();
+        } else if (!llvm::isSpace(c)) {
+          minus = 0;
         }
       }
     }
     auto source = parseModule(text, ctx, "load: cannot read the module");
+    // Depth first with an explicit stack: (operation, depth of its regions).
+    llvm::SmallVector<std::pair<mlir::Operation *, int>> open;
     for (mlir::Operation &op : *source->getBody())
-      if (mlir::isa<mlir::ModuleOp>(op))
+      open.emplace_back(&op, 1);
+    while (!open.empty()) {
+      auto [op, depth] = open.pop_back_val();
+      if (mlir::isa<mlir::ModuleOp>(op) ||
+          op->hasTrait<mlir::OpTrait::SymbolTable>())
         throw std::invalid_argument(
             "load: the module holds another module; a loaded module is one "
             "module of functions");
+      if (op->getNumRegions() && depth >= kMostNesting)
+        throw tooDeep();
+      for (mlir::Region &region : op->getRegions())
+        for (mlir::Block &block : region)
+          for (mlir::Operation &inner : block)
+            open.emplace_back(&inner, depth + 1);
+    }
     return source;
   }
   /// The most operations the calls of a loaded function may write in place,
@@ -7712,6 +7749,17 @@ public:
       else
         stated.periods.push_back(*cycles("pulse.period_cycles"));
     }
+    // One period per loop the call is in, each a count of cycles: a call
+    // written in a function's place takes the periods of the call it was
+    // written for, so the loops are counted in the entry only.
+    for (int64_t period : stated.periods)
+      if (period < 0 || period > (int64_t(1) << 50))
+        throw std::invalid_argument("load: " + caller + " calls " + callee +
+                                    " with a pulse.period_cycles that is not a "
+                                    "count of cycles (i64)");
+    if (stated.periods.size() > static_cast<size_t>(kMostNesting))
+      throw std::invalid_argument("load: " + caller + " calls " + callee +
+                                  " with more periods than loops can nest");
     return stated;
   }
   /// The function `caller` calls by `name`, checked to be one a call can be
@@ -7761,26 +7809,30 @@ public:
     mlir::func::FuncOp callee = calledFunction(source, caller, name);
     open.push_back(name);
     int64_t end = 0, written = 0;
+    // The callee's own calls are measured after the walk, not from inside
+    // it: the stack then grows with the calls' nesting only.
+    llvm::SmallVector<mlir::func::CallOp> nestedCalls;
     callee.walk([&](mlir::Operation *op) {
       if (op != callee.getOperation())
         written = std::min(written + 1, kMostWritten + 1);
-      if (auto nested = mlir::dyn_cast<mlir::func::CallOp>(op)) {
-        StatedCall within = statedCall(nested, name);
-        auto [inner, more] =
-            extentOf(source, name, nested.getCallee().str(), known, open);
-        written = std::min(written + more, kMostWritten + 1);
-        if (within.length && inner > *within.length)
-          throw std::invalid_argument(
-              "load: " + name + " gives " + nested.getCallee().str() + " " +
-              std::to_string(*within.length) + " cycles at " +
-              std::to_string(within.start) + ", and it takes " +
-              std::to_string(inner));
-        end = std::max(end, within.start + within.length.value_or(inner));
-        return;
-      }
-      if (std::optional<int64_t> start = pulse::startCycles(op))
+      if (auto nested = mlir::dyn_cast<mlir::func::CallOp>(op))
+        nestedCalls.push_back(nested);
+      else if (std::optional<int64_t> start = pulse::startCycles(op))
         end = std::max(end, *start + pulse::durationCycles(op).value_or(0));
     });
+    for (mlir::func::CallOp nested : nestedCalls) {
+      StatedCall within = statedCall(nested, name);
+      auto [inner, more] =
+          extentOf(source, name, nested.getCallee().str(), known, open);
+      written = std::min(written + more, kMostWritten + 1);
+      if (within.length && inner > *within.length)
+        throw std::invalid_argument(
+            "load: " + name + " gives " + nested.getCallee().str() + " " +
+            std::to_string(*within.length) + " cycles at " +
+            std::to_string(within.start) + ", and it takes " +
+            std::to_string(inner));
+      end = std::max(end, within.start + within.length.value_or(inner));
+    }
     open.pop_back();
     return known[name] = {end, written};
   }
@@ -7816,6 +7868,18 @@ public:
           throw std::invalid_argument("load: " + entry +
                                       " calls a function that calls itself");
         StatedCall stated = statedCall(call, entry);
+        // One period per loop around the call, as every timed operation
+        // there has.
+        size_t loops = 0;
+        for (mlir::Operation *parent = call->getParentOp();
+             parent && parent != main.getOperation();
+             parent = parent->getParentOp())
+          loops += mlir::isa<mlir::scf::ForOp>(parent);
+        if (stated.periods.size() != loops)
+          throw std::invalid_argument(
+              "load: " + entry + " calls " + name + " inside " +
+              std::to_string(loops) + " loop(s) and states " +
+              std::to_string(stated.periods.size()) + " period(s)");
         llvm::SmallVector<std::string> open;
         int64_t extent = extentOf(source, entry, name, extents, open).first;
         if (stated.length && extent > *stated.length)
@@ -8107,10 +8171,21 @@ public:
     main.setType(
         mlir::FunctionType::get(ctx_.get(), main.getArgumentTypes(), {}));
     // What was written here from another compiler's module is checked as IR
-    // before anything reads it.
-    if (mlir::failed(mlir::verify(*module)))
-      throw std::invalid_argument("load: " + entry +
-                                  " is not valid as a loaded function");
+    // before anything reads it; the verifier's first reason goes with the
+    // refusal.
+    std::string reason;
+    {
+      mlir::ScopedDiagnosticHandler handler(ctx_.get(),
+                                            [&](mlir::Diagnostic &diagnostic) {
+                                              if (reason.empty())
+                                                reason = diagnostic.str();
+                                              return mlir::success();
+                                            });
+      if (mlir::failed(mlir::verify(*module)))
+        throw std::invalid_argument("load: " + entry +
+                                    " is not valid as a loaded function" +
+                                    (reason.empty() ? "" : ": " + reason));
+    }
     return PulseModule(ctx_, std::move(module));
   }
 
