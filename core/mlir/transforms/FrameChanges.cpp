@@ -550,8 +550,8 @@ private:
       }
       return latest;
     }
-    if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp,
-                  pulse::ToneOp>(def))
+    if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp, pulse::ToneOp,
+                  pulse::GetCouplingLineOp>(def))
       return Time{};
     return std::nullopt;
   }

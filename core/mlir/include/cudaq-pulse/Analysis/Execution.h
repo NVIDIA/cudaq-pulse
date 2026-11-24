@@ -132,6 +132,9 @@ public:
   std::function<void(const Occurrence &)> onTimed;
   /// Called for every drive occurrence, with its tone frame.
   std::function<void(const Occurrence &)> onDrive;
+  /// Called for every drive on a coupling line, which has no tone; returning
+  /// false ends the walk as failed. Without it such a drive is passed over.
+  std::function<bool(const Occurrence &)> onCouplingDrive;
   /// Called for every readout occurrence; returning true ends the walk.
   std::function<bool(const Occurrence &, const MeasurementKey &)> onReadout;
   /// Give readout occurrences their tone's frame (drives always have it).
@@ -237,7 +240,11 @@ private:
       Occurrence occurrence;
       if (!timed(op, occurrence))
         return false;
-      ToneState &tone = toneOf(drive.getTone());
+      // A drive on a coupling line plays at baseband: no tone, no frame.
+      mlir::Value carrier = drive.getTone();
+      if (!carrier)
+        return !onCouplingDrive || onCouplingDrive(occurrence);
+      ToneState &tone = toneOf(carrier);
       occurrence.tone = tone;
       if (onDrive)
         onDrive(occurrence);

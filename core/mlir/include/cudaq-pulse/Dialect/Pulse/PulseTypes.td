@@ -57,6 +57,16 @@ def ReadoutLineType : PulseType<"ReadoutLine", "readout_line"> {
   }];
 }
 
+def CouplingLineType : PulseType<"CouplingLine", "coupling_line"> {
+  let summary = "Physical coupling channel (linear resource)";
+  let description = [{
+    A `coupling_line` represents a channel that plays a baseband waveform,
+    with no tone, on a control of the quantum system: one qudit's own
+    tuning, or the control of the coupling of several qudits. Like drive
+    and readout lines, coupling lines are linear resources with time state.
+  }];
+}
+
 //===----------------------------------------------------------------------===//
 // Tone and timing types
 //===----------------------------------------------------------------------===//
@@ -123,8 +133,16 @@ def SchedulePolicy : I32Enum<"SchedulePolicy", "schedule policy", [
 //===----------------------------------------------------------------------===//
 
 def AnyLineType : Type<
-  Or<[DriveLineType.predicate, ReadoutLineType.predicate]>,
+  Or<[DriveLineType.predicate, ReadoutLineType.predicate,
+      CouplingLineType.predicate]>,
   "any pulse line type"
+>;
+
+// The lines `pulse.drive` plays on: a drive line at a tone, a coupling line
+// at baseband.
+def DrivenLineType : Type<
+  Or<[DriveLineType.predicate, CouplingLineType.predicate]>,
+  "a drive line or a coupling line"
 >;
 
 // Values that become available at a time: lines, tones, measurements, and
@@ -132,6 +150,7 @@ def AnyLineType : Type<
 def AnyTimedType : Type<
   Or<[DriveLineType.predicate, ReadoutLineType.predicate,
       ToneType.predicate, MeasurementType.predicate,
+      CouplingLineType.predicate,
       CPred<"$_self.getDialect().getNamespace() == \"classical\"">]>,
   "a pulse line, tone, measurement, link or call handle"
 >;

@@ -778,6 +778,11 @@ struct PulseToQOpPass
       endCycles = std::max(endCycles,
                            occurrence.startCycles + occurrence.durationCycles);
     };
+    walker.onCouplingDrive = [&](const pulse::Occurrence &occurrence) {
+      walker.errorOp = occurrence.op;
+      walker.error = "a pulse on a coupling line is not simulated yet";
+      return false;
+    };
     walker.onDrive = [&](const pulse::Occurrence &occurrence) {
       double startNs = occurrence.startCycles / clockGHz;
       double endNs =

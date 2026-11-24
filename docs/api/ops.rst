@@ -12,6 +12,8 @@ Channel Access
 
 .. autofunction:: cudaq_pulse.ops.get_readout_line
 
+.. autofunction:: cudaq_pulse.ops.get_coupling_line
+
 Scheduling
 ----------
 

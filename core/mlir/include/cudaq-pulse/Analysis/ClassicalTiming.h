@@ -182,7 +182,7 @@ inline bool readers(mlir::Value value, const pulse::Controllers &controllers,
     return reader >= 0;
   }
   if (mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType, pulse::ToneType,
-                LinkType>(value.getType()))
+                LinkType, pulse::CouplingLineType>(value.getType()))
     return true;
   mlir::Operation *def = value.getDefiningOp();
   if (!def || mlir::isa<WaitOp, SubmitOp>(def) || def->getNumRegions())

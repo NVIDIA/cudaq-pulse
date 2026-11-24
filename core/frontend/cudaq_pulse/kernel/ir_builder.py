@@ -438,7 +438,7 @@ class IRValue(_UndecidableComparisons):
         return f"{self.name or f'%v{self.vid}'}:{self.vtype}"
 
 
-LINEAR_TYPES = frozenset({"drive_line", "readout_line", "tone"})
+LINEAR_TYPES = frozenset({"drive_line", "readout_line", "tone", "coupling_line"})
 
 # The vid of a loop-carried value that has no value entering the loop.
 UNDEFINED_VID = -1
@@ -452,6 +452,8 @@ MAX_CYCLES = 2**53
 OP_TABLE: dict[str, tuple[int, tuple[str, ...], tuple[str, ...] | None]] = {
     "get_drive_line": (1, (), ("drive_line", "tone")),
     "get_readout_line": (1, (), ("readout_line", "tone")),
+    # One or more qudits; traced by kernel/_coupling.py, not from this entry.
+    "get_coupling_line": (-1, (), ("coupling_line",)),
     "gaussian": (0, ("duration", "amplitude", "sigma"), ("waveform",)),
     "square": (0, ("duration", "amplitude"), ("waveform",)),
     "drag": (0, ("duration", "amplitude", "sigma", "beta"), ("waveform",)),

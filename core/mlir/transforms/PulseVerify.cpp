@@ -279,9 +279,76 @@ public:
       return checkMeasurement(op, isSet.getMeasurement());
     if (auto wait = mlir::dyn_cast<pulse::WaitOp>(op))
       return checkBounds(wait);
+    if (auto drive = mlir::dyn_cast<pulse::DriveOp>(op))
+      if (!drive.getTone())
+        return checkReal(drive);
   }
 
 private:
+  /// A coupling line plays at baseband, so its waveform has no imaginary
+  /// part: one that is not known to be zero is refused, naming the op that
+  /// may give it one.
+  void checkReal(pulse::DriveOp drive) {
+    mlir::Operation *complex = notKnownReal(drive.getPulse());
+    if (!complex)
+      return;
+    mlir::InFlightDiagnostic diagnostic =
+        drive.emitOpError("on a coupling line plays a real waveform; the "
+                          "imaginary part of this one is not known to be zero");
+    diagnostic.attachNote(complex->getLoc())
+        << "this " << complex->getName().getStringRef()
+        << " may have an imaginary part";
+    hadError = true;
+  }
+
+  static bool isZero(mlir::Value value) {
+    auto constant = value.getDefiningOp<mlir::arith::ConstantOp>();
+    auto number = constant
+                      ? mlir::dyn_cast<mlir::FloatAttr>(constant.getValue())
+                      : nullptr;
+    return number && number.getValueAsDouble() == 0.0;
+  }
+
+  /// The op that may give `waveform` an imaginary part, or null when it has
+  /// none: a square with a constant imaginary amplitude of 0, a Gaussian,
+  /// flat-topped Gaussian, raised cosine, tanh ramp or samples, a DRAG pulse
+  /// with a constant beta of 0, and sums, differences, products, real
+  /// multiples and negations of those. A waveform that is not made by an op
+  /// here (a block argument, a select) is not known.
+  mlir::Operation *notKnownReal(mlir::Value waveform) {
+    mlir::Operation *def = waveform.getDefiningOp();
+    if (!def)
+      return waveform.getParentBlock()->getParentOp();
+    auto [known, added] = complexOf.try_emplace(def, nullptr);
+    if (!added)
+      return known->second;
+    mlir::Operation *found = def;
+    if (auto square = mlir::dyn_cast<pulse::SquarePulseOp>(def))
+      found = isZero(square.getAmpImag()) ? nullptr : def;
+    else if (mlir::isa<pulse::GaussianPulseOp, pulse::GaussianSquarePulseOp,
+                       pulse::CosinePulseOp, pulse::TanhRampOp,
+                       pulse::CustomSamplesOp>(def))
+      found = nullptr;
+    else if (auto drag = mlir::dyn_cast<pulse::DRAGPulseOp>(def))
+      found = isZero(drag.getBeta()) ? nullptr : def;
+    else if (mlir::isa<pulse::PulseAddOp, pulse::PulseSubOp, pulse::PulseMulOp>(
+                 def)) {
+      found = notKnownReal(def->getOperand(0));
+      if (!found)
+        found = notKnownReal(def->getOperand(1));
+    } else if (auto scale = mlir::dyn_cast<pulse::PulseScaleOp>(def))
+      found = mlir::isa<mlir::FloatType>(scale.getScale().getType())
+                  ? notKnownReal(scale.getPulse())
+                  : def;
+    else if (auto negated = mlir::dyn_cast<pulse::PulseNegOp>(def))
+      found = notKnownReal(negated.getPulse());
+    // The map may have grown: look the op up again.
+    complexOf[def] = found;
+    return found;
+  }
+
+  llvm::DenseMap<mlir::Operation *, mlir::Operation *> complexOf;
+
   void visitWaveform(mlir::Operation *op) {
     llvm::TypeSwitch<mlir::Operation *>(op)
         .Case<pulse::SquarePulseOp, pulse::CosinePulseOp, pulse::CustomOp>(
@@ -545,8 +612,20 @@ struct PulseVerifyPass
           for (mlir::Value arg : block.getArguments())
             checkLinear(arg, op);
       waveforms.visit(op);
-      if (!mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
+      if (!mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp,
+                     pulse::GetCouplingLineOp>(op))
         return;
+      if (mlir::isa<pulse::GetCouplingLineOp>(op) &&
+          op->getResult(0).use_empty()) {
+        auto diagnostic = mlir::emitWarning(op->getLoc())
+                          << "coupling line allocated but never used";
+        llvm::SmallVector<int64_t, 2> qudits = pulse::couplingQudits(op);
+        if (!llvm::is_contained(qudits, -1)) {
+          diagnostic << " (qudit" << (qudits.size() > 1 ? "s " : " ");
+          llvm::interleaveComma(qudits, diagnostic);
+          diagnostic << ")";
+        }
+      }
       if (op->getParentOfType<mlir::scf::ForOp>()) {
         op->emitError("a line cannot be acquired inside an scf.for; acquire "
                       "it before the loop and carry it through iter_args");

@@ -64,6 +64,41 @@ int64_t CustomSamplesOp::getDurationCycles() {
   return count;
 }
 
+LogicalResult GetCouplingLineOp::verify() {
+  auto qudits = getQudits();
+  if (qudits.empty())
+    return emitOpError("needs at least one qudit: the qudits whose control "
+                       "the line reaches");
+  for (unsigned i = 1, count = qudits.size(); i < count; ++i)
+    for (unsigned j = 0; j < i; ++j) {
+      Value a = qudits[i], b = qudits[j];
+      auto first = a.getDefiningOp<QuditAllocOp>();
+      auto second = b.getDefiningOp<QuditAllocOp>();
+      if (a == b || (first && second && first.getQudit() == second.getQudit()))
+        return emitOpError("names a qudit twice: a coupling line reaches each "
+                           "of its qudits once");
+    }
+  return success();
+}
+
+LogicalResult DriveOp::verify() {
+  // The form follows the line: a drive line plays at a tone and returns it,
+  // a coupling line plays at baseband and has none.
+  bool coupling = isa<CouplingLineType>(getLine().getType());
+  if (getUpdatedLine().getType() != getLine().getType())
+    return emitOpError("returns a ")
+           << getUpdatedLine().getType() << " for a " << getLine().getType();
+  if (coupling) {
+    if (getTone() || getUpdatedTone())
+      return emitOpError("on a coupling line takes no tone: a coupling line "
+                         "plays the waveform itself, at baseband");
+    return success();
+  }
+  if (!getTone() || !getUpdatedTone())
+    return emitOpError("on a drive line needs a tone, and returns it");
+  return success();
+}
+
 LogicalResult WaitOp::verify() {
   auto lowest = (*this)->getAttrOfType<IntegerAttr>("pulse.min_cycles");
   auto highest = (*this)->getAttrOfType<IntegerAttr>("pulse.max_cycles");
@@ -141,7 +176,8 @@ void IsSetOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
 /// The types AnyTimedType admits: lines, tones, measurements, and the
 /// classical dialect's links and call handles.
 static bool isTimedValueType(Type type) {
-  return isa<DriveLineType, ReadoutLineType, ToneType, MeasurementType>(type) ||
+  return isa<DriveLineType, ReadoutLineType, ToneType, MeasurementType,
+             CouplingLineType>(type) ||
          type.getDialect().getNamespace() == "classical";
 }
 

@@ -189,6 +189,8 @@ constexpr int kOpClassicalCompare = 39;
 constexpr int kOpVariableWait = 40;
 constexpr int kOpSelect = 41;
 constexpr int kOpMaxCycles = 42;
+constexpr int kOpAllocCoupling = 43;
+constexpr int kOpDriveCoupling = 44;
 // A payload length of 0xFF means the length is in the next word.
 constexpr int kExtendedPayload = 0xFF;
 
@@ -224,6 +226,42 @@ struct PackedValueError : std::invalid_argument {
 struct NotSupportedYet : std::runtime_error {
   using std::runtime_error::runtime_error;
 };
+
+/// What a program asks that is not available yet; UnsupportedError
+/// (cudaq_pulse) in Python.
+struct Unsupported : std::runtime_error {
+  using std::runtime_error::runtime_error;
+};
+
+/// The module attribute of a program that holds a coupling line, set where
+/// one is made (the packed decoder, the text parser), so that asking costs
+/// nothing per op.
+constexpr const char *kCouplingLinesAttr = "pulse.coupling_lines";
+
+/// Refuse a program that holds a coupling line where a controller's program
+/// is walked, for an export or a check of a controller's limits.
+inline void refuseCouplingLines(mlir::ModuleOp module) {
+  if (module->hasAttr(kCouplingLinesAttr)) [[unlikely]]
+    throw Unsupported(
+        "this program holds a coupling line; coupling lines are not exported "
+        "in formats /1 and /2 (cudaq-pulse.controller/1, "
+        "cudaq-pulse.controller/2 and cudaq-pulse.emulation/1), and a "
+        "controller's limits are not checked on them yet");
+}
+
+/// The qudit of a schedule event on the line `allocation` acquires: the
+/// line's qudit, of a coupling line the lowest of its qudits, or -1 for a
+/// qudit not bound yet.
+inline int64_t eventQudit(mlir::Operation *allocation) {
+  int64_t qudit = pulse::quditOf(allocation);
+  if (qudit < 0 && mlir::isa<pulse::GetCouplingLineOp>(allocation))
+      [[unlikely]] {
+    llvm::SmallVector<int64_t, 2> qudits = pulse::couplingQudits(allocation);
+    if (!llvm::is_contained(qudits, -1))
+      qudit = *llvm::min_element(qudits);
+  }
+  return qudit;
+}
 
 /// Refuse a readout whose mode the exports do not support yet: only iq.
 inline void requireExportedMode(mlir::Operation *op) {
@@ -503,8 +541,10 @@ inline bool madeFrom(mlir::Value value, mlir::Value given) {
   mlir::Operation *op = value.getDefiningOp();
   if (!op)
     return false;
+  // A drive on a coupling line has no tone operand.
   if (mlir::isa<pulse::DriveOp>(op))
-    return (op->getOperand(0) == given || op->getOperand(2) == given) &&
+    return (op->getOperand(0) == given ||
+            (op->getNumOperands() > 2 && op->getOperand(2) == given)) &&
            given.getType() == value.getType();
   if (!mlir::isa<pulse::ReadoutOp, pulse::WaitOp, pulse::ShiftPhaseOp,
                  pulse::IQAcquireOp, pulse::ShiftFrequencyOp, pulse::SetPhaseOp,
@@ -871,8 +911,8 @@ inline double i2f(int64_t bits) {
 /// only at run time: anything but a line, a tone or a link.
 static bool yieldsValue(mlir::Type type) {
   return !mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType,
-                    pulse::ToneType, pulse::QuditType, classical::LinkType>(
-      type);
+                    pulse::ToneType, pulse::QuditType, classical::LinkType,
+                    pulse::CouplingLineType>(type);
 }
 
 /// The native frequency of a runtime qudit's line stands in the arguments
@@ -902,7 +942,8 @@ struct SegmentWalk {
   explicit SegmentWalk(mlir::ModuleOp module)
       : names(ContextStore::names(module.getContext(), ownNames)) {
     module.walk([&](mlir::Operation *op) {
-      if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
+      if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp,
+                    pulse::GetCouplingLineOp>(op))
         lineIndex.try_emplace(op, static_cast<int64_t>(lineIndex.size()));
     });
   }
@@ -976,7 +1017,8 @@ struct SegmentWalk {
       return classical::intAttr(op, names.timeline);
     for (mlir::Value operand : op->getOperands())
       if (mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType,
-                    pulse::ToneType>(operand.getType())) {
+                    pulse::ToneType, pulse::CouplingLineType>(
+              operand.getType())) {
         mlir::Operation *allocation = trace(operand);
         return allocation ? classical::intAttr(allocation, names.timeline) : 0;
       }
@@ -2937,7 +2979,8 @@ struct SimulationProgram {
 
 static bool isThreadedType(mlir::Type type) {
   return mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType,
-                   pulse::ToneType, classical::LinkType>(type);
+                   pulse::ToneType, classical::LinkType,
+                   pulse::CouplingLineType>(type);
 }
 
 static bool isReadoutOp(mlir::Operation *op) {
@@ -3022,7 +3065,7 @@ simulationProgram(mlir::ModuleOp source) {
   for (int64_t i = 0; i < count; ++i) {
     mlir::Operation *op = program->ops[i];
     if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp,
-                  pulse::QuditAllocOp>(op) ||
+                  pulse::QuditAllocOp, pulse::GetCouplingLineOp>(op) ||
         op->getName().getStringRef() == "classical.get_link")
       program->roots.push_back(i);
     for (mlir::Value result : op->getResults()) {
@@ -3344,7 +3387,8 @@ public:
     std::lock_guard<std::recursive_mutex> guard(*lock_);
     llvm::DenseMap<mlir::Operation *, int64_t> lineIndex;
     module_->walk([&](mlir::Operation *op) {
-      if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
+      if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp,
+                    pulse::GetCouplingLineOp>(op))
         lineIndex.try_emplace(op, static_cast<int64_t>(lineIndex.size()));
     });
     std::vector<Event> result;
@@ -3358,7 +3402,7 @@ public:
           requireExportedMode(&op);
           mlir::Operation *allocation = trace(op.getOperand(0));
           int64_t line = allocation ? lineIndex.lookup(allocation) : -1;
-          int64_t qubit = allocation ? pulse::quditOf(allocation) : -1;
+          int64_t qubit = allocation ? eventQudit(allocation) : -1;
           result.emplace_back(op.getName().stripDialect().str(), line, qubit,
                               pulse::scheduledStart(&op, iteration),
                               pulse::scheduledDuration(&op));
@@ -3428,7 +3472,8 @@ public:
       return nb::cast(events());
     llvm::DenseMap<mlir::Operation *, int64_t> lineIndex;
     module_->walk([&](mlir::Operation *op) {
-      if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
+      if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp,
+                    pulse::GetCouplingLineOp>(op))
         lineIndex.try_emplace(op, static_cast<int64_t>(lineIndex.size()));
     });
     llvm::SmallVector<int64_t, 2> iteration;
@@ -3456,7 +3501,7 @@ public:
                     op)) {
               mlir::Operation *allocation = trace(op.getOperand(0));
               int64_t line = allocation ? lineIndex.lookup(allocation) : -1;
-              int64_t qubit = allocation ? pulse::quditOf(allocation) : -1;
+              int64_t qubit = allocation ? eventQudit(allocation) : -1;
               out.append(
                   node(op, op.getName().stripDialect().str(), line, qubit));
             } else if (mlir::isa<classical::SubmitOp, classical::WaitOp>(op)) {
@@ -3619,6 +3664,7 @@ public:
   void controllerEvents(ControllerEventWalk &walk,
                         std::vector<ControllerLine> &lines,
                         std::vector<int64_t> *slots) {
+    refuseCouplingLines(*module_);
     module_->walk([&](mlir::Operation *op) {
       if constexpr (RunTime)
         walk.scan(op);
@@ -3671,6 +3717,7 @@ public:
     ControllerEventWalk walk(ctx_.get(), clock(), /*track=*/true);
     walk.summarize = true;
     walk.unsynced = unsynced;
+    refuseCouplingLines(*module_);
     module_->walk([&](mlir::Operation *op) {
       if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
         walk.lineIndex.try_emplace(op,
@@ -3712,6 +3759,7 @@ public:
                       ControllerWaveforms *waveforms,
                       std::vector<int64_t> *slots = nullptr) {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
+    refuseCouplingLines(*module_);
     module_->walk([&](mlir::Operation *op) {
       if (walk.runTime)
         walk.scan(op);
@@ -4210,6 +4258,13 @@ public:
     SegmentWalk walk(*module_);
     walk.run(*module_->getBody(), [](mlir::Operation *, int64_t) {});
     return std::move(walk.boundaries);
+  }
+
+  /// segment_boundaries() for an export, which a program that holds a
+  /// coupling line is refused.
+  std::vector<SegmentWalk::Boundary> exported_segment_boundaries() {
+    refuseCouplingLines(*module_);
+    return segment_boundaries();
   }
 
   /// The segment of each event of `events()` (with `syncs`, of
@@ -6068,7 +6123,8 @@ private:
 
 bool isTimedPulseType(mlir::Type type) {
   return mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType,
-                   pulse::ToneType, pulse::MeasurementType>(type) ||
+                   pulse::ToneType, pulse::MeasurementType,
+                   pulse::CouplingLineType>(type) ||
          pulse::isClassicalType(type);
 }
 
@@ -6283,6 +6339,7 @@ public:
 
     auto driveTy = pulse::DriveLineType::get(ctx_.get());
     auto readoutTy = pulse::ReadoutLineType::get(ctx_.get());
+    auto couplingTy = pulse::CouplingLineType::get(ctx_.get());
     auto toneTy = pulse::ToneType::get(ctx_.get());
     auto wfTy = pulse::WaveformType::get(ctx_.get());
     auto durTy = pulse::DurationType::get(ctx_.get());
@@ -6760,7 +6817,8 @@ public:
           } else if (madeFrom(other, then)) {
             entry = then;
           } else if (mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType,
-                               pulse::ToneType>(then.getType())) {
+                               pulse::ToneType, pulse::CouplingLineType>(
+                         then.getType())) {
             mlir::Value a = enteringArm(then, region.body.get(), entered);
             mlir::Value b = enteringArm(other, region.elseBody.get(), entered);
             if (a != b && differentLines(then, region.body.get(), a, other,
@@ -6921,6 +6979,37 @@ public:
         }
         bind(p[1], grl.getLine());
         bind(p[2], grl.getTone());
+        break;
+      }
+
+      case kOpAllocCoupling: {
+        // (count, result, qudits...): the line of the control of the qudits.
+        if (plen < 3 || p[0] < 1 || p[0] + 2 != plen)
+          throw std::invalid_argument("packed: malformed coupling line");
+        llvm::SmallVector<mlir::Value, 2> qudits;
+        for (int64_t j = 0; j < p[0]; ++j)
+          qudits.push_back(getQubit(p[2 + j]));
+        auto line = pulse::GetCouplingLineOp::create(*builder_, loc, couplingTy,
+                                                     qudits);
+        module->setAttr(kCouplingLinesAttr, builder_->getUnitAttr());
+        bind(p[1], line.getLine());
+        break;
+      }
+
+      case kOpDriveCoupling: {
+        // (line, waveform, result, start, duration): a drive with no tone.
+        requirePayload(5);
+        if (!mlir::isa<pulse::CouplingLineType>(look(p[0]).getType()))
+          throw std::invalid_argument("packed: a drive with no tone plays on "
+                                      "a coupling line");
+        auto driveOp = pulse::DriveOp::create(
+            *builder_, loc, couplingTy, mlir::Type(), look(p[0]), look(p[1]),
+            mlir::Value(),
+            p[3] != -1 ? std::optional<int64_t>(p[3]) : std::nullopt,
+            p[4] != -1 ? std::optional<int64_t>(p[4]) : std::nullopt,
+            /*period_cycles=*/{});
+        bind(p[2], driveOp.getUpdatedLine());
+        lengthen(waveformCycles(driveOp.getPulse()), cur);
         break;
       }
 
@@ -7249,8 +7338,9 @@ public:
         for (int64_t j = 0; j < n; ++j) {
           inVals.push_back(look(p[1 + 3 * j]));
           int64_t vtype = p[3 + 3 * j];
-          outTypes.push_back(vtype == 1 ? mlir::Type(readoutTy)
-                                        : mlir::Type(driveTy));
+          outTypes.push_back(vtype == 1   ? mlir::Type(readoutTy)
+                             : vtype == 2 ? mlir::Type(couplingTy)
+                                          : mlir::Type(driveTy));
         }
         if (n == 2) {
           if (inVals[0] == inVals[1]) [[unlikely]]
@@ -7789,6 +7879,11 @@ public:
     ctx->loadAllAvailableDialects();
     auto module =
         parseModule(mlir_text, ctx.get(), "Failed to parse MLIR text");
+    // A text that holds a coupling line, which names its type wherever one
+    // is fetched, carried or played on, makes a module that says so, as the
+    // packed decoder's does.
+    if (mlir_text.find("pulse.coupling_line") != std::string::npos)
+      (*module)->setAttr(kCouplingLinesAttr, mlir::UnitAttr::get(ctx.get()));
     return PulseModule(ctx, std::move(module));
   }
 
@@ -7888,17 +7983,21 @@ NB_MODULE(_cudaq_pulse_native, m) {
       "message and the word offset of the record that holds it.",
       PyExc_ValueError, nullptr);
   m.attr("PackedValueError") = nb::handle(packedValueError);
-  nb::register_exception_translator(
-      [](const std::exception_ptr &error, void *) {
-        try {
-          std::rethrow_exception(error);
-        } catch (const PackedValueError &e) {
-          nb::object args = nb::make_tuple(e.what(), e.word);
-          PyErr_SetObject(packedValueError, args.ptr());
-        } catch (const NotSupportedYet &e) {
-          PyErr_SetString(PyExc_NotImplementedError, e.what());
-        }
-      });
+  nb::register_exception_translator([](const std::exception_ptr &error,
+                                       void *) {
+    try {
+      std::rethrow_exception(error);
+    } catch (const PackedValueError &e) {
+      nb::object args = nb::make_tuple(e.what(), e.word);
+      PyErr_SetObject(packedValueError, args.ptr());
+    } catch (const NotSupportedYet &e) {
+      PyErr_SetString(PyExc_NotImplementedError, e.what());
+    } catch (const Unsupported &e) {
+      nb::object raised =
+          nb::module_::import_("cudaq_pulse._errors").attr("UnsupportedError");
+      PyErr_SetString(raised.ptr(), e.what());
+    }
+  });
 
   nb::class_<PulseModule>(m, "PulseModule")
       .def("print", &PulseModule::print,
@@ -8022,6 +8121,10 @@ NB_MODULE(_cudaq_pulse_native, m) {
            "This module with unbound answers set to zero")
       .def("segment_boundaries", &PulseModule::segment_boundaries,
            "The variable and blocking waits that start new segments")
+      .def("exported_segment_boundaries",
+           &PulseModule::exported_segment_boundaries,
+           "segment_boundaries() for an export: a program that holds a "
+           "coupling line is refused")
       .def("event_segments", &PulseModule::event_segments, nb::arg("syncs"),
            "The segment of each event, in the order the events are listed")
       .def("classical_calls", &PulseModule::classical_calls,

@@ -138,6 +138,30 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   building the system, its fingerprint, its pickles and its system file
   are what they were. System files keep the components a system is given.
   Nothing compiles, schedules, exports or simulates differently.
+- **Coupling lines in a kernel.** `get_coupling_line(*qudits)` fetches the
+  line of a control of the quantum system, of one qudit the line that tunes
+  it and of two the control of their coupling, and `drive(line, waveform)`
+  plays a real waveform on it at baseband, with no tone:
+  `drive(get_coupling_line(a), square(60 * pulse.ns, amplitude))`. The
+  amplitude is what the control receives (flux quanta from the idle point
+  for a `FluxTuning`), signed. `wait` and `sync` take the line, and every
+  schedule (`asap`, `alap`, `rcp`, `alap_rcp`) treats it as a line of its
+  own, in rolled loops and measurement-conditioned branches too. The line
+  must exist: the quantum system declares the control of exactly those
+  qudits (a qudit's `tuning`, a coupling's `control`), and a control
+  system, when one is given, has a `CouplingLine` that acts on exactly
+  them; the error names what is missing and the lines that reach the
+  qudits. In the IR
+  it is a `!pulse.coupling_line` from `pulse.get_coupling_line`, and
+  `pulse.drive` on it has no tone operand; `pulse-verify` refuses a
+  waveform that may have an imaginary part. A tone on it, `line.tone`, a
+  frame op or a readout on it are errors that say so. Not yet: the
+  exports (`export_to_controller` and `export_to_emulator` raise
+  `UnsupportedError` for a program that holds a coupling line), a
+  controller's limits on it (compiling such a program for a control system
+  raises the same error), its simulation, and the calibrated gate of a
+  coupling as one call. Programs without coupling lines compile, schedule
+  and export as before.
 - **Coupling lines of a controller.** `Controller(coupling_lines=[...])`
   lists the outputs that play a baseband waveform on a control of the
   quantum system, each a `cudaq_pulse.controller.CouplingLine` named by the
