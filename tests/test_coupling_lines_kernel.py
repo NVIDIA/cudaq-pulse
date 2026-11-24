@@ -699,16 +699,35 @@ def test_what_scheduling_does_not_do_yet_is_refused():
             pulse.Controller(drive_lines=[2, 3], readout_lines=[2, 3]),
         ]
     )
-    with pytest.raises(pulse.UnsupportedError, match="several controllers"):
-        pulse.compile(tuned, quantum_system=QS, control_system=several).lower(A)
+    # Several controllers with no coupling line among them: none acts on the qudit.
+    message = _raises(pulse.compile(tuned, quantum_system=QS, control_system=several), A)
+    assert "no coupling line of the control system acts on exactly qudit 0" in message
+    # With one, and with a delay on it, the program is scheduled; what the
+    # controllers' limits say of it is not checked yet, and it says so.
+    wired = pulse.ControlSystem(
+        controllers=[
+            pulse.Controller(drive_lines=[0, 1], readout_lines=[0, 1]),
+            pulse.Controller(drive_lines=[2, 3], readout_lines=[2, 3]).with_coupling_lines(
+                [CouplingLine(0, delay_ns=2.0)]
+            ),
+        ]
+    )
+    with pytest.raises(pulse.UnsupportedError, match="limits are not checked on them yet"):
+        pulse.compile(tuned, quantum_system=QS, control_system=wired).lower(A)
     # A control system with no coupling line has none that acts on the qudit.
     plain = pulse.ControlSystem(controllers=[pulse.Controller()])
     message = _raises(pulse.compile(tuned, quantum_system=QS, control_system=plain), A)
     assert "no coupling line of the control system acts on exactly qudit 0" in message
     assert ".with_coupling_lines([CouplingLine(0)])" in message
     delayed = pulse.Controller().with_coupling_lines([CouplingLine(0, delay_ns=2.0)])
-    with pytest.raises(pulse.UnsupportedError, match=r"the delay of CouplingLine\(0, delay_ns"):
+    with pytest.raises(pulse.UnsupportedError, match="limits are not checked on them yet"):
         pulse.compile(tuned, quantum_system=QS, control_system=delayed).lower(A)
+    # A delay that is not whole timesteps of its controller, which has no fine delay.
+    uneven = pulse.Controller().with_coupling_lines([CouplingLine(0, delay_ns=2.2)])
+    with pytest.raises(
+        pulse.InvalidValueError, match=r"CouplingLine\(0, delay_ns=2.2\) is delayed"
+    ):
+        pulse.compile(tuned, quantum_system=QS, control_system=uneven).lower(A)
 
 
 def test_the_tracing_module_loads_only_for_a_kernel_with_a_coupling_line():

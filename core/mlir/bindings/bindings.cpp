@@ -7537,9 +7537,12 @@ public:
         if constexpr (!Coupled) {
           throw HoldsCouplingLine{};
         } else {
-          // (count, result, qudits...): the line of the control of the
-          // qudits.
-          if (plen < 3 || p[0] < 1 || p[0] + 2 != plen)
+          // (count, result, qudits...[, controller, delay_cycles]): the
+          // line of the control of the qudits, and what the control system
+          // says of it (the controller that drives it among several, -1
+          // for none; its delay in program cycles).
+          bool facts = plen >= 5 && p[0] + 4 == plen;
+          if (plen < 3 || p[0] < 1 || !(p[0] + 2 == plen || facts))
             throw std::invalid_argument("packed: malformed coupling line");
           llvm::SmallVector<mlir::Value, 2> qudits;
           for (int64_t j = 0; j < p[0]; ++j)
@@ -7548,6 +7551,14 @@ public:
           module->setAttr(kCouplingLinesAttr, builder_->getUnitAttr());
           auto line = pulse::GetCouplingLineOp::create(
               *builder_, loc, pulse::CouplingLineType::get(ctx_.get()), qudits);
+          if (facts) {
+            mlir::Type i64 = builder_->getI64Type();
+            if (int64_t controller = p[2 + p[0]]; controller >= 0)
+              line->setAttr("controller",
+                            mlir::IntegerAttr::get(i64, controller));
+            if (int64_t delay = p[3 + p[0]]; delay != 0)
+              line->setAttr("delay_cycles", mlir::IntegerAttr::get(i64, delay));
+          }
           bind(p[1], line.getLine());
         }
         break;
