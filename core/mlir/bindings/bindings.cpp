@@ -275,10 +275,12 @@ LLVM_ATTRIBUTE_NOINLINE __attribute__((cold)) inline void
 refuseCouplingLines(mlir::ModuleOp module) {
   if (holdsCouplingLine(module)) [[unlikely]]
     throw Unsupported(
-        "this program holds a coupling line; coupling lines are not exported "
-        "in formats /1 and /2 (cudaq-pulse.controller/1, "
-        "cudaq-pulse.controller/2 and cudaq-pulse.emulation/1), and a "
-        "controller's limits are not checked on them yet");
+        "this program holds a coupling line, which compiles and simulates "
+        "without a control system only: a controller's limits are not "
+        "checked on a coupling line and it is not exported yet (both await "
+        "a later program format, not cudaq-pulse.controller/1, "
+        "cudaq-pulse.controller/2 or cudaq-pulse.emulation/1). Simulate "
+        "it; to compile it, use a quantum system with no control system");
 }
 
 /// Refuse a program that holds a coupling line where it is simulated or

@@ -384,7 +384,7 @@ def test_exports_refuse_a_program_that_holds_a_coupling_line():
         with pytest.raises(pulse.UnsupportedError) as raised:
             export()
         message = str(raised.value)
-        assert "coupling lines are not exported in formats /1 and /2" in message
+        assert "it is not exported yet" in message and "with no control system" in message
         assert "cudaq-pulse.controller/1" in message and "cudaq-pulse.emulation/1" in message
 
     @pulse.kernel
@@ -398,11 +398,13 @@ def test_exports_refuse_a_program_that_holds_a_coupling_line():
 
 def test_a_check_of_limits_refuses_it_and_the_program_pickles():
     lowered = detune.lower(A, D, 0.31)
-    with pytest.raises(pulse.UnsupportedError, match="limits are not checked on them yet"):
+    with pytest.raises(
+        pulse.UnsupportedError, match="compiles and simulates without a control system only"
+    ):
         pulse.controller.check(lowered, pulse.Controller(min_pulse_cycles=4))
     back = pickle.loads(pickle.dumps(lowered))
     assert _events(back) == _events(lowered) and "pulse.coupling_lines" in back.mlir()
-    with pytest.raises(pulse.UnsupportedError, match="formats /1 and /2"):
+    with pytest.raises(pulse.UnsupportedError, match="it is not exported yet"):
         back.export_to_controller()
 
 
@@ -690,7 +692,9 @@ def test_a_line_the_control_system_does_not_have_is_refused():
     assert "the coupling lines that reach it are CouplingLine((0, 1))" in message
     # A line the controller has: what a controller's limits say of it is
     # not checked yet, so the program is refused for now, and says so.
-    with pytest.raises(pulse.UnsupportedError, match="limits are not checked on them yet"):
+    with pytest.raises(
+        pulse.UnsupportedError, match="compiles and simulates without a control system only"
+    ):
         tuned.lower(qs.qudits[0])
 
 
@@ -714,7 +718,9 @@ def test_what_scheduling_does_not_do_yet_is_refused():
             ),
         ]
     )
-    with pytest.raises(pulse.UnsupportedError, match="limits are not checked on them yet"):
+    with pytest.raises(
+        pulse.UnsupportedError, match="compiles and simulates without a control system only"
+    ):
         pulse.compile(tuned, quantum_system=QS, control_system=wired).lower(A)
     # A control system with no coupling line has none that acts on the qudit.
     plain = pulse.ControlSystem(controllers=[pulse.Controller()])
@@ -722,7 +728,9 @@ def test_what_scheduling_does_not_do_yet_is_refused():
     assert "no coupling line of the control system acts on exactly qudit 0" in message
     assert ".with_coupling_lines([CouplingLine(0)])" in message
     delayed = pulse.Controller().with_coupling_lines([CouplingLine(0, delay_ns=2.0)])
-    with pytest.raises(pulse.UnsupportedError, match="limits are not checked on them yet"):
+    with pytest.raises(
+        pulse.UnsupportedError, match="compiles and simulates without a control system only"
+    ):
         pulse.compile(tuned, quantum_system=QS, control_system=delayed).lower(A)
     # A delay that is not whole timesteps of its controller, which has no fine delay.
     uneven = pulse.Controller().with_coupling_lines([CouplingLine(0, delay_ns=2.2)])
