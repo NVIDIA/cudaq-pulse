@@ -5,7 +5,7 @@ another compiler built, as a compiled program."""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -39,6 +39,7 @@ def load(
     qudits: Sequence[Qudit],
     control_system: ControlSystem | Controller | None = None,
     classical: Sequence[Any] = (),
+    links: Mapping[int | str, str] | None = None,
 ) -> ScheduledKernel:
     """The compiled program of *entry*, a scheduled function of *module*.
 
@@ -65,7 +66,13 @@ def load(
     (``pulse.classical``) for them, by name: each must take and give what the
     module states, with its latency mode and submit policy, and its latency
     and implementation replace the module's. The links are the control
-    system's, by the link id the module states. A schedule that takes an
+    system's: the module names each link its calls travel on
+    (``classical.links``), and *links* gives the control system's name for a
+    link the module names otherwise or only numbers
+    (``links={"host": "nvqlink"}``). The dispatch keys are the control
+    system's too, as for ``compile``: a key a controller fixes for a function
+    replaces the module's, and a reserved key or two functions on one link
+    and key are refused. A schedule that takes an
     answer before the latency and the link allow, or gives a submission
     less time than the link takes, is refused.
 
@@ -149,9 +156,19 @@ def load(
     except (RuntimeError, ValueError) as error:
         raise CompilationError(_first_line(error), code="wrong_argument") from None
     given = _given_functions(classical, declared)
-    # The module states the classical functions it calls: their schema,
-    # latency, link and dispatch key.
+    try:
+        devices = _target_links(
+            sorted({row[2] for row in declared}), builder.load_link_names(text), links, machine
+        )
+    except RuntimeError as error:
+        if isinstance(error, CompilationError):
+            raise
+        raise CompilationError(_first_line(error), code="wrong_argument") from None
+    declared = [(*row[:2], devices[row[2]], *row[3:]) for row in declared]
+    # The module states the classical functions it calls: their schema and
+    # latency. Their links and dispatch keys are the control system's.
     stated = [_stated_function(*row, given.get(row[0])) for row in declared]
+    routes = _target_keys(stated, machine)
     try:
         generic: Any = builder.load_function(
             text,
@@ -162,6 +179,8 @@ def load(
                 name: (fn.min_latency_ns, fn.nominal_latency_ns, fn.max_latency_ns)
                 for name, (fn, _) in given.items()
             },
+            {function.name: route[1] for function, route in zip(stated, routes, strict=True)},
+            devices,
         )
         _, frequencies, readouts = target._frequency_tables(max(carriers) + 1)
         bound = generic.place_carriers(carriers, frequencies, readouts)
@@ -170,12 +189,12 @@ def load(
         raise CompilationError(_first_line(error), code="wrong_argument") from None
     if declared:
         # The links the calls travel on are the control system's.
-        links = [row[2] for row in declared]
+        used = [row[2] for row in declared]
         system = machine._system
         bound.set_attributes(
-            machine.links_attribute(links)
+            machine.links_attribute(used)
             if system is None or machine.controller is not None
-            else system._links_attribute(machine, links, target.clock_ghz)
+            else system._links_attribute(machine, used, target.clock_ghz)
         )
     clocks = _clocked_builder(_NoTrace(), machine, target)
     fine_delays = _clocked_module(bound, machine, target, clocks, None)
@@ -206,11 +225,99 @@ def load(
     )
     if stated:
         called = _ClassicalFunctions(stated)
-        called.routes = [(row[2], row[1], None) for row in declared]
+        called.routes = routes
         program.classical = called
     program = _check_controller(program)
     program.metrics.op_count = len(program.schedule)
     return program
+
+
+def _target_links(
+    used: Sequence[int],
+    named: Mapping[int, str],
+    given: Mapping[int | str, str] | None,
+    machine: Any,
+) -> dict[int, int]:
+    """Per link id the module's classical functions state, the id of that
+    link on the control system: the link of the name the module gives it,
+    or of the name ``load(links=)`` gives for that name or id."""
+    from ._errors import CompilationError, InvalidTypeError, InvalidValueError
+
+    given = dict(given or {})
+    for key, name in given.items():
+        if isinstance(key, bool) or not isinstance(key, (int, str)) or not isinstance(name, str):
+            raise InvalidTypeError(
+                "load(links=) maps a link's name or id in the module to the name of a "
+                f"link of the control system, got {key!r}: {name!r}"
+            )
+    known = ", ".join(repr(name) for name in machine.link_names) or "none"
+    out: dict[int, int] = {}
+    taken: set[int | str] = set()
+    for link in used:
+        stated = named.get(link)
+        found: str | None = stated
+        keys: tuple[int | str, ...] = (link,) if stated is None else (stated, link)
+        for key in keys:
+            if key in given:
+                found = given[key]
+                taken.add(key)
+                break
+        if found is None:
+            raise CompilationError(
+                f"load: the module does not name its link {link}; name it in the module's "
+                f"classical.links, or give load(links={{{link}: ...}}) the control system's "
+                f"link (its links: {known})",
+                code="control_system",
+            )
+        if found not in machine.link_names:
+            raise CompilationError(
+                f"load: the module's calls travel on the link {found!r}, and the control "
+                f"system has no link of that name (its links: {known})",
+                code="control_system",
+            )
+        out[link] = machine.link_names[found]
+    unused = [key for key in given if key not in taken]
+    if unused:
+        raise InvalidValueError(
+            f"load(links=) names {unused[0]!r}, which is not a link the module's calls travel on"
+        )
+    return out
+
+
+def _target_keys(functions: Sequence[Any], machine: Any) -> list[tuple[int, int, str | None]]:
+    """Per classical function of a loaded module, its link id, dispatch key
+    and what fixes the key, by the rules ``compile`` applies: a controller
+    that fixes the function's key gives it, a key reserved for decoder
+    messages is refused, and so are two functions on one link and key."""
+    from ._errors import CompilationError
+    from .classical import _RESERVED_KEYS
+    from .compiler import _dispatch_tables
+    from .kernel.packed_ir_builder import _collision, _fixed_key
+
+    tables = (
+        _dispatch_tables(machine)
+        if machine.controller is not None or machine._system is not None
+        else {}
+    )
+    routes: list[tuple[int, int, str | None]] = []
+    seen: dict[tuple[int, int], Any] = {}
+    for function in functions:
+        key, fixed_by = function._dispatch_key, None
+        table = tables.get(function.link)
+        if table is not None:
+            key, fixed_by = _fixed_key(function, table)
+        if key in _RESERVED_KEYS:
+            raise CompilationError(
+                f"{function.name} is dispatch key {key:#x}, which {_RESERVED_KEYS[key]} uses"
+                " for its decoder messages; rename it",
+                code="control_system",
+            )
+        other = seen.get((function.link, key))
+        if other is not None:
+            raise CompilationError(_collision(other, function, key), code="control_system")
+        seen[function.link, key] = function
+        routes.append((function.link, key, fixed_by))
+    return routes
 
 
 def _first_line(error: BaseException) -> str:
@@ -293,6 +400,8 @@ def _stated_function(
 ) -> Any:
     """The classical function a module declares; with *given*, the function
     declared for it, its implementation and latency."""
+    import re
+
     from ._errors import CompilationError, PulseError
     from .classical import ClassicalFunction
 
@@ -327,6 +436,8 @@ def _stated_function(
     else:
         function.args = tuple(_stated_type(spelled, name) for spelled in args)
         function.results = tuple(_stated_type(spelled, name) for spelled in results)
+        # A version of a function of several lengths is named after it.
+        function.base_name = re.sub(r"__i?\d+$", "", name)
     return function
 
 

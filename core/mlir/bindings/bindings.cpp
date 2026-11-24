@@ -7773,6 +7773,28 @@ public:
     }
   }
 
+  /// The name the module gives each link it states (`classical.links`), by
+  /// link id; a link without a name is absent.
+  std::map<int64_t, std::string> load_link_names(const std::string &text) {
+    std::lock_guard<std::mutex> guard(lock_);
+    auto source = parseModule(text, ctx_.get(), "load: cannot read the module");
+    std::map<int64_t, std::string> out;
+    auto links = source->getOperation()->getAttrOfType<mlir::DictionaryAttr>(
+        "classical.links");
+    if (!links)
+      return out;
+    for (mlir::NamedAttribute entry : links) {
+      int64_t id = 0;
+      auto facts = mlir::dyn_cast<mlir::DictionaryAttr>(entry.getValue());
+      if (!facts || entry.getName().getValue().getAsInteger(10, id))
+        continue;
+      if (auto name = facts.getAs<mlir::StringAttr>("name"))
+        if (!name.getValue().empty())
+          out[id] = name.getValue().str();
+    }
+    return out;
+  }
+
   using LoadedCallable =
       std::tuple<std::string, int64_t, int64_t, std::vector<std::string>,
                  std::vector<std::string>, std::array<double, 3>, std::string,
@@ -7812,7 +7834,9 @@ public:
   PulseModule
   load_function(const std::string &text, const std::string &entry,
                 double clock_ghz, int64_t qudits,
-                const std::map<std::string, std::array<double, 3>> &latencies) {
+                const std::map<std::string, std::array<double, 3>> &latencies,
+                const std::map<std::string, int64_t> &keys,
+                const std::map<int64_t, int64_t> &devices) {
     std::lock_guard<std::mutex> guard(lock_);
     SharedContextPool::charge(ctx_.get(),
                               static_cast<int64_t>(text.size() / 8));
@@ -7892,11 +7916,33 @@ public:
           callable->setAttr("latency_max_ns",
                             builder_->getF64FloatAttr(given->second[2]));
         }
+        // The control system's key for the function, and its id for the
+        // link the function travels on, replace the module's.
+        auto key = keys.find(stated.getSymName().str());
+        if (key != keys.end() &&
+            key->second != static_cast<int64_t>(stated.getDispatchKey())) {
+          callable->setAttr("dispatch_key",
+                            builder_->getI64IntegerAttr(key->second));
+          callable->setAttr("dispatch_key_override", builder_->getUnitAttr());
+        }
+        auto device = devices.find(static_cast<int64_t>(stated.getDevice()));
+        if (device != devices.end())
+          callable->setAttr("device",
+                            builder_->getI64IntegerAttr(device->second));
         module->push_back(callable);
       }
     auto main = mlir::cast<mlir::func::FuncOp>(found->clone());
     module->push_back(main);
     writeCallsInPlace(*source, main, entry);
+    main.walk([&](mlir::Operation *op) {
+      if (op->getName().getStringRef() != "classical.get_link")
+        return;
+      if (auto stated = op->getAttrOfType<mlir::IntegerAttr>("device")) {
+        auto device = devices.find(stated.getInt());
+        if (device != devices.end())
+          op->setAttr("device", builder_->getI64IntegerAttr(device->second));
+      }
+    });
     mlir::NamedAttrList kept;
     for (mlir::NamedAttribute attribute : main->getAttrs()) {
       llvm::StringRef name = attribute.getName().getValue();
@@ -8504,6 +8550,15 @@ NB_MODULE(_cudaq_pulse_native, m) {
           nb::arg("module"), nb::arg("source"), nb::arg("run_time"),
           nb::arg("rewrites"))
       .def(
+          "load_link_names",
+          [](PulseModuleBuilder &self, nb::bytes module) {
+            std::string text(module.c_str(), module.size());
+            nb::gil_scoped_release release;
+            return self.load_link_names(text);
+          },
+          "The names a module (assembly or bytecode) gives its links, by id",
+          nb::arg("module"))
+      .def(
           "load_callables",
           [](PulseModuleBuilder &self, nb::bytes module) {
             std::string text(module.c_str(), module.size());
@@ -8516,18 +8571,21 @@ NB_MODULE(_cudaq_pulse_native, m) {
           "load_function",
           [](PulseModuleBuilder &self, nb::bytes module,
              const std::string &entry, double clock_ghz, int64_t qudits,
-             const std::map<std::string, std::array<double, 3>> &latencies) {
+             const std::map<std::string, std::array<double, 3>> &latencies,
+             const std::map<std::string, int64_t> &keys,
+             const std::map<int64_t, int64_t> &devices) {
             std::string text(module.c_str(), module.size());
             nb::gil_scoped_release release;
-            return self.load_function(text, entry, clock_ghz, qudits,
-                                      latencies);
+            return self.load_function(text, entry, clock_ghz, qudits, latencies,
+                                      keys, devices);
           },
           "The scheduled function `entry` of a module (assembly or bytecode) "
           "as a module whose main takes the function's qudits as slots",
           nb::arg("module"), nb::arg("entry"), nb::arg("clock_ghz"),
           nb::arg("qudits"),
-          nb::arg("latencies") =
-              std::map<std::string, std::array<double, 3>>());
+          nb::arg("latencies") = std::map<std::string, std::array<double, 3>>(),
+          nb::arg("keys") = std::map<std::string, int64_t>(),
+          nb::arg("devices") = std::map<int64_t, int64_t>());
 
   m.def(
       "build_stamp", [] { return std::string(cudaqPulseBuildStamp); },

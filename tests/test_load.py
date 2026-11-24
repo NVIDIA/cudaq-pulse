@@ -274,8 +274,14 @@ def _as_written(system, machine):
         "func.func @main(" + ", ".join(f"{n}: !pulse.qudit" for n in names) + ")",
     )
     text = re.sub(r" \{frequency_hz = [^}]*\}", "", text)
-    text = re.sub(r"classical\.links = \{.*?\}\}, ", "", text, count=1)
-    assert "classical.links" not in text and "classical.callable" in text
+    # Of its link, the module states the name: the link's cost is the target's.
+    text = re.sub(
+        r"classical\.links = \{.*?\}\}, ",
+        'classical.links = {"0" = {name = "host"}}, ',
+        text,
+        count=1,
+    )
+    assert text.count("classical.links") == 1 and "classical.callable" in text
     return native, text
 
 
@@ -463,3 +469,106 @@ def test_a_function_is_given_for_its_versions_only():
     lazy = version[:7] + ("lazy",) + version[8:]
     with pytest.raises(pulse.CompilationError, match="submit policy"):
         _given_functions([decide], [lazy])
+
+
+# ── Links and dispatch keys are the control system's ─────────────────────────
+
+
+def _host(**link):
+    from cudaq_pulse.classical import Link
+
+    return Link(**(link or {"fixed_ns": 50, "feedback_ns": 100}))
+
+
+def _written(system):
+    machine = _links()
+    native, text = _as_written(system, machine)
+    return native, text, [system.qudits[0], system.qudits[2]]
+
+
+def test_a_link_is_found_by_its_name_not_its_number(system):
+    native, text, qudits = _written(system)
+    from cudaq_pulse.classical import Link
+
+    moved = pulse.ControlSystem(links={"fast": Link(), "host": _host()})
+    loaded = pulse.load(text, entry="main", qudits=qudits, control_system=moved)
+    exported = loaded.export_to_controller()
+    assert [link["name"] for link in exported["links"].values()] == ["host"]
+    assert list(exported["links"]) == ["1"]
+    assert [c["due_cycles"] for c in exported["calls"]] == [
+        c["due_cycles"] for c in native.export_to_controller()["calls"]
+    ]
+
+
+def test_a_link_the_control_system_does_not_have_is_refused(system):
+    _, text, qudits = _written(system)
+    with pytest.raises(pulse.CompilationError, match="no link of that name") as none:
+        pulse.load(text, entry="main", qudits=qudits)
+    assert none.value.code == "control_system"
+    other = pulse.ControlSystem(links={"nvqlink": _host()})
+    with pytest.raises(pulse.CompilationError, match=r"link 'host'.*its links: 'nvqlink'"):
+        pulse.load(text, entry="main", qudits=qudits, control_system=other)
+
+
+@pytest.mark.parametrize("key", ["host", 0])
+def test_links_gives_the_control_systems_name(system, key):
+    native, text, qudits = _written(system)
+    other = pulse.ControlSystem(links={"nvqlink": _host()})
+    loaded = pulse.load(
+        text, entry="main", qudits=qudits, control_system=other, links={key: "nvqlink"}
+    )
+    exported = loaded.export_to_controller()
+    assert [link["name"] for link in exported["links"].values()] == ["nvqlink"]
+    assert [
+        (c["submit_cycles"], c["due_cycles"], c["taken_cycles"]) for c in exported["calls"]
+    ] == [
+        (c["submit_cycles"], c["due_cycles"], c["taken_cycles"])
+        for c in native.export_to_controller()["calls"]
+    ]
+
+
+def test_links_is_checked(system):
+    _, text, qudits = _written(system)
+    machine = _links()
+    with pytest.raises(pulse.InvalidValueError, match="'other', which is not a link"):
+        pulse.load(
+            text, entry="main", qudits=qudits, control_system=machine, links={"other": "host"}
+        )
+    with pytest.raises(pulse.InvalidTypeError, match="maps a link's name or id"):
+        pulse.load(text, entry="main", qudits=qudits, control_system=machine, links={"host": 0})
+    unnamed = text.replace('classical.links = {"0" = {name = "host"}}, ', "")
+    assert unnamed != text
+    with pytest.raises(pulse.CompilationError, match="does not name its link 0"):
+        pulse.load(unnamed, entry="main", qudits=qudits, control_system=machine)
+    assert pulse.load(
+        unnamed, entry="main", qudits=qudits, control_system=machine, links={0: "host"}
+    ).classical
+
+
+def test_a_controller_that_fixes_a_key_gives_it(system):
+    _, text, qudits = _written(system)
+    keys = pulse.Processor(links=["host"], dispatch_keys={"decide": 0x1234})
+    fixed = pulse.ControlSystem(
+        controllers=[pulse.Controller(processors=[keys])], links={"host": _host()}
+    )
+    function = pulse.load(
+        text, entry="main", qudits=qudits, control_system=fixed
+    ).export_to_controller()["manifest"]["functions"][0]
+    assert function["dispatch_key"] == 0x1234
+    assert "processors[0]" in function["dispatch_key_fixed_by"]
+    unlisted = pulse.Processor(links=["host"], dispatch_keys={"other": 5})
+    system_of = pulse.ControlSystem(
+        controllers=[pulse.Controller(processors=[unlisted])], links={"host": _host()}
+    )
+    with pytest.raises(pulse.CompilationError, match="dispatch_keys have no 'decide'"):
+        pulse.load(text, entry="main", qudits=qudits, control_system=system_of)
+
+
+def test_a_reserved_dispatch_key_is_refused(system):
+    _, text, qudits = _written(system)
+    found = re.search(r"dispatch_key = (\d+) : i64", text)
+    reserved = text.replace(
+        found.group(0), f"dispatch_key = {0x7ED8BE82} : i64, dispatch_key_override"
+    )
+    with pytest.raises(pulse.CompilationError, match="0x7ed8be82.*rename it"):
+        pulse.load(reserved, entry="main", qudits=qudits, control_system=_links())

@@ -319,9 +319,15 @@ A loaded function may hold loops, branches on measurements and calls of
 classical functions (:doc:`classical_calls`). The classical functions are the
 module's ``classical.callable`` declarations: their types, latency, link and
 dispatch key are enough to export the program. The links are the control
-system's, by the link id the module states; an answer taken before the
-latency and the link allow is refused, and so is a submission given less
-time than the link takes. ``classical=`` gives functions declared with
+system's: the module names each link its calls travel on (``name`` in its
+``classical.links``), and ``links=`` gives the control system's name for a
+link the module names otherwise, or only numbers
+(``links={"host": "nvqlink"}``, ``links={0: "nvqlink"}``). A link the control
+system does not have is refused. An answer taken before the latency and the
+link allow is refused, and so is a submission given less time than the link
+takes. The dispatch keys are the control system's too, as for ``compile``: a
+key a controller fixes for a function replaces the module's, and a reserved
+key or two functions on one link and key are refused. ``classical=`` gives functions declared with
 ``pulse.classical`` for the module's, by name. Each must take and give what
 the module states, with its latency mode and submit policy, and its latency
 and implementation replace the module's:

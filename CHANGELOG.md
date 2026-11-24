@@ -216,8 +216,10 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   `qudits` gives the qudit of each argument and the lines
   get that quantum system's frequencies. A loaded function may hold loops,
   branches and calls of classical functions: these are read from the module's
-  `classical.callable` declarations, travel on the control system's links and
-  are checked against their latencies, and `classical=` gives declared
+  `classical.callable` declarations, travel on the control system's links
+  (found by the name the module gives them, or by `links=`), take the
+  control system's dispatch keys as for `compile`, and are checked against
+  their latencies, and `classical=` gives declared
   functions for them, whose types must agree and whose latency and
   implementation replace the module's. A call of another function of the
   module that states its start (`pulse.start_cycles`, provisional) is written
