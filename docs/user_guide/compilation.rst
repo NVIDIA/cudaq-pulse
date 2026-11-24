@@ -293,9 +293,12 @@ backends take.
 
 .. code-block:: python
 
+   from pathlib import Path
+
    import cudaq_pulse as pulse
 
    system = pulse.quantum_system("transmon_surface17")
+   text = Path("round.mlir").read_text()
    program = pulse.load(text, entry="round", qudits=[system.qudits[2], system.qudits[0]])
    program.export_to_controller()
 
@@ -338,6 +341,7 @@ and implementation replace the module's:
    def decide(bits: pulse.Bits) -> pulse.Length[pulse.Bits, 1]:
        return pulse.Bits([bits[0]])
 
+   qudits = [system.qudits[0], system.qudits[2]]
    program = pulse.load(text, entry="main", qudits=qudits, classical=[decide])
 
 A call of another function of the module states when it starts, as
