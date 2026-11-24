@@ -63,7 +63,6 @@ from ._errors import QuantumSystemDefinitionError as QuantumSystemDefinitionErro
 from ._errors import TimingError as TimingError
 from ._errors import UnsupportedError as UnsupportedError
 from ._errors import UpgradeNotice as UpgradeNotice
-from ._load import load as load
 from .classical import Bits as Bits
 from .compiler import Pass as Pass
 from .compiler import ScheduledKernel as ScheduledKernel
@@ -104,6 +103,7 @@ if TYPE_CHECKING:
     from . import viz as viz
     from ._capability import Capability as Capability
     from ._error_codes import ErrorCode as ErrorCode
+    from ._load import load as load
     from ._system import Controller as Controller
     from ._system import ControlSystem as ControlSystem
     from ._system import Processor as Processor
@@ -141,6 +141,8 @@ _LAZY_EXPORTS = {
     "ControlSystem": "._system",
     "Processor": "._system",
     "Link": ".classical",
+    # Loading another compiler's module is not what compiling a kernel needs.
+    "load": "._load",
 }
 _LAZY_MODULES = {
     "viz": ".viz",
