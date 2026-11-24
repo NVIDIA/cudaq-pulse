@@ -78,6 +78,26 @@ def test_lines_get_the_frequencies_of_their_qudits(system):
     assert [e["frequency_hz"] for e in drives] == [system.frequencies[1], system.frequencies[2]]
 
 
+def test_bytecode_is_accepted(system):
+    from cudaq_pulse._native import _cudaq_pulse_native as native
+
+    bytecode = native.MLIRPipeline().parse_to_module(MODULE).serialize()[0]
+    assert isinstance(bytecode, bytes) and bytecode.startswith(b"ML\xefR")
+    program = pulse.load(bytecode, entry="round", qudits=system.qudits[:2])
+    assert events(program) == events(pulse.load(MODULE, entry="round", qudits=system.qudits[:2]))
+
+
+def test_a_function_that_selects_at_run_time_is_refused(system):
+    text = MODULE.replace(
+        ", pulse.schedule_state = #pulse.schedule_state<timed>} {\n    %da,",
+        ", pulse.schedule_state = #pulse.schedule_state<timed>, "
+        "pulse.selected_values = 1 : i64} {\n    %da,",
+    )
+    assert text != MODULE
+    with pytest.raises(pulse.CompilationError, match="selects values at run time"):
+        pulse.load(text, entry="round", qudits=system.qudits[:2])
+
+
 def test_bytes_are_accepted(system):
     program = pulse.load(MODULE.encode(), entry="round", qudits=system.qudits[:2])
     assert len(events(program)) == 3
@@ -112,7 +132,7 @@ def test_overlap_on_a_line_fails_verification(system):
     text = text.replace(
         "%db1, %tb1 = pulse.drive %db, %w, %tb", "%db1, %tb1 = pulse.drive %da1, %w, %ta1"
     )
-    with pytest.raises(pulse.CompilationError):
+    with pytest.raises(pulse.CompilationError, match="overlaps or precedes"):
         pulse.load(text, entry="round", qudits=system.qudits[:2])
 
 
@@ -192,7 +212,7 @@ def test_calls_with_a_stated_start_are_written_in_place(system):
             "pulse.length_cycles = 12",
             "and it takes 16",
         ),
-        ("pulse.start_cycles = 40 : i64", "pulse.start_cycles = 12 : i64", None),
+        ("pulse.start_cycles = 40 : i64", "pulse.start_cycles = 12 : i64", "overlaps or precedes"),
         (
             "pulse.schedule_state = #pulse.schedule_state<timed>} {\n    %n",
             "made.by = 1 : i64} {\n    %n",

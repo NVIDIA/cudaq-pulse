@@ -7887,6 +7887,13 @@ public:
     if (!llvm::hasSingleElement(found.getBody()))
       throw std::invalid_argument("load: " + entry +
                                   " has more than one block");
+    // A value chosen at run time by a measurement is lowered with the
+    // program it was compiled in; a loaded function has none of that.
+    if (found->hasAttr("pulse.selected_values"))
+      throw std::invalid_argument(
+          "load: " + entry +
+          " selects values at run time (pulse.selected_values), which a "
+          "loaded function cannot do yet");
     refuseOwnQudits(found);
     if (pulse::scheduleStateOf(found) != pulse::ScheduleState::Timed)
       throw std::invalid_argument(
