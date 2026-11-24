@@ -211,7 +211,7 @@ def load(
             bound.run_passes(["pulse-classical-check"])
         except (RuntimeError, ValueError) as error:
             raise CompilationError(str(error), code="timing") from None
-        _check_submissions(bound.print())
+        _check_submissions(builder.load_submissions(bound.serialize()[0]))
     metrics = CompileMetrics(quantum_system=target.name)
     program = _lowered(
         bound,
@@ -324,20 +324,22 @@ def _first_line(error: BaseException) -> str:
     return str(error).splitlines()[0] if str(error) else type(error).__name__
 
 
-def _check_submissions(text: str) -> None:
+def _check_submissions(submissions: Sequence[tuple[str, int, int]]) -> None:
     """Refuse a submission scheduled for less time than this control
-    system's link takes to send it (the classical check writes that time on
-    the call as ``classical.submit_cycles``)."""
-    import re
-
+    system's link takes to send it. *submissions* is every submission of the
+    module as the native loader walks them: the function, the cycles the
+    schedule gives it, and the cycles the classical check wrote that the
+    link takes. One the check wrote nothing on is refused too: it was not
+    checked."""
     from ._errors import CompilationError
 
-    for found in re.finditer(
-        r"classical\.submit [^\n]*?@([\w$.]+)\([^\n]*?duration_cycles = (\d+)"
-        r"[^\n]*?classical\.submit_cycles = (\d+)",
-        text,
-    ):
-        name, written, needed = found.group(1), int(found.group(2)), int(found.group(3))
+    for name, written, needed in submissions:
+        if written < 0 or needed < 0:
+            raise CompilationError(
+                f"load: a submission to {name} has no "
+                + ("duration" if written < 0 else "link time to check it against"),
+                code="timing",
+            )
         if written < needed:
             raise CompilationError(
                 f"load: a submission to {name} is given {written} cycle(s), and on this "
@@ -475,6 +477,8 @@ def _given_functions(given: Sequence[Any], declared: Sequence[Any]) -> dict[str,
             stated = (list(row[3]), list(row[4]))
             # A function with lists of unstated length is declared once for
             # every length: its version for the module's lengths is compared.
+            # A classical function has at most 8 arguments, so a row states at
+            # most 8 lengths: at most C(8, 4) = 70 candidate versions.
             candidates: list[Any] = [function]
             if function._shape is not None:
                 names = _unsized_names(function)

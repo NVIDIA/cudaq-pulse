@@ -7795,6 +7795,25 @@ public:
     return out;
   }
 
+  /// Every submission of a module (assembly or bytecode): the function it
+  /// calls, the cycles its schedule gives it, and the cycles its link takes
+  /// to send it as the classical check wrote them on it (-1 when the check
+  /// wrote none).
+  std::vector<std::tuple<std::string, int64_t, int64_t>>
+  load_submissions(const std::string &text) {
+    std::lock_guard<std::mutex> guard(lock_);
+    auto source = parseModule(text, ctx_.get(), "load: cannot read the module");
+    std::vector<std::tuple<std::string, int64_t, int64_t>> out;
+    source->walk([&](classical::SubmitOp submit) {
+      auto needed =
+          submit->getAttrOfType<mlir::IntegerAttr>("classical.submit_cycles");
+      out.emplace_back(submit.getCallee().str(),
+                       pulse::durationCycles(submit).value_or(-1),
+                       needed ? needed.getInt() : int64_t(-1));
+    });
+    return out;
+  }
+
   using LoadedCallable =
       std::tuple<std::string, int64_t, int64_t, std::vector<std::string>,
                  std::vector<std::string>, std::array<double, 3>, std::string,
@@ -8564,6 +8583,16 @@ NB_MODULE(_cudaq_pulse_native, m) {
             return self.load_link_names(text);
           },
           "The names a module (assembly or bytecode) gives its links, by id",
+          nb::arg("module"))
+      .def(
+          "load_submissions",
+          [](PulseModuleBuilder &self, nb::bytes module) {
+            std::string text(module.c_str(), module.size());
+            nb::gil_scoped_release release;
+            return self.load_submissions(text);
+          },
+          "Every submission of a module (assembly or bytecode): its function, "
+          "the cycles its schedule gives it and the cycles its link takes",
           nb::arg("module"))
       .def(
           "load_callables",

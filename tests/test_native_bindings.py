@@ -26,6 +26,7 @@ def test_module_builder_exposes_only_the_packed_decoder_and_the_loaders():
         "load_callables",
         "load_function",
         "load_link_names",
+        "load_submissions",
     }
 
 

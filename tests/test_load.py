@@ -457,9 +457,35 @@ def test_a_slower_link_is_refused(system):
     machine = _links()
     _, text = _as_written(system, machine)
     qudits = [system.qudits[0], system.qudits[2]]
+    # A link that takes longer to send on, with the same feedback: the answer
+    # is still due in time as scheduled, and only the submission is too short.
     slower = pulse.ControlSystem(links={"host": Link(fixed_ns=5000, feedback_ns=100)})
-    with pytest.raises(pulse.CompilationError, match="due|it takes"):
+    with pytest.raises(pulse.CompilationError, match=r"is given \d+ cycle\(s\).*it takes \d+"):
         pulse.load(text, entry="main", qudits=qudits, control_system=slower)
+
+
+def test_every_submission_is_seen_by_the_check(system):
+    from cudaq_pulse._load import _check_submissions
+    from cudaq_pulse._native import _cudaq_pulse_native as native
+
+    machine = _links()
+    _, text = _as_written(system, machine)
+    # The loader sees each submission, with the cycles its schedule gives it
+    # and the cycles the classical check wrote that its link takes.
+    rows = native.PulseModuleBuilder().load_submissions(text.encode())
+    assert len(rows) == text.count("classical.submit ") == 1
+    assert rows[0][0].startswith("decide") and rows[0][1] == rows[0][2] > 0
+    _check_submissions(rows)
+    # One the check wrote nothing on was not checked: it is refused.
+    bare = re.sub(r"(, )?classical\.submit_cycles = \d+ : i64", "", text)
+    assert bare != text
+    rows = native.PulseModuleBuilder().load_submissions(bare.encode())
+    assert [row[2] for row in rows] == [-1]
+    with pytest.raises(pulse.CompilationError, match="no link time to check it against"):
+        _check_submissions(rows)
+    _check_submissions([("decide", 100, 100)])
+    with pytest.raises(pulse.CompilationError, match="is given 99 cycle"):
+        _check_submissions([("decide", 100, 100), ("decide", 99, 100)])
 
 
 def test_a_given_bool_function_keeps_its_own_types(system):
