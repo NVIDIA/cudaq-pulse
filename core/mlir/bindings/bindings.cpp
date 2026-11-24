@@ -7585,75 +7585,18 @@ public:
   /// qudits as slots, in argument order: what place_carriers() binds. The
   /// function's results and its attributes other than its schedule state are
   /// dropped.
-  /// A module another compiler wrote, parsed and verified.
-  ///
-  /// Before parsing, text is scanned as the lexer reads it (strings and
-  /// `//` comments skipped) and refused when its brackets, or a run of
-  /// minus signs, nest deeper than a module of scheduled functions does:
-  /// the text parser recurses once per level. The scan is a guard for the
-  /// nesting it knows, not a proof: a parse of text or of bytecode that
-  /// nests deeper than the thread's stack holds still ends the process, as
-  /// any MLIR parse does.
+  /// A module another compiler wrote, parsed and verified by MLIR as it is
+  /// given: nothing here bounds the depth of that parse, text or bytecode.
   ///
   /// After parsing, the module's regions are measured without recursion,
   /// the module's own body counting as the first: one nested deeper than
   /// kMostNesting is refused before anything walks or copies it (254
-  /// branches or loops nested in a function are the most that load), and so is
-  /// any operation with a symbol table of its own below the module, so every
-  /// symbol is one of the module's own table.
+  /// branches or loops nested in a function are the most that load), and
+  /// so is any operation with a symbol table of its own below the module,
+  /// so every symbol is one of the module's own table.
   static constexpr int kMostNesting = 256;
   static mlir::OwningOpRef<mlir::ModuleOp>
   parseForeign(const std::string &text, mlir::MLIRContext *ctx) {
-    auto tooDeep = [](const char *what) {
-      return std::invalid_argument(
-          std::string("load: the module nests ") + what + " deeper than " +
-          std::to_string(kMostNesting) + "; write it with less nesting");
-    };
-    if (!llvm::StringRef(text).starts_with("ML\xefR")) {
-      // The brackets open at this byte, innermost last. A `<` or `>` is a
-      // bracket only where the text nests by it: a `>` closes the `<` on
-      // top and nothing else (the `>` of `->`, of `>=` and of `> =` closes
-      // nothing), and a `)`, `]` or `}` closes its own opener, with any `<`
-      // opened since (the `<` of `<=`).
-      std::string open;
-      int minus = 0;
-      for (size_t i = 0; i < text.size(); ++i) {
-        char c = text[i];
-        if (c == '"') {
-          // A string ends at its closing quote; a backslash keeps the next
-          // character in it.
-          for (++i; i < text.size() && text[i] != '"'; ++i)
-            if (text[i] == '\\')
-              ++i;
-          minus = 0;
-        } else if (c == '/' && i + 1 < text.size() && text[i + 1] == '/') {
-          while (i < text.size() && text[i] != '\n')
-            ++i;
-        } else if (c == '(' || c == '[' || c == '{' || c == '<') {
-          minus = 0;
-          open.push_back(c);
-          if (open.size() > static_cast<size_t>(kMostNesting))
-            throw tooDeep("brackets");
-        } else if (c == ')' || c == ']' || c == '}') {
-          minus = 0;
-          char opener = c == ')' ? '(' : c == ']' ? '[' : '{';
-          while (!open.empty() && open.back() == '<')
-            open.pop_back();
-          if (!open.empty() && open.back() == opener)
-            open.pop_back();
-        } else if (c == '>') {
-          if (!(i > 0 && text[i - 1] == '-') && !open.empty() &&
-              open.back() == '<')
-            open.pop_back();
-          minus = 0;
-        } else if (c == '-') {
-          if (++minus > kMostNesting)
-            throw tooDeep("minus signs in a row");
-        } else if (!llvm::isSpace(c)) {
-          minus = 0;
-        }
-      }
-    }
     auto source = parseModule(text, ctx, "load: cannot read the module");
     // Depth first with an explicit stack: (operation, depth of its regions).
     llvm::SmallVector<std::pair<mlir::Operation *, int>> open;
@@ -7667,7 +7610,9 @@ public:
             "', which has symbols of its own (a module inside the module); "
             "a loaded module is one module of functions");
       if (op->getNumRegions() && depth >= kMostNesting)
-        throw tooDeep("regions");
+        throw std::invalid_argument(
+            "load: the module nests regions deeper than " +
+            std::to_string(kMostNesting) + "; write it with less nesting");
       for (mlir::Region &region : op->getRegions())
         for (mlir::Block &block : region)
           for (mlir::Operation &inner : block)

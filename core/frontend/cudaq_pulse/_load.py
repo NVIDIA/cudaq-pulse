@@ -186,8 +186,9 @@ def load(
         _, frequencies, readouts = target._frequency_tables(max(carriers) + 1)
         bound = generic.place_carriers(carriers, frequencies, readouts)
     except (RuntimeError, ValueError) as error:
-        # The module or the entry is not what load() takes.
-        raise CompilationError(_first_line(error), code="wrong_argument") from None
+        # The module or the entry is not what load() takes; a module that is
+        # not valid as written here comes with the verifier's reasons.
+        raise CompilationError(str(error), code="wrong_argument") from None
     if declared:
         # The links the calls travel on are the control system's.
         used = [row[2] for row in declared]

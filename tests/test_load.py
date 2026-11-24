@@ -687,59 +687,51 @@ def _attribute(value):
     return MODULE.replace("module {", "module attributes {made.by = " + value + "} {", 1)
 
 
-def test_text_nested_too_deep_is_refused_before_it_is_parsed(system):
-    qudits = system.qudits[:2]
-    refused = "nests brackets deeper than 256; write it with less nesting"
-    # Inside the module's attributes one bracket is open: 255 more are allowed.
-    assert pulse.load(_attribute("[" * 255 + "]" * 255), entry="round", qudits=qudits).schedule
-    with pytest.raises(pulse.CompilationError, match=refused):
-        pulse.load(_attribute("[" * 256 + "]" * 256), entry="round", qudits=qudits)
-    # The scan reads as the lexer does: a quote or a closer in a comment hides
-    # nothing, and the `>` of `> =` closes nothing.
-    deep = _attribute("[" * 300 + "]" * 300)
-    with pytest.raises(pulse.CompilationError, match=refused):
-        pulse.load('// "\n' + deep + '// "\n', entry="round", qudits=qudits)
-    with pytest.raises(pulse.CompilationError, match=refused):
-        pulse.load(_attribute("[ // ]\n" * 300 + "]" * 300), entry="round", qudits=qudits)
-    hole = (
-        "[" * 200
-        + "affine_set<(d0) : ("
-        + "d0 > = 0, " * 199
-        + "d0 > = 0)>, "
-        + "[" * 200
-        + "1"
-        + "]" * 400
-    )
-    with pytest.raises(pulse.CompilationError, match=refused):
-        pulse.load(_attribute(hole), entry="round", qudits=qudits)
-    with pytest.raises(pulse.CompilationError, match="nests minus signs in a row deeper than 256"):
-        pulse.load(
-            _attribute("affine_map<(d0) -> (" + "- " * 300 + "d0)>"), entry="round", qudits=qudits
-        )
-
-
 @pytest.mark.parametrize(
     "value",
     [
-        "[[[1]]]",
+        "[" * 300 + "1" + "]" * 300,
         "[" + ", ".join(["affine_set<(d0) : (d0 - 1 >= 0, 9 - d0 >= 0)>"] * 300) + "]",
         "[" + ", ".join(["-1"] * 300) + "]",
-        '"' + "-" * 300 + '"',
         '"((([[[{{{<<< // \\" )))"',
     ],
-    ids=[
-        "nested",
-        "many-comparisons",
-        "negative-numbers",
-        "dashes-in-a-string",
-        "brackets-in-a-string",
-    ],
+    ids=["nested-lists", "many-comparisons", "negative-numbers", "brackets-in-a-string"],
 )
-def test_text_a_compiler_writes_is_not_refused(system, value):
+def test_the_text_is_parsed_as_it_is_given(system, value):
+    # Nothing is read before the parser reads it: what parses, loads.
     text = "// " + "-" * 300 + "\n// ((((" * 100 + "\n" + _attribute(value)
     assert events(pulse.load(text, entry="round", qudits=system.qudits[:2])) == events(
         pulse.load(MODULE, entry="round", qudits=system.qudits[:2])
     )
+
+
+def test_a_function_not_valid_as_written_is_refused_with_the_reasons(system, monkeypatch):
+    from cudaq_pulse._native import _cudaq_pulse_native as native
+
+    real = native.PulseModuleBuilder
+
+    class Refusing:
+        def __init__(self):
+            self._real = real()
+
+        def load_callables(self, text):
+            return self._real.load_callables(text)
+
+        def load_link_names(self, text):
+            return self._real.load_link_names(text)
+
+        def load_function(self, *arguments):
+            raise RuntimeError(
+                "load: round is not valid as a loaded function\n"
+                "  loc(\"-\":3:5): 'pulse.drive' op the reason the verifier gave"
+            )
+
+    monkeypatch.setattr(native, "PulseModuleBuilder", Refusing)
+    with pytest.raises(pulse.CompilationError) as refused:
+        pulse.load(MODULE, entry="round", qudits=system.qudits[:2])
+    assert refused.value.code == "wrong_argument"
+    assert "is not valid as a loaded function" in str(refused.value)
+    assert "the reason the verifier gave" in str(refused.value)
 
 
 def _nested_ifs(count):
