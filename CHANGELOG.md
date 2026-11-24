@@ -200,11 +200,14 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   imaginary part is a `CompilationError`, at the kernel's line where the
   kernel says so and from `pulse-verify` otherwise. A tone on it,
   `line.tone`, a frame op, a readout or a calibrated pulse on it are
-  errors that say so. Not yet: the
-  exports (`export_to_controller` and `export_to_emulator` raise
-  `UnsupportedError` for a program that holds a coupling line), a
-  controller's limits on it (compiling such a program for a control system
-  raises the same error), its emulation (`classical.emulation.emulate`
+  errors that say so. A program that holds a coupling line compiles and
+  simulates without a control system only: a controller's limits on a
+  coupling line and its export come with a later program format, and
+  until then compiling for a control system, `export_to_controller` and
+  `export_to_emulator` raise an `UnsupportedError` that says to simulate
+  the program and to compile it for a quantum system with no control
+  system. Not yet
+  either: its emulation (`classical.emulation.emulate`
   raises `UnsupportedError`), and the
   calibrated gate of a coupling as one call, and, in the same program as
   a coupling line, a classical call, a kernel with its own `schedule=`
