@@ -63,11 +63,11 @@ from ._errors import QuantumSystemDefinitionError as QuantumSystemDefinitionErro
 from ._errors import TimingError as TimingError
 from ._errors import UnsupportedError as UnsupportedError
 from ._errors import UpgradeNotice as UpgradeNotice
+from ._load import load as load
 from .classical import Bits as Bits
 from .compiler import Pass as Pass
 from .compiler import ScheduledKernel as ScheduledKernel
 from .compiler import compile as compile
-from ._load import load as load
 from .kernel import kernel as kernel
 from .kernel._kernel import CompiledKernel as CompiledKernel
 from .kernel._kernel import Kernel as Kernel

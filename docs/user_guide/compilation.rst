@@ -282,6 +282,59 @@ quantum system gives the coupling of two of them, ``qs.coupling(a, b)``.
    set a wait length is both. A loop that compiles each round can tell which
    path each round took, and reading it does no work.
 
+Loading a scheduled function
+----------------------------
+
+A program does not have to start as a kernel. ``pulse.load`` takes a module of
+the Pulse dialect that another compiler wrote, as assembly or bytecode, and
+returns what ``kernel.lower(...)`` returns: a ``ScheduledKernel`` that
+``schedule()``, ``timeline()``, ``export_to_controller()`` and the backends
+take.
+
+.. code-block:: python
+
+   import cudaq_pulse as pulse
+
+   system = pulse.quantum_system("transmon_surface17")
+   program = pulse.load(text, entry="round", qudits=[system.qudits[2], system.qudits[0]])
+   program.export_to_controller()
+
+The function named by ``entry`` takes one ``!pulse.qudit`` per qudit it plays
+on, gets its lines from them and is scheduled: every timed operation has its
+``start_cycles`` and ``duration_cycles``, in cycles of the quantum system's
+clock. ``qudits`` gives the qudit of each argument, in order, and the lines
+get that system's frequencies.
+
+``load`` keeps the schedule as written and does not schedule again. It does
+check it: the function is verified as every scheduled program is, and checked
+against the controller limits. A module that states its clock must state the
+quantum system's. Attributes another compiler put on the function or its
+operations are dropped.
+
+A loaded function may hold loops, branches on measurements and calls of
+classical functions (:doc:`classical_calls`). The classical functions are the
+module's ``classical.callable`` declarations: their types, latency, link and
+dispatch key are enough to export the program. The links are the control
+system's, and an answer taken before its latency allows is refused.
+``classical=`` gives functions declared with ``pulse.classical`` for the
+module's, by name. Each must take and give what the module states, and its
+latency and implementation replace the module's:
+
+.. code-block:: python
+
+   @pulse.classical(max_latency_ns=400, link="host")
+   def decide(bits: pulse.Bits) -> pulse.Length[pulse.Bits, 1]:
+       return pulse.Bits([bits[0]])
+
+   program = pulse.load(text, entry="main", qudits=qudits, classical=[decide])
+
+A call of another function of the module states when it starts, as
+``pulse.start_cycles`` on the ``func.call`` (with ``pulse.length_cycles``,
+which the callee must fit in, and ``pulse.period_cycles`` inside a loop), and
+is written in place: the callee's operations, each that much later. The
+callee takes and returns the lines and tones it plays on. This spelling is
+provisional and will follow the dialect's timed call.
+
 Threads
 -------
 

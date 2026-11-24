@@ -10,8 +10,8 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ._device import Qudit
-    from .compiler import ScheduledKernel
     from ._system import Controller, ControlSystem
+    from .compiler import ScheduledKernel
 
 
 class _NoTrace:
@@ -96,7 +96,8 @@ def load(
         text = bytes(module)
     else:
         raise InvalidTypeError(
-            f"load() takes a module's assembly (str) or bytecode (bytes), got {type(module).__name__}"
+            "load() takes a module's assembly (str) or bytecode (bytes), "
+            f"got {type(module).__name__}"
         )
     if not isinstance(entry, str) or not entry:
         raise InvalidTypeError(f"load(entry=) takes the function's name, got {entry!r}")
@@ -127,7 +128,7 @@ def load(
     try:
         declared = native.PulseModuleBuilder().load_callables(text)
     except (RuntimeError, ValueError) as error:
-        raise CompilationError(str(error), code="load") from None
+        raise CompilationError(str(error), code="wrong_argument") from None
     given = _given_functions(classical, declared)
     try:
         generic: Any = native.PulseModuleBuilder().load_function(
@@ -154,8 +155,12 @@ def load(
         generic.run_passes(
             ["pulse-verify", "pulse-classical-check"] if declared else ["pulse-verify"]
         )
-    except (RuntimeError, ValueError) as error:
-        raise CompilationError(str(error), code="load") from None
+    except ValueError as error:
+        # The module or the entry is not what load() takes.
+        raise CompilationError(str(error), code="wrong_argument") from None
+    except RuntimeError as error:
+        # The schedule as written does not verify.
+        raise CompilationError(str(error), code="timing") from None
     _, frequencies, readouts = target._frequency_tables(max(carriers) + 1)
     bound = generic.place_carriers(carriers, frequencies, readouts)
     clocks = _clocked_builder(_NoTrace(), machine, target)
@@ -174,9 +179,7 @@ def load(
     if declared:
         # The module states the classical functions it calls: their schema,
         # latency, link and dispatch key.
-        called = _ClassicalFunctions(
-            _stated_function(*row, given.get(row[0])) for row in declared
-        )
+        called = _ClassicalFunctions(_stated_function(*row, given.get(row[0])) for row in declared)
         called.routes = [(row[2], row[1], None) for row in declared]
         program.classical = called
     program = _check_controller(program)
@@ -296,7 +299,7 @@ def _given_functions(given: Sequence[Any], declared: Sequence[Any]) -> dict[str,
                         if took is None or gave is None
                         else f"takes ({', '.join(took)}) and gives ({', '.join(gave)})"
                     ),
-                    code="load",
+                    code="wrong_argument",
                 )
             out[row[0]] = function
     return out

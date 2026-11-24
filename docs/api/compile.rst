@@ -7,6 +7,8 @@ Compilation API
 
 .. autofunction:: cudaq_pulse.compile
 
+.. autofunction:: cudaq_pulse.load
+
 .. autoclass:: cudaq_pulse.CompiledKernel
    :members:
 

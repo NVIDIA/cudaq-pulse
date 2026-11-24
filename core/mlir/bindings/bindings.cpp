@@ -7614,8 +7614,7 @@ public:
       stated.periods.push_back(one.getInt());
     else if (auto many =
                  mlir::dyn_cast_or_null<mlir::DenseI64ArrayAttr>(periods))
-      stated.periods.assign(many.asArrayRef().begin(),
-                            many.asArrayRef().end());
+      stated.periods.assign(many.asArrayRef().begin(), many.asArrayRef().end());
     return stated;
   }
   static void writeCallsInPlace(mlir::ModuleOp source, mlir::func::FuncOp main,
@@ -7666,9 +7665,9 @@ public:
               // Written by the next round, from the same start and loops.
               StatedCall within = statedCall(nested, name);
               mlir::Builder attrs(inner->getContext());
-              inner->setAttr("pulse.start_cycles",
-                             attrs.getI64IntegerAttr(within.start +
-                                                     stated.start));
+              inner->setAttr(
+                  "pulse.start_cycles",
+                  attrs.getI64IntegerAttr(within.start + stated.start));
               if (!stated.periods.empty())
                 inner->setAttr("pulse.period_cycles",
                                attrs.getDenseI64ArrayAttr(stated.periods));
@@ -7690,11 +7689,11 @@ public:
           });
         }
         if (stated.length && end > *stated.length)
-          throw std::invalid_argument(
-              "load: " + entry + " gives " + name + " " +
-              std::to_string(*stated.length) + " cycles at " +
-              std::to_string(stated.start) + ", and it takes " +
-              std::to_string(end));
+          throw std::invalid_argument("load: " + entry + " gives " + name +
+                                      " " + std::to_string(*stated.length) +
+                                      " cycles at " +
+                                      std::to_string(stated.start) +
+                                      ", and it takes " + std::to_string(end));
         call->erase();
       }
     }
@@ -7710,8 +7709,7 @@ public:
   /// in ns, mode, submit policy, timeout, deadline and reaction deadline.
   std::vector<LoadedCallable> load_callables(const std::string &text) {
     std::lock_guard<std::mutex> guard(lock_);
-    auto source =
-        parseModule(text, ctx_.get(), "load: cannot read the module");
+    auto source = parseModule(text, ctx_.get(), "load: cannot read the module");
     auto strings = [](mlir::ArrayAttr values) {
       std::vector<std::string> out;
       for (mlir::Attribute value : values)
@@ -7732,9 +7730,8 @@ public:
             std::array<double, 3>{fn.getLatencyMinNs().convertToDouble(),
                                   fn.getLatencyNominalNs().convertToDouble(),
                                   fn.getLatencyMaxNs().convertToDouble()},
-            fn.getMode().str(), fn.getSubmit().str(),
-            number(fn.getTimeoutNs()), number(fn.getDeadlineNs()),
-            number(fn.getReactionDeadlineNs()));
+            fn.getMode().str(), fn.getSubmit().str(), number(fn.getTimeoutNs()),
+            number(fn.getDeadlineNs()), number(fn.getReactionDeadlineNs()));
     return out;
   }
 
@@ -7785,10 +7782,10 @@ public:
             " takes an argument that is not a qudit; a loaded function takes "
             "one !pulse.qudit per qudit it plays on and nothing else");
     if (static_cast<int64_t>(found.getNumArguments()) != qudits)
-      throw std::invalid_argument(
-          "load: " + entry + " takes " +
-          std::to_string(found.getNumArguments()) + " qudit(s), and " +
-          std::to_string(qudits) + " were given");
+      throw std::invalid_argument("load: " + entry + " takes " +
+                                  std::to_string(found.getNumArguments()) +
+                                  " qudit(s), and " + std::to_string(qudits) +
+                                  " were given");
     if (pulse::scheduleStateOf(found) != pulse::ScheduleState::Timed)
       throw std::invalid_argument(
           "load: " + entry +
@@ -7800,7 +7797,8 @@ public:
     module->getOperation()->setAttr(pulse::kControlSystemAttr, controlSystem);
     // The classical functions the program calls and the links they travel
     // on are stated by the module, beside its functions.
-    if (mlir::Attribute links = source->getOperation()->getAttr("classical.links"))
+    if (mlir::Attribute links =
+            source->getOperation()->getAttr("classical.links"))
       module->getOperation()->setAttr("classical.links", links);
     for (mlir::Operation &op : *source->getBody())
       if (auto stated = mlir::dyn_cast<classical::CallableOp>(op)) {
@@ -7836,8 +7834,7 @@ public:
     main.walk([&](mlir::Operation *op) {
       if (op == main.getOperation())
         return;
-      llvm::ArrayRef<mlir::StringAttr> own =
-          op->getName().getAttributeNames();
+      llvm::ArrayRef<mlir::StringAttr> own = op->getName().getAttributeNames();
       mlir::NamedAttrList attributes;
       for (mlir::NamedAttribute attribute : op->getAttrs())
         if (attribute.getName().getValue().starts_with("pulse.") ||
@@ -7852,8 +7849,8 @@ public:
       if (ret->getParentOp() == main.getOperation())
         ret->setOperands({});
     });
-    main.setType(mlir::FunctionType::get(ctx_.get(), main.getArgumentTypes(),
-                                         {}));
+    main.setType(
+        mlir::FunctionType::get(ctx_.get(), main.getArgumentTypes(), {}));
     return PulseModule(ctx_, std::move(module));
   }
 
