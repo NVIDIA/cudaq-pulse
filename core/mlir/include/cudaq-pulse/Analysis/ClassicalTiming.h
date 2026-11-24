@@ -185,8 +185,12 @@ inline bool readers(mlir::Value value, const pulse::Controllers &controllers,
     return reader >= 0;
   }
   if (mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType, pulse::ToneType,
+#if PULSE_COUPLED
                 LinkType>(value.getType()) ||
       (pulse::kCoupled && mlir::isa<pulse::CouplingLineType>(value.getType())))
+#else
+                LinkType>(value.getType()))
+#endif
     return true;
   mlir::Operation *def = value.getDefiningOp();
   if (!def || mlir::isa<WaitOp, SubmitOp>(def) || def->getNumRegions())
@@ -244,17 +248,25 @@ inline bool takers(mlir::Value value, const pulse::Controllers &controllers,
     frame.results.clear();
     frame.next = 0;
     mlir::Operation *user = use.getOwner();
+#if PULSE_COUPLED
     if (mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(user) ||
         (pulse::kCoupled && mlir::isa<pulse::DriveBasebandOp>(user))) {
+#else
+    if (mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(user)) {
+#endif
       if (!pulse(user))
         return false;
     } else if (auto branch = mlir::dyn_cast<mlir::scf::IfOp>(user)) {
       bool known = true;
       branch->walk([&](mlir::Operation *inner) {
         if (known &&
+#if PULSE_COUPLED
             (mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(
                  inner) ||
              (pulse::kCoupled && mlir::isa<pulse::DriveBasebandOp>(inner))))
+#else
+            mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(inner))
+#endif
           known = pulse(inner);
       });
       if (!known)

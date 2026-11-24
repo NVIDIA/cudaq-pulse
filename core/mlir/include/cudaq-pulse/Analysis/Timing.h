@@ -139,9 +139,11 @@ inline R withTiming(mlir::Operation *op, R otherwise, Fn &&fn) {
     return fn(timed);
   if (auto timed = mlir::dyn_cast<ScheduleBlockOp>(op))
     return fn(timed);
+#if PULSE_COUPLED
   if (kCoupled)
     if (auto timed = mlir::dyn_cast<DriveBasebandOp>(op))
       return fn(timed);
+#endif
   return otherwise;
 }
 

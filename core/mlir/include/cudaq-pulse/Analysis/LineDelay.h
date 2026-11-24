@@ -33,15 +33,22 @@ public:
   /// The delay of the line scheduled `op` plays on: 0 for an op no delay
   /// moves.
   int64_t of(mlir::Operation *op) {
-    if (!(mlir::isa<DriveOp, ReadoutOp, WaitOp>(op) ||
-          (kCoupled && mlir::isa<DriveBasebandOp>(op))) ||
+#if PULSE_COUPLED
+    if (!mlir::isa<DriveOp, ReadoutOp, WaitOp, DriveBasebandOp>(op) ||
         op->hasAttr("classical.variable"))
       return 0;
+#else
+    if (!mlir::isa<DriveOp, ReadoutOp, WaitOp>(op) ||
+        op->hasAttr("classical.variable"))
+      return 0;
+#endif
     mlir::Operation *allocation = trace(op->getOperand(0));
     if (!allocation)
       return 0;
-    if (kCoupled && mlir::isa<GetCouplingLineOp>(allocation))
+#if PULSE_COUPLED
+    if (mlir::isa<GetCouplingLineOp>(allocation))
       return couplingFact(allocation, "delay_cycles", 0);
+#endif
     int64_t qudit = quditOf(allocation);
     const llvm::SmallVector<int64_t> &shifts =
         mlir::isa<GetDriveLineOp>(allocation) ? drive : readout;

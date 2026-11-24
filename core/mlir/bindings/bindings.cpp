@@ -87,6 +87,7 @@
 #define GET_OP_CLASSES
 #include "cudaq-pulse/Dialect/Classical/ClassicalOps.h.inc"
 
+#include "BindingsCoupled.h"
 #include "LengthInference.h"
 #include "ModuleLoader.h"
 #include "cudaq-pulse/Analysis/ClassicalTiming.h"
@@ -95,6 +96,14 @@
 #include "cudaq-pulse/Analysis/LineTrace.h"
 #include "cudaq-pulse/Analysis/Timing.h"
 
+// This file is compiled twice (BindingsCoupled.h): as the extension's
+// bindings, and, by bindingsCoupled.cpp, as the decoder and the event walks
+// of a program that holds a coupling line.
+#ifndef PULSE_BINDINGS_COUPLED
+#define PULSE_BINDINGS_COUPLED 0
+#endif
+
+#if PULSE_BINDINGS_COUPLED
 // The variant of the line trace and of the timing accessors that knows the
 // ops of a coupling line, as pulse::coupled:: (see Variant.h).
 #undef PULSE_COUPLED
@@ -104,6 +113,7 @@
 #undef PULSE_COUPLED
 #define PULSE_COUPLED 0
 #include "cudaq-pulse/Analysis/Variant.h"
+#endif
 #include "cudaq-pulse/Dialect/Classical/Answers.h"
 #include "cudaq-pulse/Runtime/WaveformCallback.h"
 #include "cudaq-pulse/Transforms/Passes.h"
@@ -261,7 +271,8 @@ using pulse::holdsCouplingLine;
 
 /// Refuse a program that holds a coupling line where a controller's program
 /// is walked, for an export or a check of a controller's limits.
-inline void refuseCouplingLines(mlir::ModuleOp module) {
+LLVM_ATTRIBUTE_NOINLINE __attribute__((cold)) inline void
+refuseCouplingLines(mlir::ModuleOp module) {
   if (holdsCouplingLine(module)) [[unlikely]]
     throw Unsupported(
         "this program holds a coupling line; coupling lines are not exported "
@@ -272,69 +283,55 @@ inline void refuseCouplingLines(mlir::ModuleOp module) {
 
 /// Refuse a program that holds a coupling line where it is simulated or
 /// emulated: the simulation does not know its ops.
-inline void refuseSimulatedCouplingLines(mlir::ModuleOp module) {
+LLVM_ATTRIBUTE_NOINLINE __attribute__((cold)) inline void
+refuseSimulatedCouplingLines(mlir::ModuleOp module) {
   if (holdsCouplingLine(module)) [[unlikely]]
     throw Unsupported("this program holds a coupling line; a program with a "
                       "coupling line is not simulated or emulated yet");
 }
 
-/// What the event walks ask of a module, in two variants (Variant.h): of a
-/// module without coupling lines, and of one that holds some.
-struct PlainEvents {
-  using Tracer = pulse::AllocationTracer;
-  static bool acquires(mlir::Operation *op) {
-    return mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op);
-  }
-  static bool isPulse(mlir::Operation &op) {
-    return mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(op);
-  }
-  static std::string kind(mlir::Operation &op) {
-    return op.getName().stripDialect().str();
-  }
-  static int64_t qudit(mlir::Operation *allocation) {
-    return pulse::quditOf(allocation);
-  }
-  static std::optional<int64_t> start(mlir::Operation *op,
-                                      llvm::ArrayRef<int64_t> iteration) {
-    return pulse::scheduledStart(op, iteration);
-  }
-  static std::optional<int64_t> duration(mlir::Operation *op) {
-    return pulse::scheduledDuration(op);
-  }
-};
+/// refuseSimulatedCouplingLines unless the module was asked to lower its
+/// pulses on coupling lines for whoever maps them (PulseToQOp.cpp).
+LLVM_ATTRIBUTE_NOINLINE __attribute__((cold)) inline void
+refuseUnaskedCouplingLines(mlir::ModuleOp module) {
+  auto asked =
+      module->getAttrOfType<mlir::BoolAttr>("pulse.simulate_coupling_lines");
+  if (!asked || !asked.getValue())
+    refuseSimulatedCouplingLines(module);
+}
 
-struct CoupledEvents {
-  using Tracer = pulse::coupled::AllocationTracer;
-  static bool acquires(mlir::Operation *op) {
-    return mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp,
-                     pulse::GetCouplingLineOp>(op);
-  }
-  static bool isPulse(mlir::Operation &op) {
-    return mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp,
-                     pulse::DriveBasebandOp>(op);
-  }
-  /// A pulse on a coupling line is a drive, as the kernel wrote it.
-  static std::string kind(mlir::Operation &op) {
-    return mlir::isa<pulse::DriveBasebandOp>(op)
-               ? std::string("drive")
-               : op.getName().stripDialect().str();
-  }
-  /// Of a coupling line, the lowest of its qudits; -1 for one not bound.
-  static int64_t qudit(mlir::Operation *allocation) {
-    if (!mlir::isa<pulse::GetCouplingLineOp>(allocation))
-      return pulse::coupled::quditOf(allocation);
-    llvm::SmallVector<int64_t, 2> qudits =
-        pulse::coupled::couplingQudits(allocation);
-    return llvm::is_contained(qudits, -1) ? -1 : *llvm::min_element(qudits);
-  }
-  static std::optional<int64_t> start(mlir::Operation *op,
-                                      llvm::ArrayRef<int64_t> iteration) {
-    return pulse::coupled::scheduledStart(op, iteration);
-  }
-  static std::optional<int64_t> duration(mlir::Operation *op) {
-    return pulse::coupled::scheduledDuration(op);
-  }
-};
+/// What differs between the two compilations of the walks below: of a
+/// module without coupling lines (the bindings), and of one that holds some
+/// (bindingsCoupled.cpp). With these names replaced by what they stand for,
+/// the first is, past the test at the walks' entry, the code it was before
+/// coupling lines existed.
+#if PULSE_BINDINGS_COUPLED
+using LineTracer = pulse::coupled::AllocationTracer;
+namespace line_timing = pulse::coupled;
+#define PULSE_LINE_FETCHES                                                     \
+  pulse::GetDriveLineOp, pulse::GetReadoutLineOp, pulse::GetCouplingLineOp
+#define PULSE_LINE_PULSES                                                      \
+  pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp, pulse::DriveBasebandOp
+/// A pulse on a coupling line is a drive, as the kernel wrote it.
+inline std::string eventKind(mlir::Operation &op) {
+  return mlir::isa<pulse::DriveBasebandOp>(op)
+             ? std::string("drive")
+             : op.getName().stripDialect().str();
+}
+/// Of a coupling line, the lowest of its qudits; -1 for one not bound.
+inline int64_t eventQudit(mlir::Operation *allocation) {
+  if (!mlir::isa<pulse::GetCouplingLineOp>(allocation))
+    return pulse::coupled::quditOf(allocation);
+  llvm::SmallVector<int64_t, 2> qudits =
+      pulse::coupled::couplingQudits(allocation);
+  return llvm::is_contained(qudits, -1) ? -1 : *llvm::min_element(qudits);
+}
+#else
+using LineTracer = pulse::AllocationTracer;
+namespace line_timing = pulse;
+#define PULSE_LINE_FETCHES pulse::GetDriveLineOp, pulse::GetReadoutLineOp
+#define PULSE_LINE_PULSES pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp
+#endif
 
 /// Refuse a readout whose mode the exports do not support yet: only iq.
 inline void requireExportedMode(mlir::Operation *op) {
@@ -400,8 +397,7 @@ enteringArm(mlir::Value value, mlir::Block *arm,
 /// What a line or tone value is a version of: its line (a line's own tone
 /// stands for its line), or, for a tone that is a frame of its own, the
 /// pulse.tone that made the frame. Null when neither is found.
-template <typename Tracer>
-inline mlir::Operation *lineOrFrame(Tracer &trace, mlir::Value value) {
+inline mlir::Operation *lineOrFrame(LineTracer &trace, mlir::Value value) {
   if (mlir::Operation *line = trace(value))
     return line;
   while (mlir::Value before = pulse::linearPredecessor(value))
@@ -551,12 +547,11 @@ inline bool changedIn(mlir::Value entered, mlir::Block *arm) {
 /// it) or made alike, only played, and not changed by the other arm
 /// (`entered` is the version of it the if began with). A frame an op
 /// changed on the other path is another tone.
-template <typename Tracer = pulse::AllocationTracer>
 inline bool differentLines(mlir::Value then, mlir::Block *thenArm,
                            mlir::Value entered, mlir::Value other,
                            mlir::Block *elseArm,
                            llvm::function_ref<bool(mlir::Operation *)> kept) {
-  Tracer trace;
+  LineTracer trace;
   mlir::Operation *a = lineOrFrame(trace, then);
   mlir::Operation *b = lineOrFrame(trace, other);
   if (!a || !b || a == b)
@@ -604,6 +599,7 @@ unknownValue(const llvm::DenseMap<int64_t, MixedResult> &mixed, int64_t vid) {
                            std::to_string(vid));
 }
 
+#if PULSE_BINDINGS_COUPLED
 /// What the passes do not do yet in a module that holds a coupling line:
 /// the decoder refuses the record that asks for it.
 [[noreturn]] inline void refuseBesideCouplingLine(const char *what) {
@@ -617,6 +613,24 @@ inline bool madeOnCouplingLine(mlir::Value value, mlir::Value given) {
   auto drive = value.getDefiningOp<pulse::DriveBasebandOp>();
   return drive && drive.getLine() == given;
 }
+#else
+/// What the second compilation refused, thrown as this unit's own type.
+inline void throwCoupled(const cudaq_pulse::CoupledFailure &failure) {
+  using cudaq_pulse::CoupledFailure;
+  switch (failure.kind) {
+  case CoupledFailure::None:
+    return;
+  case CoupledFailure::PackedValue:
+    throw PackedValueError(failure.what, failure.word);
+  case CoupledFailure::NotSupportedYet:
+    throw NotSupportedYet(failure.what);
+  case CoupledFailure::Unsupported:
+    throw Unsupported(failure.what);
+  case CoupledFailure::KernelRefused:
+    throw KernelRefused(failure.what);
+  }
+}
+#endif
 
 /// Whether `value` is what an op that takes one line or one tone and gives
 /// it back made of `given`: the op is given `given`, of `value`'s type.
@@ -916,6 +930,8 @@ public:
   /// The AttrNames of `context`: those it keeps, or else interned in `own`.
   static const AttrNames &names(mlir::MLIRContext *context,
                                 std::optional<AttrNames> &own) {
+#if !PULSE_BINDINGS_COUPLED
+    // The second compilation keeps no store: it interns the names in `own`.
     {
       std::lock_guard<std::mutex> guard(lock());
       auto found = contexts().find(context);
@@ -926,6 +942,7 @@ public:
         return *kept;
       }
     }
+#endif
     return own.emplace(context);
   }
 
@@ -3561,10 +3578,13 @@ public:
         lock_(std::make_shared<std::recursive_mutex>()) {}
 
   /// Whether the module says it holds a coupling line: asked of the module
-  /// the first time, then kept (see saysCouplingLines_).
+  /// the first time, then kept (see saysCouplingLines_). The caller holds
+  /// the module's lock.
   bool saysCouplingLines() {
     if (saysCouplingLines_ < 0)
-      saysCouplingLines_ = (*module_)->hasAttr(kCouplingLinesAttr) ? 1 : 0;
+      __atomic_store_n(&saysCouplingLines_,
+                       (*module_)->hasAttr(kCouplingLinesAttr) ? 1 : 0,
+                       __ATOMIC_RELAXED);
     return saysCouplingLines_ != 0;
   }
 
@@ -3741,40 +3761,45 @@ public:
   /// link id and whose qubit is -1.
   std::vector<Event> events() {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
-    // Asked once of the module (Variant.h, saysCouplingLines).
+#if !PULSE_BINDINGS_COUPLED
+    // Asked once of the module (saysCouplingLines).
     if (saysCouplingLines()) [[unlikely]]
-      return eventsOf<CoupledEvents>();
-    return eventsOf<PlainEvents>();
-  }
-
-  template <typename Variant>
-  LLVM_ATTRIBUTE_ALWAYS_INLINE std::vector<Event> eventsOf() {
+      return coupledEvents();
+#endif
     llvm::DenseMap<mlir::Operation *, int64_t> lineIndex;
     module_->walk([&](mlir::Operation *op) {
-      if (Variant::acquires(op))
+      if (mlir::isa<PULSE_LINE_FETCHES>(op))
         lineIndex.try_emplace(op, static_cast<int64_t>(lineIndex.size()));
     });
     std::vector<Event> result;
     llvm::SmallVector<int64_t, 2> iteration;
-    typename Variant::Tracer trace;
+    LineTracer trace;
     std::optional<AttrNames> ownNames;
     const AttrNames &names = ContextStore::names(ctx_.get(), ownNames);
     std::function<void(mlir::Block &)> collect = [&](mlir::Block &block) {
       for (mlir::Operation &op : block) {
-        if (Variant::isPulse(op)) {
+        if (mlir::isa<PULSE_LINE_PULSES>(op)) {
           requireExportedMode(&op);
           mlir::Operation *allocation = trace(op.getOperand(0));
           int64_t line = allocation ? lineIndex.lookup(allocation) : -1;
-          int64_t qubit = allocation ? Variant::qudit(allocation) : -1;
-          result.emplace_back(Variant::kind(op), line, qubit,
-                              Variant::start(&op, iteration),
-                              Variant::duration(&op));
+#if PULSE_BINDINGS_COUPLED
+          int64_t qubit = allocation ? eventQudit(allocation) : -1;
+          result.emplace_back(eventKind(op), line, qubit,
+                              line_timing::scheduledStart(&op, iteration),
+                              line_timing::scheduledDuration(&op));
+#else
+          int64_t qubit = allocation ? pulse::quditOf(allocation) : -1;
+          result.emplace_back(op.getName().stripDialect().str(), line, qubit,
+                              line_timing::scheduledStart(&op, iteration),
+                              line_timing::scheduledDuration(&op));
+#endif
         } else if (mlir::isa<classical::SubmitOp, classical::WaitOp>(op)) {
           // A classical call's events are on its link; they have no qudit.
-          result.emplace_back(
-              mlir::isa<classical::SubmitOp>(op) ? "submit" : "answer",
-              classical::intAttr(&op, names.device), -1,
-              Variant::start(&op, iteration), Variant::duration(&op));
+          result.emplace_back(mlir::isa<classical::SubmitOp>(op) ? "submit"
+                                                                 : "answer",
+                              classical::intAttr(&op, names.device), -1,
+                              line_timing::scheduledStart(&op, iteration),
+                              line_timing::scheduledDuration(&op));
         } else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
           int64_t trips = pulse::constantTripCount(loop).value_or(0);
           iteration.push_back(0);
@@ -3794,6 +3819,52 @@ public:
     return result;
   }
 
+#if !PULSE_BINDINGS_COUPLED
+  /// events() of a module that holds a coupling line: the second
+  /// compilation's (BindingsCoupled.h).
+  LLVM_ATTRIBUTE_NOINLINE __attribute__((cold)) std::vector<Event>
+  coupledEvents() {
+    cudaq_pulse::CoupledFailure failure;
+    std::vector<Event> listed =
+        cudaq_pulse::coupledEvents(ctx_, *module_, failure);
+    throwCoupled(failure);
+    return listed;
+  }
+
+  /// event_tree() of a module that holds a coupling line, likewise.
+  LLVM_ATTRIBUTE_NOINLINE __attribute__((cold)) nb::object
+  coupledEventTree(int64_t limit) {
+    cudaq_pulse::CoupledFailure failure;
+    PyObject *tree =
+        cudaq_pulse::coupledEventTree(ctx_, *module_, limit, failure);
+    throwCoupled(failure);
+    return nb::steal<nb::object>(tree);
+  }
+#else
+  /// For one walk of a module this PulseModule does not own: borrow() takes
+  /// it, giveBack() hands it back, so that this PulseModule never destroys
+  /// it (BorrowedModule).
+  void borrow(mlir::ModuleOp module) {
+    module_ = mlir::OwningOpRef<mlir::ModuleOp>(module);
+  }
+  void giveBack() { (void)module_.release(); }
+
+  /// What the builder made, for the unit that asked for it.
+  cudaq_pulse::DecodedModule decoded() {
+    cudaq_pulse::DecodedModule out;
+    out.module = std::move(module_);
+    out.runTime = runTime_;
+    out.loops = loops_;
+    out.hasLength = !length_.repeats.empty();
+    out.cycles = length_.cycles;
+    out.most = length_.most;
+    out.controller = length_.controller;
+    out.repeats = std::move(length_.repeats);
+    out.excess = std::move(length_.excess);
+    return out;
+  }
+#endif
+
   /// events(), or, when it lists more than `limit` events, a 1-tuple of
   /// their loops: a list of nodes in program order, each (kind, line, qubit,
   /// start_cycles, duration_cycles, shifts) for an op at the first iteration
@@ -3803,17 +3874,14 @@ public:
     if (!loops_ && limit >= 0)
       return nb::cast(events());
     std::lock_guard<std::recursive_mutex> guard(*lock_);
-    // Asked once of the module (Variant.h, saysCouplingLines).
+#if !PULSE_BINDINGS_COUPLED
+    // Asked once of the module (saysCouplingLines).
     if (saysCouplingLines()) [[unlikely]]
-      return eventTreeOf<CoupledEvents>(limit);
-    return eventTreeOf<PlainEvents>(limit);
-  }
-
-  template <typename Variant>
-  LLVM_ATTRIBUTE_ALWAYS_INLINE nb::object eventTreeOf(int64_t limit) {
+      return coupledEventTree(limit);
+#endif
     auto timed = [](mlir::Operation &op) {
-      return Variant::isPulse(op) ||
-             mlir::isa<classical::SubmitOp, classical::WaitOp>(op);
+      return mlir::isa<PULSE_LINE_PULSES, classical::SubmitOp,
+                       classical::WaitOp>(op);
     };
     auto add = [](uint64_t a, uint64_t b) {
       return checkedAdd(a, b).value_or(UINT64_MAX);
@@ -3839,38 +3907,46 @@ public:
     };
     if (limit >= 0 &&
         count(*module_->getBody()) <= static_cast<uint64_t>(limit))
-      return nb::cast(eventsOf<Variant>());
+      return nb::cast(events());
     llvm::DenseMap<mlir::Operation *, int64_t> lineIndex;
     module_->walk([&](mlir::Operation *op) {
-      if (Variant::acquires(op))
+      if (mlir::isa<PULSE_LINE_FETCHES>(op))
         lineIndex.try_emplace(op, static_cast<int64_t>(lineIndex.size()));
     });
     llvm::SmallVector<int64_t, 2> iteration;
-    typename Variant::Tracer trace;
+    LineTracer trace;
     std::optional<AttrNames> ownNames;
     const AttrNames &names = ContextStore::names(ctx_.get(), ownNames);
     auto node = [&](mlir::Operation &op, std::string kind, int64_t line,
                     int64_t qubit) {
-      std::optional<int64_t> start = Variant::start(&op, iteration);
+      std::optional<int64_t> start =
+          line_timing::scheduledStart(&op, iteration);
       nb::list shifts;
       if (start)
         for (int64_t &k : iteration) {
           k = 1;
-          std::optional<int64_t> next = Variant::start(&op, iteration);
+          std::optional<int64_t> next =
+              line_timing::scheduledStart(&op, iteration);
           k = 0;
           shifts.append(next ? nb::cast(*next - *start) : nb::none());
         }
       return nb::make_tuple(std::move(kind), line, qubit, start,
-                            Variant::duration(&op), shifts);
+                            line_timing::scheduledDuration(&op), shifts);
     };
     std::function<void(mlir::Block &, nb::list &)> build =
         [&](mlir::Block &block, nb::list &out) {
           for (mlir::Operation &op : block) {
-            if (Variant::isPulse(op)) {
+            if (mlir::isa<PULSE_LINE_PULSES>(op)) {
               mlir::Operation *allocation = trace(op.getOperand(0));
               int64_t line = allocation ? lineIndex.lookup(allocation) : -1;
-              int64_t qubit = allocation ? Variant::qudit(allocation) : -1;
-              out.append(node(op, Variant::kind(op), line, qubit));
+#if PULSE_BINDINGS_COUPLED
+              int64_t qubit = allocation ? eventQudit(allocation) : -1;
+              out.append(node(op, eventKind(op), line, qubit));
+#else
+              int64_t qubit = allocation ? pulse::quditOf(allocation) : -1;
+              out.append(
+                  node(op, op.getName().stripDialect().str(), line, qubit));
+#endif
             } else if (mlir::isa<classical::SubmitOp, classical::WaitOp>(op)) {
               out.append(node(
                   op, mlir::isa<classical::SubmitOp>(op) ? "submit" : "answer",
@@ -4771,26 +4847,26 @@ public:
   /// ends, of the lines it holds back.
   std::vector<SegmentWalk::Boundary> segment_boundaries() {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
-    return segmentBoundaries();
-  }
-
-  /// segment_boundaries() for an export, which a program that holds a
-  /// coupling line is refused.
-  std::vector<SegmentWalk::Boundary> exported_segment_boundaries() {
-    std::lock_guard<std::recursive_mutex> guard(*lock_);
-    if (saysCouplingLines()) [[unlikely]]
-      refuseCouplingLines(*module_);
-    return segmentBoundaries();
-  }
-
-  /// segment_boundaries(), under the module's lock.
-  LLVM_ATTRIBUTE_ALWAYS_INLINE
-  std::vector<SegmentWalk::Boundary> segmentBoundaries() {
     if (!classical::declaresClassicalCalls(*module_))
       return {};
     SegmentWalk walk(*module_);
     walk.run(*module_->getBody(), [](mlir::Operation *, int64_t) {});
     return std::move(walk.boundaries);
+  }
+
+  /// segment_boundaries() for an export, which a program that holds a
+  /// coupling line is refused.
+  std::vector<SegmentWalk::Boundary> exported_segment_boundaries() {
+    // Once a walk has asked the module, the answer is read without the
+    // lock, which segment_boundaries() takes: a module known to hold no
+    // coupling line is locked once, as before.
+    if (__atomic_load_n(&saysCouplingLines_, __ATOMIC_RELAXED) != 0)
+        [[unlikely]] {
+      std::lock_guard<std::recursive_mutex> guard(*lock_);
+      if (saysCouplingLines())
+        refuseCouplingLines(*module_);
+    }
+    return segment_boundaries();
   }
 
   /// The segment of each event of `events()` (with `syncs`, of
@@ -5331,6 +5407,9 @@ public:
       for (mlir::NamedAttribute entry : entries)
         module_->getOperation()->setAttr(entry.getName(), entry.getValue());
     };
+    // The attributes change: whether the module says it holds a coupling
+    // line is asked of it again by the next walk.
+    __atomic_store_n(&saysCouplingLines_, -1, __ATOMIC_RELAXED);
     merge(dictionary);
     if (!then.empty())
       merge(then);
@@ -5698,8 +5777,10 @@ private:
   static constexpr size_t kMaxPrograms = 64;
 
   ProgramTemplate lowerOperatorProgram() {
+    // The conversion maps no pulse on a coupling line itself: it lowers
+    // one for whoever asked with pulse.simulate_coupling_lines.
     if (saysCouplingLines()) [[unlikely]]
-      refuseSimulatedCouplingLines(*module_);
+      refuseUnaskedCouplingLines(*module_);
     auto lowered = mlir::OwningOpRef<mlir::ModuleOp>(module_->clone());
     mlir::PassManager pm(ctx_.get());
     pm.addPass(pulse::createPulseToQOpPass());
@@ -6420,13 +6501,18 @@ private:
   // in a branch: false only where the builder saw neither, so that
   // controller_program() looks for them only where there can be any.
   bool runTime_ = true;
-  /// Whether the module says it holds a coupling line (-1: not asked yet).
-  /// The attribute is set when the module is built and not after, so the
-  /// walks of one PulseModule ask the module once between them.
-  int8_t saysCouplingLines_ = -1;
   // False only for a module built from a program with no loop, whose
   // event_tree() is its events().
   bool loops_ = true;
+  /// Whether the module says it holds a coupling line (-1: not asked yet).
+  /// The attribute is set when the module is built, so the walks of one
+  /// PulseModule ask the module once between them; set_attributes(), the
+  /// one way to set it later, has them ask again. Every write after
+  /// construction is an atomic store (relaxed: the byte orders nothing
+  /// else) under the module's lock; it is read plainly under the lock, and
+  /// atomically without it by exported_segment_boundaries(). After the two
+  /// flags, in the space before the next field: no field moves for it.
+  int8_t saysCouplingLines_ = -1;
   /// For a module with waits whose length floats set: what it lasts op after
   /// op with each at its lowest length, the most it may last, whether that
   /// is the controller's, and how often each such wait runs.
@@ -6789,6 +6875,39 @@ public:
     lostLines_ = std::move(results);
   }
 
+#if PULSE_BINDINGS_COUPLED
+  /// A builder in the context of the builder that asked (BindingsCoupled.h).
+  explicit PulseModuleBuilder(std::shared_ptr<mlir::MLIRContext> context)
+      : ctx_(std::move(context)) {
+    builder_ = std::make_unique<mlir::OpBuilder>(ctx_.get());
+  }
+#else
+  /// build_from_packed of a program that holds a coupling line: the second
+  /// compilation's, in this builder's context and under its lock.
+  LLVM_ATTRIBUTE_NOINLINE __attribute__((cold)) PulseModule decodeCoupled(
+      const nb::ndarray<int64_t, nb::ndim<1>, nb::c_contig> &stream,
+      double clock_ghz, int64_t qudit_count,
+      const nb::ndarray<double, nb::ndim<1>, nb::c_contig> &qubit_freqs,
+      const std::vector<std::string> &param_names,
+      const std::vector<std::string> &param_types, const std::string &name,
+      int64_t slot_count,
+      const std::optional<nb::ndarray<const double, nb::ndim<1>, nb::c_contig>>
+          &readout_freqs) {
+    cudaq_pulse::CoupledFailure failure;
+    cudaq_pulse::DecodedModule decoded = cudaq_pulse::decodeCoupled(
+        ctx_, lostLines_, stream, clock_ghz, qudit_count, qubit_freqs,
+        param_names, param_types, name, slot_count, readout_freqs, failure);
+    throwCoupled(failure);
+    PulseModule result(ctx_, std::move(decoded.module));
+    result.runTime_ = decoded.runTime;
+    result.loops_ = decoded.loops;
+    if (decoded.hasLength)
+      result.length_ = {decoded.cycles, decoded.most, decoded.controller,
+                        std::move(decoded.repeats), std::move(decoded.excess)};
+    return result;
+  }
+#endif
+
   // ─── Packed-buffer decoder (zero-copy path) ──────────────────────────
   PulseModule build_from_packed(
       nb::ndarray<int64_t, nb::ndim<1>, nb::c_contig> stream, double clock_ghz,
@@ -6799,41 +6918,13 @@ public:
       const std::string &name = "main", int64_t slot_count = 0,
       std::optional<nb::ndarray<const double, nb::ndim<1>, nb::c_contig>>
           readout_freqs = std::nullopt) {
-    // Decoded as a program without coupling lines until a record makes one:
-    // then again, by the variant of the decoder that knows them (Variant.h).
-    try {
-      return decodePacked<false>(stream, clock_ghz, qudit_count, qubit_freqs,
-                                 param_names, param_types, name, slot_count,
-                                 readout_freqs);
-    } catch (const HoldsCouplingLine &) {
-      return decodePacked<true>(stream, clock_ghz, qudit_count, qubit_freqs,
-                                param_names, param_types, name, slot_count,
-                                readout_freqs);
-    }
-  }
-
-  /// What the plain decoder throws at the record of a coupling line.
-  struct HoldsCouplingLine {};
-
-  template <bool Coupled>
-  LLVM_ATTRIBUTE_ALWAYS_INLINE PulseModule decodePacked(
-      const nb::ndarray<int64_t, nb::ndim<1>, nb::c_contig> &stream,
-      double clock_ghz, int64_t qudit_count,
-      const nb::ndarray<double, nb::ndim<1>, nb::c_contig> &qubit_freqs,
-      const std::vector<std::string> &param_names,
-      const std::vector<std::string> &param_types, const std::string &name,
-      int64_t slot_count,
-      const std::optional<nb::ndarray<const double, nb::ndim<1>, nb::c_contig>>
-          &readout_freqs) {
     std::lock_guard<std::mutex> guard(lock_);
-    // The tracer that knows this variant's lines.
-    using LineTracer =
-        std::conditional_t<Coupled, pulse::coupled::AllocationTracer,
-                           pulse::AllocationTracer>;
 
     const int64_t *d = stream.data();
     const size_t len = stream.shape(0);
+#if !PULSE_BINDINGS_COUPLED
     SharedContextPool::charge(ctx_.get(), static_cast<int64_t>(len));
+#endif
     auto loc = builder_->getUnknownLoc();
 
     if (clock_ghz <= 0.0)
@@ -7387,19 +7478,23 @@ public:
             entry = other;
           } else if (madeFrom(other, then)) {
             entry = then;
-          } else if (Coupled && madeOnCouplingLine(then, other)) {
+#if PULSE_BINDINGS_COUPLED
+          } else if (madeOnCouplingLine(then, other)) {
             entry = other;
-          } else if (Coupled && madeOnCouplingLine(other, then)) {
+          } else if (madeOnCouplingLine(other, then)) {
             entry = then;
           } else if (mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType,
-                               pulse::ToneType>(then.getType()) ||
-                     (Coupled &&
-                      mlir::isa<pulse::CouplingLineType>(then.getType()))) {
+                               pulse::ToneType, pulse::CouplingLineType>(
+                         then.getType())) {
+#else
+          } else if (mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType,
+                               pulse::ToneType>(then.getType())) {
+#endif
             mlir::Value a = enteringArm(then, region.body.get(), entered);
             mlir::Value b = enteringArm(other, region.elseBody.get(), entered);
-            if (a != b && differentLines<LineTracer>(
-                              then, region.body.get(), a, other,
-                              region.elseBody.get(), kept)) [[unlikely]] {
+            if (a != b && differentLines(then, region.body.get(), a, other,
+                                         region.elseBody.get(), kept))
+                [[unlikely]] {
               MixedResult from{cur, i,
                                mlir::isa<pulse::ToneType>(then.getType())};
               drop(i);
@@ -7418,9 +7513,12 @@ public:
           thenValues.push_back(then);
           elseValues.push_back(other);
           types.push_back(then.getType());
-          runTime |=
-              yieldsValue(types.back()) &&
-              !(Coupled && mlir::isa<pulse::CouplingLineType>(types.back()));
+#if PULSE_BINDINGS_COUPLED
+          runTime |= yieldsValue(types.back()) &&
+                     !mlir::isa<pulse::CouplingLineType>(types.back());
+#else
+          runTime |= yieldsValue(types.back());
+#endif
         }
         // A link either arm sent on leaves the branch as a result.
         const auto &thenLinks = region.elseBody ? region.linksThen : links;
@@ -7467,10 +7565,11 @@ public:
         break;
       }
       case kOpBlockBegin: {
-        if constexpr (Coupled)
-          refuseBesideCouplingLine(
-              "a kernel with its own schedule (schedule=); compile with "
-              "flatten_schedules=True");
+#if PULSE_BINDINGS_COUPLED
+        refuseBesideCouplingLine(
+            "a kernel with its own schedule (schedule=); compile with "
+            "flatten_schedules=True");
+#endif
         // [policy (0 = asap, 1 = alap), callee name bytes, name words...,
         //  max_duration_cycles (optional)]
         if (plen < 2 || p[0] < 0 || p[0] > 1 || p[1] < 0)
@@ -7564,34 +7663,31 @@ public:
         break;
       }
 
+#if PULSE_BINDINGS_COUPLED
       case kOpAllocCoupling: {
-        if constexpr (!Coupled) {
-          throw HoldsCouplingLine{};
-        } else {
-          // (count, result, qudits...[, controller, delay_cycles]): the
-          // line of the control of the qudits, and what the control system
-          // says of it (the controller that drives it among several, -1
-          // for none; its delay in program cycles).
-          bool facts = plen >= 5 && p[0] + 4 == plen;
-          if (plen < 3 || p[0] < 1 || !(p[0] + 2 == plen || facts))
-            throw std::invalid_argument("packed: malformed coupling line");
-          llvm::SmallVector<mlir::Value, 2> qudits;
-          for (int64_t j = 0; j < p[0]; ++j)
-            qudits.push_back(getQubit(p[2 + j]));
-          // Said first: the op verifies only in a module that says so.
-          module->setAttr(kCouplingLinesAttr, builder_->getUnitAttr());
-          auto line = pulse::GetCouplingLineOp::create(
-              *builder_, loc, pulse::CouplingLineType::get(ctx_.get()), qudits);
-          if (facts) {
-            mlir::Type i64 = builder_->getI64Type();
-            if (int64_t controller = p[2 + p[0]]; controller >= 0)
-              line->setAttr("controller",
-                            mlir::IntegerAttr::get(i64, controller));
-            if (int64_t delay = p[3 + p[0]]; delay != 0)
-              line->setAttr("delay_cycles", mlir::IntegerAttr::get(i64, delay));
-          }
-          bind(p[1], line.getLine());
+        // (count, result, qudits...[, controller, delay_cycles]): the
+        // line of the control of the qudits, and what the control system
+        // says of it (the controller that drives it among several, -1
+        // for none; its delay in program cycles).
+        bool facts = plen >= 5 && p[0] + 4 == plen;
+        if (plen < 3 || p[0] < 1 || !(p[0] + 2 == plen || facts))
+          throw std::invalid_argument("packed: malformed coupling line");
+        llvm::SmallVector<mlir::Value, 2> qudits;
+        for (int64_t j = 0; j < p[0]; ++j)
+          qudits.push_back(getQubit(p[2 + j]));
+        // Said first: the op verifies only in a module that says so.
+        module->setAttr(kCouplingLinesAttr, builder_->getUnitAttr());
+        auto line = pulse::GetCouplingLineOp::create(
+            *builder_, loc, pulse::CouplingLineType::get(ctx_.get()), qudits);
+        if (facts) {
+          mlir::Type i64 = builder_->getI64Type();
+          if (int64_t controller = p[2 + p[0]]; controller >= 0)
+            line->setAttr("controller",
+                          mlir::IntegerAttr::get(i64, controller));
+          if (int64_t delay = p[3 + p[0]]; delay != 0)
+            line->setAttr("delay_cycles", mlir::IntegerAttr::get(i64, delay));
         }
+        bind(p[1], line.getLine());
         break;
       }
 
@@ -7599,8 +7695,7 @@ public:
         // (line, waveform, result, start, duration): a pulse on a coupling
         // line, which comes after the record that fetched the line.
         requirePayload(5);
-        if (!Coupled ||
-            !mlir::isa<pulse::CouplingLineType>(look(p[0]).getType()))
+        if (!mlir::isa<pulse::CouplingLineType>(look(p[0]).getType()))
           throw std::invalid_argument("packed: a drive with no tone plays on "
                                       "a coupling line");
         auto driveOp = pulse::DriveBasebandOp::create(
@@ -7612,6 +7707,15 @@ public:
         lengthen(waveformCycles(driveOp.getPulse()), cur);
         break;
       }
+#else
+      // The record of a coupling line: the program is decoded again, from
+      // its start, by the second compilation (BindingsCoupled.h).
+      case kOpAllocCoupling:
+      case kOpDriveCoupling:
+        return decodeCoupled(stream, clock_ghz, qudit_count, qubit_freqs,
+                             param_names, param_types, name, slot_count,
+                             readout_freqs);
+#endif
 
       case kOpAllocTone: {
         requirePayload(3);
@@ -7750,9 +7854,10 @@ public:
       }
 
       case kOpSelect: {
-        if constexpr (Coupled)
-          refuseBesideCouplingLine(
-              "a value a measurement selects while the program runs");
+#if PULSE_BINDINGS_COUPLED
+        refuseBesideCouplingLine(
+            "a value a measurement selects while the program runs");
+#endif
         // [result id, condition (a measurement or i1), then id, else id]
         requirePayload(4);
         mlir::Value condition = look(p[1]);
@@ -7941,15 +8046,16 @@ public:
         for (int64_t j = 0; j < n; ++j) {
           inVals.push_back(look(p[1 + 3 * j]));
           int64_t vtype = p[3 + 3 * j];
-          if constexpr (Coupled)
-            outTypes.push_back(
-                vtype == 1 ? mlir::Type(readoutTy)
-                : vtype == 2
-                    ? mlir::Type(pulse::CouplingLineType::get(ctx_.get()))
-                    : mlir::Type(driveTy));
-          else
-            outTypes.push_back(vtype == 1 ? mlir::Type(readoutTy)
-                                          : mlir::Type(driveTy));
+#if PULSE_BINDINGS_COUPLED
+          outTypes.push_back(
+              vtype == 1 ? mlir::Type(readoutTy)
+              : vtype == 2
+                  ? mlir::Type(pulse::CouplingLineType::get(ctx_.get()))
+                  : mlir::Type(driveTy));
+#else
+          outTypes.push_back(vtype == 1 ? mlir::Type(readoutTy)
+                                        : mlir::Type(driveTy));
+#endif
         }
         if (n == 2) {
           if (inVals[0] == inVals[1]) [[unlikely]]
@@ -8091,8 +8197,9 @@ public:
       }
 
       case kOpClassicalDeclare: {
-        if constexpr (Coupled)
-          refuseBesideCouplingLine("a classical call");
+#if PULSE_BINDINGS_COUPLED
+        refuseBesideCouplingLine("a classical call");
+#endif
         // [index, id, link, flags, min, nominal, max, timeout, deadline,
         //  name length, args length, results length, text words...,
         //  reaction (with flag 64)]
@@ -8564,7 +8671,103 @@ private:
   mlir::DialectRegistry registry_;
 };
 
+#if PULSE_BINDINGS_COUPLED
+/// A PulseModule of this unit around a module the other unit owns, for one
+/// walk. The module is handed back when this goes out of scope, also when
+/// the walk throws, and is not held before the PulseModule exists: whatever
+/// fails, the owner's module is not destroyed here.
+struct BorrowedModule {
+  PulseModule held;
+  BorrowedModule(const std::shared_ptr<mlir::MLIRContext> &context,
+                 mlir::ModuleOp module)
+      : held(context, mlir::OwningOpRef<mlir::ModuleOp>()) {
+    held.borrow(module);
+  }
+  ~BorrowedModule() { held.giveBack(); }
+  BorrowedModule(const BorrowedModule &) = delete;
+  BorrowedModule &operator=(const BorrowedModule &) = delete;
+};
+
+/// Runs `run`; what it throws of this unit's own types is written to
+/// `failure` for the unit that asked (BindingsCoupled.h).
+template <typename Run>
+void runCoupled(cudaq_pulse::CoupledFailure &failure, Run &&run) {
+  using cudaq_pulse::CoupledFailure;
+  try {
+    run();
+  } catch (const PackedValueError &e) {
+    failure = {CoupledFailure::PackedValue, e.what(), e.word};
+  } catch (const NotSupportedYet &e) {
+    failure = {CoupledFailure::NotSupportedYet, e.what(), 0};
+  } catch (const Unsupported &e) {
+    failure = {CoupledFailure::Unsupported, e.what(), 0};
+  } catch (const KernelRefused &e) {
+    failure = {CoupledFailure::KernelRefused, e.what(), 0};
+  }
+}
+#endif
+
 } // namespace
+
+#if PULSE_BINDINGS_COUPLED
+
+cudaq_pulse::DecodedModule cudaq_pulse::decodeCoupled(
+    const std::shared_ptr<mlir::MLIRContext> &context,
+    const std::vector<int64_t> &lost,
+    const nb::ndarray<int64_t, nb::ndim<1>, nb::c_contig> &stream,
+    double clockGHz, int64_t quditCount,
+    const nb::ndarray<double, nb::ndim<1>, nb::c_contig> &qubitFreqs,
+    const std::vector<std::string> &paramNames,
+    const std::vector<std::string> &paramTypes, const std::string &name,
+    int64_t slotCount,
+    const std::optional<nb::ndarray<const double, nb::ndim<1>, nb::c_contig>>
+        &readoutFreqs,
+    CoupledFailure &failure) {
+  DecodedModule decoded;
+  PulseModuleBuilder builder(context);
+  builder.expectLost(lost);
+  runCoupled(failure, [&] {
+    decoded = builder
+                  .build_from_packed(stream, clockGHz, quditCount, qubitFreqs,
+                                     paramNames, paramTypes, name, slotCount,
+                                     readoutFreqs)
+                  .decoded();
+  });
+  return decoded;
+}
+
+std::vector<cudaq_pulse::CoupledEvent>
+cudaq_pulse::coupledEvents(const std::shared_ptr<mlir::MLIRContext> &context,
+                           mlir::ModuleOp module, CoupledFailure &failure) {
+  std::vector<CoupledEvent> events;
+  BorrowedModule borrowed(context, module);
+  runCoupled(failure, [&] { events = borrowed.held.events(); });
+  return events;
+}
+
+PyObject *
+cudaq_pulse::coupledEventTree(const std::shared_ptr<mlir::MLIRContext> &context,
+                              mlir::ModuleOp module, int64_t limit,
+                              CoupledFailure &failure) {
+  nb::object tree;
+  BorrowedModule borrowed(context, module);
+  runCoupled(failure, [&] { tree = borrowed.held.event_tree(limit); });
+  return tree.release().ptr();
+}
+
+void cudaq_pulse::raiseUnsupported(const char *what) {
+  nb::object raised =
+      nb::module_::import_("cudaq_pulse._errors").attr("UnsupportedError");
+  PyErr_SetString(raised.ptr(), what);
+}
+
+void cudaq_pulse::raiseKernelRefused(const char *what) {
+  nb::object raised =
+      nb::module_::import_("cudaq_pulse._errors").attr("CompilationError");
+  PyErr_SetString(raised.ptr(), what);
+}
+
+#else // The extension's Python module: of the bindings only.
 
 namespace {
 
@@ -8656,25 +8859,21 @@ NB_MODULE(_cudaq_pulse_native, m) {
       "message and the word offset of the record that holds it.",
       PyExc_ValueError, nullptr);
   m.attr("PackedValueError") = nb::handle(packedValueError);
-  nb::register_exception_translator([](const std::exception_ptr &error,
-                                       void *) {
-    try {
-      std::rethrow_exception(error);
-    } catch (const PackedValueError &e) {
-      nb::object args = nb::make_tuple(e.what(), e.word);
-      PyErr_SetObject(packedValueError, args.ptr());
-    } catch (const NotSupportedYet &e) {
-      PyErr_SetString(PyExc_NotImplementedError, e.what());
-    } catch (const Unsupported &e) {
-      nb::object raised =
-          nb::module_::import_("cudaq_pulse._errors").attr("UnsupportedError");
-      PyErr_SetString(raised.ptr(), e.what());
-    } catch (const KernelRefused &e) {
-      nb::object raised =
-          nb::module_::import_("cudaq_pulse._errors").attr("CompilationError");
-      PyErr_SetString(raised.ptr(), e.what());
-    }
-  });
+  nb::register_exception_translator(
+      [](const std::exception_ptr &error, void *) {
+        try {
+          std::rethrow_exception(error);
+        } catch (const PackedValueError &e) {
+          nb::object args = nb::make_tuple(e.what(), e.word);
+          PyErr_SetObject(packedValueError, args.ptr());
+        } catch (const NotSupportedYet &e) {
+          PyErr_SetString(PyExc_NotImplementedError, e.what());
+        } catch (const Unsupported &e) {
+          cudaq_pulse::raiseUnsupported(e.what());
+        } catch (const KernelRefused &e) {
+          cudaq_pulse::raiseKernelRefused(e.what());
+        }
+      });
 
   nb::class_<PulseModule>(m, "PulseModule")
       .def("print", &PulseModule::print,
@@ -9186,3 +9385,5 @@ NB_MODULE(_cudaq_pulse_native, m) {
            nb::call_guard<nb::gil_scoped_release>(),
            "Parse MLIR text into a PulseModule");
 }
+
+#endif // PULSE_BINDINGS_COUPLED
