@@ -629,7 +629,9 @@ def _selects(value: Any) -> bool:
     if cls is _Choice:
         return all(_select_leaf(leaf) for leaf in _choice_leaves(value))
     if cls is ParameterExpression or cls is UndecidableComparison:
-        return _selects(value.lhs) and _selects(value.rhs)
+        from .ir_builder import expression_leaves
+
+        return all(_selects(leaf) for leaf in expression_leaves(value))
     if cls is list or cls is tuple:
         return _find_choice(value) is None
     return True
@@ -650,8 +652,13 @@ def _find_choice(value: Any) -> _Choice | None:
     if cls is _Choice:
         return value  # type: ignore[no-any-return]
     if cls is ParameterExpression or cls is UndecidableComparison:
-        found = _find_choice(value.lhs)
-        return found if found is not None else _find_choice(value.rhs)
+        from .ir_builder import expression_leaves
+
+        for leaf in expression_leaves(value):
+            found = _find_choice(leaf)
+            if found is not None:
+                return found
+        return None
     if cls is list or cls is tuple:
         for item in value:
             found = _find_choice(item)
@@ -666,8 +673,10 @@ def _choices_in(value: Any) -> Iterator[_Choice]:
     if cls is _Choice:
         yield value
     elif cls is ParameterExpression or cls is UndecidableComparison:
-        yield from _choices_in(value.lhs)
-        yield from _choices_in(value.rhs)
+        from .ir_builder import expression_leaves
+
+        for leaf in expression_leaves(value):
+            yield from _choices_in(leaf)
     elif cls is list or cls is tuple:
         for item in value:
             yield from _choices_in(item)
@@ -684,18 +693,23 @@ def _in_arm(value: Any, cond: IRValue, taken: bool) -> Any:
         if then is value.then and other is value.other:
             return value
         return _choose(value.cond, then, other, value, value.scope)
-    if cls is ParameterExpression:
-        lhs = _in_arm(value.lhs, cond, taken)
-        rhs = _in_arm(value.rhs, cond, taken)
-        if lhs is value.lhs and rhs is value.rhs:
-            return value
-        return ParameterExpression(value.op, lhs, rhs, dtype=value.dtype)
-    if cls is UndecidableComparison:
-        lhs = _in_arm(value.lhs, cond, taken)
-        rhs = _in_arm(value.rhs, cond, taken)
-        if lhs is value.lhs and rhs is value.rhs:
-            return value
-        return _CHOICE_COMPARE[value.op](lhs, rhs)
+    if cls is ParameterExpression or cls is UndecidableComparison:
+        # Each operation once, after its operands; one whose operands stay
+        # as they are stays itself, so what it shares stays shared.
+        from .ir_builder import expression_nodes
+
+        made: dict[int, Any] = {}
+        for node in expression_nodes(value):
+            lhs, rhs = node.lhs, node.rhs
+            lhs = made[id(lhs)] if id(lhs) in made else _in_arm(lhs, cond, taken)
+            rhs = made[id(rhs)] if id(rhs) in made else _in_arm(rhs, cond, taken)
+            if lhs is node.lhs and rhs is node.rhs:
+                made[id(node)] = node
+            elif node.__class__ is ParameterExpression:
+                made[id(node)] = ParameterExpression(node.op, lhs, rhs, dtype=node.dtype)
+            else:
+                made[id(node)] = _CHOICE_COMPARE[node.op](lhs, rhs)
+        return made[id(value)]
     if cls is list or cls is tuple:
         items = [_in_arm(item, cond, taken) for item in value]
         if all(a is b for a, b in zip(items, value, strict=False)):
@@ -1589,7 +1603,13 @@ def _parameter_names(value: Any) -> list[str]:
     if isinstance(value, Parameter):
         return [value.name]
     if isinstance(value, ParameterExpression):
-        return _parameter_names(value.lhs) + _parameter_names(value.rhs)
+        from .ir_builder import ARITHMETIC, expression_leaves
+
+        return [
+            leaf.name
+            for leaf in expression_leaves(value, ARITHMETIC)
+            if isinstance(leaf, Parameter)
+        ]
     return []
 
 
@@ -1752,7 +1772,9 @@ def _made_in_if(value: Any, first: int, scope: tuple[int, ...]) -> bool:
     if cls is AnswerValue:
         return bool(scope[: len(value.scope)] != value.scope)
     if cls is ParameterExpression:
-        return _made_in_if(value.lhs, first, scope) or _made_in_if(value.rhs, first, scope)
+        from .ir_builder import ARITHMETIC, expression_leaves
+
+        return any(_made_in_if(leaf, first, scope) for leaf in expression_leaves(value, ARITHMETIC))
     return False
 
 

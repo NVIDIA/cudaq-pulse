@@ -13,7 +13,7 @@ import numbers
 import struct
 import sys
 from array import array
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from typing import Any
 
 from ..classical import _LIST_NAME, _RESERVED_KEYS, _unsized_names
@@ -1284,52 +1284,12 @@ class PackedIRBuilder:
             cache_key = (value, expected_dtype)
             if cache_key in self._numeric_vids:
                 return self._numeric_vids[cache_key]
-
-            if value.op == "cast":
-                target_dtype = value.dtype
-                source_dtype = getattr(value.lhs, "dtype", "unknown")
-                if source_dtype == "unknown":
-                    source_dtype = "f64" if target_dtype == "i64" else "i64"
-                source = self._get_numeric_vid(value.lhs, source_dtype)
-                result = self._emit_numeric_cast(source, source_dtype, target_dtype)
-                if target_dtype != expected_dtype:
-                    result = self._emit_numeric_cast(result, target_dtype, expected_dtype)
-                # A cast that emitted nothing is not cached: every entry is
-                # then newer than those before it, which _forget relies on.
-                if result != source:
-                    self._numeric_vids[cache_key] = result
-                return result
-
-            dtype = "f64" if value.op == "div" else expected_dtype
-            if value.op in ("floordiv", "mod"):
-                dtype = "i64"
-            if value.op == "pow":
-                raise CompilationError(
-                    "symbolic exponentiation is not supported; specialize "
-                    "that value before compilation",
-                    code="symbolic_parameter",
-                )
-            if value.op == "neg":
-                operand = self._get_numeric_vid(value.lhs, dtype)
-                result = self._next_id
-                self._next_id += 1
-                self._put((_header(_NUM_NEG, 3), result, _NUMERIC_TYPE[dtype], operand))
-            else:
-                opcode = _BINARY_OP.get(value.op)
-                if opcode is None:
-                    raise CompilationError(
-                        f"unsupported symbolic operation {value.op!r}",
-                        code="symbolic_parameter",
-                    )
-                lhs = self._get_numeric_vid(value.lhs, dtype)
-                rhs = self._get_numeric_vid(value.rhs, dtype)
-                result = self._next_id
-                self._next_id += 1
-                self._put((_header(_NUM_BINARY, 5), result, _NUMERIC_TYPE[dtype], opcode, lhs, rhs))
-            if dtype != expected_dtype:
-                result = self._emit_numeric_cast(result, dtype, expected_dtype)
-            self._numeric_vids[cache_key] = result
-            return result
+            if self._numeric_operand is value:
+                # An operand of the expression _expression_vid is emitting:
+                # its steps go on that call's stack, not on Python's.
+                self._numeric_operand = None
+                return self._expression_steps(value, expected_dtype)  # type: ignore[return-value]
+            return self._expression_vid(value, expected_dtype)
 
         cls = value.__class__
         if cls is not float and cls is not int and isinstance(value, Selection):
@@ -1342,6 +1302,89 @@ class PackedIRBuilder:
         except struct.error:
             word = _f2i(_real(value, "a pulse op operand"))
         self._put((_header(_NUM_CONST, 3), result, _NUMERIC_TYPE[expected_dtype], word))
+        return result
+
+    # The operand _expression_vid is asking _get_numeric_vid for, if any.
+    _numeric_operand: Any = None
+
+    def _expression_vid(self, value: ParameterExpression, expected_dtype: str) -> int:
+        """The SSA value of the arithmetic *value*, not emitted yet. Its
+        operations are emitted as a call for each operand would emit them,
+        operands first and left before right, but from a stack kept here: an
+        expression may be thousands of operations deep."""
+        frames = [self._expression_steps(value, expected_dtype)]
+        result: Any = None
+        while frames:
+            try:
+                operand, dtype = frames[-1].send(result)
+            except StopIteration as done:
+                frames.pop()
+                result = done.value
+                continue
+            if operand.__class__ is ParameterExpression:
+                self._numeric_operand = operand
+                try:
+                    result = self._get_numeric_vid(operand, dtype)
+                finally:
+                    self._numeric_operand = None
+                if result.__class__ is not int:
+                    frames.append(result)
+                    result = None
+            else:
+                result = self._get_numeric_vid(operand, dtype)
+        return result  # type: ignore[no-any-return]
+
+    def _expression_steps(
+        self, value: ParameterExpression, expected_dtype: str
+    ) -> Generator[tuple[Any, str], int, int]:
+        """The steps of ``_get_numeric_vid`` for arithmetic not emitted yet:
+        each operand it needs, with its type, is yielded and its SSA value
+        sent back."""
+        cache_key = (value, expected_dtype)
+        if value.op == "cast":
+            target_dtype = value.dtype
+            source_dtype = getattr(value.lhs, "dtype", "unknown")
+            if source_dtype == "unknown":
+                source_dtype = "f64" if target_dtype == "i64" else "i64"
+            source = yield value.lhs, source_dtype
+            result = self._emit_numeric_cast(source, source_dtype, target_dtype)
+            if target_dtype != expected_dtype:
+                result = self._emit_numeric_cast(result, target_dtype, expected_dtype)
+            # A cast that emitted nothing is not cached: every entry is
+            # then newer than those before it, which _forget relies on.
+            if result != source:
+                self._numeric_vids[cache_key] = result
+            return result
+
+        dtype = "f64" if value.op == "div" else expected_dtype
+        if value.op in ("floordiv", "mod"):
+            dtype = "i64"
+        if value.op == "pow":
+            raise CompilationError(
+                "symbolic exponentiation is not supported; specialize "
+                "that value before compilation",
+                code="symbolic_parameter",
+            )
+        if value.op == "neg":
+            operand = yield value.lhs, dtype
+            result = self._next_id
+            self._next_id += 1
+            self._put((_header(_NUM_NEG, 3), result, _NUMERIC_TYPE[dtype], operand))
+        else:
+            opcode = _BINARY_OP.get(value.op)
+            if opcode is None:
+                raise CompilationError(
+                    f"unsupported symbolic operation {value.op!r}",
+                    code="symbolic_parameter",
+                )
+            lhs = yield value.lhs, dtype
+            rhs = yield value.rhs, dtype
+            result = self._next_id
+            self._next_id += 1
+            self._put((_header(_NUM_BINARY, 5), result, _NUMERIC_TYPE[dtype], opcode, lhs, rhs))
+        if dtype != expected_dtype:
+            result = self._emit_numeric_cast(result, dtype, expected_dtype)
+        self._numeric_vids[cache_key] = result
         return result
 
     def select(self, value: Selection, dtype: str, specializes: bool = True) -> int:

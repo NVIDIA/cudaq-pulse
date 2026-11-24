@@ -391,13 +391,32 @@ class _AtOnce:
             entries.append((lo, hi, self._common(node, path), self._weight(node)))
         entries.sort(key=lambda e: (e[0], e[1]))
         most = 0
-        active: list[tuple[int, dict[tuple[Any, ...], Any], int]] = []
-        for lo, hi, arms, weight in entries:
-            active = [a for a in active if a[0] > lo]
-            active.append((hi, arms, weight))
-            if sum(a[2] for a in active) <= max(most, floor):
+        # The entries in flight: a heap with the one that ends first on top,
+        # (end, the entry's place in *entries*); their places in the order
+        # they came in; the sum of their weights; and how many of them are
+        # in an arm of a branch.
+        active: list[tuple[int, int]] = []
+        flying: dict[int, None] = {}
+        total = armed = 0
+        for order, (lo, hi, arms, weight) in enumerate(entries):
+            while active and active[0][0] <= lo:
+                gone = heappop(active)[1]
+                del flying[gone]
+                total -= entries[gone][3]
+                if entries[gone][2]:
+                    armed -= 1
+            heappush(active, (hi, order))
+            flying[order] = None
+            total += weight
+            if arms:
+                armed += 1
+            if total <= max(most, floor):
                 continue
-            most = max(most, _together([(a[1], a[2]) for a in active]))
+            if not armed:
+                # None is in a branch: all in flight play together.
+                most = total
+                continue
+            most = max(most, _together([(entries[k][2], entries[k][3]) for k in flying]))
         return most
 
     def _weight(self, node: Any) -> int:
