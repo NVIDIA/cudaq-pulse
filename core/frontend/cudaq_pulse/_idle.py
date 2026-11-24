@@ -458,7 +458,25 @@ def _filled(
 
     rule = options.idle_replacement
     assert rule is not None and rule.fill is not None
-    entry = kernel._specialize(values, target, options.traced(Sites(planned, rule)))
+    from .controller import ControllerLimitError
+
+    try:
+        entry = kernel._specialize(values, target, options.traced(Sites(planned, rule)))
+    except ControllerLimitError as error:
+        # The program without the fills fits: the fills' pulses do not, as
+        # they count against the control system like any pulse. The error
+        # keeps its type and what it lists, and says so.
+        fix = (
+            "fill fewer qudits (qudits=), use a fill with fewer pulses, or raise the "
+            "control system's limit"
+        )
+        error.args = (
+            f"idle replacement: with the idle windows of {kernel.__name__}() filled by "
+            f"{rule.fill.__name__}(), {error.args[0]}; {fix}",
+            *error.args[1:],
+        )
+        error.fix = fix
+        raise
     lowered = entry.lowered
     module = lowered._module
     try:

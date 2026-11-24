@@ -1361,6 +1361,53 @@ def test_the_quantum_systems_control_system_is_the_one_compiled_for():
         ).lower(q[0], q[1])
 
 
+@pulse.kernel
+def three_lines(a, b, c):
+    da = get_drive_line(a)
+    db = get_drive_line(b)
+    dc = get_drive_line(c)
+    drive(da, square(40, 0.1))
+    sync(da, db, dc)
+    drive(db, square(400, 0.1))
+    drive(dc, square(400, 0.1))
+    sync(da, db, dc)
+    drive(da, square(40, 0.1))
+
+
+@pytest.mark.parametrize("schedule", ["alap", "asap"])
+def test_a_fill_past_the_systems_drive_limit_fails_and_names_it(schedule):
+    from cudaq_pulse.controller import ControllerLimitError, DriveLine, ReadoutLine
+
+    from tests._handles import ladder_target
+
+    box = pulse.Controller(
+        drive_lines=[DriveLine(q) for q in range(4)],
+        readout_lines=[ReadoutLine(q) for q in range(4)],
+    )
+    qpu = ladder_target(
+        4, control_system=pulse.ControlSystem(controllers=[box], max_concurrent_drives=2)
+    )
+    q = qpu.qudits
+    rule = pulse.IdleReplacement(pi, threshold=100)
+    # Two lines play at once without the fill; its pulse on a's line makes three.
+    plain = pulse.compile(three_lines, schedule=schedule).lower(q[0], q[1], q[2])
+    assert float(plain.duration) > 0
+    with pytest.raises(ControllerLimitError) as raised:
+        pulse.compile(three_lines, schedule=schedule, passes=_WITH, idle_replacement=rule).lower(
+            q[0], q[1], q[2]
+        )
+    text = str(raised.value)
+    assert text.startswith(
+        "idle replacement: with the idle windows of three_lines() filled by pi(), "
+        "the program does not fit the control system:"
+    )
+    assert "max_concurrent_drives" in text
+    assert text.endswith(
+        "; fill fewer qudits (qudits=), use a fill with fewer pulses, or raise the "
+        "control system's limit"
+    )
+
+
 def test_a_float_parameter_that_sets_a_pulses_length_compiles_at_once():
     # The kernel is traced again with the parameter static: the record of
     # the first trace is not the second's.
