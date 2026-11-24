@@ -18,7 +18,6 @@ from cudaq_pulse.compiler import DEFAULT_PASSES, CompileOptions
 from tests._handles import Q
 
 _ROOT = str(Path(pulse.__file__).parent.parent)
-_WITH = (*DEFAULT_PASSES, pulse.Pass.IDLE_REPLACEMENT)
 
 
 @pulse.kernel
@@ -52,47 +51,28 @@ def _rule(**settings):
     return pulse.IdleReplacement(echo, **({"threshold": 100 * pulse.ns} | settings))
 
 
-# -- The member and the option: both or neither ------------------------------
+# -- The method --------------------------------------------------------------
 
 
-def test_the_member_is_a_pass_by_name():
-    assert pulse.Pass.IDLE_REPLACEMENT == "idle_replacement"
-    assert pulse.Pass("idle_replacement") is pulse.Pass.IDLE_REPLACEMENT
-    assert pulse.Pass.IDLE_REPLACEMENT not in DEFAULT_PASSES
-
-
-@pytest.mark.parametrize("passes", [_WITH, ("idle_replacement",), _WITH[::-1]])
-def test_the_member_without_a_rule_names_the_option(passes):
-    with pytest.raises(pulse.InvalidValueError) as error:
-        pulse.compile(two_lines, passes=passes)
-    assert str(error.value) == (
-        "passes= lists Pass.IDLE_REPLACEMENT, which needs "
-        "idle_replacement=pulse.IdleReplacement(fill, threshold=...)"
-    )
-
-
-@pytest.mark.parametrize("passes", [None, DEFAULT_PASSES, ()])
-def test_a_rule_without_the_member_names_the_member(passes):
-    with pytest.raises(pulse.InvalidValueError) as error:
-        pulse.compile(two_lines, passes=passes, idle_replacement=_rule())
-    assert str(error.value) == (
-        "idle_replacement= is given but passes= does not list Pass.IDLE_REPLACEMENT; "
-        "add it, as passes=(*pulse.compiler.DEFAULT_PASSES, pulse.Pass.IDLE_REPLACEMENT)"
-    )
-
-
-def test_the_option_takes_only_a_rule():
+def test_replace_idle_takes_only_a_rule():
     with pytest.raises(pulse.InvalidTypeError, match=r"takes a pulse\.IdleReplacement, got "):
-        pulse.compile(two_lines, passes=_WITH, idle_replacement=echo)
+        pulse.compile(two_lines).replace_idle(echo)
 
 
-def test_the_member_is_no_rewrite_and_its_place_changes_nothing():
-    rule = _rule()
-    last = CompileOptions.make(passes=_WITH, idle_replacement=rule)
-    first = CompileOptions.make(passes=_WITH[::-1][:1] + DEFAULT_PASSES, idle_replacement=rule)
-    assert last.passes == first.passes == DEFAULT_PASSES
-    assert last == first and hash(last) == hash(first)
-    assert last.idle_replacement is rule
+def test_replace_idle_leaves_the_compiled_kernel_as_it_is():
+    compiled = pulse.compile(two_lines)
+    idled = compiled.replace_idle(_rule())
+    assert idled is not compiled and isinstance(idled, type(compiled))
+    assert compiled.lower(Q[0], Q[1]).idle_windows is None
+    assert idled.lower(Q[0], Q[1]).idle_windows is not None
+    with pytest.raises(pulse.InvalidValueError, match="replaced already"):
+        idled.replace_idle(_rule())
+
+
+def test_there_is_no_pass_member_or_keyword_for_it():
+    assert "idle_replacement" not in {p.value for p in pulse.Pass}
+    with pytest.raises(TypeError, match="unexpected keyword argument 'idle_replacement'"):
+        pulse.compile(two_lines, **{"idle_replacement": _rule()})
 
 
 # -- The rule -----------------------------------------------------------------
@@ -218,27 +198,31 @@ def test_align_and_qudits_are_checked():
     assert _rule(qudits=Q[3]).qudits == (Q[3],)
 
 
-# -- The options of a compilation with a rule ---------------------------------
+# -- The options of a kernel whose idle windows are replaced ------------------
+
+
+def _options(compiled):
+    return compiled._dispatch.options
 
 
 def test_options_with_a_rule_are_apart_from_those_without():
     plain = CompileOptions.make()
-    with_rule = CompileOptions.make(passes=_WITH, idle_replacement=_rule())
-    assert plain.idle_replacement is None and type(plain) is CompileOptions
+    with_rule = _options(pulse.compile(two_lines).replace_idle(_rule()))
+    assert type(plain) is CompileOptions
     assert with_rule != plain and with_rule.passes == plain.passes
-    assert with_rule == CompileOptions.make(passes=_WITH, idle_replacement=_rule())
-    assert with_rule != CompileOptions.make(passes=_WITH, idle_replacement=_rule(threshold=7))
+    assert with_rule == _options(pulse.compile(two_lines).replace_idle(_rule()))
+    assert with_rule != _options(pulse.compile(two_lines).replace_idle(_rule(threshold=7)))
     assert with_rule.without_rule() == plain and type(with_rule.without_rule()) is CompileOptions
     assert repr(with_rule) == f"{plain!r} + {_rule()!r}"
 
 
 def test_a_copy_of_the_options_keeps_the_rule_and_the_unit_warnings():
     rule = _rule()
-    options = CompileOptions.make(passes=_WITH, idle_replacement=rule, unit_warnings=True)
-    assert options.unit_warnings is True and options.idle_replacement is rule
+    options = _options(pulse.compile(two_lines, unit_warnings=True).replace_idle(rule))
+    assert options.units is True and options.idle_replacement is rule
     assert options.without_rule().unit_warnings is True
     copy = dataclasses.replace(options, schedule="asap")
-    assert copy.idle_replacement is rule and copy.unit_warnings is True
+    assert copy.idle_replacement is rule and copy.units is True
     assert copy.schedule == "asap" and copy != options
 
 
@@ -246,7 +230,7 @@ def test_a_copy_of_the_options_keeps_the_rule_and_the_unit_warnings():
 
 
 def _compiled(kernel, **settings):
-    return pulse.compile(kernel, passes=_WITH, idle_replacement=_rule(**settings))
+    return pulse.compile(kernel).replace_idle(_rule(**settings))
 
 
 def test_a_wait_as_long_as_a_float_is_refused_with_the_way_out():
@@ -394,7 +378,7 @@ def uneven(a, b, n: int):
 
 def _windows(kernel, *args, schedule="asap", **settings):
     rule = pulse.IdleReplacement(None, **({"threshold": 100} | settings))
-    program = pulse.compile(kernel, schedule=schedule, passes=_WITH, idle_replacement=rule)
+    program = pulse.compile(kernel, schedule=schedule).replace_idle(rule)
     return program.lower(*args).idle_windows
 
 
@@ -430,11 +414,13 @@ def test_the_windows_print_as_a_table():
 
 def test_a_rule_without_a_fill_leaves_the_program_as_it_is():
     rule = pulse.IdleReplacement(None, threshold=100)
-    program = pulse.compile(host, passes=_WITH, idle_replacement=rule).lower(Q[0], Q[1])
+    program = pulse.compile(host).replace_idle(rule).lower(Q[0], Q[1])
     plain = pulse.compile(host).lower(Q[0], Q[1])
     assert program.mlir() == plain.mlir()
     assert program._module.serialize() == plain._module.serialize()
-    assert program.options.idle_replacement is rule
+    # The program carries the options it was compiled with: the rule is the
+    # kernel's (replace_idle), not the program's.
+    assert program.options == plain.options
     assert plain.idle_windows is None
     assert program.bind(()).idle_windows is program.idle_windows
 
@@ -533,9 +519,7 @@ def test_an_error_of_the_program_is_the_one_it_raises_without_the_rule():
     with pytest.raises(RuntimeError) as plain:
         pulse.compile(budgeted).lower(Q[0])
     with pytest.raises(RuntimeError) as ruled:
-        pulse.compile(
-            budgeted, passes=_WITH, idle_replacement=pulse.IdleReplacement(None, threshold=100)
-        ).lower(Q[0])
+        pulse.compile(budgeted).replace_idle(pulse.IdleReplacement(None, threshold=100)).lower(Q[0])
     assert "max_duration_cycles=500" in str(plain.value)
     assert str(ruled.value) == str(plain.value)
     assert type(ruled.value) is type(plain.value)
@@ -631,11 +615,9 @@ def waits_in_a_row(a, b):
 _POLICIES = ["asap", "alap", "rcp", "alap_rcp"]
 
 
-def _filled(kernel, *args, fill=pi, schedule="asap", passes=_WITH, **settings):
+def _filled(kernel, *args, fill=pi, schedule="asap", passes=None, **settings):
     rule = pulse.IdleReplacement(fill, **({"threshold": 100} | settings))
-    return pulse.compile(kernel, schedule=schedule, passes=passes, idle_replacement=rule).lower(
-        *args
-    )
+    return pulse.compile(kernel, schedule=schedule, passes=passes).replace_idle(rule).lower(*args)
 
 
 def _events(program):
@@ -806,17 +788,20 @@ def test_the_windows_of_several_qudits_that_end_at_one_sync_are_all_filled(sched
 
 
 @pytest.mark.parametrize("schedule", ["rcp", "alap_rcp"])
-def test_fills_that_need_more_drive_lanes_than_there_are_fail_and_name_them(schedule):
-    with pytest.raises(pulse.CompilationError) as raised:
-        _filled(many, Q[0], Q[1], Q[2], Q[3], Q[4], fill=pair, schedule=schedule)
-    text = str(raised.value)
-    assert text.startswith("idle replacement: with the idle windows of many() filled, ")
-    assert (
-        f"under schedule={schedule!r} a fill's pulses take drive lanes like any pulse, and "
-        "the control system has 4; fill fewer qudits (qudits=), use a fill with fewer pulses, "
-        "or allow more drives at once (max_concurrent_drives)"
-    ) in text
-    assert raised.value.code == pulse.ErrorCode.TIMING
+def test_fills_that_need_more_drive_lanes_than_there_are_are_left_alone(schedule):
+    # Under rcp and alap_rcp a fill's pulses take drive lanes like any
+    # pulse: a window whose fill would move an operation of the kernel is
+    # left unfilled and says why, and the program compiles (decision 280).
+    from cudaq_pulse._idle_windows import LANES
+
+    program = _filled(many, Q[0], Q[1], Q[2], Q[3], Q[4], fill=pair, schedule=schedule)
+    plain = pulse.compile(many, schedule=schedule).lower(Q[0], Q[1], Q[2], Q[3], Q[4])
+    results = [w.result for w in program.idle_windows]
+    assert LANES in results
+    assert all(w.filled or w.result == LANES for w in program.idle_windows)
+    assert program.duration == plain.duration
+    host = _events(plain)
+    assert [event for event in _events(program) if event in host] == host
     # Two qudits fit.
     program = _filled(
         many, Q[0], Q[1], Q[2], Q[3], Q[4], fill=pair, schedule=schedule, qudits=[Q[0], Q[1]]
@@ -998,9 +983,7 @@ def test_the_gaps_of_the_surface_code_cycle_are_written_through_its_barriers(sch
     # let what is written slide, under alap, towards the operation after.
     kernel, qudits = _surface_code_cycle()
     rule = pulse.IdleReplacement(calibrated_echo, threshold=50 * pulse.ns)
-    program = pulse.compile(kernel, schedule=schedule, passes=_WITH, idle_replacement=rule).lower(
-        qudits
-    )
+    program = pulse.compile(kernel, schedule=schedule).replace_idle(rule).lower(qudits)
     plain = pulse.compile(kernel, schedule=schedule).lower(qudits)
     host = _events(plain)
     assert [event for event in _events(program) if event in host] == host
@@ -1047,7 +1030,7 @@ def test_the_data_qudits_of_a_stabilizer_cycle_are_filled_between_its_layers(fla
     # written after the pulse at the tone, around the calls of the layers.
     rule = pulse.IdleReplacement(pair, threshold=100)
     register = Q[0:4]
-    compiled = pulse.compile(cycle, passes=_WITH, idle_replacement=rule, flatten_schedules=flatten)
+    compiled = pulse.compile(cycle, flatten_schedules=flatten).replace_idle(rule)
     program = compiled.lower(register, n)
     plain = pulse.compile(cycle, flatten_schedules=flatten).lower(register, n)
     assert program.duration == plain.duration
@@ -1082,7 +1065,7 @@ def test_a_gap_that_ends_inside_a_loop_is_written_after_the_operation_before_it(
 
 
 def test_a_window_before_waits_the_passes_merge_is_written_before_the_first():
-    passes = (*DEFAULT_PASSES, pulse.Pass.MERGE_WAITS, pulse.Pass.IDLE_REPLACEMENT)
+    passes = (*DEFAULT_PASSES, pulse.Pass.MERGE_WAITS)
     program = _filled(waits_in_a_row, Q[0], Q[1], schedule="alap", passes=passes, leading=True)
     assert _events(program)[:4] == [
         ("wait", 0, 0, 210),
@@ -1129,8 +1112,12 @@ def test_a_program_with_filled_windows_pickles_as_the_program_it_is():
     again = pickle.loads(pickle.dumps(program))
     assert _events(again) == _events(program)
     assert again.idle_windows == program.idle_windows
-    # The rule holds its fill, a live kernel: the program pickles without it.
-    assert again.options == program.options.without_rule()
+    # The program carries the options it was compiled with, not the rule.
+    assert (
+        again.options
+        == program.options
+        == pulse.compile(host, schedule="asap").lower(Q[0], Q[1]).options
+    )
 
 
 def test_a_program_filled_by_a_kernel_defined_in_a_function_pickles():
@@ -1162,11 +1149,8 @@ def from_a_global(qudit, window):
 
 
 def test_a_change_of_what_the_fill_reads_compiles_the_program_again(monkeypatch):
-    compiled = pulse.compile(
-        host,
-        schedule="asap",
-        passes=_WITH,
-        idle_replacement=pulse.IdleReplacement(from_a_global, threshold=100),
+    compiled = pulse.compile(host, schedule="asap").replace_idle(
+        pulse.IdleReplacement(from_a_global, threshold=100)
     )
     assert ("drive", 0, 320, 360) in _events(compiled.lower(Q[0], Q[1]))
     monkeypatch.setitem(_PULSE, "cycles", 80)
@@ -1183,11 +1167,8 @@ def test_a_float_argument_of_the_kernel_stays_an_argument_of_the_filled_program(
         sync(da, db)
         drive(da, square(40, amp))
 
-    compiled = pulse.compile(
-        scaled,
-        schedule="asap",
-        passes=_WITH,
-        idle_replacement=pulse.IdleReplacement(pi, threshold=100),
+    compiled = pulse.compile(scaled, schedule="asap").replace_idle(
+        pulse.IdleReplacement(pi, threshold=100)
     )
     one, other = compiled.lower(Q[0], Q[1], 0.1), compiled.lower(Q[0], Q[1], 0.2)
     assert one.generic is other.generic
@@ -1342,23 +1323,22 @@ def test_the_quantum_systems_control_system_is_the_one_compiled_for():
     for fill, schedule in ((None, "alap_rcp"), (None, "rcp")):
         plain = pulse.compile(two_lines, schedule=schedule).lower(q[0], q[1])
         rule = pulse.IdleReplacement(fill, threshold=100, leading=True)
-        program = pulse.compile(
-            two_lines, schedule=schedule, passes=_WITH, idle_replacement=rule
-        ).lower(q[0], q[1])
+        program = pulse.compile(two_lines, schedule=schedule).replace_idle(rule).lower(q[0], q[1])
         assert program.options.schedule_args() == plain.options.schedule_args()
         assert program.options.schedule_args()[1] == 1
         assert program.options.machine == plain.options.machine
         if fill is None:
             assert program.export_to_controller() == plain.export_to_controller()
-    # One drive lane: the fill's pulse does not fit beside b's, and the
-    # error counts the lanes of the system the program is compiled for.
-    with pytest.raises(pulse.CompilationError, match="and the control system has 1;"):
-        pulse.compile(
-            two_lines,
-            schedule="alap_rcp",
-            passes=_WITH,
-            idle_replacement=pulse.IdleReplacement(pi, threshold=100, leading=True),
-        ).lower(q[0], q[1])
+    # One drive lane: the fill's pulse does not fit beside b's, so its
+    # window is left alone and says why.
+    from cudaq_pulse._idle_windows import LANES
+
+    program = (
+        pulse.compile(two_lines, schedule="alap_rcp")
+        .replace_idle(pulse.IdleReplacement(pi, threshold=100, leading=True))
+        .lower(q[0], q[1])
+    )
+    assert [w.result for w in program.idle_windows] == [LANES]
 
 
 @pulse.kernel
@@ -1393,9 +1373,7 @@ def test_a_fill_past_the_systems_drive_limit_fails_and_names_it(schedule):
     plain = pulse.compile(three_lines, schedule=schedule).lower(q[0], q[1], q[2])
     assert float(plain.duration) > 0
     with pytest.raises(ControllerLimitError) as raised:
-        pulse.compile(three_lines, schedule=schedule, passes=_WITH, idle_replacement=rule).lower(
-            q[0], q[1], q[2]
-        )
+        pulse.compile(three_lines, schedule=schedule).replace_idle(rule).lower(q[0], q[1], q[2])
     text = str(raised.value)
     assert text.startswith(
         "idle replacement: with the idle windows of three_lines() filled by pi(), "
@@ -1518,12 +1496,8 @@ def test_a_fill_that_calls_a_classical_function_the_kernel_already_calls_is_refu
         drive(get_drive_line(qudit), gaussian(40, 0.2, 10))
 
     with pytest.raises(pulse.CompilationError) as raised:
-        pulse.compile(
-            calling,
-            schedule="asap",
-            passes=_WITH,
-            idle_replacement=pulse.IdleReplacement(submits, threshold=100),
-            control_system=matrix.MACHINE,
+        pulse.compile(calling, schedule="asap", control_system=matrix.MACHINE).replace_idle(
+            pulse.IdleReplacement(submits, threshold=100)
         ).lower(Q[0], Q[1])
     assert str(raised.value).startswith(
         "idle replacement: fill submits() calls a classical function; in this version"

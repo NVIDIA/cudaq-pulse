@@ -1,14 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Idle replacement: the rule that ``pulse.compile(k, idle_replacement=)``
-takes, the options of a compilation that has one, and that compilation.
-Only a compilation that lists ``Pass.IDLE_REPLACEMENT`` loads this.
+"""Idle replacement: the rule ``compiled.replace_idle(rule)`` takes, the
+options of the kernel it returns, and how that kernel compiles. Only a
+kernel whose idle windows are replaced loads this.
 
 An idle window is a stretch of the schedule, at least the rule's threshold
 long, in which a qudit does nothing; the rule's kernel, the fill, replaces
-it. The windows are known only once the program is scheduled, so the pass
-is not one of the rewrites that ``passes=`` runs before the schedule:
-``CompileOptions.make`` takes it out of that list and keeps the rule.
+it. The windows are known only once the program is scheduled, so the
+replacement is not one of the rewrites that ``passes=`` runs before the
+schedule: it applies to a compiled kernel, whose compilations it runs.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from ._errors import (
     _closest,
 )
 from .compiler import _DEFAULT_MACHINE, CompileOptions
+from .kernel._kernel import CompiledKernel
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -119,7 +120,7 @@ def _qudits(qudits: Iterable[Qudit] | None) -> tuple[Qudit, ...] | None:
 
 
 class IdleReplacement:
-    """What ``Pass.IDLE_REPLACEMENT`` replaces idle time with.
+    """What ``compiled.replace_idle(rule)`` replaces idle time with.
 
     *fill* is a ``@pulse.kernel`` that takes ``(qudit, window)``: the idle
     qudit and the length of its idle window in clock cycles. It is traced
@@ -234,19 +235,19 @@ def _rebuilt(
 
 @dataclasses.dataclass(frozen=True, repr=False)
 class _IdleOptions(CompileOptions):
-    """The options of a compilation that replaces idle windows: those of the
-    compilation without it, and the rule. Equal only to others with an equal
-    rule, so its programs are traced and kept apart."""
+    """The options of a compiled kernel whose idle windows are replaced:
+    those it was compiled with, and the rule. Equal only to others with an
+    equal rule, so its programs are traced and kept apart."""
 
     # Fields here: every way of copying options (dataclasses.replace, the
     # field-by-field copy of the unit warnings) keeps them.
-    idle_replacement: IdleReplacement | None = None  # type: ignore[assignment]
-    unit_warnings: bool = False
+    idle_replacement: IdleReplacement | None = None
+    units: bool = False
 
     def without_rule(self) -> CompileOptions:
         """The options of the same compilation with no idle replacement."""
         plain = CompileOptions(*(getattr(self, f.name) for f in dataclasses.fields(CompileOptions)))
-        if self.unit_warnings:
+        if self.units:
             from .kernel._unit_warnings import with_unit_warnings
 
             return with_unit_warnings(plain)
@@ -257,7 +258,7 @@ class _IdleOptions(CompileOptions):
         of the program: no rule, and the record *sites* its trace keeps."""
         return _SiteOptions(
             **{f.name: getattr(self, f.name) for f in dataclasses.fields(CompileOptions)},
-            unit_warnings=self.unit_warnings,
+            units=self.units,
             _sites=sites,
         )
 
@@ -270,37 +271,77 @@ class _SiteOptions(CompileOptions):
     """Options of one of the compilations an idle replacement makes of a
     program: those of the program without the rule, with the record its
     trace keeps of the operations it emits. A record equals only itself,
-    so no compilation is taken for another."""
+    so no compilation is taken for another. Its ``unit_warnings`` is set,
+    so that ``build`` traces with ``tracer``: a compilation without idle
+    replacement runs none of this."""
 
-    unit_warnings: bool = False
-    _sites: Sites | None = None  # type: ignore[assignment]
+    units: bool = False
+    _sites: Sites | None = None
+
+    unit_warnings = True
+
+    def tracer(self, builder: Any, target: Any) -> Any:
+        checked = CompileOptions.tracer(self, builder, target) if self.units else None
+        assert self._sites is not None
+        return self._sites.attach(builder, checked)
 
 
-def with_idle_replacement(
-    options: CompileOptions, rule: IdleReplacement | None, listed: bool
-) -> CompileOptions:
-    """*options* for a compilation whose ``passes=`` named
-    ``Pass.IDLE_REPLACEMENT`` (*listed*) and whose ``idle_replacement=`` is
-    *rule*: both, or an error that names the missing one."""
-    if rule is None:
-        raise InvalidValueError(
-            "passes= lists Pass.IDLE_REPLACEMENT, which needs "
-            "idle_replacement=pulse.IdleReplacement(fill, threshold=...)"
+class _IdleKernel:
+    """*kernel*, as a dispatcher of a kernel whose idle windows are
+    replaced sees it: each specialization is ``specialize``'s."""
+
+    __slots__ = ("_kernel",)
+
+    def __init__(self, kernel: Kernel[...]) -> None:
+        object.__setattr__(self, "_kernel", kernel)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._kernel, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        setattr(self._kernel, name, value)
+
+    def _specialize(self, values: tuple[Any, ...], target: Any, options: CompileOptions) -> _Entry:
+        return specialize(self._kernel, values, target, options)
+
+
+class IdledKernel(CompiledKernel):  # type: ignore[type-arg]
+    """``compiled.replace_idle(rule)``: *compiled*, whose programs have each
+    idle window replaced as *rule* says. It lowers, calls, simulates and
+    pickles as a compiled kernel; *compiled* is unchanged."""
+
+    def __init__(self, compiled: CompiledKernel[...], rule: IdleReplacement) -> None:
+        if not isinstance(rule, IdleReplacement):
+            raise InvalidTypeError(f"replace_idle() takes a pulse.IdleReplacement, got {rule!r}")
+        if isinstance(compiled, IdledKernel):
+            raise InvalidValueError(
+                "replace_idle() is given a kernel whose idle windows are replaced already; "
+                "call it on the compiled kernel"
+            )
+        base = compiled._dispatch.options
+        options = _IdleOptions(
+            **{f.name: getattr(base, f.name) for f in dataclasses.fields(CompileOptions)},
+            idle_replacement=rule,
+            units=bool(base.unit_warnings),
         )
-    if not isinstance(rule, IdleReplacement):
-        raise InvalidTypeError(
-            f"compile(idle_replacement=) takes a pulse.IdleReplacement, got {rule!r}"
-        )
-    if not listed:
-        raise InvalidValueError(
-            "idle_replacement= is given but passes= does not list Pass.IDLE_REPLACEMENT; "
-            "add it, as passes=(*pulse.compiler.DEFAULT_PASSES, pulse.Pass.IDLE_REPLACEMENT)"
-        )
-    return _IdleOptions(
-        **{f.name: getattr(options, f.name) for f in dataclasses.fields(CompileOptions)},
-        idle_replacement=rule,
-        unit_warnings=options.unit_warnings,
-    )
+        kernel = compiled.kernel
+        self.kernel = kernel
+        self.quantum_system = compiled.quantum_system
+        self._compiled = compiled
+        self._rule = rule
+        self._dispatch = kernel._dispatcher_type(_IdleKernel(kernel), options, None)  # type: ignore[arg-type]
+        self._dispatch.pin = compiled.quantum_system
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        return (IdledKernel, (self._compiled, self._rule))
+
+    def __repr__(self) -> str:
+        return f"{self._compiled!r}.replace_idle({self._rule!r})"
+
+
+class _LaneGapError(Exception):
+    """Under rcp or alap_rcp, the fills moved an operation of the kernel:
+    the policy's drive lanes, not the fills, decide where pulses go."""
 
 
 def _float_wait(kernel: Kernel[...], entry: _Entry) -> CompilationError | None:
@@ -424,12 +465,47 @@ def specialize(
                 "replacing its idle windows traces it twice"
             )
         if planned.tiles:
-            return _filled(
-                kernel, values, target, options, planned, windows, lines, items, sites, lowered
+            try:
+                return _filled(
+                    kernel, values, target, options, planned, windows, lines, items, sites, lowered
+                )
+            except _LaneGapError:
+                pass
+            # Under rcp or alap_rcp: each window's fill kept if, with those
+            # kept before it, no operation of the kernel moves; the others
+            # are left alone and say why.
+            ready = [(w.qudit, w.start, w.end) for w in windows if w.filled]
+            kept: list[tuple[int, int, int]] = []
+            for window in ready:
+                trial = frozenset(w for w in ready if w != window and w not in kept)
+                attempt, _ = plan(found, rule, sites.log, threshold, chosen, forward, _PADS, trial)
+                try:
+                    _filled(
+                        kernel,
+                        values,
+                        target,
+                        options,
+                        attempt,
+                        windows,
+                        lines,
+                        items,
+                        sites,
+                        lowered,
+                    )
+                except _LaneGapError:
+                    continue
+                kept.append(window)
+            lanes = frozenset(w for w in ready if w not in kept)
+            planned, windows = plan(
+                found, rule, sites.log, threshold, chosen, forward, _PADS, lanes
             )
+            if planned.tiles:
+                return _filled(
+                    kernel, values, target, options, planned, windows, lines, items, sites, lowered
+                )
     # Nothing is replaced: the program is the one compiled without the rule.
     module.strip_sites()
-    lowered.options = options
+    lowered.options = options.without_rule()
     lowered.metrics.idle_windows = windows  # type: ignore[attr-defined]
     return base
 
@@ -482,16 +558,10 @@ def _filled(
     try:
         prove(lines, items, module, sites.log, kernel.__name__, options.schedule in ("asap", "rcp"))
     except CompilationError as error:
-        schedule = options.schedule
-        if error.code == "timing" and schedule in ("rcp", "alap_rcp"):
-            drives = options.schedule_args()[1]
-            raise CompilationError(
-                f"{error.args[0]}; under schedule={schedule!r} a fill's pulses take drive "
-                f"lanes like any pulse, and the control system has {drives}",
-                fix="fill fewer qudits (qudits=), use a fill with fewer pulses, or allow "
-                "more drives at once (max_concurrent_drives)",
-                code="timing",
-            ) from None
+        if error.code == "timing" and options.schedule in ("rcp", "alap_rcp"):
+            # Not an error (decision 280): specialize() leaves the windows
+            # whose fills move another operation unfilled.
+            raise _LaneGapError() from None
         raise
     if lowered.duration != plain.duration:
         raise CompilationError(
@@ -500,7 +570,7 @@ def _filled(
             code="timing",
         )
     module.strip_sites()
-    lowered.options = options
+    lowered.options = options.without_rule()
     lowered.metrics.idle_windows = windows  # type: ignore[attr-defined]
     # The program is valid while the kernel's reads and the fill's hold.
     host, fill = entry.guard, build_guard(rule.fill.__pulse_kernel_fn__)

@@ -348,11 +348,6 @@ def program_reduce(lowered: Any) -> tuple[Any, ...]:
             fields[name] = getattr(lowered, name)
         except AttributeError:
             pass
-    options = fields.get("options")
-    if options is not None and options.idle_replacement is not None:
-        # The rule holds its fill, a live kernel. The program is compiled:
-        # it pickles as the program it is, and its idle_windows name the fill.
-        fields["options"] = options.without_rule()
     proxies = tuple(name for name, value in fields.items() if type(value) is MappingProxyType)
     for name in proxies:
         fields[name] = dict(fields[name])

@@ -82,6 +82,8 @@ _CLASSICAL_COMPARE = 39
 _VARIABLE_WAIT = 40
 _SELECT = 41
 _MAX_CYCLES = 42
+# [site number, kind] of the op just written: idle replacement's trace only.
+_SITE = 43
 _LATENCY_MODE = {"bounded": 0, "timeout": 1, "blocking": 2}
 # "and" and "or" take two i1 values only (compare_bits).
 _COMPARE = {"==": 0, "!=": 1, "<": 2, "<=": 3, ">": 4, ">=": 5, "and": 6, "or": 7}

@@ -24,6 +24,9 @@ if TYPE_CHECKING:
 __all__ = ["IdleWindow", "IdleWindows"]
 
 # The letter number_sites() returns for each kind of numbered op.
+# The kind of each numbered op, as the packed buffer's site record gives it.
+_SITE_KINDS = {"d": 0, "r": 1, "w": 2, "s": 3, "f": 4}
+
 _LETTERS = {
     "pulse.drive": "d",
     "pulse.readout": "r",
@@ -119,6 +122,7 @@ class Sites:
         to trace with, which is *tracer* (or the one *builder*'s sample
         rates take) and notes the points between statements."""
         from .kernel._emitter import tracing_frames
+        from .kernel.packed_ir_builder import _SITE
 
         # A kernel is traced again when a float parameter turns out to set
         # a length: the record starts over with each trace.
@@ -174,6 +178,9 @@ class Sites:
                 number = -1 - self.inserting
                 enter = set()
             log.append(Site(kind, mark, scope, tracing_frames(), cycles, enter, number))
+            # The op's number travels with it in the packed buffer, so the
+            # module is built with it, before any pass runs.
+            builder._record(_SITE, [number, _SITE_KINDS[_LETTERS[kind]]])
             return results  # type: ignore[no-any-return]
 
         def rolled_back(checkpoint: tuple[Any, ...]) -> None:
@@ -214,14 +221,10 @@ class Sites:
             )
         return sited
 
-    def number(self, module: Any) -> None:
-        """Give each numbered op of *module*, just built from the trace,
-        its number."""
-        kinds = module.number_sites([site.number for site in self.log])
-        if kinds != "".join(_LETTERS[site.kind] for site in self.log):
-            raise InternalError(
-                "idle replacement: the module's operations are not the ones the trace recorded"
-            )
+    def finish(self) -> None:
+        """After the trace: each window planned was written (the module was
+        built with each op's number, from the packed buffer's site records,
+        which also check each op's kind)."""
         plan = self.plan
         if plan is not None and len(self.done) != plan.tiles:
             raise InternalError(
@@ -1393,6 +1396,13 @@ def _last_round(listed: list[Gap], index: int, log: list[Site]) -> int | str:
     return place
 
 
+# Why a window is left unfilled under rcp or alap_rcp when filling it, and
+# only it, would move another operation: those policies give each drive lane
+# one time it is free from, so a pulse written into one line's idle time can
+# take a lane another line's pulse used (until the scheduler fills such gaps).
+LANES = "left alone: its fill would move another operation under this schedule policy's drive lanes"
+
+
 def plan(
     found: dict[int, list[Gap]],
     rule: Any,
@@ -1401,10 +1411,13 @@ def plan(
     chosen: frozenset[int] | None,
     forward: bool,
     pads: bool = False,
+    lanes: frozenset[tuple[int, int, int]] = frozenset(),
 ) -> tuple[Plan, IdleWindows]:
     """What to write for *rule* into the gaps *found*, and the windows with
     what is done in each; *forward* says whether the schedule places
-    operations as soon as possible."""
+    operations as soon as possible. The windows in *lanes* (qudit, start,
+    end) are left alone: their fills would move another operation under
+    the rcp policies' lane accounting."""
     planned = Plan(pads)
     name = "a wait" if pads else f"{rule.fill.__name__}()"
     rows = []
@@ -1421,6 +1434,9 @@ def plan(
             parts = [part for part in gap.idle() if part[1] - part[0] >= threshold]
             reasons = {part: kept(gap, part, rule, log, forward) for part in parts}
             fills = {part for part in parts if reasons[part] is None}
+            for part in [part for part in fills if (qudit, *part) in lanes]:
+                reasons[part] = LANES
+                fills.discard(part)
             if fills and gap.varies and not _steady(gap, fills, forward):
                 reasons.update(dict.fromkeys(fills, "left alone: its rounds differ"))
                 fills = set()
