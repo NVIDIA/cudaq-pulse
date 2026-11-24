@@ -3,7 +3,7 @@
 """Shared IR types and builder for the pulse kernel compiler.
 
 This module contains the core data structures used by the bytecode
-compiler: Op, IRValue, Parameter, PythonIRBuilder, OP_TABLE, LINEAR_TYPES,
+compiler: Op, IRValue, Parameter, PythonIRBuilder, OP_ROWS, OP_TABLE, LINEAR_TYPES,
 and CompilationError.
 """
 
@@ -694,7 +694,7 @@ class IRValue(_UndecidableComparisons):
         return f"{self.name or f'%v{self.vid}'}:{self.vtype}"
 
 
-LINEAR_TYPES = frozenset({"drive_line", "readout_line", "tone"})
+LINEAR_TYPES = frozenset({"drive_line", "readout_line", "tone", "coupling_line"})
 
 # The vid of a loop-carried value that has no value entering the loop.
 UNDEFINED_VID = -1
@@ -705,7 +705,7 @@ MAX_CYCLES = 2**53
 # (value_arg_count, attr_names, result_types)
 #   value_arg_count: leading args that are IR values; -1 = variadic all-values
 #   result_types: None = mirror operand types
-OP_TABLE: dict[str, tuple[int, tuple[str, ...], tuple[str, ...] | None]] = {
+OP_ROWS: dict[str, tuple[int, tuple[str, ...], tuple[str, ...] | None]] = {
     "get_drive_line": (1, (), ("drive_line", "tone")),
     "get_readout_line": (1, (), ("readout_line", "tone")),
     "gaussian": (0, ("duration", "amplitude", "sigma"), ("waveform",)),
@@ -729,6 +729,14 @@ OP_TABLE: dict[str, tuple[int, tuple[str, ...], tuple[str, ...] | None]] = {
     "wf_mul": (2, (), ("waveform",)),
     "wf_scale": (1, ("scale",), ("waveform",)),
     "wf_neg": (1, (), ("waveform",)),
+}
+
+# Every op a kernel calls by name: those the tracer emits from their row
+# above, and get_coupling_line (one or more qudits), which
+# kernel/_coupling.py traces: the tracer builds nothing for it.
+OP_TABLE: dict[str, tuple[int, tuple[str, ...], tuple[str, ...] | None]] = {
+    **OP_ROWS,
+    "get_coupling_line": (-1, (), ("coupling_line",)),
 }
 
 

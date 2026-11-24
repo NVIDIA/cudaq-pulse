@@ -30,6 +30,7 @@ __all__ = [
     "drive",
     "gaussian",
     "gaussian_square",
+    "get_coupling_line",
     "get_drive_line",
     "get_readout_line",
     "readout",
@@ -182,18 +183,40 @@ def get_readout_line(qudit: Any) -> Line:
     return _require_context("get_readout_line")
 
 
+def get_coupling_line(*qudits: Any) -> Line:
+    """The coupling line of a control of the quantum system: of one qudit,
+    the line that tunes it; of two, the line of the control of their
+    coupling. The qudits name the line as a set, in any order.
+
+    A coupling line plays a baseband waveform with ``drive(line,
+    waveform)``: it has no tone, so no ``line.tone`` and no frame, and the
+    waveform is real. Its amplitude is what the control receives, in the
+    unit of the quantum system's component (flux quanta from the idle
+    point for a ``FluxTuning``), and signed. Like the other lines it is
+    fetched once for the whole program, whatever the order of the qudits,
+    and ``wait`` and ``sync`` take it.
+
+    Args:
+        qudits: The qudits whose control the line reaches.
+    """
+    return _require_context("get_coupling_line")
+
+
 # ── Scheduling ops ──────────────────────────────────────────────────────
 
 
 def drive(line: Line, waveform: Waveform, *, tone: Tone | None = None) -> None:
-    """Play a waveform on a drive line.
+    """Play a waveform on a drive line, or on a coupling line.
 
     Args:
-        line: Drive line from ``get_drive_line()``.
-        waveform: Waveform envelope to play (e.g. from ``gaussian()``).
+        line: Drive line from ``get_drive_line()``, or coupling line from
+            ``get_coupling_line()``.
+        waveform: Waveform envelope to play (e.g. from ``gaussian()``); on
+            a coupling line, a real one.
         tone: The tone to play it at; by default the line's own,
             ``line.tone``. Another transition's, ``line.tones[(1, 2)]``,
-            or another line's tone retunes the drive.
+            or another line's tone retunes the drive. A coupling line
+            plays at baseband and takes none.
     """
     _require_context("drive")
 
@@ -219,7 +242,7 @@ def wait(
     """Insert an idle delay on a line.
 
     Args:
-        target: Drive or readout line.
+        target: Drive, readout or coupling line.
         duration: Wait duration: an int number of clock cycles, or a time
             (``20 * pulse.ns``) that is a whole number of them; a plain float
             is an error. It may be computed from ``float`` kernel
@@ -250,7 +273,7 @@ def sync(*targets: Line) -> None:
     whole number of every line's timesteps.
 
     Args:
-        targets: Two or more drive/readout lines to synchronize.
+        targets: Two or more drive, readout or coupling lines to synchronize.
     """
     _require_context("sync")
 
