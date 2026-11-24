@@ -55,6 +55,78 @@ Couplings
    :members:
    :undoc-members:
 
+Tunings and coupling controls
+-----------------------------
+
+The components a quantum system declares for its baseband controls, in
+``cudaq_pulse.quantum_systems.tuning``. A tuning says how a qudit's own
+frequency is tuned, a control what a coupling's own control does (a
+coupling line reaches it), and an interaction what a coupling with no line
+of its own does when its qudits are tuned. They are declared on the
+system, by qudit and by pair (``pulse.quantum_system(..., tunings={q:
+...}, controls={(a, d): ...}, interactions={(a, d): ...})``), not on a
+``PhysicalQudit`` or a ``Coupling``, and all may be left out (a qudit at a
+fixed frequency, a coupling that is always on). An amplitude is in the
+component's ``unit``, an offset from the idle point, and signed.
+``QuantumSystem.tuning``, ``control`` and ``interaction`` give a system's
+answer, declared or from its calibration, and the answers read without
+compiling anything:
+
+.. code-block:: python
+
+   import cudaq_pulse as pulse
+
+   qs = pulse.quantum_system("transmon_surface17")
+   d4, x2 = qs.qudit("D4"), qs.qudit("X2")
+   qs.tuning(d4).frequency_at(-0.3)                        # Hz, 0.3 flux quanta off idle
+   qs.tuning(d4).amplitude_for(5.276e9)                    # -0.3015
+   point = qs.interaction(x2, d4).at((x2, d4), {d4: -0.3015})   # X2 idles
+   print(point.frequencies_hz, point.exchange_hz, point.exchanges_hz[(1, 1), (2, 0)])
+
+Each component records where its values come from in ``source``: on the
+shipped system, the calibration entries they are read from, which
+``Calibration.entry`` gives with their kind, source and method. A system
+file lists what a system declares under ``"tunings"`` (entries ``{"qudit":
+3, "kind": "flux", ...}``), ``"controls"`` and ``"interactions"`` (entries
+``{"qudits": [1, 2], "kind": "exchange", ...}`` and ``"kind": "charge"``),
+each with the component's fields, written only where the system declares
+some.
+
+A ``FluxTuning`` or an ``ExchangeControl`` may declare the ``response`` of
+the wiring that carries its amplitude from the controller to the device:
+an ``ExponentialSettling``, a ``HighPass``, or a sequence of them applied
+one after another. A program's samples stay as written.
+
+.. autoclass:: cudaq_pulse.quantum_systems.tuning.Tuning
+   :members:
+
+.. autoclass:: cudaq_pulse.quantum_systems.tuning.FluxTuning
+   :members:
+
+.. autoclass:: cudaq_pulse.quantum_systems.tuning.CouplingControl
+   :members:
+
+.. autoclass:: cudaq_pulse.quantum_systems.tuning.CouplingInteraction
+   :members:
+
+.. autoclass:: cudaq_pulse.quantum_systems.tuning.ChargeCoupling
+   :members:
+
+.. autoclass:: cudaq_pulse.quantum_systems.tuning.ExchangeControl
+   :members:
+
+.. autoclass:: cudaq_pulse.quantum_systems.tuning.CouplingPoint
+   :members:
+
+.. autoclass:: cudaq_pulse.quantum_systems.tuning.Response
+   :members:
+
+.. autoclass:: cudaq_pulse.quantum_systems.tuning.ExponentialSettling
+   :members:
+
+.. autoclass:: cudaq_pulse.quantum_systems.tuning.HighPass
+   :members:
+
 Gate calibrations
 -----------------
 
