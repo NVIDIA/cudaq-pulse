@@ -127,13 +127,9 @@ _MOVES_SLOTS = frozenset({"append", "extend", "insert", "pop", "remove", "revers
 # instead of one per iteration, so the acquisition is hoisted or the loop
 # unrolled.
 _ACQUIRES = frozenset({"get_drive_line", "get_readout_line"})
-_PACKED_BRANCH_MESSAGE = "measurement-conditioned branches need an IR builder that supports regions"
 _REJOIN_MESSAGE = (
     "both branches of a measurement-conditioned if must continue after it; "
     "break, continue or return in only one branch is not supported"
-)
-_BRANCH_TYPE_MESSAGE = (
-    "only measurement results can control a branch at runtime; got an IR value of type {}"
 )
 
 # The emulated stack mixes IR values with arbitrary Python constants
@@ -260,21 +256,20 @@ def _load_pulse_functions() -> None:
     _PULSE_FUNCTIONS.update(loaded)
 
 
+# Whether *fn* directly or transitively calls the pulse DSL.
+#
+# *owner* is the object a method is bound to: its instance, or its class
+# for a classmethod. The attributes the method reads are looked up on it,
+# and on the objects those hold, so a method that calls the DSL through
+# ``self.other()``, ``cls.other()`` or ``self.gates.other()`` counts too.
+# Those methods, and *fn* when *strict*, count a DSL name only where they
+# load it as a global: ``self.lock.wait()`` is not ``wait``.
 def _uses_pulse_ops(
     fn: types.FunctionType,
     seen: set[int] | None = None,
     owner: Any = None,
     strict: bool = False,
 ) -> bool:
-    """Whether *fn* directly or transitively calls the pulse DSL.
-
-    *owner* is the object a method is bound to: its instance, or its class
-    for a classmethod. The attributes the method reads are looked up on it,
-    and on the objects those hold, so a method that calls the DSL through
-    ``self.other()``, ``cls.other()`` or ``self.gates.other()`` counts too.
-    Those methods, and *fn* when *strict*, count a DSL name only where they
-    load it as a global: ``self.lock.wait()`` is not ``wait``.
-    """
     seen = seen or set()
     if id(fn) in seen:
         return False
@@ -1632,11 +1627,11 @@ _identity_keys = None
 def _runtime_branch(
     self: PulseIREmitter, prog: bc.DecodedCode, index: int, cond: Any, jump_if_true: bool
 ) -> int:
-    """Emit the ``if`` whose conditional jump is ``prog.instrs[index]``:
-    ``_measured_if._runtime_branch``, imported at a trace's first such if,
-    which then takes this name's place, so every later if calls it
-    directly. Rebinding a module's name leaves the classes and what the
-    interpreter specialised on them as they were."""
+    # Emit the ``if`` whose conditional jump is ``prog.instrs[index]``:
+    # ``_measured_if._runtime_branch``, imported at a trace's first such if,
+    # which then takes this name's place, so every later if calls it
+    # directly. Rebinding a module's name leaves the classes and what the
+    # interpreter specialised on them as they were.
     global _runtime_branch
     from ._measured_if import _runtime_branch as traced
 
@@ -3893,20 +3888,19 @@ def _subclass_slot_changes(obj: list[Any], copy: list[Any], changes: list[Any]) 
     return True
 
 
+# The names a rolled loop body left on an old value of a channel, and
+# the names it moved from one channel to another.
+#
+# A name on an old value was read from a tuple or dict the tracer does
+# not rebind; each use of it reads its channel's current value. It is not
+# carried when it entered on the same channel or the body bound it first,
+# so every iteration traces alike; after the loop it names the channel's
+# value, given as (name, channel). A name that entered on another channel
+# is returned apart: the loop rolls only if the body does not read it
+# before rebinding it.
 def _stale_names(
     delta: dict[str, IRValue], before: dict[str, StackVal], count: int
 ) -> tuple[list[tuple[str, _Chan]], list[str]]:
-    """The names a rolled loop body left on an old value of a channel, and
-    the names it moved from one channel to another.
-
-    A name on an old value was read from a tuple or dict the tracer does
-    not rebind; each use of it reads its channel's current value. It is not
-    carried when it entered on the same channel or the body bound it first,
-    so every iteration traces alike; after the loop it names the channel's
-    value, given as (name, channel). A name that entered on another channel
-    is returned apart: the loop rolls only if the body does not read it
-    before rebinding it.
-    """
     stale: list[tuple[str, _Chan]] = []
     crossing: list[str] = []
     for n, v in delta.items():

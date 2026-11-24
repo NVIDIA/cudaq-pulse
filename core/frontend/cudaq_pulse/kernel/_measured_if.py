@@ -1,12 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Measurement-conditioned ifs: _runtime_branch and _trace_arm, imported
-at a trace's first such if.
-
-_emitter._runtime_branch imports this module and takes the name of its
-_runtime_branch, so every later if calls it directly. A trace without
-such an if, as a first compile often is, never loads it.
-"""
+# Measurement-conditioned ifs: _runtime_branch and _trace_arm, imported
+# at a trace's first such if.
+#
+# _emitter._runtime_branch imports this module and takes the name of its
+# _runtime_branch, so every later if calls it directly. A trace without
+# such an if, as a first compile often is, never loads it.
 
 from __future__ import annotations
 
@@ -16,12 +15,10 @@ from typing import Any
 from . import _bytecode_normalize as bc
 from ._bytecode_normalize import JUMP
 from ._emitter import (
-    _BRANCH_TYPE_MESSAGE,
     _CONTAINERS,
     _IS_NOT,
     _MISSING,
     _MUTABLE,
-    _PACKED_BRANCH_MESSAGE,
     _REGION_DONE,
     _SCALARS,
     PulseIREmitter,
@@ -37,12 +34,17 @@ from ._emitter import (
 )
 from .ir_builder import LINEAR_TYPES, CompilationError, IRValue
 
+_PACKED_BRANCH_MESSAGE = "measurement-conditioned branches need an IR builder that supports regions"
+_BRANCH_TYPE_MESSAGE = (
+    "only measurement results can control a branch at runtime; got an IR value of type {}"
+)
+
 _journal_lines: type[_Lines] | None = None
 
 
 def _load_journal_lines() -> type[_Lines]:
-    """The channels of a trace from its first measurement-conditioned if on,
-    imported then."""
+    # The channels of a trace from its first measurement-conditioned if on,
+    # imported then.
     global _journal_lines
     from ._branch_journal import JournalLines
 
@@ -53,13 +55,13 @@ def _load_journal_lines() -> type[_Lines]:
 def _runtime_branch(
     self: PulseIREmitter, prog: bc.DecodedCode, index: int, cond: Any, jump_if_true: bool
 ) -> int:
-    """Emit the ``if`` whose conditional jump is ``prog.instrs[index]``.
-
-    Both arms are traced from the same state into an ``scf.if`` region.
-    Pulse resources rebound by either arm become results of the region;
-    any other value must end up the same in both arms. Returns the
-    instruction index where tracing continues.
-    """
+    # Emit the ``if`` whose conditional jump is ``prog.instrs[index]``.
+    #
+    # Both arms are traced from the same state into an ``scf.if`` region.
+    # Pulse resources rebound by either arm become results of the region;
+    # any other value must end up the same in both arms. Returns the
+    # instruction index where tracing continues.
+    #
     negated = isinstance(cond, _NotMeasurement)
     value = cond.value if negated else cond
     if value.vtype not in ("measurement", "i1"):
@@ -522,13 +524,13 @@ def _trace_arm(
     start: int,
     snapshot: tuple[list[tuple[Any, Any]], list[tuple[Any, int]]],
 ) -> tuple[dict[str, StackVal], list[tuple[list[Any], int, IRValue]], list[tuple[Any, Any]]]:
-    """Trace one arm until it reaches *join*; return its locals, rebound
-    slots and the contents before it of the containers it changed. Of the
-    *snapshot* of containers the arm starts with, those with a copy are
-    copied, those without (lists of lines and tones) are put back from
-    the arm's slot log (the containers copied when first changed are then
-    a ``_branch_journal.Logged``, which keeps that log), and the others
-    (each with its length) are copied when first changed."""
+    # Trace one arm until it reaches *join*; return its locals, rebound
+    # slots and the contents before it of the containers it changed. Of the
+    # *snapshot* of containers the arm starts with, those with a copy are
+    # copied, those without (lists of lines and tones) are put back from
+    # the arm's slot log (the containers copied when first changed are then
+    # a ``_branch_journal.Logged``, which keeps that log), and the others
+    # (each with its length) are copied when first changed.
     lazy: Any  # a _branch_journal.Logged at an if holding lists of lines
     containers, lazy = snapshot
     end = len(view.instrs)
