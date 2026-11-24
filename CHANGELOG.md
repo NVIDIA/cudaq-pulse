@@ -117,6 +117,41 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   plays it as `shift_phase(line.tone, phase_rad)`: no pulse and no time.
   The operations guide's new "Phase frames and virtual Z gates" section
   gives the sign convention and why a simulated state is in the frame.
+- **Qudit tunings, coupling controls and interactions.** A quantum system
+  can state what a baseband control does. `PhysicalQudit(...,
+  tuning=FluxTuning(...))` is how a qudit's own frequency moves with an
+  amplitude (flux quanta from its idle point, signed). `Coupling(...,
+  control=ExchangeControl(...))` is a coupling's own control, which a
+  coupling line reaches and which sets its exchange (tabulated against its
+  amplitude). `Coupling(..., interaction=ChargeCoupling(...))` is a fixed
+  coupling with no line of its own, turned on by tuning its qudits.
+  `PhysicalQudit.frequency_at`, `anharmonicity_at` and `amplitude_for` and
+  `Coupling.at(amplitude)` read them without compiling: frequencies,
+  anharmonicities and the exchange of each pair of levels at an operating
+  point. A `FluxTuning` or an `ExchangeControl` may declare the `response`
+  of the wiring that carries its amplitude, an `ExponentialSettling`, a
+  `HighPass` or a sequence of them; a program's samples stay as written.
+  Each component names its `source`. `transmon_surface17` gives every
+  qudit the `FluxTuning` of its calibrated circuit and every coupling a
+  `ChargeCoupling` of its g_c: they follow from its calibration and are
+  made the first time its `physical_qudits` or `couplings` are read, so
+  building the system, its fingerprint, its pickles and its system file
+  are what they were. System files keep the components a system is given.
+  Nothing compiles, schedules, exports or simulates differently.
+- **Coupling lines of a controller.** `Controller(coupling_lines=[...])`
+  lists the outputs that play a baseband waveform on a control of the
+  quantum system, each a `cudaq_pulse.controller.CouplingLine` named by the
+  set of qudits it acts on, in any order: `CouplingLine(0)` is the line of
+  qudit 0's own tuning and `CouplingLine((1, 2))` that of the control of
+  the coupling of qudits 1 and 2. `amplitude_per_volt` converts volts at
+  the output to the amplitude at the device, `max_volts` is the most the
+  output plays, and `delay_ns` is the line's delay. A quantum system
+  refuses a line that reaches a qudit with no tuning, a pair with no
+  control of its own (for a pair whose interaction is made through its
+  qudits, naming the lines that reach them), three or more qudits, or what
+  another line already reaches, naming the line and the fix. System files
+  keep the lines; a controller's exported limits do not list them, and a
+  controller without them builds, prints, pickles and exports as before.
 - **Post-selection.** `SimulationResult.postselect(keep)` is the result
   over the branches the test `keep` accepts (a function of a `Branch`, as
   `lambda b: b.answers("herald")[-1]`): their state, normalized, their

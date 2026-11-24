@@ -180,7 +180,13 @@ def test_a_cz_calibration_belongs_to_its_coupling_and_is_read_only():
         FluxCZ()  # type: ignore[call-arg]
     with pytest.raises(TypeError, match="missing 1 required positional argument: 'strength_hz'"):
         Coupling((0, 1))  # type: ignore[call-arg]
-    assert list(inspect.signature(Coupling).parameters) == ["qudits", "strength_hz", "calibrations"]
+    assert list(inspect.signature(Coupling).parameters) == [
+        "qudits",
+        "strength_hz",
+        "calibrations",
+        "control",
+        "interaction",
+    ]
 
 
 def test_a_coupling_has_only_a_couplings_calibrations():

@@ -51,6 +51,73 @@ Couplings
    :members:
    :undoc-members:
 
+Tunings and coupling controls
+-----------------------------
+
+A qudit's ``tuning`` says how its own frequency is tuned, a coupling's
+``control`` what its own control does (a coupling line reaches it), and a
+coupling's ``interaction`` what a coupling with no line of its own does
+when its qudits are tuned; all are components of their modality, as
+``drive`` and ``readout`` are, and all may be left out (a qudit at a fixed
+frequency, a coupling that is always on). An amplitude is in the
+component's ``unit``, an offset from the idle point, and signed.
+``PhysicalQudit.frequency_at``, ``anharmonicity_at`` and ``amplitude_for``
+and ``Coupling.at`` read them without compiling anything:
+
+.. code-block:: python
+
+   import cudaq_pulse as pulse
+
+   qs = pulse.quantum_system("transmon_surface17")
+   d4, x2 = qs.qudit("D4"), qs.qudit("X2")
+   qs.physical_qudits[d4.index].frequency_at(-0.3)         # Hz, 0.3 flux quanta off idle
+   qs.physical_qudits[d4.index].amplitude_for(5.276e9)     # -0.3015
+   point = qs.coupling(x2, d4).at({d4: -0.3015})           # X2 idles
+   print(point.frequencies_hz, point.exchange_hz, point.exchanges_hz[(1, 1), (2, 0)])
+
+Each component records where its values come from in ``source``: on the
+shipped system, the calibration entries they are read from, which
+``Calibration.entry`` gives with their kind, source and method. In a system
+file a qudit's ``tuning`` and a coupling's ``control`` and ``interaction``
+are mappings with their ``kind`` (``"flux"``; ``"exchange"``; ``"charge"``)
+and fields, written only where given; a ``ChargeCoupling``'s tunings are
+its qudits' own.
+
+A ``FluxTuning`` or an ``ExchangeControl`` may declare the ``response`` of
+the wiring that carries its amplitude from the controller to the device:
+an ``ExponentialSettling``, a ``HighPass``, or a sequence of them applied
+one after another. A program's samples stay as written.
+
+.. autoclass:: cudaq_pulse.quantum_systems.Tuning
+   :members:
+
+.. autoclass:: cudaq_pulse.quantum_systems.FluxTuning
+   :members:
+
+.. autoclass:: cudaq_pulse.quantum_systems.CouplingControl
+   :members:
+
+.. autoclass:: cudaq_pulse.quantum_systems.CouplingInteraction
+   :members:
+
+.. autoclass:: cudaq_pulse.quantum_systems.ChargeCoupling
+   :members:
+
+.. autoclass:: cudaq_pulse.quantum_systems.ExchangeControl
+   :members:
+
+.. autoclass:: cudaq_pulse.quantum_systems.CouplingPoint
+   :members:
+
+.. autoclass:: cudaq_pulse.quantum_systems.Response
+   :members:
+
+.. autoclass:: cudaq_pulse.quantum_systems.ExponentialSettling
+   :members:
+
+.. autoclass:: cudaq_pulse.quantum_systems.HighPass
+   :members:
+
 Gate calibrations
 -----------------
 

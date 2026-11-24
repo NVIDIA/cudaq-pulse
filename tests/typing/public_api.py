@@ -21,6 +21,7 @@ from cudaq_pulse.compiler import CompileMetrics, ScheduledEvent
 from cudaq_pulse.controller import (
     ControllerModule,
     ControllerNames,
+    CouplingLine,
     DriveLine,
     ExpressionTerm,
     WaveformMemoryScope,
@@ -231,6 +232,18 @@ assert_type(feedline.qudits, tuple[int, ...])
 assert_type(feedline.max_concurrent_tones, int)
 assert_type(pulse.controller.DriveLine(range(4)).qudits, tuple[int, ...])
 pulse.controller.ReadoutLine([0, 1], 12.0, 2)  # type: ignore[call-arg]
+tuned = pulse.Controller(
+    coupling_lines=[
+        pulse.controller.CouplingLine(0, amplitude_per_volt=0.52),
+        pulse.controller.CouplingLine((1, 2), delay_ns=2.0),
+        pulse.controller.CouplingLine([3, 4, 5], max_volts=1.0),
+    ]
+)
+assert_type(tuned.coupling_lines, Sequence[CouplingLine])
+assert_type(pulse.controller.CouplingLine(0).qudits, tuple[int, ...])
+assert_type(pulse.controller.CouplingLine(0).amplitude_per_volt, float | None)
+assert_type(pulse.controller.CouplingLine(0).max_volts, float | None)
+pulse.controller.CouplingLine(0, 0.52)  # type: ignore[call-arg]
 pulse.ControlSystem(line_delays_ns={("drive", 0): 1.5})  # type: ignore[call-arg]
 pulse.Link(fixed_ns=100 * pulse.ns, feedback_ns=20.0, per_controller=True)
 assert_type(box.supports_capability(pulse.Capability.BRANCH), bool)

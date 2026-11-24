@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from typing import ClassVar, Literal, NoReturn, Self, overload
 
     from ..gates import Gate
+    from .tuning import CouplingPoint
 
     _NONE: type[None]
 else:
@@ -110,6 +111,94 @@ class _Component:
         return type(self)(**values)
 
     __replace__ = replace
+
+
+class Tuning(_Component):
+    """How a qudit's own frequency is tuned: the base of the tuning
+    modalities, such as ``FluxTuning``. An amplitude is in the component's
+    ``unit``, an offset from the idle point the qudit idles at, and
+    ``frequency_at``, ``anharmonicity_at`` and ``amplitude_for`` map it to
+    the qudit's frequencies and back."""
+
+    __slots__ = ()
+    if TYPE_CHECKING:
+        unit: ClassVar[str]
+
+        def frequency_at(self, amplitude: Any) -> Any: ...
+        def anharmonicity_at(self, amplitude: Any) -> Any: ...
+        def amplitude_for(self, frequency_hz: Any) -> Any: ...
+
+    def _problems(self, where: str) -> list[Problem]:
+        """The problems with the tuning, the one at *where*."""
+        return []
+
+
+class Response(_Component):
+    """How the wiring between a controller and the device passes a
+    programmed amplitude on: the base of the responses a ``Tuning`` or a
+    ``CouplingControl`` declares, such as ``ExponentialSettling`` and
+    ``HighPass``. The samples of a program stay as written; a simulation
+    applies the response, and a backend or an instrument compensates it."""
+
+    __slots__ = ()
+
+
+class CouplingControl(_Component):
+    """The control of a coupling, which a coupling line reaches: the base of
+    the coupling controls, such as ``ExchangeControl`` (the pair's own
+    control sets its exchange). ``Coupling.at`` reads the coupling at an
+    amplitude of its control."""
+
+    __slots__ = ()
+
+    def _problems(self, qudits: tuple[int, ...], where: str) -> list[Problem]:
+        """The problems with the control of the coupling of *qudits*, at *where*."""
+        return []
+
+
+class CouplingInteraction(_Component):
+    """How two qudits interact through a coupling that has no line of its
+    own: the base of the interactions, such as ``ChargeCoupling`` (a fixed
+    charge coupling, turned on by tuning its qudits). ``Coupling.at`` reads
+    the coupling at amplitudes of its qudits' tunings."""
+
+    __slots__ = ()
+
+    def _problems(self, qudits: tuple[int, ...], where: str) -> list[Problem]:
+        """The problems with the interaction of the coupling of *qudits*, at *where*."""
+        return []
+
+
+def _with_parts(calibrations: Any, parts: tuple[Any, ...]) -> Any:
+    """*calibrations*, checked, as a mapping of the same gates whose content
+    for a fingerprint lists *parts* too, the components a qudit or a
+    coupling declares beside its calibrations, each by name: a system
+    without them has the fingerprint it had before they existed."""
+    made = _Calibrations(dict(calibrations))
+    made._content = (  # type: ignore[assignment]
+        *made._content,
+        tuple((name, type(part).__name__, part._values) for name, part in parts),
+    )
+    return made
+
+
+def _checked_part(part: Any, base: type, name: str, where: str, problems: list[Problem]) -> Any:
+    """*part*, the component a qudit or coupling gives as *name*, of the
+    kind *base*; anything wrong with it is a ``QuantumSystemDefinitionError``."""
+    if not isinstance(part, base):
+        problems = [
+            Problem(
+                f"must be a {base.__name__}, got {type(part).__name__}",
+                path=where,
+                value=part,
+                fix=f"give {name}= a {base.__name__}, or leave it out",
+            )
+        ]
+    if problems:
+        raise QuantumSystemDefinitionError(
+            f"{_count(len(problems), 'problem')} with {where}", problems=problems
+        )
+    return part
 
 
 class Readout(_Component):
@@ -720,6 +809,8 @@ class _QuditFields:
         "thermal_population",
         "_calibrations",
         "metadata",
+        # Set only on a qudit that is given a tuning.
+        "_tuning",
     )
 
     index: int
@@ -738,10 +829,13 @@ class _QuditFields:
     # What calibrations= gives, which get_calibration reads.
     _calibrations: Mapping[Any, DragPulse | VirtualZ | ReadoutPulse]
     metadata: Mapping[str, Any]
+    _tuning: Tuning
 
 
-# A qubit's fields but its metadata, in the order of PhysicalQudit's arguments.
-_QUDIT_STATE = attrgetter(*_QuditFields.__slots__[:-1])
+# A qudit's fields that every qudit sets, in the order of PhysicalQudit's
+# arguments, and those but its metadata.
+_QUDIT_FIELDS = _QuditFields.__slots__[:-1]
+_QUDIT_STATE = attrgetter(*_QUDIT_FIELDS[:-1])
 
 
 class PhysicalQudit(_QuditFields):
@@ -781,6 +875,7 @@ class PhysicalQudit(_QuditFields):
         thermal_population: float = 0.0,
         calibrations: Mapping[Any, DragPulse | VirtualZ | ReadoutPulse] = _NO_CALIBRATIONS,
         metadata: Mapping[str, Any] = _EMPTY,
+        tuning: Tuning | None = None,
     ) -> None:
         if calibrations.__class__ is not _Calibrations:
             calibrations = _calibrations(calibrations, f"qudit {index}", _QUDIT_GATES)
@@ -788,6 +883,11 @@ class PhysicalQudit(_QuditFields):
             metadata = _metadata(metadata, index)
         cls = self.__class__
         object.__setattr__(self, "__class__", _QuditFields)
+        if tuning is not None:
+            where = f"qudits[{index}].tuning"
+            problems = tuning._problems(where) if isinstance(tuning, Tuning) else []
+            self._tuning = _checked_part(tuning, Tuning, "tuning", where, problems)
+            calibrations = _with_parts(calibrations, (("tuning", tuning),))
         self.index = index
         self.frequency_hz = frequency_hz
         self.t1_us = t1_us
@@ -811,15 +911,21 @@ class PhysicalQudit(_QuditFields):
     def __eq__(self, other: object) -> bool:
         if other.__class__ is not self.__class__:
             return NotImplemented
-        return all(getattr(self, n) == getattr(other, n) for n in _QuditFields.__slots__)
+        return (
+            all(getattr(self, n) == getattr(other, n) for n in _QUDIT_FIELDS)
+            and self.tuning == other.tuning
+        )
 
     def __hash__(self) -> int:
         return hash((self.index, self.frequency_hz, self.label))
 
     def __repr__(self) -> str:
         shown = ", ".join(
-            f"{n.lstrip('_')}={_plain_value(getattr(self, n))!r}" for n in _QuditFields.__slots__
+            f"{n.lstrip('_')}={_plain_value(getattr(self, n))!r}" for n in _QUDIT_FIELDS
         )
+        tuning = self.tuning
+        if tuning is not None:
+            shown += f", tuning={tuning!r}"
         return f"{type(self).__name__}({shown})"
 
     def __reduce__(self) -> tuple[Any, ...]:
@@ -827,6 +933,14 @@ class PhysicalQudit(_QuditFields):
         state = _QUDIT_STATE(self)
         if self.metadata:
             state = (*state, dict(self.metadata))
+        tuning = self.tuning
+        if tuning is not None:
+            # After the metadata, so a qudit without one pickles as before
+            # tunings existed; its calibrations without the tuning's content.
+            state = (*state, *(() if self.metadata else ({},)), tuning)
+            if len(self._calibrations._content) == 2:  # type: ignore[attr-defined]
+                # A tuning its calibration gave it (_derived_tuning).
+                state = (*state, False)
         return (object.__new__, (type(self),), state)
 
     def __setstate__(self, state: tuple[Any, ...]) -> None:
@@ -846,17 +960,54 @@ class PhysicalQudit(_QuditFields):
             self._calibrations,
             *metadata,
         ) = state
-        self.metadata = MappingProxyType(metadata[0]) if metadata else _EMPTY
+        self.metadata = MappingProxyType(metadata[0]) if metadata and metadata[0] else _EMPTY
+        if len(metadata) > 1:
+            self._tuning = metadata[1]
+            if len(metadata) == 2:
+                self._calibrations = _with_parts(self._calibrations, (("tuning", metadata[1]),))
         self.__class__ = cls
 
     def replace(self, **changes: Any) -> Self:
         """A copy with the fields *changes* names set to their values."""
-        values = {n: getattr(self, n) for n in _QuditFields.__slots__}
+        values = {n: getattr(self, n) for n in _QUDIT_FIELDS}
         values["calibrations"] = values.pop("_calibrations")
+        tuning = self.tuning
+        if tuning is not None:
+            # Its calibrations without the content the tuning gave them.
+            values["calibrations"] = _Calibrations(dict(values["calibrations"]))
+        values["tuning"] = tuning
         values.update(changes)
         return type(self)(**values)
 
     __replace__ = replace
+
+    @property
+    def tuning(self) -> Tuning | None:
+        """How the qudit's own frequency is tuned (a ``FluxTuning``), or
+        ``None`` for a qudit whose frequency is fixed."""
+        try:
+            return self._tuning
+        except AttributeError:
+            return None
+
+    def frequency_at(self, amplitude: Any) -> Any:
+        """The 0-1 frequency (Hz) the qudit's ``tuning`` puts it at with
+        *amplitude* (in the tuning's ``unit``, from the idle point) applied:
+        a float, or an array for an array of amplitudes. A qudit with no
+        tuning is a ``NotFoundError``."""
+        return _tuning_of(self).frequency_at(amplitude)
+
+    def anharmonicity_at(self, amplitude: Any) -> Any:
+        """The anharmonicity (Hz), E_12 - E_01, at *amplitude* of the
+        qudit's ``tuning``, as ``frequency_at`` reads it."""
+        return _tuning_of(self).anharmonicity_at(amplitude)
+
+    def amplitude_for(self, frequency_hz: Any) -> Any:
+        """The amplitude of the qudit's ``tuning`` that puts its 0-1
+        frequency at *frequency_hz*, on the branch the idle point is on: the
+        inverse of ``frequency_at``. A frequency out of the tuning's range is
+        an ``InvalidValueError``."""
+        return _tuning_of(self).amplitude_for(frequency_hz)
 
     @property
     def depletion_ns(self) -> float:
@@ -915,6 +1066,40 @@ class PhysicalQudit(_QuditFields):
         return _qudit_calibration(self, gate, transition)
 
 
+def _derived_tuning(qudit: PhysicalQudit, tuning: Tuning) -> PhysicalQudit:
+    """A copy of *qudit* with the *tuning* its calibration gives it: what
+    the qudit is, and so its content for a fingerprint, stays as it was
+    (the calibration is in the fingerprint), unlike with a tuning given to
+    ``PhysicalQudit``."""
+    made = object.__new__(type(qudit))
+    made.__setstate__(qudit.__reduce__()[2])
+    cls = made.__class__
+    object.__setattr__(made, "__class__", _QuditFields)
+    made._calibrations = qudit._calibrations
+    made.metadata = qudit.metadata
+    made._tuning = tuning
+    made.__class__ = cls
+    return made
+
+
+def _derived_interaction(coupling: Coupling, interaction: CouplingInteraction) -> Coupling:
+    """A copy of *coupling* with the *interaction* its calibration gives it,
+    its content for a fingerprint as it was (see ``_derived_tuning``)."""
+    made = type(coupling)(coupling.qudits, coupling.strength_hz, coupling._calibrations)
+    object.__setattr__(made, "_interaction", interaction)
+    return made
+
+
+def _tuning_of(qudit: PhysicalQudit) -> Tuning:
+    tuning = qudit.tuning
+    if tuning is None:
+        raise NotFoundError(
+            f"{_qudit_name(qudit)} has no tuning: its frequency is fixed; give "
+            "PhysicalQudit(..., tuning=...) the component that tunes it, as a FluxTuning"
+        )
+    return tuning
+
+
 def _plain_value(value: Any) -> Any:
     return dict(value) if type(value) in (MappingProxyType, _Calibrations) else value
 
@@ -931,7 +1116,12 @@ class Coupling:
     compiles, schedules and exports, and ``simulate`` refuses it.
     ``calibrations=`` gives the gates it is tuned for, ``{pulse.gates.CZ:
     FluxCZ(...)}``, which ``calibrations`` gives back and ``get_calibration``
-    reads. A coupling is
+    reads. ``control`` is the coupling's own control, which a coupling line
+    reaches and which sets its exchange (an ``ExchangeControl``);
+    ``interaction`` says how the qudits interact through a coupling with
+    no line of its own (a ``ChargeCoupling``, turned on by tuning its
+    qudits); both are ``None`` by default, for a coupling that is always
+    on. ``at`` reads the coupling at an operating point. A coupling is
     read-only: ``replace`` makes a changed copy.
 
     A plain slotted class, as ``PhysicalQudit`` is: its calibrations are
@@ -939,19 +1129,24 @@ class Coupling:
     constructor's ``calibrations=``.
     """
 
-    __slots__ = ("qudits", "strength_hz", "_calibrations")
+    # _control and _interaction are set only on a coupling that is given one.
+    __slots__ = ("qudits", "strength_hz", "_calibrations", "_control", "_interaction")
     __match_args__ = ("qudits", "strength_hz")
 
     qudits: tuple[int, ...]
     strength_hz: float | None
     # What calibrations= gives, which get_calibration reads.
     _calibrations: Mapping[Any, FluxCZ]
+    _control: CouplingControl
+    _interaction: CouplingInteraction
 
     def __init__(
         self,
         qudits: Sequence[int],
         strength_hz: float | None,
         calibrations: Mapping[Any, FluxCZ] = _NO_CALIBRATIONS,
+        control: CouplingControl | None = None,
+        interaction: CouplingInteraction | None = None,
     ) -> None:
         if qudits.__class__ is not tuple and isinstance(qudits, Sequence):
             qudits = tuple(qudits)
@@ -959,6 +1154,8 @@ class Coupling:
             calibrations = _calibrations(
                 calibrations, f"the coupling of qudits {qudits}", _COUPLING_GATES
             )
+        if control is not interaction:  # type: ignore[comparison-overlap]
+            calibrations = self._with_components(qudits, calibrations, control, interaction)
         set_ = object.__setattr__
         set_(self, "qudits", qudits)
         set_(self, "strength_hz", strength_hz)
@@ -970,6 +1167,44 @@ class Coupling:
     def __delattr__(self, name: str) -> NoReturn:
         raise FrozenInstanceError(f"cannot delete field {name!r}")
 
+    def _with_components(
+        self, qudits: Any, calibrations: Any, control: Any, interaction: Any
+    ) -> Any:
+        """Keeps the control and the interaction a coupling is given, checked;
+        its calibrations with their content for a fingerprint."""
+        set_ = object.__setattr__
+        where = f"Coupling({qudits})"
+        parts = []
+        for name, part, base in (
+            ("control", control, CouplingControl),
+            ("interaction", interaction, CouplingInteraction),
+        ):
+            if part is None:
+                continue
+            path = f"{where}.{name}"
+            problems = part._problems(qudits, path) if isinstance(part, base) else []
+            set_(self, f"_{name}", _checked_part(part, base, name, path, problems))
+            parts.append((name, part))
+        return _with_parts(calibrations, tuple(parts))
+
+    @property
+    def control(self) -> CouplingControl | None:
+        """The coupling's own control, which a coupling line reaches (an
+        ``ExchangeControl``), or ``None``."""
+        try:
+            return self._control
+        except AttributeError:
+            return None
+
+    @property
+    def interaction(self) -> CouplingInteraction | None:
+        """How the qudits interact through a coupling with no line of its
+        own (a ``ChargeCoupling``), or ``None``."""
+        try:
+            return self._interaction
+        except AttributeError:
+            return None
+
     def __eq__(self, other: object) -> bool:
         if other.__class__ is not self.__class__:
             return NotImplemented
@@ -977,19 +1212,37 @@ class Coupling:
             other.qudits,
             other.strength_hz,
             other._calibrations,
+        ) and (self.control, self.interaction) == (
+            other.control,
+            other.interaction,
         )
 
     def __hash__(self) -> int:
         return hash((self.qudits, self.strength_hz))
 
     def __repr__(self) -> str:
+        parts = "".join(
+            f", {name}={part!r}"
+            for name, part in (("control", self.control), ("interaction", self.interaction))
+            if part is not None
+        )
         return (
             f"{type(self).__name__}(qudits={self.qudits!r}, strength_hz={self.strength_hz!r}, "
-            f"calibrations={_plain_value(self._calibrations)!r})"
+            f"calibrations={_plain_value(self._calibrations)!r}{parts})"
         )
 
     def __reduce__(self) -> tuple[Any, ...]:
-        return (type(self), (self.qudits, self.strength_hz, self._calibrations))
+        control, interaction = self.control, self.interaction
+        if control is None and interaction is None:
+            return (type(self), (self.qudits, self.strength_hz, self._calibrations))
+        if len(self._calibrations._content) == 2:  # type: ignore[attr-defined]
+            # An interaction its calibration gave it.
+            plain = type(self)(self.qudits, self.strength_hz, self._calibrations)
+            return (_derived_interaction, (plain, interaction))
+        return (
+            type(self),
+            (self.qudits, self.strength_hz, dict(self._calibrations), control, interaction),
+        )
 
     def replace(self, **changes: Any) -> Self:
         """A copy with the fields *changes* names set to their values."""
@@ -997,11 +1250,32 @@ class Coupling:
             "qudits": self.qudits,
             "strength_hz": self.strength_hz,
             "calibrations": self._calibrations,
+            "control": self.control,
+            "interaction": self.interaction,
         }
+        if values["control"] is not values["interaction"]:
+            # Its calibrations without the content the components gave them.
+            values["calibrations"] = _Calibrations(dict(self._calibrations))
         values.update(changes)
         return type(self)(**values)
 
     __replace__ = replace
+
+    def at(self, amplitude: Any) -> CouplingPoint:
+        """The coupling at an operating point: a ``CouplingPoint`` of the
+        qudits' 0-1 frequencies and anharmonicities and the exchange between
+        their levels there. Read-only: nothing is compiled or simulated.
+
+        A float or an array is an amplitude of the coupling's own
+        ``control`` (in the control's unit, from its idle point). A mapping
+        from a qudit (its index, or a ``Qudit`` handle) to an amplitude, as
+        ``{a: 0.1}`` or ``{a: 0.1, b: -0.05}``, is the amplitudes of the
+        qudits' tunings, for a coupling whose ``interaction`` is made
+        through its qudits (a ``ChargeCoupling``); a qudit left out idles.
+        A coupling with neither is a ``NotFoundError``."""
+        from .tuning import _coupling_at
+
+        return _coupling_at(self, amplitude)
 
     @property
     def calibrations(self) -> Mapping[Gate | tuple[Gate, tuple[int, int]], FluxCZ]:

@@ -33,7 +33,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from functools import partial
 from itertools import repeat
-from operator import itemgetter
+from operator import attrgetter, itemgetter
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -60,6 +60,7 @@ if TYPE_CHECKING:
     from . import _clocks
     from ._capability import Capability
     from ._controller_cost import FunctionUsage
+    from ._coupling_lines import CouplingLine
     from ._device import QuantumSystem
     from ._op_classes import OpClass
     from ._op_tables import OpCycles
@@ -360,6 +361,7 @@ def _update_buses(value: Any) -> tuple[UpdateBus, ...]:
 
 
 _QUDIT: Callable[[Any], int] = itemgetter(0)
+_COUPLING_LINES: Callable[[Any], Any] = attrgetter("coupling_lines")
 _DELAY: Callable[[Any], float] = itemgetter(1)
 # Lines given as carrier indices only.
 _PLAIN = frozenset({int})
@@ -700,6 +702,16 @@ class Processor:
         return data
 
 
+class _ListedFields:
+    """``Controller._listed_fields``, found when first read (reading the
+    fields makes the dataclass): every field but ``coupling_lines``."""
+
+    def __get__(self, controller: Any, owner: Any) -> tuple[str, ...]:
+        listed = tuple(name for name in owner.__dataclass_fields__ if name != "coupling_lines")
+        owner._listed_fields = listed
+        return listed
+
+
 @_dataclass_when_used(frozen=True)
 class Controller:
     """One controller: what it can play, its wiring and its processors;
@@ -801,6 +813,12 @@ class Controller:
     lists none plays every line. A line may reach several qudits
     (``ReadoutLine([0, 1, 2, 3], max_concurrent_tones=4)``, a shared line);
     each qudit is reached by at most one line of each kind.
+    ``coupling_lines`` are its coupling lines (``CouplingLine``), the
+    outputs that play a baseband waveform on a control of the quantum
+    system, each named by the set of qudits it acts on: ``CouplingLine(0)``
+    is the line of qudit 0's own tuning and ``CouplingLine((1, 2))`` that of
+    the control of the coupling of qudits 1 and 2. They are checked when the
+    controller meets a quantum system.
     ``update_buses``: the groups of its lines whose updates share one bus
     (``UpdateBus``), which carries one update at a time; updates on one bus
     must start ``cycles_per_update`` apart, else the program is a violation
@@ -856,6 +874,15 @@ class Controller:
     model: str | None = None
     version: str | None = None
     processors: Sequence[Processor] = ()
+    # Checked when the controller meets a quantum system or a kernel fetches
+    # a coupling line (_coupling_lines.lines_of): building a controller does
+    # nothing for them, and one without them prints as before.
+    coupling_lines: Sequence[CouplingLine] = field(default=(), repr=False)
+    # The fields as_dict lists for every controller.
+    if TYPE_CHECKING:
+        _listed_fields: ClassVar[tuple[str, ...]]
+    else:
+        _listed_fields = _ListedFields()
 
     def __post_init__(self) -> None:
         for name in ("persistent_frames", "blocks_on_calls", "space_updates"):
@@ -1015,23 +1042,38 @@ class Controller:
         object.__setattr__(self, "processors", tuple(processors))
 
     def __hash__(self) -> int:
-        return hash(
-            tuple(
-                tuple(sorted(value.items())) if isinstance(value, Mapping) else value
-                for value in (getattr(self, f.name) for f in fields(self))
+        try:
+            return hash(
+                tuple(
+                    tuple(sorted(value.items())) if isinstance(value, Mapping) else value
+                    for value in (getattr(self, f.name) for f in fields(self))
+                )
             )
-        )
+        except TypeError:
+            # Coupling lines given as a list: checked and kept as a tuple now.
+            from ._coupling_lines import lines_of
+
+            if isinstance(self.coupling_lines, tuple):
+                raise
+            lines_of(self)
+            return hash(self)
 
     def __reduce__(self) -> tuple[Any, ...]:
         from ._pickling import frozen_reduce
 
-        return frozen_reduce(self)
+        reduced = frozen_reduce(self)
+        if not self.coupling_lines:
+            # A controller without coupling lines pickles as before they existed.
+            del reduced[1][1]["coupling_lines"]
+        return reduced
 
     def as_dict(self) -> dict[str, Any]:
         """The controller as JSON-serializable data, which ``Controller(**data)``
-        reads back after ``_controller_fields``."""
-        # Every field in order: the class has none that fields() would leave out.
-        data = {name: getattr(self, name) for name in self.__dataclass_fields__}
+        reads back after ``_controller_fields``. Its coupling lines are not
+        listed: the exports hold this as a controller's limits, and a system
+        file adds them (``ControlSystem.as_dict``)."""
+        # Every field in order but its coupling lines.
+        data = {name: getattr(self, name) for name in self._listed_fields}
         data["detectors"] = {str(k): v for k, v in sorted(self.detectors.items())}
         for name in (
             "max_amplitude",
@@ -1531,8 +1573,13 @@ class ControlSystem:
     def as_dict(self) -> dict[str, Any]:
         """The control system as JSON-serializable data; links name the
         controllers they reach by index."""
+        controllers = [c.as_dict() for c in self.controllers]
+        if any(map(_COUPLING_LINES, self.controllers)):
+            from ._coupling_lines import list_lines
+
+            list_lines(controllers, self.controllers)
         data: dict[str, Any] = {
-            "controllers": [c.as_dict() for c in self.controllers],
+            "controllers": controllers,
             "links": {
                 name: {
                     **link.cost(),
@@ -2651,7 +2698,9 @@ def _placement(system: ControlSystem) -> dict[int, dict[int, int]]:
     return found
 
 
-def _wiring_problems(system: ControlSystem, target: _Description) -> list[Problem]:
+def _wiring_problems(
+    system: ControlSystem, target: _Description, calibration: Any = None
+) -> list[Problem]:
     """The lines and detectors of *system* that name carriers *target* lacks."""
     carriers = set(target.qudits)
     problems: list[Problem] = []
@@ -2684,6 +2733,10 @@ def _wiring_problems(system: ControlSystem, target: _Description) -> list[Proble
                         fix=f"it has qudits {_ranges(sorted(carriers))}",
                     )
                 )
+    if any(map(_COUPLING_LINES, system.controllers)):
+        from ._coupling_lines import wiring_problems as coupling_problems
+
+        problems.extend(coupling_problems(system, target, calibration))
     return problems
 
 
@@ -2695,6 +2748,7 @@ _DESCRIPTIONS = os.path.join(os.path.dirname(os.path.realpath(__file__)), "contr
 _WIRING = (
     "drive_lines",
     "readout_lines",
+    "coupling_lines",
     "detectors",
     "peer_latency_cycles",
     "clock_skew_cycles",
@@ -2896,8 +2950,8 @@ _QUDIT_FIELDS = (
     "thermal_population",
 )
 # Written only when a qudit gives them.
-_QUDIT_EXTRAS = ("calibrations", "metadata")
-_COUPLING_FIELDS = ("qudits", "strength_hz", "calibrations")
+_QUDIT_EXTRAS = ("tuning", "calibrations", "metadata")
+_COUPLING_FIELDS = ("qudits", "strength_hz", "calibrations", "control", "interaction")
 _RESIDUAL_ZZ_FIELDS = ("qudits", "rate_hz")
 # The keys an entry must give, with the fix for each.
 _QUDITS_FIX = "give the indices of the two qudits, as [0, 1]"
@@ -2945,19 +2999,42 @@ def _component_kinds() -> dict[str, dict[str, type[Any]]]:
     return {"drive": {"microwave": MicrowaveDrive}, "readout": {"dispersive": DispersiveReadout}}
 
 
+_TUNING_MEMBERS = ("tuning", "control", "interaction")
+_QUDIT_MEMBERS = ("drive", "readout", "tuning")
+
+
+def _tuning_kinds() -> dict[str, dict[str, type[Any]]]:
+    """The tunings of qudits and the controls and interactions of couplings
+    a system file holds, by the member they set and the kind it writes; read
+    only for a system that declares one."""
+    from .quantum_systems.tuning import ChargeCoupling, ExchangeControl, FluxTuning
+
+    return {
+        "tuning": {"flux": FluxTuning},
+        "control": {"exchange": ExchangeControl},
+        "interaction": {"charge": ChargeCoupling},
+    }
+
+
 def _component_data(member: str, component: Any) -> dict[str, Any] | None:
     if component is None:
         return None
-    kinds = _component_kinds()[member]
+    kinds = (_tuning_kinds() if member in _TUNING_MEMBERS else _component_kinds())[member]
     kind = next((k for k, cls in kinds.items() if type(component) is cls), None)
     if kind is None:
         from ._errors import UnsupportedError
 
         raise UnsupportedError(
-            f"a system file holds a qudit's {member} as one of {', '.join(kinds)}; "
+            f"a system file holds a {'qudit' if member in _QUDIT_MEMBERS else 'coupling'}'s "
+            f"{member} as one of {', '.join(kinds)}; "
             f"got a {type(component).__name__}"
         )
-    return {"kind": kind, **dict(zip(component._fields, component._values, strict=True))}
+    # A ChargeCoupling's tunings are its qudits' own, which the file gives with them.
+    if member not in _TUNING_MEMBERS:
+        return {"kind": kind, **dict(zip(component._fields, component._values, strict=True))}
+    from .quantum_systems.tuning import _component_data as tuning_data
+
+    return tuning_data(kind, component)
 
 
 def _calibration_data(calibrations: Mapping[Any, Any]) -> list[dict[str, Any]]:
@@ -2980,6 +3057,8 @@ def _qudit_data(q: Any) -> dict[str, Any]:
         for key in _QUDIT_FIELDS
         for value in (getattr(q, key),)
     }
+    if q.tuning is not None:
+        data["tuning"] = _component_data("tuning", q.tuning)
     if q._calibrations:
         data["calibrations"] = _calibration_data(q._calibrations)
     if q.metadata:
@@ -3018,6 +3097,12 @@ def _quantum_data(target: _Description) -> dict[str, Any]:
         "couplings": [
             {"qudits": list(c.qudits), "strength_hz": c.strength_hz}
             | ({"calibrations": _calibration_data(c._calibrations)} if c._calibrations else {})
+            | ({} if c.control is None else {"control": _component_data("control", c.control)})
+            | (
+                {}
+                if c.interaction is None
+                else {"interaction": _component_data("interaction", c.interaction)}
+            )
             for c in target.couplings
         ],
         "residual_zz": [
@@ -3095,7 +3180,9 @@ def _config_systems(
         control = None
     problems.extend(reader.problems)
     if control is not None and target is not None:
-        problems.extend(_wiring_problems(control, target))
+        # The coupling lines are checked by the quantum system built from
+        # these, which has its calibration.
+        problems.extend(_wiring_problems(control, target, False))
     return target, control
 
 
@@ -3125,10 +3212,10 @@ class _Reader:
                 )
         return data
 
-    def component(self, data: Any, path: str, member: str) -> Any:
+    def component(self, data: Any, path: str, member: str, tunings: Any = ()) -> Any:
         """A qudit's *member* (``drive`` or ``readout``): the component of the
         kind *data* names, with its fields."""
-        kinds = _component_kinds()[member]
+        kinds = (_tuning_kinds() if member in _TUNING_MEMBERS else _component_kinds())[member]
         if not isinstance(data, Mapping):
             self.problem(path, f"must be a mapping, got {type(data).__name__}", data)
             return None
@@ -3142,9 +3229,20 @@ class _Reader:
                 fix=f"the kinds are {', '.join(kinds)}",
             )
             return None
-        known = made._fields
+        known = tuple(k for k in made._fields if k != "tunings")
         self.mapping(data, path, ("kind", *known))
-        return self.build(path, made, **{k: data[k] for k in known if k in data})
+        given = {k: data[k] for k in known if k in data}
+        if "tunings" in made._fields:
+            given["tunings"] = tunings
+        if "response" in given:
+            from .quantum_systems.tuning import _response_from
+
+            try:
+                given["response"] = _response_from(given["response"])
+            except (TypeError, ValueError) as error:
+                self.problem(f"{path}.response", str(error), data["response"])
+                return None
+        return self.build(path, made, **given)
 
     def build[T](self, path: str, make: Callable[..., T], **kwargs: Any) -> T | None:
         try:
@@ -3170,7 +3268,7 @@ class _Reader:
             if entry is not None:
                 entry = {
                     key: self.component(value, f"{where}.{key}", key)
-                    if key in ("drive", "readout") and value is not None
+                    if key in ("drive", "readout", "tuning") and value is not None
                     else self.calibrations(value, f"{where}.{key}", "qudit")
                     if key == "calibrations"
                     else value
@@ -3191,6 +3289,18 @@ class _Reader:
             if "calibrations" in entry:
                 given["calibrations"] = self.calibrations(
                     entry["calibrations"], f"{where}.calibrations", "coupling"
+                )
+            if entry.get("control") is not None:
+                given["control"] = self.component(entry["control"], f"{where}.control", "control")
+            if entry.get("interaction") is not None:
+                # A ChargeCoupling is made through its qudits' own tunings.
+                pair = entry["qudits"] if isinstance(entry["qudits"], Sequence) else ()
+                tunings = tuple(
+                    getattr(qudits.get(q) if isinstance(q, int) else None, "tuning", None)
+                    for q in pair
+                )
+                given["interaction"] = self.component(
+                    entry["interaction"], f"{where}.interaction", "interaction", tunings
                 )
             coupling = self.build(where, Coupling, **given)
             if coupling is not None:
@@ -3336,6 +3446,17 @@ class _Reader:
                 if None in read:
                     return None
                 given[name] = read
+        coupling = given.get("coupling_lines")
+        if isinstance(coupling, list):
+            from ._coupling_lines import line_from
+
+            read = [
+                line_from(self, item, f"{path}.coupling_lines[{i}]")
+                for i, item in enumerate(coupling)
+            ]
+            if None in read:
+                return None
+            given["coupling_lines"] = read
         controller: Controller | None = self.build(path, Controller, **given)
         if controller is not None:
             _notice_version(controller, path if self.file is None else f"{self.file}: {path}")

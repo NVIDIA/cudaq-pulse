@@ -400,7 +400,7 @@ def _several_controllers(system: ControlSystem) -> ControlSystem:
     return ControlSystem(
         controllers=[
             dataclasses.replace(base, drive_lines=[0], readout_lines=[_feedline()]),
-            dataclasses.replace(base, drive_lines=[1], readout_lines=[]),
+            dataclasses.replace(base, drive_lines=[1], readout_lines=[], coupling_lines=()),
         ],
         reference_clock_ghz=clock,
     )

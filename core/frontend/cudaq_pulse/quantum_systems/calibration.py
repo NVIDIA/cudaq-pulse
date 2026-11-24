@@ -292,7 +292,9 @@ class Calibration:
                     idle_exchange, f"{b.label}-{a.label}", b.frequency_hz, a.frequency_hz
                 )
             if strength is not None:
-                if c.__class__ is Coupling:
+                # A coupling with a control or an interaction keeps it.
+                content = c._calibrations._content
+                if c.__class__ is Coupling and len(content) == 2:
                     c = Coupling(c.qudits, strength, c._calibrations)
                 else:
                     c = c.replace(strength_hz=strength)
@@ -366,6 +368,90 @@ class Calibration:
                 found[label] = (beta, pulse, errors)
         self._pulses = found
         return found
+
+    def _tunings(
+        self,
+    ) -> tuple[str, float, tuple[tuple[str, tuple[float, float, float, float]], ...]]:
+        """What a quantum system's tuning components take of the calibration:
+        the key of the charge coupling used, g_c in Hz, and each qudit whose
+        circuit is calibrated with (E_C, E_J,max, d, idle flux), by label.
+        Read when first asked for; an indexed shipped calibration's is in
+        ``_shipped_calibrations.SHIPPED_TUNINGS``."""
+        found: Any = self.__dict__.get("_tuning_values")
+        if found is not None:
+            return found  # type: ignore[no-any-return]
+        from .._source_stamp import CALIBRATIONS
+
+        if CALIBRATIONS.get(self.name) == self.__dict__.get("_shipped", 0):
+            from ._shipped_calibrations import SHIPPED_TUNINGS
+
+            found = SHIPPED_TUNINGS.get(self.name)
+        if found is None:
+            couplings = self._couplings()
+            used = couplings["used"]
+            found = (
+                used,
+                couplings[used]["value"],
+                tuple(
+                    (
+                        label,
+                        (
+                            q["ec"]["value"],
+                            q["ej_max"]["value"],
+                            q["asymmetry_d"]["value"],
+                            _SWEET_SPOT_FLUX[q["sweet_spot_idle"]],
+                        ),
+                    )
+                    for label, q in self._data["qudits"].items()
+                    if q.get("flux_quanta_capable")
+                ),
+            )
+        self._tuning_values = found
+        return found  # type: ignore[no-any-return]
+
+    def _with_components(self, target: Any) -> Any:
+        """*target* with what the calibration says of its controls, made when
+        something first asks for them: each qudit whose circuit is
+        calibrated and that gives no tuning takes a ``FluxTuning`` of it,
+        and each coupling of two tuned qudits that gives no control and no
+        interaction a ``ChargeCoupling`` with the calibration's g_c, made
+        through those tunings. A qudit matches its label; a target the
+        calibration says nothing of is returned as it is."""
+        used, g_c, circuits = self._tunings()
+        by_label = dict(circuits)
+        qudits = target.qudits
+        if by_label.keys().isdisjoint(q.label for q in qudits.values()):
+            return target
+        from .base import _derived_interaction, _derived_tuning
+        from .tuning import ChargeCoupling, FluxTuning
+
+        tuned = {}
+        for i, q in qudits.items():
+            circuit = by_label.get(q.label)
+            if circuit is not None and q.tuning is None:
+                ec, ej_max, d, idle = circuit
+                q = _derived_tuning(
+                    q,
+                    FluxTuning(
+                        ec_hz=ec,
+                        ej_max_hz=ej_max,
+                        asymmetry=d,
+                        idle_flux=idle,
+                        source=f"{self.name} calibration, qudits.{q.label}: ec, ej_max, "
+                        "asymmetry_d, sweet_spot_idle",
+                    ),
+                )
+            tuned[i] = q
+        source = f"{self.name} calibration, coupling.charge_coupling_g_c.{used}"
+        couplings = []
+        for c in target.couplings:
+            a, b = tuned[c.qudits[0]].tuning, tuned[c.qudits[1]].tuning
+            if a is not None and b is not None and c.control is None and c.interaction is None:
+                c = _derived_interaction(
+                    c, ChargeCoupling(charge_coupling_hz=g_c, tunings=(a, b), source=source)
+                )
+            couplings.append(c)
+        return target.replace(qudits=tuned, couplings=couplings)
 
     @cached_property
     def _idle_exchange(self) -> Mapping[str, tuple[float, Any]]:
