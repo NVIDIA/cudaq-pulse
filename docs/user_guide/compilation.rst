@@ -147,18 +147,8 @@ Options, all keyword-only:
    that take no time, remove loops that run once or never), ``FOLD_PHASES``
    (fold frame changes into drives), ``FUSE_PULSES`` (merge square pulses in
    a row) and ``HOIST_LOOP_INVARIANTS`` (move loop-invariant operations out
-   of loops). ``IDLE_REPLACEMENT`` is listed together with
-   ``idle_replacement=`` and works on the schedule, so its place in the
-   list changes nothing (see `Idle replacement`_). An unknown name is a
-   ``ValueError`` that names the closest. See
+   of loops). An unknown name is a ``ValueError`` that names the closest. See
    :doc:`../architecture/mlir_passes`.
-
-``idle_replacement`` *(IdleReplacement, optional)*
-   The kernel that replaces each idle window of the schedule, and the
-   shortest idle that counts as one. Given together with
-   ``Pass.IDLE_REPLACEMENT`` in ``passes``; either one without the other is
-   an ``InvalidValueError`` that names the missing one. See
-   `Idle replacement`_.
 
 ``control_system`` *(ControlSystem or Controller, optional)*
    The control system to compile for: every program is checked against its
@@ -187,7 +177,7 @@ Idle replacement
 
 A schedule leaves qudits idle: a data qudit while an ancilla is read out, a
 line that waits at a ``sync`` for a longer pulse on another line.
-``Pass.IDLE_REPLACEMENT`` finds each such stretch that is at least a
+``compiled.replace_idle(rule)`` finds each such stretch that is at least a
 threshold long, an idle window, and writes a kernel of yours into it, the
 fill: a dynamical-decoupling sequence, an echo, whatever the qudit should do
 instead of nothing. The fill is an ordinary kernel that takes the idle qudit
@@ -196,7 +186,6 @@ and the window's length in clock cycles:
 .. code-block:: python
 
    import cudaq_pulse as pulse
-   from cudaq_pulse.compiler import DEFAULT_PASSES
 
    qs = pulse.quantum_system("transmon_surface17")
    data, ancilla = qs.qudit("D1"), qs.qudit("X1")
@@ -219,11 +208,9 @@ and the window's length in clock cycles:
        line = get_drive_line(qudit)
        drive(line, line.get_calibration(pulse.gates.X))
 
-   program = pulse.compile(
-       syndrome,
-       passes=(*DEFAULT_PASSES, pulse.Pass.IDLE_REPLACEMENT),
-       idle_replacement=pulse.IdleReplacement(echo, threshold=100 * pulse.ns),
-   ).lower(data, ancilla)
+   compiled = pulse.compile(syndrome)
+   filled = compiled.replace_idle(pulse.IdleReplacement(echo, threshold=100 * pulse.ns))
+   program = filled.lower(data, ancilla)
    print(program.idle_windows)
 
 .. code-block:: text
@@ -287,11 +274,17 @@ as the passes fold it, into the pulse after it, which may be the fill's:
 the fill plays in the shifted frame. Each gap is
 written to the cycle, so one fill gives one program under every schedule
 policy. Under ``"rcp"`` and ``"alap_rcp"`` a fill's pulses take drive lanes
-like any pulse; when they do not fit, compiling fails and names the lanes
-(``qudits=`` or a control system with more ``max_concurrent_drives`` are
-the ways out). A compilation without the rule is unchanged: it loads
-nothing and makes a few tests more. A program with filled windows pickles
-as the program it is; its options are then those without the rule.
+like any pulse, and those policies give each lane one time it is free from:
+a window whose fill would move an operation of the kernel there is left
+unfilled, and its ``result`` says so. Under ``"asap"`` and ``"alap"``, fills
+that take the control system past one of its limits (``max_concurrent_drives``)
+make compiling fail with ``ControllerLimitError``, which names idle
+replacement and the way out (``qudits=``, a fill with fewer pulses).
+``compiled.replace_idle(rule)`` returns a new compiled kernel and leaves
+``compiled`` as it is; a kernel whose idle windows are not replaced runs
+none of this. A program with filled windows pickles as the program it is,
+with the options it was compiled with; ``compiled.replace_idle(rule)``
+pickles as the compiled kernel and the rule.
 
 Not supported yet, each refused with a message: kernels whose qudits or
 lists each call binds (parameters annotated ``Qudit``, ``Register`` or
