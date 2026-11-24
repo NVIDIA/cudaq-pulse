@@ -154,7 +154,8 @@ def load(
     try:
         declared = builder.load_callables(text)
     except (RuntimeError, ValueError) as error:
-        raise CompilationError(_first_line(error), code="wrong_argument") from None
+        # A module that does not parse: the parser's reasons say where.
+        raise CompilationError(str(error), code="wrong_argument") from None
     given = _given_functions(classical, declared)
     try:
         devices = _target_links(

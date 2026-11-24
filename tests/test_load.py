@@ -923,3 +923,40 @@ def test_a_link_no_classical_function_travels_on_is_refused(system):
         pulse.load(
             other, entry="main", qudits=[system.qudits[0], system.qudits[2]], control_system=machine
         )
+
+
+def test_a_load_beside_a_failing_load_on_another_thread_keeps_each_ones_reasons(system):
+    import threading
+
+    qudits = system.qudits[:2]
+    broken = MODULE.replace("pulse.square %n, %amp, %zero", "pulse.square %n, %amp, %missing", 1)
+    assert broken != MODULE
+    failures, stop = [], threading.Event()
+
+    def fails():
+        while not stop.is_set():
+            try:
+                pulse.load(broken, entry="round", qudits=qudits)
+                failures.append("the broken module loaded")
+            except pulse.CompilationError as error:
+                # Its own reason, with the parser's diagnostic, every time.
+                if "cannot read the module" not in str(error) or "undeclared SSA value" not in str(
+                    error
+                ):
+                    failures.append(str(error))
+
+    def loads():
+        for _ in range(300):
+            if events(pulse.load(MODULE, entry="round", qudits=qudits))[0][0] != "drive":
+                failures.append("a good module loaded wrong")
+
+    workers = [threading.Thread(target=fails) for _ in range(2)]
+    for worker in workers:
+        worker.start()
+    try:
+        loads()
+    finally:
+        stop.set()
+        for worker in workers:
+            worker.join()
+    assert failures == []

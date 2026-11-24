@@ -7595,10 +7595,12 @@ public:
   /// nests deeper than the thread's stack holds still ends the process, as
   /// any MLIR parse does.
   ///
-  /// After parsing, the module's regions are measured without recursion:
-  /// one nested deeper than kMostNesting is refused before anything walks
-  /// or copies it, and so is any operation with a symbol table of its own
-  /// below the module, so every symbol is one of the module's own table.
+  /// After parsing, the module's regions are measured without recursion,
+  /// the module's own body counting as the first: one nested deeper than
+  /// kMostNesting is refused before anything walks or copies it (254
+  /// branches or loops nested in a function are the most that load), and so is
+  /// any operation with a symbol table of its own below the module, so every
+  /// symbol is one of the module's own table.
   static constexpr int kMostNesting = 256;
   static mlir::OwningOpRef<mlir::ModuleOp>
   parseForeign(const std::string &text, mlir::MLIRContext *ctx) {

@@ -321,8 +321,11 @@ yet.
 A module given to ``load`` is another compiler's and is treated as untrusted
 input. Nested modules are refused; the entry and the functions it calls are
 those of the module's own symbol table; what its calls would write in place
-is counted first and refused above 2\ :sup:`20` operations; calls and regions
-nest at most 256 deep; starts, durations and periods are counts of 0 to
+is counted first and refused above 2\ :sup:`20` operations; calls nest at most
+256 deep; regions nest at most 256 deep counting the module's and the
+function's own, which leaves 254 branches or loops nested in a function; text
+with more than 256 brackets open at once is refused before it is parsed;
+starts, durations and periods are counts of 0 to
 2\ :sup:`50` cycles; and the module ``load`` writes is verified before
 anything reads it. The depth of the parse itself is not bounded: text or
 bytecode nested tens of thousands of levels deep can exhaust the stack and
