@@ -94,6 +94,25 @@ calibration value does:
 
 .. code-block:: python
 
+   import cudaq_pulse as pulse
+   from cudaq_pulse.quantum_systems import Coupling, PhysicalQudit
+   from cudaq_pulse.quantum_systems.tuning import ExchangeControl, FluxTuning
+
+   qs = pulse.quantum_system(
+       name="pair",
+       qudits={
+           i: PhysicalQudit(i, 5.0e9 + 1.0e8 * i, 50.0, 30.0, anharmonicity_hz=-2.0e8)
+           for i in range(2)
+       },
+       couplings=[Coupling((0, 1), strength_hz=4.0e6)],
+       tunings={0: FluxTuning(ec_hz=1.65e8, ej_max_hz=2.6e10, asymmetry=0.47, idle_flux=0.5)},
+       controls={
+           (0, 1): ExchangeControl(
+               unit="volt", amplitudes=(0.0, 0.2), exchange_hz=(4.0e6, 2.4e7)
+           )
+       },
+   )
+
    @pulse.kernel
    def detune(a, d, amplitude: float, length: int):
        tuning = get_coupling_line(a)         # the line that tunes a

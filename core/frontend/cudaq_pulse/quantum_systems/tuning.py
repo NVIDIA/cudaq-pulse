@@ -86,6 +86,11 @@ class CouplingControl(_Component):
     control sets its exchange)."""
 
     __slots__ = ()
+    if TYPE_CHECKING:
+
+        def at(self, amplitude: Any) -> CouplingPoint:
+            """The coupling at *amplitude* of the control."""
+            ...
 
     def _problems(self, qudits: tuple[int, ...], where: str) -> list[Problem]:
         """The problems with the control of the coupling of *qudits*, at *where*."""
@@ -98,6 +103,11 @@ class CouplingInteraction(_Component):
     charge coupling, turned on by tuning its qudits)."""
 
     __slots__ = ()
+    if TYPE_CHECKING:
+
+        def at(self, qudits: Sequence[Any], amplitude: Mapping[Any, Any]) -> CouplingPoint:
+            """The coupling of *qudits* with each tuned qudit at its *amplitude*."""
+            ...
 
     def _problems(self, qudits: tuple[int, ...], where: str) -> list[Problem]:
         """The problems with the interaction of the coupling of *qudits*, at *where*."""
