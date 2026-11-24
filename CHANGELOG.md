@@ -175,6 +175,44 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   (`tunings[3].ec_hz`, `controls[(1, 2)]`). System files list what a
   system declares under `tunings`, `controls` and `interactions`.
   Nothing compiles, schedules, exports or simulates differently.
+- **Coupling lines in a kernel.** `get_coupling_line(*qudits)` fetches the
+  line of a control of the quantum system, of one qudit the line that tunes
+  it and of two the control of their coupling, and `drive(line, waveform)`
+  plays a real waveform on it at baseband, with no tone:
+  `drive(get_coupling_line(a), square(60 * pulse.ns, amplitude))`. The
+  amplitude is what the control receives (flux quanta from the idle point
+  for a `FluxTuning`), signed. `wait` and `sync` take the line, and every
+  schedule (`asap`, `alap`, `rcp`, `alap_rcp`) treats it as a line of its
+  own, in rolled loops and measurement-conditioned branches too. The line
+  must exist (the line of a qudit that a call binds, a parameter
+  annotated `Qudit`, is refused in a kernel with no control system, where
+  nothing checks it when the qudit is bound): the quantum system declares
+  the control of exactly those qudits (`tunings={q: ...}`, `controls={(a, d): ...}`), and a control
+  system, when one is given, has a `CouplingLine` that acts on exactly
+  them; the error names what is missing and the lines that reach the
+  qudits. In the IR
+  it is a `!pulse.coupling_line` from `pulse.get_coupling_line`, and
+  a pulse on it is a `pulse.drive_baseband`, which has no tone (a kernel
+  still writes `drive`, and `pulse.drive` is unchanged); a module that
+  holds a coupling line says so with the unit attribute
+  `pulse.coupling_lines`, which the passes ask once; a waveform that may
+  have an
+  imaginary part is a `CompilationError`, at the kernel's line where the
+  kernel says so and from `pulse-verify` otherwise. A tone on it,
+  `line.tone`, a frame op, a readout or a calibrated pulse on it are
+  errors that say so. Not yet: the
+  exports (`export_to_controller` and `export_to_emulator` raise
+  `UnsupportedError` for a program that holds a coupling line), a
+  controller's limits on it (compiling such a program for a control system
+  raises the same error), its simulation and emulation (`simulate` and
+  `classical.emulation.emulate` raise `UnsupportedError`), and the
+  calibrated gate of a coupling as one call, and, in the same program as
+  a coupling line, a classical call, a kernel with its own `schedule=`
+  (compile with `flatten_schedules=True`) and a value a measurement
+  selects at run time (each an `UnsupportedError` that says so, even
+  when the line is never used). Beside none of those, a coupling line that
+  is fetched and never used is dropped as any unused line. Programs without coupling lines compile, schedule
+  and export as before.
 - **Coupling lines of a controller.**
   `controller.with_coupling_lines([...])` gives a controller the outputs
   that play a baseband waveform on a control of the

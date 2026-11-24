@@ -84,6 +84,11 @@ _SELECT = 41
 _MAX_CYCLES = 42
 # [site number, kind] of the op just written: idle replacement's trace only.
 _SITE = 43
+# Written by kernel/_coupling.py: a coupling line (count, result, qudits...)
+# and a drive on one, which has no tone (line, waveform, result, start,
+# duration).
+_ALLOC_COUPLING = 44
+_DRIVE_COUPLING = 45
 _LATENCY_MODE = {"bounded": 0, "timeout": 1, "blocking": 2}
 # "and" and "or" take two i1 values only (compare_bits).
 _COMPARE = {"==": 0, "!=": 1, "<": 2, "<=": 3, ">": 4, ">=": 5, "and": 6, "or": 7}
@@ -219,7 +224,7 @@ def _header(opcode: int, payload_len: int, param_mask: int = 0) -> int:
 
 _DRIVE_HEADER = _header(_DRIVE, 7)
 _WAIT_HEADER = _header(_WAIT, 3)
-_LINE_TYPE_CODES = {"drive_line": 0, "readout_line": 1}
+_LINE_TYPE_CODES = {"drive_line": 0, "readout_line": 1, "coupling_line": 2}
 _ALGEBRA_OPCODES = {
     "pulse.wf_add": _WF_ADD,
     "pulse.wf_sub": _WF_SUB,
