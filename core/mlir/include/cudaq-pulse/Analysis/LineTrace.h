@@ -51,6 +51,16 @@ inline int64_t quditOf(mlir::Operation *acquisition) {
   return -1;
 }
 
+/// What the control system says of a coupling line, on its acquisition:
+/// `controller` (the index of the controller that drives it, among several)
+/// and `delay_cycles` (its calibrated delay in program cycles); `otherwise`
+/// where the acquisition does not say.
+inline int64_t couplingFact(mlir::Operation *acquisition, llvm::StringRef name,
+                            int64_t otherwise) {
+  auto fact = acquisition->getAttrOfType<mlir::IntegerAttr>(name);
+  return fact ? fact.getInt() : otherwise;
+}
+
 /// The indices of the qudits a `pulse.get_coupling_line` reaches, in operand
 /// order; -1 for a runtime qudit not bound yet.
 inline llvm::SmallVector<int64_t, 2>
