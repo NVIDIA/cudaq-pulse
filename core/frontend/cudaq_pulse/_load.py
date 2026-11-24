@@ -141,7 +141,16 @@ def load(
             },
         )
         # A module that calls classical functions is also checked against
-        # their latencies: an answer is taken no earlier than it is due.
+        # their latencies: an answer is taken no earlier than it is due. The
+        # links they travel on are the control system's.
+        if declared:
+            links = [row[2] for row in declared]
+            system = machine._system
+            generic.set_attributes(
+                machine.links_attribute(links)
+                if system is None or machine.controller is not None
+                else system._links_attribute(machine, links, target.clock_ghz)
+            )
         generic.run_passes(
             ["pulse-verify", "pulse-classical-check"] if declared else ["pulse-verify"]
         )
