@@ -270,6 +270,20 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 - **Faster compiles of branches beside long lists of lines.** Tracing a
   measurement-conditioned `if` in a kernel that keeps many lines or tones
   in a list costs less; the programs compiled are unchanged.
+- **`alap` and `alap_rcp` end a program at its last operation.** They placed
+  every line as late as the forward schedule's end, and that end could come
+  after the last operation: under `rcp` a readout holds its line for the
+  feedback latency after it ends, and a sync in a branch arm waits for the
+  outcome, though neither plays anything. A program then ended up to a
+  feedback latency, or a branch outcome's latency, after its last pulse:
+  with 400 cycles of feedback, a drive played beside a 400-cycle readout ran
+  at 760-800 under `alap_rcp`, an 800-cycle program, and now at 360-400. The
+  hold still makes the next operation on the readout line wait. This changes
+  the output of `alap` and `alap_rcp` on one controller too, always to a
+  program that is no longer; `asap` and `rcp` are unchanged, and so are
+  programs that call a kernel with its own `schedule=`. A tail after the
+  last readout used as a guard before the next shot needs
+  `simulate(reset_time=...)` or an explicit `wait()`.
 - **Measurements keep the kernel's numbers under every schedule.**
   `SimulationResult.measurements` gives each measurement the readout number
   (the kernel's order of its readouts) and loop iteration the kernel gave it,
@@ -402,12 +416,37 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 
 ### Fixed
 
+- **A value computed from a term it uses several times, or through
+  thousands of operations, compiles.** `tau = tau + tau` written a few dozen
+  times did not finish tracing: forty such lines are forty operations, but
+  written out they are 2^40 terms, and the tracer walked the value as
+  written out. A wait length or an amplitude summed in a loop of 200 rounds
+  failed with a `SyntaxError` from inside the compiler, one of 1,100 rounds
+  with a `RecursionError`. Every walk of a value now visits an operation
+  once and without recursion, and an error names a shared term once:
+  `the wait length t2 + t2 with t1 = tau * 2.0, t2 = t1 + t1`. The same
+  holds for conditions built with `&` and `|` from answers of classical
+  calls, however long the chain; and a condition that several parts of
+  another use, also through `^`, `==` and `!=`, is computed once in the
+  program, where it was computed once per use. A value that shares nothing
+  compiles to the same program and reads the same in errors. Not
+  covered yet: an amplitude, phase or frequency, or a value from an answer,
+  that doubles a term many times is still written out in the controller
+  export, which grows with its terms.
 - **A time in a runtime `list[float]` argument is refused, as for a `float`
   parameter.** `[100 * pulse.ns]` was taken as its nanoseconds and used as
   that many clock cycles, so a scan of waits written with units played half
   of each wait on a 2 GHz clock, with no error. It is now an
   `InvalidTypeError` that names the element, and so is an element that is
   not a number, which said only that the argument was a list.
+- **A loop that hands each classical call's answer to the next call now
+  compiles.** With a wait whose length is an answer in it
+  (`tau = f.submit(tau).result()` then `wait(line, tau, bounds=...)`), the
+  time to schedule doubled with every round, so a loop of some thirty rounds
+  did not finish. To find a wait's length the scheduler went back from the
+  answer through the call to every call before it, by two ways each. It now
+  follows arithmetic only, and computes a term that others share once. The
+  schedules are the same.
 - **A kernel with many measurement-conditioned `if`s no longer takes memory
   and time that grow with the square of their number to trace.** Each `if`
   kept its own copy of the whole kernel's instructions, so a kernel of n
@@ -490,6 +529,15 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   once for each content it has had. An installed description, loaded by
   its name, is still kept by its file's modification time: nothing writes
   those while a program runs.
+- **Bounding what a round plays at once no longer takes time that grows
+  with the square of its pulses, where none of them is in a branch.** For
+  a loop kept as a loop, the check of `max_concurrent_drives` and
+  `max_concurrent_readouts` first bounds what one round plays at once. The
+  bound went through every pulse in flight at each pulse, as the count
+  after it did before it was changed. It now keeps them by their ends and
+  the sum of what they stand for as they come and go, and where none in
+  flight is in a branch that sum is the bound. Where one is, those in
+  flight are gone through as before. What it finds is the same.
 - **Checking a program against a control system of many controllers no
   longer takes time that grows with their number times the program.**
   Compiling for several controllers checked each one on a copy of every

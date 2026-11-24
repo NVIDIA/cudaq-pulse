@@ -15,6 +15,7 @@
 #include "mlir/IR/Matchers.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 
 #include <algorithm>
@@ -152,22 +153,40 @@ inline std::optional<double> boundAnswer(mlir::Value value) {
   return answers[result.getResultNumber()];
 }
 
+/// The numbers one evaluation has found for the values that have several
+/// uses, so that a term others share is computed once however many reach it.
+using ComputedNumbers =
+    llvm::SmallDenseMap<mlir::Value, std::optional<double>, 8>;
+
 template <typename Leaf>
-std::optional<double> computedTerm(mlir::Value value, Leaf &leaf);
+std::optional<double> computedTerm(mlir::Value value, Leaf &leaf,
+                                   std::optional<ComputedNumbers> &shared);
+template <typename Leaf>
+std::optional<double>
+computedArithmetic(mlir::Operation *def, Leaf &leaf,
+                   std::optional<ComputedNumbers> &shared);
+
+template <typename Leaf>
+std::optional<double> computedNumber(mlir::Value value, Leaf &leaf,
+                                     std::optional<ComputedNumbers> &shared) {
+  std::optional<double> out = computedTerm(value, leaf, shared);
+  if (out && value.getType().isInteger(1))
+    out = *out != 0.0 ? 1.0 : 0.0;
+  return out;
+}
 
 /// A number computed from constants and the values `leaf` gives (else
 /// none), by the terms of the controller export's expression vocabulary
 /// and the bool logic it expresses with them. A bool is 1 or 0.
 template <typename Leaf>
 std::optional<double> computedNumber(mlir::Value value, Leaf &leaf) {
-  std::optional<double> out = computedTerm(value, leaf);
-  if (out && value.getType().isInteger(1))
-    out = *out != 0.0 ? 1.0 : 0.0;
-  return out;
+  std::optional<ComputedNumbers> shared;
+  return computedNumber(value, leaf, shared);
 }
 
 template <typename Leaf>
-std::optional<double> computedTerm(mlir::Value value, Leaf &leaf) {
+std::optional<double> computedTerm(mlir::Value value, Leaf &leaf,
+                                   std::optional<ComputedNumbers> &shared) {
   if (mlir::Attribute attribute = constantAttribute(value)) {
     if (auto number = mlir::dyn_cast<mlir::FloatAttr>(attribute))
       return number.getValueAsDouble();
@@ -180,17 +199,41 @@ std::optional<double> computedTerm(mlir::Value value, Leaf &leaf) {
   mlir::Operation *def = value.getDefiningOp();
   if (!def || def->getNumRegions() != 0)
     return std::nullopt;
+  // Only arithmetic computes a number from its operands. Those of any other
+  // op are not followed: a classical call's answer that is not bound yet
+  // leads to the call, and that to the calls before it by its link and by
+  // its arguments both.
+  mlir::Dialect *dialect = def->getDialect();
+  if (!dialect || !mlir::isa<mlir::arith::ArithDialect>(*dialect))
+    return std::nullopt;
+  // A value of one use is reached once.
+  if (value.hasOneUse())
+    return computedArithmetic(def, leaf, shared);
+  if (!shared)
+    shared.emplace();
+  else if (auto found = shared->find(value); found != shared->end())
+    return found->second;
+  std::optional<double> out = computedArithmetic(def, leaf, shared);
+  shared->try_emplace(value, out);
+  return out;
+}
+
+/// computedTerm for the result of `def`, an op of arith without regions.
+template <typename Leaf>
+std::optional<double>
+computedArithmetic(mlir::Operation *def, Leaf &leaf,
+                   std::optional<ComputedNumbers> &shared) {
   llvm::StringRef name = def->getName().getStringRef();
   if (auto select = mlir::dyn_cast<mlir::arith::SelectOp>(def)) {
-    auto condition = computedNumber(select.getCondition(), leaf);
+    auto condition = computedNumber(select.getCondition(), leaf, shared);
     if (!condition)
       return std::nullopt;
     return computedNumber(*condition != 0.0 ? select.getTrueValue()
                                             : select.getFalseValue(),
-                          leaf);
+                          leaf, shared);
   }
   if (def->getNumOperands() == 1) {
-    auto x = computedNumber(def->getOperand(0), leaf);
+    auto x = computedNumber(def->getOperand(0), leaf, shared);
     if (!x)
       return std::nullopt;
     if (name == "arith.negf")
@@ -207,8 +250,8 @@ std::optional<double> computedTerm(mlir::Value value, Leaf &leaf) {
   }
   if (def->getNumOperands() != 2)
     return std::nullopt;
-  auto a = computedNumber(def->getOperand(0), leaf),
-       b = computedNumber(def->getOperand(1), leaf);
+  auto a = computedNumber(def->getOperand(0), leaf, shared),
+       b = computedNumber(def->getOperand(1), leaf, shared);
   if (!a || !b)
     return std::nullopt;
   if (name == "arith.xori")
