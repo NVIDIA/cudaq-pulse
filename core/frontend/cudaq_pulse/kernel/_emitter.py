@@ -857,6 +857,9 @@ _PLAYS = frozenset({"drive", "readout"})
 _first = operator.itemgetter(0)
 
 _LINE_TYPES = ("drive_line", "readout_line")
+# The lines wait() and sync() take: those, and a coupling line, which has no
+# tone (kernel/_coupling.py).
+_TIMED_LINE_TYPES = (*_LINE_TYPES, "coupling_line")
 _QUDIT = ("qref",)
 _TONE = ("tone",)
 _WAVEFORM = ("waveform",)
@@ -866,7 +869,7 @@ _OPERAND_TYPES = {
     "get_readout_line": (_QUDIT,),
     "drive": (("drive_line",), _WAVEFORM, _TONE),
     "readout": (("readout_line",), _WAVEFORM, _TONE),
-    "wait": (_LINE_TYPES,),
+    "wait": (_TIMED_LINE_TYPES,),
     "shift_phase": (_TONE,),
     "set_phase": (_TONE,),
     "shift_frequency": (_TONE,),
@@ -884,10 +887,13 @@ _EMIT_TABLE = {
     name: (value_count, attrs, rtypes, _OPERAND_TYPES.get(name, ()))
     for name, (value_count, attrs, rtypes) in OP_TABLE.items()
 }
+# _emit_pulse_call hands get_coupling_line to kernel/_coupling.py.
+del _EMIT_TABLE["get_coupling_line"]
 _TYPE_WORDS = {
     "qref": "qudit",
     "drive_line": "drive line",
     "readout_line": "readout line",
+    "coupling_line": "coupling line",
     "tone": "tone",
     "waveform": "waveform",
     "measurement": "measurement result",
@@ -1077,7 +1083,7 @@ def _sync_lines(fname: str, call_args: list[Any]) -> list[IRValue]:
     tuples of lines flattened."""
     lines: list[IRValue] = []
     for v in call_args:
-        if v.__class__ is not IRValue or v.vtype not in _LINE_TYPES:
+        if v.__class__ is not IRValue or v.vtype not in _TIMED_LINE_TYPES:
             break
         chan = v.chan
         lines.append(v if chan is None else chan.value)
@@ -1087,7 +1093,7 @@ def _sync_lines(fname: str, call_args: list[Any]) -> list[IRValue]:
     lines = []
 
     def add(value: Any, where: str) -> None:
-        if value.__class__ is IRValue and value.vtype in _LINE_TYPES:
+        if value.__class__ is IRValue and value.vtype in _TIMED_LINE_TYPES:
             lines.append(_current(value))
         elif value.__class__ in (list, tuple):
             for i, item in enumerate(value):
@@ -4119,6 +4125,10 @@ class PulseIREmitter:
             from ._emit_errors import qudit_attribute_error
 
             raise qudit_attribute_error(self.locals, value, name)
+        if value.vtype == "coupling_line":
+            from ._coupling import attribute_error
+
+            raise attribute_error(name)
         word = _TYPE_WORDS.get(value.vtype, value.vtype)
         article = "an" if word[0] in "aeiou" else "a"
         hint = "its attributes are" if value.vtype in _LINE_TYPES else "only a line has attributes,"
@@ -4148,6 +4158,10 @@ class PulseIREmitter:
                 from ._durations import traced_round_duration
 
                 return (traced_round_duration(self.b, call_args, None),)
+            if fname == "get_coupling_line":
+                from ._coupling import get_coupling_line
+
+                return get_coupling_line(self, call_args)
             raise CompilationError(f"unknown pulse op: {fname}", code="unknown_name")
 
         value_count, attr_names, rtypes, operand_types = entry

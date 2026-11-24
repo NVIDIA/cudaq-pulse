@@ -14,6 +14,7 @@ from ._emitter import (
     _LINE_TYPES,
     _OPERAND_TYPES,
     _QUDIT,
+    _TIMED_LINE_TYPES,
     _TONE,
     _TYPE_WORDS,
     _WAVEFORM,
@@ -101,7 +102,11 @@ def operand_error(fname: str, call_args: list[Any]) -> CompilationError:
         if v.__class__ is not IRValue or v.vtype not in want:
             break
     value = call_args[index]
-    wanted = " or ".join(_TYPE_WORDS[t] for t in want)
+    # A wait takes a coupling line too; its message names the lines every
+    # kernel has.
+    wanted = " or ".join(
+        _TYPE_WORDS[t] for t in (_LINE_TYPES if want is _TIMED_LINE_TYPES else want)
+    )
     message = f"{fname}(): argument {index + 1} must be a {wanted}, got {_describe(value)}"
     vtype = value.vtype if value.__class__ is IRValue else None
     play = fname in ("drive", "readout")

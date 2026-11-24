@@ -71,6 +71,7 @@ TOP_LEVEL = {
 DSL = {
     "get_drive_line",
     "get_readout_line",
+    "get_coupling_line",
     "drive",
     "readout",
     "wait",
@@ -127,7 +128,7 @@ def test_names_that_moved_or_went_are_not_top_level(name):
 
 def test_the_kernel_language_is_in_ops():
     assert DSL <= set(dir(pulse.ops))
-    assert len(DSL) == 23
+    assert len(DSL) == 24
 
 
 def test_ops_all_is_the_kernel_language_the_tracer_lowers():
