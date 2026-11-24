@@ -650,6 +650,15 @@ struct PulseToQOpPass
 
   void runOnOperation() override {
     auto module = getOperation();
+    // Asked once of the module (Variant.h): the operator program has no
+    // term for a coupling line yet, and would leave its pulses out.
+    if (module->hasAttr(pulse::kCouplingLinesAttr)) [[unlikely]]
+      if (pulse::holdsCouplingLine(module)) {
+        module.emitError("this program holds a coupling line; a program with "
+                         "a coupling line is not simulated or emulated yet");
+        pulse::lastRefusal = pulse::Refusal::NotSimulated;
+        return signalPassFailure();
+      }
     OpBuilder b(module.getContext());
 
     func::FuncOp mainFunc;

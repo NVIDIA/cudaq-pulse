@@ -118,12 +118,25 @@ def SchedulePolicy : I32Enum<"SchedulePolicy", "schedule policy", [
   let cppNamespace = "::pulse";
 }
 
+// Defined after the other types: the generated parser and printer try the
+// types in this order, so that the earlier ones are found as they were.
+def CouplingLineType : PulseType<"CouplingLine", "coupling_line"> {
+  let summary = "Physical coupling channel (linear resource)";
+  let description = [{
+    A `coupling_line` represents a channel that plays a baseband waveform,
+    with no tone, on a control of the quantum system: one qudit's own
+    tuning, or the control of the coupling of several qudits. Like drive
+    and readout lines, coupling lines are linear resources with time state.
+  }];
+}
+
 //===----------------------------------------------------------------------===//
 // Composite type predicates
 //===----------------------------------------------------------------------===//
 
 def AnyLineType : Type<
-  Or<[DriveLineType.predicate, ReadoutLineType.predicate]>,
+  Or<[DriveLineType.predicate, ReadoutLineType.predicate,
+      CouplingLineType.predicate]>,
   "any pulse line type"
 >;
 

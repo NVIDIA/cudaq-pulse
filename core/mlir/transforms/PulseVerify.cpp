@@ -43,6 +43,15 @@
 #include <cmath>
 #include <iterator>
 
+#if PULSE_COUPLED == 0
+namespace pulse {
+namespace coupled {
+/// pulse-verify on a module that holds a coupling line: this file compiled
+/// as the variant that knows its ops (Variant.h). Whether a check failed.
+bool verifyModule(mlir::ModuleOp module);
+} // namespace coupled
+} // namespace pulse
+#endif
 namespace pulse {
 /// Whether `module` holds a pulse.call (PulseCallCheck.cpp).
 bool moduleHasCalls(mlir::ModuleOp module);
@@ -53,7 +62,8 @@ mlir::LogicalResult checkCalls(mlir::ModuleOp module);
 namespace {
 
 static bool isTimedOp(mlir::Operation *op) {
-  return mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(op);
+  return mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(op) ||
+         (pulse::kCoupled && mlir::isa<pulse::DriveBasebandOp>(op));
 }
 
 /// The measurement results a branch condition is computed from, not
@@ -256,6 +266,9 @@ private:
       return pulse::waveformCycles(drive.getPulse());
     if (auto readout = mlir::dyn_cast<pulse::ReadoutOp>(op))
       return pulse::waveformCycles(readout.getPulse());
+    if (pulse::kCoupled)
+      if (auto drive = mlir::dyn_cast<pulse::DriveBasebandOp>(op))
+        return pulse::waveformCycles(drive.getPulse());
     return pulse::waitCycles(mlir::cast<pulse::WaitOp>(op));
   }
 
@@ -286,9 +299,80 @@ public:
       return checkMeasurement(op, isSet.getMeasurement());
     if (auto wait = mlir::dyn_cast<pulse::WaitOp>(op))
       return checkBounds(wait);
+#if PULSE_COUPLED
+    if (auto drive = mlir::dyn_cast<pulse::DriveBasebandOp>(op))
+      return checkReal(drive);
+#endif
   }
 
 private:
+#if PULSE_COUPLED
+  /// A coupling line plays at baseband, so its waveform has no imaginary
+  /// part: one that is not known to be zero is refused, naming the op that
+  /// may give it one.
+  void checkReal(pulse::DriveBasebandOp drive) {
+    mlir::Operation *complex = notKnownReal(drive.getPulse());
+    if (!complex)
+      return;
+    mlir::InFlightDiagnostic diagnostic =
+        drive.emitOpError("plays a real waveform; the imaginary part of this "
+                          "one is not known to be zero");
+    diagnostic.attachNote(complex->getLoc())
+        << "this " << complex->getName().getStringRef()
+        << " may have an imaginary part";
+    pulse::lastRefusal = pulse::Refusal::ComplexWaveform;
+    hadError = true;
+  }
+
+  static bool isZero(mlir::Value value) {
+    auto constant = value.getDefiningOp<mlir::arith::ConstantOp>();
+    auto number = constant
+                      ? mlir::dyn_cast<mlir::FloatAttr>(constant.getValue())
+                      : nullptr;
+    return number && number.getValueAsDouble() == 0.0;
+  }
+
+  /// The op that may give `waveform` an imaginary part, or null when it has
+  /// none: a square with a constant imaginary amplitude of 0, a Gaussian,
+  /// flat-topped Gaussian, raised cosine, tanh ramp or samples, a DRAG pulse
+  /// with a constant beta of 0, and sums, differences, products, real
+  /// multiples and negations of those. A waveform that is not made by an op
+  /// here (a block argument, a select) is not known.
+  mlir::Operation *notKnownReal(mlir::Value waveform) {
+    mlir::Operation *def = waveform.getDefiningOp();
+    if (!def)
+      return waveform.getParentBlock()->getParentOp();
+    auto [known, added] = complexOf.try_emplace(def, nullptr);
+    if (!added)
+      return known->second;
+    mlir::Operation *found = def;
+    if (auto square = mlir::dyn_cast<pulse::SquarePulseOp>(def))
+      found = isZero(square.getAmpImag()) ? nullptr : def;
+    else if (mlir::isa<pulse::GaussianPulseOp, pulse::GaussianSquarePulseOp,
+                       pulse::CosinePulseOp, pulse::TanhRampOp,
+                       pulse::CustomSamplesOp>(def))
+      found = nullptr;
+    else if (auto drag = mlir::dyn_cast<pulse::DRAGPulseOp>(def))
+      found = isZero(drag.getBeta()) ? nullptr : def;
+    else if (mlir::isa<pulse::PulseAddOp, pulse::PulseSubOp, pulse::PulseMulOp>(
+                 def)) {
+      found = notKnownReal(def->getOperand(0));
+      if (!found)
+        found = notKnownReal(def->getOperand(1));
+    } else if (auto scale = mlir::dyn_cast<pulse::PulseScaleOp>(def))
+      found = mlir::isa<mlir::FloatType>(scale.getScale().getType())
+                  ? notKnownReal(scale.getPulse())
+                  : def;
+    else if (auto negated = mlir::dyn_cast<pulse::PulseNegOp>(def))
+      found = notKnownReal(negated.getPulse());
+    // The map may have grown: look the op up again.
+    complexOf[def] = found;
+    return found;
+  }
+
+  llvm::DenseMap<mlir::Operation *, mlir::Operation *> complexOf;
+#endif
+
   void visitWaveform(mlir::Operation *op) {
     llvm::TypeSwitch<mlir::Operation *>(op)
         .Case<pulse::SquarePulseOp, pulse::CosinePulseOp, pulse::CustomOp>(
@@ -469,6 +553,260 @@ private:
   llvm::DenseMap<mlir::Value, mlir::Operation *> sources;
 };
 
+/// Every check of pulse-verify on `module`; whether one failed.
+LLVM_ATTRIBUTE_ALWAYS_INLINE static bool verifyModule(mlir::ModuleOp module) {
+#if PULSE_COUPLED == 0
+  // A module that holds a coupling line is verified by the variant of this
+  // file that knows its ops (Variant.h).
+  if (module->hasAttr(pulse::kCouplingLinesAttr)) [[unlikely]]
+    return pulse::coupled::verifyModule(module);
+#endif
+  bool hadError = false;
+
+  // Check 1: Linearity -- lines must be consumed. The warning names the
+  // qudit instead of attaching the op: printing an op numbers every value
+  // of its function, which is linear in the program per warning.
+  auto warnUnused = [](mlir::Operation *op, mlir::Value line,
+                       llvm::StringRef kind) {
+    if (!line.use_empty())
+      return;
+    auto diagnostic = mlir::emitWarning(op->getLoc())
+                      << kind << " line allocated but never used";
+    if (int64_t qudit = pulse::quditOf(op); qudit >= 0)
+      diagnostic << " (qudit " << qudit << ")";
+  };
+  module.walk(
+      [&](pulse::GetDriveLineOp op) { warnUnused(op, op.getLine(), "drive"); });
+  module.walk([&](pulse::GetReadoutLineOp op) {
+    warnUnused(op, op.getLine(), "readout");
+  });
+  // A line or tone is consumed at most once on every path: its uses must
+  // lie in different arms of a conditional, and none inside a loop that
+  // does not carry it. A use that only reads it (a time read) consumes
+  // nothing.
+  auto checkLinear = [&](mlir::Value value, mlir::Operation *where) {
+    if (!pulse::isLinearPulseType(value.getType()))
+      return;
+    llvm::SmallVector<mlir::Operation *> users;
+    for (mlir::OpOperand &use : value.getUses())
+      if (!pulse::readsWithoutConsuming(use.getOwner()))
+        users.push_back(use.getOwner());
+    if (!pulse::allMutuallyExclusive(users)) {
+      where->emitError("linear pulse value is consumed more than once "
+                       "on one path");
+      hadError = true;
+      return;
+    }
+    for (mlir::Operation *user : users)
+      for (mlir::Operation *loop = user->getParentOp(); loop;
+           loop = loop->getParentOp()) {
+        if (loop == where || loop->isAncestor(where))
+          break;
+        if (mlir::isa<mlir::scf::ForOp>(loop)) {
+          user->emitError("linear pulse value from outside an scf.for is "
+                          "used in its body; carry it through iter_args");
+          hadError = true;
+          return;
+        }
+      }
+  };
+  // One walk for each op's own checks: an op the schedule passes cannot
+  // time, linearity, the values of waveforms
+  // and of the waits and measurements that use them (WaveformCheck), and
+  // acquisitions. Timing and lowering identify a line by the op that
+  // acquires it, so an acquisition in a loop body cannot stand for a new
+  // line per iteration.
+  WaveformCheck waveforms;
+  module.walk([&](mlir::Operation *op) {
+    // The schedule passes would time an op they do not know as nothing.
+    if (pulse::untimed(op)) {
+      pulse::emitUntimed(op);
+      hadError = true;
+    }
+    for (mlir::Value result : op->getResults())
+      checkLinear(result, op);
+    for (mlir::Region &region : op->getRegions())
+      for (mlir::Block &block : region)
+        for (mlir::Value arg : block.getArguments())
+          checkLinear(arg, op);
+    waveforms.visit(op);
+    if (!mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op) &&
+        !(pulse::kCoupled && mlir::isa<pulse::GetCouplingLineOp>(op)))
+      return;
+#if PULSE_COUPLED
+    if (mlir::isa<pulse::GetCouplingLineOp>(op) &&
+        op->getResult(0).use_empty()) {
+      auto diagnostic = mlir::emitWarning(op->getLoc())
+                        << "coupling line allocated but never used";
+      llvm::SmallVector<int64_t, 2> qudits = pulse::couplingQudits(op);
+      if (!llvm::is_contained(qudits, -1)) {
+        diagnostic << " (qudit" << (qudits.size() > 1 ? "s " : " ");
+        llvm::interleaveComma(qudits, diagnostic);
+        diagnostic << ")";
+      }
+    }
+#endif
+    if (op->getParentOfType<mlir::scf::ForOp>()) {
+      op->emitError("a line cannot be acquired inside an scf.for; acquire "
+                    "it before the loop and carry it through iter_args");
+      hadError = true;
+    }
+    if (mlir::failed(pulse::checkOneAcquisition(op)))
+      hadError = true;
+  });
+
+  // Check 1b: classical calls. A line-like link cannot be acquired in a
+  // loop either (V1 and V2 of the classical-call rules follow).
+  module.walk([&](classical::GetLinkOp op) {
+    if (!op->getParentOfType<mlir::scf::ForOp>())
+      return;
+    op->emitError("a link cannot be acquired inside an scf.for; acquire it "
+                  "before the loop and carry it through iter_args");
+    hadError = true;
+  });
+  // V1: an answer that arrives while the program runs cannot change the
+  // timeline, so no duration or loop bound may be computed from one.
+  llvm::DenseMap<mlir::Value, bool> fromAnswer;
+  std::function<bool(mlir::Value)> dependsOnAnswer =
+      [&](mlir::Value value) -> bool {
+    auto [it, inserted] = fromAnswer.try_emplace(value, false);
+    if (!inserted)
+      return it->second;
+    mlir::Operation *def = value.getDefiningOp();
+    bool result = false;
+    if (def && mlir::isa<classical::WaitOp>(def))
+      result = true;
+    else if (def && def->getNumRegions() == 0)
+      result = llvm::any_of(def->getOperands(), dependsOnAnswer);
+    fromAnswer[value] = result;
+    return result;
+  };
+  bool hasAnswers = false;
+  module.walk([&](classical::WaitOp) { hasAnswers = true; });
+  if (hasAnswers) {
+    auto rejectDuration = [&](mlir::Operation *op, mlir::Value duration) {
+      if (!dependsOnAnswer(duration))
+        return;
+      op->emitError("a duration cannot depend on the answer of a classical "
+                    "call: the answer arrives while the program runs, after "
+                    "its timeline is fixed; branch on the answer to choose "
+                    "between durations instead");
+      hadError = true;
+    };
+    module.walk([&](mlir::Operation *op) {
+      if (auto w = mlir::dyn_cast<pulse::SquarePulseOp>(op))
+        rejectDuration(op, w.getDuration());
+      else if (auto w = mlir::dyn_cast<pulse::GaussianPulseOp>(op))
+        rejectDuration(op, w.getDuration());
+      else if (auto w = mlir::dyn_cast<pulse::DRAGPulseOp>(op))
+        rejectDuration(op, w.getDuration());
+      else if (auto w = mlir::dyn_cast<pulse::CosinePulseOp>(op))
+        rejectDuration(op, w.getDuration());
+      else if (auto w = mlir::dyn_cast<pulse::TanhRampOp>(op))
+        rejectDuration(op, w.getDuration());
+      else if (auto w = mlir::dyn_cast<pulse::GaussianSquarePulseOp>(op)) {
+        rejectDuration(op, w.getDuration());
+        rejectDuration(op, w.getRisefall());
+      } else if (auto w = mlir::dyn_cast<pulse::CustomOp>(op))
+        rejectDuration(op, w.getDuration());
+      else if (auto d = mlir::dyn_cast<pulse::DurationFromIntOp>(op)) {
+        // A wait marked variable may take its length from an answer.
+        bool variable = !d->use_empty() &&
+                        llvm::all_of(d->getUsers(), [](mlir::Operation *u) {
+                          return mlir::isa<pulse::WaitOp>(u) &&
+                                 u->hasAttr("classical.variable");
+                        });
+        if (!variable)
+          rejectDuration(op, d.getCycles());
+      } else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op))
+        for (mlir::Value bound :
+             {loop.getLowerBound(), loop.getUpperBound(), loop.getStep()})
+          if (dependsOnAnswer(bound)) {
+            loop.emitError("a loop bound cannot depend on the answer of a "
+                           "classical call");
+            hadError = true;
+            break;
+          }
+    });
+  }
+  // V2 for variable waits: a region whose length is known only at run time
+  // cannot sit in a schedule block or in one arm of a branch.
+  module.walk([&](pulse::WaitOp op) {
+    if (!op->hasAttr("classical.variable"))
+      return;
+    if (!op->hasAttr("pulse.variable_wait")) {
+      op.emitError(
+          "a classical.variable wait must also be pulse.variable_wait, "
+          "with its bounds in pulse.min_cycles and pulse.max_cycles");
+      hadError = true;
+    } else if (op->getParentOfType<pulse::ScheduleBlockOp>()) {
+      op.emitError(classical::kVariableWaitInBlock);
+      hadError = true;
+    } else if (op->getParentOfType<mlir::scf::IfOp>()) {
+      op.emitError("a variable wait cannot be inside one arm of an scf.if; "
+                   "let the answer be 0 where no wait is wanted");
+      hadError = true;
+    }
+  });
+  // V2: a blocking wait stops the whole program until the answer arrives,
+  // so it cannot sit in a schedule block, which has a fixed length, or in
+  // one arm of a branch.
+  mlir::SymbolTableCollection symbols;
+  module.walk([&](classical::WaitOp op) {
+    auto callable = symbols.lookupNearestSymbolFrom<classical::CallableOp>(
+        op, op.getCalleeAttr());
+    if (!callable || callable.getMode() != "blocking")
+      return;
+    if (op->getParentOfType<pulse::ScheduleBlockOp>()) {
+      op.emitError(classical::kBlockingWaitInBlock);
+      hadError = true;
+    } else if (op->getParentOfType<mlir::scf::IfOp>()) {
+      op.emitError("a blocking wait cannot be inside one arm of an scf.if; "
+                   "wait before or after the branch");
+      hadError = true;
+    }
+  });
+  // A call of a controller that blocks on calls holds every line, which a
+  // schedule block, placed whole, cannot.
+  if (pulse::blocksOnCalls(module))
+    module.walk([&](classical::SubmitOp op) {
+      if (op->getParentOfType<pulse::ScheduleBlockOp>()) {
+        op.emitError(classical::kBlockingCallInBlock);
+        hadError = true;
+      }
+    });
+
+  hadError |= waveforms.hadError;
+  // A wait whose length is not a constant is scheduled at a placeholder
+  // length until its arguments are bound; only a variable wait, which
+  // carries its bounds, may be.
+  module.walk([&](pulse::WaitOp op) {
+    auto conversion =
+        op.getDuration().getDefiningOp<pulse::DurationFromIntOp>();
+    if (op->hasAttr("pulse.variable_wait") ||
+        (conversion && pulse::constantInteger(conversion.getCycles())))
+      return;
+    op.emitError("a wait whose length is not a constant must be marked "
+                 "pulse.variable_wait, with its bounds in pulse.min_cycles and "
+                 "pulse.max_cycles");
+    hadError = true;
+  });
+
+  // Check 3: Monotone, non-overlapping time on each physical line, and no
+  // conditional operation before its measurement. SSA line values change
+  // after every operation, so trace them back to allocation.
+  module.walk([&](mlir::func::FuncOp funcOp) {
+    if (funcOp.isExternal())
+      return;
+    TimingChecker checker;
+    checker.checkFunction(funcOp);
+    hadError |= checker.hadError;
+  });
+
+  return hadError;
+}
+
+#if PULSE_COUPLED == 0
 struct PulseVerifyPass
     : public mlir::PassWrapper<PulseVerifyPass,
                                mlir::OperationPass<mlir::ModuleOp>> {
@@ -488,245 +826,24 @@ struct PulseVerifyPass
         signalPassFailure();
       return;
     }
-    bool hadError = false;
-
-    // Check 1: Linearity -- lines must be consumed. The warning names the
-    // qudit instead of attaching the op: printing an op numbers every value
-    // of its function, which is linear in the program per warning.
-    auto warnUnused = [](mlir::Operation *op, mlir::Value line,
-                         llvm::StringRef kind) {
-      if (!line.use_empty())
-        return;
-      auto diagnostic = mlir::emitWarning(op->getLoc())
-                        << kind << " line allocated but never used";
-      if (int64_t qudit = pulse::quditOf(op); qudit >= 0)
-        diagnostic << " (qudit " << qudit << ")";
-    };
-    module.walk([&](pulse::GetDriveLineOp op) {
-      warnUnused(op, op.getLine(), "drive");
-    });
-    module.walk([&](pulse::GetReadoutLineOp op) {
-      warnUnused(op, op.getLine(), "readout");
-    });
-    // A line or tone is consumed at most once on every path: its uses must
-    // lie in different arms of a conditional, and none inside a loop that
-    // does not carry it. A use that only reads it (a time read) consumes
-    // nothing.
-    auto checkLinear = [&](mlir::Value value, mlir::Operation *where) {
-      if (!pulse::isLinearPulseType(value.getType()))
-        return;
-      llvm::SmallVector<mlir::Operation *> users;
-      for (mlir::OpOperand &use : value.getUses())
-        if (!pulse::readsWithoutConsuming(use.getOwner()))
-          users.push_back(use.getOwner());
-      if (!pulse::allMutuallyExclusive(users)) {
-        where->emitError("linear pulse value is consumed more than once "
-                         "on one path");
-        hadError = true;
-        return;
-      }
-      for (mlir::Operation *user : users)
-        for (mlir::Operation *loop = user->getParentOp(); loop;
-             loop = loop->getParentOp()) {
-          if (loop == where || loop->isAncestor(where))
-            break;
-          if (mlir::isa<mlir::scf::ForOp>(loop)) {
-            user->emitError("linear pulse value from outside an scf.for is "
-                            "used in its body; carry it through iter_args");
-            hadError = true;
-            return;
-          }
-        }
-    };
-    // One walk for each op's own checks: an op the schedule passes cannot
-    // time, linearity, the values of waveforms
-    // and of the waits and measurements that use them (WaveformCheck), and
-    // acquisitions. Timing and lowering identify a line by the op that
-    // acquires it, so an acquisition in a loop body cannot stand for a new
-    // line per iteration.
-    WaveformCheck waveforms;
-    module.walk([&](mlir::Operation *op) {
-      // The schedule passes would time an op they do not know as nothing.
-      if (pulse::untimed(op)) {
-        pulse::emitUntimed(op);
-        hadError = true;
-      }
-      for (mlir::Value result : op->getResults())
-        checkLinear(result, op);
-      for (mlir::Region &region : op->getRegions())
-        for (mlir::Block &block : region)
-          for (mlir::Value arg : block.getArguments())
-            checkLinear(arg, op);
-      waveforms.visit(op);
-      if (!mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
-        return;
-      if (op->getParentOfType<mlir::scf::ForOp>()) {
-        op->emitError("a line cannot be acquired inside an scf.for; acquire "
-                      "it before the loop and carry it through iter_args");
-        hadError = true;
-      }
-      if (mlir::failed(pulse::checkOneAcquisition(op)))
-        hadError = true;
-    });
-
-    // Check 1b: classical calls. A line-like link cannot be acquired in a
-    // loop either (V1 and V2 of the classical-call rules follow).
-    module.walk([&](classical::GetLinkOp op) {
-      if (!op->getParentOfType<mlir::scf::ForOp>())
-        return;
-      op->emitError("a link cannot be acquired inside an scf.for; acquire it "
-                    "before the loop and carry it through iter_args");
-      hadError = true;
-    });
-    // V1: an answer that arrives while the program runs cannot change the
-    // timeline, so no duration or loop bound may be computed from one.
-    llvm::DenseMap<mlir::Value, bool> fromAnswer;
-    std::function<bool(mlir::Value)> dependsOnAnswer =
-        [&](mlir::Value value) -> bool {
-      auto [it, inserted] = fromAnswer.try_emplace(value, false);
-      if (!inserted)
-        return it->second;
-      mlir::Operation *def = value.getDefiningOp();
-      bool result = false;
-      if (def && mlir::isa<classical::WaitOp>(def))
-        result = true;
-      else if (def && def->getNumRegions() == 0)
-        result = llvm::any_of(def->getOperands(), dependsOnAnswer);
-      fromAnswer[value] = result;
-      return result;
-    };
-    bool hasAnswers = false;
-    module.walk([&](classical::WaitOp) { hasAnswers = true; });
-    if (hasAnswers) {
-      auto rejectDuration = [&](mlir::Operation *op, mlir::Value duration) {
-        if (!dependsOnAnswer(duration))
-          return;
-        op->emitError("a duration cannot depend on the answer of a classical "
-                      "call: the answer arrives while the program runs, after "
-                      "its timeline is fixed; branch on the answer to choose "
-                      "between durations instead");
-        hadError = true;
-      };
-      module.walk([&](mlir::Operation *op) {
-        if (auto w = mlir::dyn_cast<pulse::SquarePulseOp>(op))
-          rejectDuration(op, w.getDuration());
-        else if (auto w = mlir::dyn_cast<pulse::GaussianPulseOp>(op))
-          rejectDuration(op, w.getDuration());
-        else if (auto w = mlir::dyn_cast<pulse::DRAGPulseOp>(op))
-          rejectDuration(op, w.getDuration());
-        else if (auto w = mlir::dyn_cast<pulse::CosinePulseOp>(op))
-          rejectDuration(op, w.getDuration());
-        else if (auto w = mlir::dyn_cast<pulse::TanhRampOp>(op))
-          rejectDuration(op, w.getDuration());
-        else if (auto w = mlir::dyn_cast<pulse::GaussianSquarePulseOp>(op)) {
-          rejectDuration(op, w.getDuration());
-          rejectDuration(op, w.getRisefall());
-        } else if (auto w = mlir::dyn_cast<pulse::CustomOp>(op))
-          rejectDuration(op, w.getDuration());
-        else if (auto d = mlir::dyn_cast<pulse::DurationFromIntOp>(op)) {
-          // A wait marked variable may take its length from an answer.
-          bool variable = !d->use_empty() &&
-                          llvm::all_of(d->getUsers(), [](mlir::Operation *u) {
-                            return mlir::isa<pulse::WaitOp>(u) &&
-                                   u->hasAttr("classical.variable");
-                          });
-          if (!variable)
-            rejectDuration(op, d.getCycles());
-        } else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op))
-          for (mlir::Value bound :
-               {loop.getLowerBound(), loop.getUpperBound(), loop.getStep()})
-            if (dependsOnAnswer(bound)) {
-              loop.emitError("a loop bound cannot depend on the answer of a "
-                             "classical call");
-              hadError = true;
-              break;
-            }
-      });
-    }
-    // V2 for variable waits: a region whose length is known only at run time
-    // cannot sit in a schedule block or in one arm of a branch.
-    module.walk([&](pulse::WaitOp op) {
-      if (!op->hasAttr("classical.variable"))
-        return;
-      if (!op->hasAttr("pulse.variable_wait")) {
-        op.emitError(
-            "a classical.variable wait must also be pulse.variable_wait, "
-            "with its bounds in pulse.min_cycles and pulse.max_cycles");
-        hadError = true;
-      } else if (op->getParentOfType<pulse::ScheduleBlockOp>()) {
-        op.emitError(classical::kVariableWaitInBlock);
-        hadError = true;
-      } else if (op->getParentOfType<mlir::scf::IfOp>()) {
-        op.emitError("a variable wait cannot be inside one arm of an scf.if; "
-                     "let the answer be 0 where no wait is wanted");
-        hadError = true;
-      }
-    });
-    // V2: a blocking wait stops the whole program until the answer arrives,
-    // so it cannot sit in a schedule block, which has a fixed length, or in
-    // one arm of a branch.
-    mlir::SymbolTableCollection symbols;
-    module.walk([&](classical::WaitOp op) {
-      auto callable = symbols.lookupNearestSymbolFrom<classical::CallableOp>(
-          op, op.getCalleeAttr());
-      if (!callable || callable.getMode() != "blocking")
-        return;
-      if (op->getParentOfType<pulse::ScheduleBlockOp>()) {
-        op.emitError(classical::kBlockingWaitInBlock);
-        hadError = true;
-      } else if (op->getParentOfType<mlir::scf::IfOp>()) {
-        op.emitError("a blocking wait cannot be inside one arm of an scf.if; "
-                     "wait before or after the branch");
-        hadError = true;
-      }
-    });
-    // A call of a controller that blocks on calls holds every line, which a
-    // schedule block, placed whole, cannot.
-    if (pulse::blocksOnCalls(module))
-      module.walk([&](classical::SubmitOp op) {
-        if (op->getParentOfType<pulse::ScheduleBlockOp>()) {
-          op.emitError(classical::kBlockingCallInBlock);
-          hadError = true;
-        }
-      });
-
-    hadError |= waveforms.hadError;
-    // A wait whose length is not a constant is scheduled at a placeholder
-    // length until its arguments are bound; only a variable wait, which
-    // carries its bounds, may be.
-    module.walk([&](pulse::WaitOp op) {
-      auto conversion =
-          op.getDuration().getDefiningOp<pulse::DurationFromIntOp>();
-      if (op->hasAttr("pulse.variable_wait") ||
-          (conversion && pulse::constantInteger(conversion.getCycles())))
-        return;
-      op.emitError(
-          "a wait whose length is not a constant must be marked "
-          "pulse.variable_wait, with its bounds in pulse.min_cycles and "
-          "pulse.max_cycles");
-      hadError = true;
-    });
-
-    // Check 3: Monotone, non-overlapping time on each physical line, and no
-    // conditional operation before its measurement. SSA line values change
-    // after every operation, so trace them back to allocation.
-    module.walk([&](mlir::func::FuncOp funcOp) {
-      if (funcOp.isExternal())
-        return;
-      TimingChecker checker;
-      checker.checkFunction(funcOp);
-      hadError |= checker.hadError;
-    });
-
-    if (hadError)
+    if (verifyModule(module))
       signalPassFailure();
   }
 };
+#endif
 
 } // namespace
 
+#if PULSE_COUPLED == 0
 namespace pulse {
 std::unique_ptr<mlir::Pass> createPulseVerifyPass() {
   return std::make_unique<PulseVerifyPass>();
 }
 } // namespace pulse
+#else
+namespace pulse {
+inline namespace coupled {
+bool verifyModule(mlir::ModuleOp module) { return ::verifyModule(module); }
+} // namespace coupled
+} // namespace pulse
+#endif
