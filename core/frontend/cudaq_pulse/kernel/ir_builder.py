@@ -527,9 +527,9 @@ def is_arithmetic(value: Any) -> bool:
     return isinstance(value, numbers.Real)
 
 
+# Whether an operand of arithmetic is a parameter, a number, or
+# arithmetic itself, which ``is_arithmetic`` tests where it comes.
 def _arithmetic_operand(value: Any) -> bool:
-    """Whether an operand of arithmetic is a parameter, a number, or
-    arithmetic itself, which ``is_arithmetic`` tests where it comes."""
     cls = value.__class__
     return (
         cls is ParameterExpression
@@ -663,9 +663,9 @@ def _arithmetic_node_text(node: Any, lhs: str, rhs: str, plain: Callable[[Any], 
     return f"{lhs} {symbol} {rhs}"
 
 
+# *text*, which writes the operand *value*, in parentheses where it is
+# an operation written in place that binds less than *level*.
 def _operand_text(value: Any, text: str, level: int, plain: Callable[[Any], bool]) -> str:
-    """*text*, which writes the operand *value*, in parentheses where it is
-    an operation written in place that binds less than *level*."""
     if plain(value) and _PRECEDENCE.get(value.op, 3) < level:
         return f"({text})"
     return text

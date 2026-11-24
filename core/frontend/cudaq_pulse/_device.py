@@ -115,10 +115,10 @@ def _read_only(array: Any) -> Any:
     return array
 
 
+# Content hash of everything a compiled kernel depends on, and of the
+# calibration the quantum system holds: quantum systems of one fingerprint are one quantum
+# system.
 def _fingerprint(target: _Description, layout: tuple[int, ...], calibration: Any) -> str:
-    """Content hash of everything a compiled kernel depends on, and of the
-    calibration the quantum system holds: quantum systems of one fingerprint are one quantum
-    system."""
     qudits = [
         (
             q.index,
@@ -317,8 +317,8 @@ class _DeviceRegister(Register):
         )
 
 
+# The error for *index*, which names a qudit past the *n* of *owner*.
 def _out_of_range(index: Any, n: int, owner: str) -> IndexOutOfRangeError:
-    """The error for *index*, which names a qudit past the *n* of *owner*."""
     wrong = index
     if isinstance(index, Sequence) and not isinstance(index, str):
         wrong = next((i for i in index if isinstance(i, int) and not -n <= i < n), index)
@@ -427,8 +427,8 @@ class QuantumSystem:
         if not _variant:
             self._finish()
 
+    # The frequencies, fingerprint, identity and qudit handles.
     def _finish(self) -> None:
-        """The frequencies, fingerprint, identity and qudit handles."""
         target, layout, control_system = self._description, self.layout, self.control_system
         self.frequencies: Mapping[int, float] = target.frequencies
         self.fingerprint = _fingerprint(target, layout, self.calibration)
@@ -455,12 +455,12 @@ class QuantumSystem:
             self._arrays = (_read_only(f01), _read_only(transitions))
         return self._arrays
 
+    # The default transition of carrier *index*, and the frequency of
+    # each transition its line has a tone for: every transition of a
+    # drive line, only the default of a readout line.
     def _line_tones(
         self, index: int, readout: bool
     ) -> tuple[tuple[int, int], dict[tuple[int, int], float]]:
-        """The default transition of carrier *index*, and the frequency of
-        each transition its line has a tone for: every transition of a
-        drive line, only the default of a readout line."""
         target = self._description
         model = target.model if isinstance(target.model, SimulationModel) else SimulationModel()
         default = model.default_transition
@@ -472,15 +472,15 @@ class QuantumSystem:
             return default, {default: self._frequency_tables(index + 1)[2][index]}
         return default, model.transitions_hz(qudit, model.levels_of(index))
 
+    # The 0-1 frequency of carriers 0 to *count* - 1 (or more), and the
+    # tone of each one's readout line (its readout's ``frequency_hz``, else
+    # its 0-1 frequency), by carrier index, as a compiled module records
+    # them, after how many carriers from 0 on the target defines: *count*
+    # or more, else the first it lacks (0 Hz in the tables, which then end
+    # at its last carrier). Kept (``_tables``) until a caller needs more
+    # carriers: a compile makes them for its program's qudits only, not
+    # for the whole quantum system.
     def _frequency_tables(self, count: int) -> tuple[int, array[float], array[float]]:
-        """The 0-1 frequency of carriers 0 to *count* - 1 (or more), and the
-        tone of each one's readout line (its readout's ``frequency_hz``, else
-        its 0-1 frequency), by carrier index, as a compiled module records
-        them, after how many carriers from 0 on the target defines: *count*
-        or more, else the first it lacks (0 Hz in the tables, which then end
-        at its last carrier). Kept (``_tables``) until a caller needs more
-        carriers: a compile makes them for its program's qudits only, not
-        for the whole quantum system."""
         if self._tables[0] >= count:
             return self._tables
         from array import array
@@ -570,11 +570,11 @@ class QuantumSystem:
                 )
         return self._description.coupling(a.index, b.index)
 
+    # ``line.get_calibration(gate, transition)`` of the drive (or
+    # readout) line of carrier *index*, while a kernel is traced.
     def _line_calibration(
         self, index: int, readout: bool, gate: Any, transition: Any
     ) -> DragPulse | VirtualZ | ReadoutPulse:
-        """``line.get_calibration(gate, transition)`` of the drive (or
-        readout) line of carrier *index*, while a kernel is traced."""
         from .quantum_systems.base import _DRIVE_GATES, _gate_label, _gate_name, _qudit_calibration
 
         name = _gate_name(gate)
@@ -776,6 +776,9 @@ class QuantumSystem:
         return f"<QuantumSystem {self.name} ({len(self.layout)} qudits)>"
 
 
+# The quantum system of *target*, registered as *spec* (``None`` for a
+# ``_Description``), with *calibration* applied and *clock_ghz* (if
+# given) its program clock.
 def _calibrated(
     target: _Description,
     spec: str | None,
@@ -785,9 +788,6 @@ def _calibrated(
     control_system: ControlSystem | None = None,
     clock_ghz: float | None = None,
 ) -> QuantumSystem:
-    """The quantum system of *target*, registered as *spec* (``None`` for a
-    ``_Description``), with *calibration* applied and *clock_ghz* (if
-    given) its program clock."""
     base = target
     if calibration is not None:
         target = calibration._apply(target)
@@ -810,8 +810,8 @@ def _calibrated(
     return made
 
 
+# The description of the registered quantum system *spec* names.
 def _target(spec: Any, problems: list[Problem], key: str = "name") -> _Description | None:
-    """The description of the registered quantum system *spec* names."""
     from .quantum_systems._registry import available_quantum_systems, make_quantum_system
 
     if spec is None:
@@ -841,10 +841,10 @@ def _target(spec: Any, problems: list[Problem], key: str = "name") -> _Descripti
         return None
 
 
+# *layout* as carrier indices, checked against *target* when it is known.
 def _layout(
     layout: Any, target: _Description | None, name: str, problems: list[Problem]
 ) -> tuple[int, ...] | None:
-    """*layout* as carrier indices, checked against *target* when it is known."""
     if isinstance(layout, (str, bytes)) or not isinstance(layout, Sequence):
         problems.append(
             Problem(
@@ -893,8 +893,8 @@ def _layout(
     return tuple(carriers) if len(first) > k else _empty(layout, problems)
 
 
+# No layout: the problem of an empty one, unless its entries had others.
 def _empty(layout: Sequence[Any], problems: list[Problem]) -> tuple[int, ...] | None:
-    """No layout: the problem of an empty one, unless its entries had others."""
     if len(layout) == 0:
         problems.append(
             Problem(
@@ -907,9 +907,9 @@ def _empty(layout: Sequence[Any], problems: list[Problem]) -> tuple[int, ...] | 
     return None
 
 
+# The config's calibration: a Calibration, or a shipped name or a path,
+# for the config's ``measurement_run`` (the file's default if absent).
 def _calibration(config: Mapping[str, Any], problems: list[Problem]) -> Any:
-    """The config's calibration: a Calibration, or a shipped name or a path,
-    for the config's ``measurement_run`` (the file's default if absent)."""
     from .quantum_systems.calibration import Calibration
 
     given = config.get("calibration")
@@ -975,10 +975,10 @@ def _calibration(config: Mapping[str, Any], problems: list[Problem]) -> Any:
     return None
 
 
+# The quantum system of *config*, or ``None`` after adding its problems in the
+# order of the config's keys. ``pulse.quantum_system`` gives the system it built
+# from its keywords as the config's ``"name"``.
 def _definition(config: Mapping[str, Any], source: str, problems: list[Problem]) -> _MaybeSystem:
-    """The quantum system of *config*, or ``None`` after adding its problems in the
-    order of the config's keys. ``pulse.quantum_system`` gives the system it built
-    from its keywords as the config's ``"name"``."""
     found = len(problems)
     quantum_system = _checked(config, source, problems)
     order = {str(key): i for i, key in enumerate(config)}
@@ -1069,8 +1069,8 @@ def _checked(config: Mapping[str, Any], source: str, problems: list[Problem]) ->
         return None
 
 
+# The line and column of each value of the JSON *text*, by its path.
 def _json_positions(text: str) -> dict[str, tuple[int, int]]:
-    """The line and column of each value of the JSON *text*, by its path."""
     import json
 
     decoder = json.JSONDecoder()
@@ -1301,8 +1301,8 @@ def quantum_system(
     return found
 
 
+# Raise for a QuantumSystem given where ``pulse.quantum_system`` takes a name.
 def _not_a_name(name: Any) -> None:
-    """Raise for a QuantumSystem given where ``pulse.quantum_system`` takes a name."""
     if isinstance(name, QuantumSystem):
         raise InvalidTypeError(
             "pulse.quantum_system takes a registered name or the keywords that build a "
@@ -1311,9 +1311,9 @@ def _not_a_name(name: Any) -> None:
         )
 
 
+# Raise ``UnknownQuantumSystemError`` for *name*, which names no registered
+# quantum system, naming the way to read a file when it looks like the path of one.
 def _unknown_target(name: str) -> None:
-    """Raise ``UnknownQuantumSystemError`` for *name*, which names no registered
-    quantum system, naming the way to read a file when it looks like the path of one."""
     if os.sep in name or name.endswith(".json") or os.path.exists(name):
         try:
             make_quantum_system(name)
@@ -1325,8 +1325,8 @@ def _unknown_target(name: str) -> None:
     make_quantum_system(name)
 
 
+# ``QuantumSystem.from_dict``: the quantum system of a system file's data.
 def _from_data(data: Any) -> QuantumSystem:
-    """``QuantumSystem.from_dict``: the quantum system of a system file's data."""
     if not isinstance(data, Mapping):
         raise InvalidTypeError(f"quantum system data must be a mapping, got {type(data).__name__}")
     problems: list[Problem] = []
@@ -1338,8 +1338,8 @@ def _from_data(data: Any) -> QuantumSystem:
     return found
 
 
+# ``QuantumSystem.load``: the quantum system of a system file.
 def _from_file(path: str | os.PathLike[str]) -> QuantumSystem:
-    """``QuantumSystem.load``: the quantum system of a system file."""
     import json
 
     file = os.fspath(path)

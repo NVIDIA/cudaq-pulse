@@ -125,8 +125,8 @@ _UNSCHEDULED = -1
 _ZERO = (0,)
 
 
+# *value* as a float, or the error naming *description* and what it got.
 def _real(value: Any, description: str) -> float:
-    """*value* as a float, or the error naming *description* and what it got."""
     try:
         if isinstance(value, (str, bytes, bytearray)):
             raise TypeError
@@ -137,8 +137,8 @@ def _real(value: Any, description: str) -> float:
         ) from None
 
 
+# Per link id, the keys *machine*'s controllers fix.
 def _tables(machine: Any) -> dict[int, dict[str, tuple[int, str]]]:
-    """Per link id, the keys *machine*'s controllers fix."""
     if machine is None or (machine.controller is None and machine._system is None):
         return {}
     from ..compiler import _dispatch_tables
@@ -155,9 +155,9 @@ def _link_without_machine(link: Any) -> int:
     return int(link)
 
 
+# The key a controller's firmware gives *function*: a function on its
+# links must be listed, and has one layout.
 def _fixed_key(function: Any, table: dict[str, tuple[int, str]]) -> tuple[int, str]:
-    """The key a controller's firmware gives *function*: a function on its
-    links must be listed, and has one layout."""
     name = function.base_name
     found = table.get(name)
     if found is None:
@@ -186,9 +186,9 @@ def _fixed_key(function: Any, table: dict[str, tuple[int, str]]) -> tuple[int, s
     return key, label
 
 
+# Two functions of one program whose names hash to one key on one link
+# (a controller that fixes keys lists every function on its links).
 def _collision(first: Any, second: Any, key: int) -> str:
-    """Two functions of one program whose names hash to one key on one link
-    (a controller that fixes keys lists every function on its links)."""
     link = f"{second.link!r}" if isinstance(second.link, str) else str(second.link)
     return (
         f"{first.name} and {second.name} hash to the same dispatch key {key:#x} on link"
@@ -196,9 +196,9 @@ def _collision(first: Any, second: Any, key: int) -> str:
     )
 
 
+# The bits of *x* as a double. Any real number converts as float()
+# converts it; a string, which float() would parse, raises struct.error.
 def _f2i(x: float) -> int:
-    """The bits of *x* as a double. Any real number converts as float()
-    converts it; a string, which float() would parse, raises struct.error."""
     return int(_unpack_q.unpack(_pack_d.pack(x))[0])
 
 
@@ -226,8 +226,8 @@ _ALGEBRA_OPCODES = {
 }
 
 
+# ``(re, im)`` of an amplitude: a number, or ``[re]`` / ``[re, im]``.
 def _complex_parts(val: Any) -> tuple[float, float]:
-    """``(re, im)`` of an amplitude: a number, or ``[re]`` / ``[re, im]``."""
     if val.__class__ is float or val.__class__ is int:
         return (float(val), 0.0)
     if isinstance(val, numbers.Complex) and not isinstance(val, numbers.Real):
@@ -251,18 +251,18 @@ def _complex_parts(val: Any) -> tuple[float, float]:
         return (_number(val), 0.0)
 
 
+# *value*, a number without ``__float__`` (one with ``__index__``), as a
+# float; a TypeError for a string, which float() would parse, as for any
+# other value that is not a number. The caller's error says what it got.
 def _number(value: Any) -> float:
-    """*value*, a number without ``__float__`` (one with ``__index__``), as a
-    float; a TypeError for a string, which float() would parse, as for any
-    other value that is not a number. The caller's error says what it got."""
     if isinstance(value, (str, bytes, bytearray)):
         raise TypeError
     return float(value)
 
 
+# *sample*, a ``custom_samples()`` value without ``__float__``, as
+# complex() reads it; a string, which complex() would parse, is an error.
 def _sample_number(sample: Any) -> complex:
-    """*sample*, a ``custom_samples()`` value without ``__float__``, as
-    complex() reads it; a string, which complex() would parse, is an error."""
     if not isinstance(sample, (str, bytes, bytearray)):
         try:
             return complex(sample)
@@ -282,8 +282,8 @@ def _flatten(items: Any) -> Any:
             yield item
 
 
+# Convert an integer-valued Python number without silent truncation.
 def _as_i64(value: Any, description: str) -> int:
-    """Convert an integer-valued Python number without silent truncation."""
     if value.__class__ is int:
         return value
     if isinstance(value, bool):
@@ -298,9 +298,9 @@ def _as_i64(value: Any, description: str) -> int:
     )
 
 
+# ``(lowest, highest)`` of ``wait(..., bounds=)`` in cycles; highest -1
+# for none.
 def _wait_bounds(bounds: Any) -> tuple[int, int]:
-    """``(lowest, highest)`` of ``wait(..., bounds=)`` in cycles; highest -1
-    for none."""
     if bounds is None:
         return 0, -1
     if not (isinstance(bounds, (tuple, list)) and len(bounds) == 2):
@@ -494,8 +494,8 @@ class PackedIRBuilder:
         self._buf[self._cur] = val
         self._cur += 1
 
+    # Write the record *words* at the cursor.
     def _put(self, words: tuple[int, ...] | list[int]) -> None:
-        """Write the record *words* at the cursor."""
         n = len(words)
         self._ensure(n)
         cur = self._cur
@@ -900,10 +900,10 @@ class PackedIRBuilder:
             raise CompilationError(f"unsupported structured control flow op {kind!r}")
         return results
 
+    # Keep the first *cached* numbers materialized: the later ones are
+    # defined in a region that has closed, which later uses must not reach
+    # into. Every entry added since has a new id, and they are the newest.
     def _forget(self, cached: int) -> None:
-        """Keep the first *cached* numbers materialized: the later ones are
-        defined in a region that has closed, which later uses must not reach
-        into. Every entry added since has a new id, and they are the newest."""
         numeric = self._numeric_vids
         while len(numeric) > cached:
             numeric.popitem()
@@ -935,8 +935,8 @@ class PackedIRBuilder:
         if len(self._numeric_vids) > cached:
             self._forget(cached)
 
+    # Open a region: a loop body, a branch arm, or (``None``) a block.
     def _open_scope(self, loop: bool | None = None) -> None:
-        """Open a region: a loop body, a branch arm, or (``None``) a block."""
         self._scope.append(self._next_scope)
         if loop is not None:
             self._flow.append((self._next_scope, loop))
@@ -1078,9 +1078,9 @@ class PackedIRBuilder:
         self._classical_index[id(function)] = index
         return index
 
+    # Drop the classical functions declared after the first
+    # *classical_count*, with their keys and versions.
     def _forget_classical(self, classical_count: int) -> None:
-        """Drop the classical functions declared after the first
-        *classical_count*, with their keys and versions."""
         dispatched = self._dispatched
         assert dispatched is not None and self.routes is not None
         for sent, entry in list(dispatched.items()):
@@ -1216,8 +1216,8 @@ class PackedIRBuilder:
         for key in [k for k, vid in self._numeric_vids.items() if vid >= live]:
             del self._numeric_vids[key]
 
+    # Get a block-argument reference and infer its storage type.
     def _get_parameter_base_vid(self, param: Parameter, expected_dtype: str) -> int:
-        """Get a block-argument reference and infer its storage type."""
         if param.dtype == "unknown":
             param.dtype = expected_dtype
         if param.index in self._param_vids:
@@ -1229,11 +1229,11 @@ class PackedIRBuilder:
         self._put((_header(_PARAM, 2), vid, param.index))
         return vid
 
+    # Materialize a symbolic or literal number as an SSA value record.
+    #
+    # An integer computed from float arguments makes them static, unless
+    # *specializes* is false: the schedule then takes it at call time.
     def _get_numeric_vid(self, value: Any, expected_dtype: str, specializes: bool = True) -> int:
-        """Materialize a symbolic or literal number as an SSA value record.
-
-        An integer computed from float arguments makes them static, unless
-        *specializes* is false: the schedule then takes it at call time."""
         if expected_dtype not in _NUMERIC_TYPE:
             raise CompilationError(f"unsupported numeric type {expected_dtype}")
         if self.classical:
@@ -1305,11 +1305,11 @@ class PackedIRBuilder:
     # The operand _expression_vid is asking _get_numeric_vid for, if any.
     _numeric_operand: Any = None
 
+    # The SSA value of the arithmetic *value*, not emitted yet. Its
+    # operations are emitted as a call for each operand would emit them,
+    # operands first and left before right, but from a stack kept here: an
+    # expression may be thousands of operations deep.
     def _expression_vid(self, value: ParameterExpression, expected_dtype: str) -> int:
-        """The SSA value of the arithmetic *value*, not emitted yet. Its
-        operations are emitted as a call for each operand would emit them,
-        operands first and left before right, but from a stack kept here: an
-        expression may be thousands of operations deep."""
         frames = [self._expression_steps(value, expected_dtype)]
         result: Any = None
         while frames:
@@ -1332,12 +1332,12 @@ class PackedIRBuilder:
                 result = self._get_numeric_vid(operand, dtype)
         return result  # type: ignore[no-any-return]
 
+    # The steps of ``_get_numeric_vid`` for arithmetic not emitted yet:
+    # each operand it needs, with its type, is yielded and its SSA value
+    # sent back.
     def _expression_steps(
         self, value: ParameterExpression, expected_dtype: str
     ) -> Generator[tuple[Any, str], int, int]:
-        """The steps of ``_get_numeric_vid`` for arithmetic not emitted yet:
-        each operand it needs, with its type, is yielded and its SSA value
-        sent back."""
         cache_key = (value, expected_dtype)
         if value.op == "cast":
             target_dtype = value.dtype
@@ -1410,10 +1410,10 @@ class PackedIRBuilder:
             return int(value.vid)
         return self._get_numeric_vid(value, dtype, specializes)
 
+    # Reject the bounds of a wait whose length comes from an answer when
+    # they are not on ``wait_grid``: the run clamps the length to them, and
+    # every later op on every line moves by it.
     def _check_answer_bounds(self, line: IRValue, lowest: int, highest: int) -> None:
-        """Reject the bounds of a wait whose length comes from an answer when
-        they are not on ``wait_grid``: the run clamps the length to them, and
-        every later op on every line moves by it."""
         grid = self.wait_grid
         off = [b for b in (lowest, highest) if b >= 0 and b % grid]
         if not off:
@@ -1432,8 +1432,8 @@ class PackedIRBuilder:
             code="runtime_value",
         )
 
+    # The role of *line* and its qudit (-1 for a runtime qudit's).
     def _role_and_qudit(self, line: IRValue) -> tuple[str, int]:
-        """The role of *line* and its qudit (-1 for a runtime qudit's)."""
         qudit = self._line_qudit.get(line.vid)
         if qudit is None:
             # A later version of the line: its channel names the qudit.
@@ -1441,6 +1441,13 @@ class PackedIRBuilder:
             qudit = -1 if held is None else self._qref_to_qudit.get(held.key[0], -1)
         return line.vtype.removesuffix("_line"), qudit
 
+    # A wait whose length is computed at run time, rounded to the nearest
+    # cycle (ties up). From float arguments it does not specialize on them,
+    # and each call checks it against the bounds; from the answer of a
+    # classical call it is a variable region, clamped to the bounds. A
+    # length from both does not specialize on its float arguments either:
+    # each call checks that its float part (its answers taken as 0) is
+    # finite and at most the highest length, and the run clamps it whole.
     def _variable_wait(
         self,
         line: int,
@@ -1451,13 +1458,6 @@ class PackedIRBuilder:
         answer: bool = False,
         grid: int | None = None,
     ) -> None:
-        """A wait whose length is computed at run time, rounded to the nearest
-        cycle (ties up). From float arguments it does not specialize on them,
-        and each call checks it against the bounds; from the answer of a
-        classical call it is a variable region, clamped to the bounds. A
-        length from both does not specialize on its float arguments either:
-        each call checks that its float part (its answers taken as 0) is
-        finite and at most the highest length, and the run clamps it whole."""
         rounded = ParameterExpression(
             "cast", ParameterExpression("add", duration, 0.5), dtype="i64"
         )
@@ -1504,9 +1504,9 @@ class PackedIRBuilder:
         )
         return result
 
+    # Convert the times in *attrs*, a *fname* op's, to program cycles,
+    # and reject plain floats and out-of-range lengths in its durations.
     def _times(self, fname: str, attrs: dict[str, Any]) -> None:
-        """Convert the times in *attrs*, a *fname* op's, to program cycles,
-        and reject plain floats and out-of-range lengths in its durations."""
         # No time exists before _units is imported, so neither does one
         # inside a symbolic wait.
         if (
@@ -1520,29 +1520,28 @@ class PackedIRBuilder:
 
         in_program_cycles(fname, attrs, self.clock_ghz)
 
+    # The duration of a waveform whose duration is not a whole number
+    # of cycles in range, after its times are converted.
     def _duration(self, wf_name: str, attrs: dict[str, Any]) -> Any:
-        """The duration of a waveform whose duration is not a whole number
-        of cycles in range, after its times are converted."""
         if wf_name != "custom_samples":
             self._times(wf_name, attrs)
         dur_raw = attrs.get("duration", 0)
         return dur_raw if is_symbolic(dur_raw) else _as_i64(dur_raw, f"{wf_name} duration")
 
+    # *value*, a waveform's shape time (sigma or beta) in operand *slot*,
+    # in program cycles.
     def _shape_time(self, wf_code: int, slot: int, value: Any) -> Any:
-        """*value*, a waveform's shape time (sigma or beta) in operand *slot*,
-        in program cycles."""
         from ._durations import cycles
 
         what = ("duration", "amplitude", "sigma", "beta")[slot]
         return cycles(_WF_NAMES[wf_code], what, value, False, "", self.clock_ghz)
 
+    # Emit a waveform record, handling mixed Parameter/concrete values.
+    #
+    # For each value slot, if the value is a Parameter, emit a PARAM record
+    # first and encode the param vid. A param_mask bit flags parametric slots
+    # so the C++ decoder can distinguish vids from literals.
     def _emit_wf(self, wf_code: int, rv: int, vals: list[Any], dtypes: list[str]) -> None:
-        """Emit a waveform record, handling mixed Parameter/concrete values.
-
-        For each value slot, if the value is a Parameter, emit a PARAM record
-        first and encode the param vid. A param_mask bit flags parametric slots
-        so the C++ decoder can distinguish vids from literals.
-        """
         encoded: list[int] = []
         param_mask = 0
         try:
@@ -1577,10 +1576,10 @@ class PackedIRBuilder:
         payload_len = 1 + len(encoded)  # rv + values
         self._put([_header(wf_code, payload_len, param_mask), rv, *encoded])
 
+    # A custom_samples record; with *rate*, n samples every d cycles.
     def _emit_custom_samples(
         self, rv: int, samples: Any, rate: tuple[int, int] | None = None
     ) -> None:
-        """A custom_samples record; with *rate*, n samples every d cycles."""
         try:
             sample_values = list(samples)
         except TypeError as exc:
@@ -1769,9 +1768,9 @@ class _RecordFinder(PackedIRBuilder):
                 raise _Stop
         super()._ensure(n)
 
+    # Trace *fn* again on *args* until the record at ``word``; False if
+    # the trace could not be watched for host code, and did not run.
     def locate(self, fn: Any, args: Any) -> bool:
-        """Trace *fn* again on *args* until the record at ``word``; False if
-        the trace could not be watched for host code, and did not run."""
         from types import GeneratorType
 
         from . import _emitter
