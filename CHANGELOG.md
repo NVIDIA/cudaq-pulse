@@ -11,6 +11,12 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 
 ## [0.1.1] - Unreleased
 
+### Changed
+
+- `viz.save_schedule` now accepts `str | os.PathLike[str]` for `path` and
+  explicitly names its keyword-only arguments `figsize` and `title` instead of
+  `**kwargs`.
+
 ### Added
 
 - **Challenges.** A `challenges/` folder with three starter problems, each with a

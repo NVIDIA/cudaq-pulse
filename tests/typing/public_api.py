@@ -9,6 +9,7 @@ mypy must report, and --warn-unused-ignores fails if it stops reporting it.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any, assert_type
 
 import cudaq_pulse as pulse
@@ -99,6 +100,8 @@ assert_type(lowered.mlir("llvm"), str)
 assert_type(lowered.metrics, CompileMetrics)
 assert_type(lowered.schedule, Sequence[ScheduledEvent])
 assert_type(lowered.arguments, tuple[float, ...])
+pulse.viz.save_schedule(lowered, Path("schedule.png"))
+pulse.viz.save_schedule(lowered, "schedule.png", dpi=300)  # type: ignore[call-arg]
 
 compiled = pulse.compile(rabi, schedule="asap", quantum_system=dev)
 compiled_kernels: list[pulse.CompiledKernel[...]] = [compiled]
