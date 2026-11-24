@@ -559,6 +559,37 @@ def _simulate_lowered(
         )
     except _DivergedError as e:
         raise _diverged_error(lowered, target, levels, as_nanoseconds(dt_ns), e.step_ns) from None
+    except UnsupportedError as refused:
+        # A program that holds a coupling line is refused by the lowering
+        # every other program takes, and simulated by the module that maps
+        # its pulses with the quantum system (runtime/_coupled.py).
+        if not str(refused).startswith("this program holds a coupling line"):
+            raise
+        from ._coupled import simulate_coupled
+
+        coupled: SimulationResult = simulate_coupled(
+            refused,
+            lambda e: _diverged_error(lowered, target, levels, as_nanoseconds(dt_ns), e.step_ns),
+            compiled_for if quantum_system is None else quantum_system,
+            lowered,
+            target,
+            levels=levels,
+            initial_state=initial_state,
+            shots_count=shots_count,
+            seed=seed,
+            backend=backend,
+            t_start=t_start,
+            t_end=t_end,
+            dt_ns=step,
+            integrator=integrator,
+            clock_ghz=compiled_for.clock_ghz,
+            dephasing=dephasing,
+            handlers=handlers,
+            readout=readout,
+            latency_branching=latency_branching,
+            sampled=branches == "sampled",
+        )
+        return coupled
 
 
 def _step(

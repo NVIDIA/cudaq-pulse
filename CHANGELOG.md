@@ -187,8 +187,8 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   exports (`export_to_controller` and `export_to_emulator` raise
   `UnsupportedError` for a program that holds a coupling line), a
   controller's limits on it (compiling such a program for a control system
-  raises the same error), its simulation and emulation (`simulate` and
-  `classical.emulation.emulate` raise `UnsupportedError`), and the
+  raises the same error), its emulation (`classical.emulation.emulate`
+  raises `UnsupportedError`), and the
   calibrated gate of a coupling as one call, and, in the same program as
   a coupling line, a classical call, a kernel with its own `schedule=`
   (compile with `flatten_schedules=True`) and a value a measurement
@@ -196,6 +196,17 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   when the line is never used). Beside none of those, a coupling line that
   is fetched and never used is dropped as any unused line. Programs without coupling lines compile, schedule
   and export as before.
+- **Simulating a pulse on a coupling line.** `simulate` plays a pulse on
+  a coupling line with what the simulated quantum system says of the
+  control: on the line of one qudit, its tuning moves the qudit's
+  frequency and anharmonicity at each cycle of the pulse; on the line of
+  a pair, its control changes the pair's exchange. The integrator's step
+  is shortened where a pulse moves a frequency fast. On the CPU backend;
+  the GPU backend, a `response` of the wiring and a qudit that a call
+  binds are `UnsupportedError` for now. The schedulers place a pulse on a
+  coupling line on its controller's grid among several controllers, and
+  its `delay_ns` later; a program compiled for a control system is still
+  refused after scheduling until the limits of coupling lines are checked.
 - **Coupling lines of a controller.**
   `controller.with_coupling_lines([...])` gives a controller the outputs
   that play a baseband waveform on a control of the

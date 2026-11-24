@@ -406,16 +406,18 @@ def test_a_check_of_limits_refuses_it_and_the_program_pickles():
         back.export_to_controller()
 
 
-def test_simulating_a_pulse_on_a_coupling_line_is_refused_for_now():
+def test_emulating_a_pulse_on_a_coupling_line_is_refused_for_now():
     from cudaq_pulse.classical.emulation import emulate
 
     lowered = detune.lower(A, D, 0.31)
-    for run in (lambda: pulse.simulate(lowered, levels=2), lambda: emulate(lowered, seed=1)):
-        with pytest.raises(pulse.UnsupportedError) as raised:
-            run()
-        assert "a program with a coupling line is not simulated or emulated yet" in str(
-            raised.value
-        )
+    with pytest.raises(pulse.UnsupportedError) as raised:
+        emulate(lowered, seed=1)
+    assert "a program with a coupling line is not simulated or emulated yet" in str(raised.value)
+    # It is simulated (tests/runtime/test_coupling_lines_simulate.py), also
+    # after a refusal and before one: the module is shared.
+    assert pulse.simulate(lowered, levels=2).density_matrix.shape == (4, 4)
+    with pytest.raises(pulse.UnsupportedError):
+        emulate(lowered, seed=1)
 
 
 @pulse.classical(max_latency_ns=200)
