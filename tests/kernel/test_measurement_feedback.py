@@ -546,7 +546,7 @@ def test_a_line_first_acquired_in_an_arm_is_not_carried_out_of_the_if():
 
 def _traced_lines(monkeypatch, kernel, qudit_count):
     """The channels of each trace compiling *kernel* makes (``_Lines``)."""
-    from cudaq_pulse.kernel import _emitter
+    from cudaq_pulse.kernel import _emitter, _measured_if
 
     made = []
 
@@ -558,6 +558,8 @@ def _traced_lines(monkeypatch, kernel, qudit_count):
             made.append(self)
 
     monkeypatch.setattr(_emitter, "_Lines", Recorded)
+    # Where a measured if tells the channels that note from the others.
+    monkeypatch.setattr(_measured_if, "_Lines", Recorded)
     _compile(kernel, qudit_count)
     return made
 
@@ -917,7 +919,7 @@ def _traced(body: str, tag: str) -> str:
 
 @pytest.mark.parametrize("case", list(_EMPTY_ELSE))
 def test_an_else_arm_that_only_jumps_back_is_taken_as_traced(case, monkeypatch):
-    from cudaq_pulse.kernel import _emitter
+    from cudaq_pulse.kernel import _emitter, _measured_if
 
     body = _EMPTY_ELSE[case]
     arms = []
@@ -932,7 +934,7 @@ def test_an_else_arm_that_only_jumps_back_is_taken_as_traced(case, monkeypatch):
     skipped = len(arms)
     arms.clear()
     # No arm is a jump: every else arm is traced.
-    monkeypatch.setattr(_emitter, "JUMP", -1)
+    monkeypatch.setattr(_measured_if, "JUMP", -1)
     assert _traced(body, case) == taken
     assert taken.startswith("error") or len(arms) > skipped
 
