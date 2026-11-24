@@ -84,6 +84,19 @@
 
 #include <map>
 
+#if PULSE_COUPLED == 0
+namespace pulse {
+namespace coupled {
+/// The schedule of `function` in a module that holds a coupling line: this
+/// file compiled as the variant that knows its ops (Variant.h).
+mlir::LogicalResult scheduleFunction(mlir::func::FuncOp function, bool enabled,
+                                     int64_t maxDrives, int64_t maxReadouts,
+                                     int64_t readoutLatency,
+                                     int64_t switchPenalty, bool isAlap);
+} // namespace coupled
+} // namespace pulse
+#endif
+
 namespace {
 
 constexpr int64_t kNever = std::numeric_limits<int64_t>::max() / 4;
@@ -97,9 +110,18 @@ static std::optional<int64_t> traceConstantI64(mlir::Value value) {
   return std::nullopt;
 }
 
+/// A pulse on a coupling line, in the variant of the passes that knows
+/// coupling lines (Variant.h): it takes its waveform's time on its line,
+/// plays no tone, and takes none of the drives a control system plays at
+/// once.
+static bool isBaseband(mlir::Operation *op) {
+  return pulse::kCoupled && mlir::isa<pulse::DriveBasebandOp>(op);
+}
+
 static bool isTimedOp(mlir::Operation *op) {
   return mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp,
-                   classical::SubmitOp, classical::WaitOp>(op);
+                   classical::SubmitOp, classical::WaitOp>(op) ||
+         isBaseband(op);
 }
 
 /// The shape a scheduled `pulse.schedule_block` presents to its parent, in
@@ -135,6 +157,9 @@ static int64_t durationOf(mlir::Operation *op) {
     return pulse::waveformCycles(drive.getPulse()).value_or(0);
   if (auto readout = mlir::dyn_cast<pulse::ReadoutOp>(op))
     return pulse::waveformCycles(readout.getPulse()).value_or(0);
+  if (pulse::kCoupled)
+    if (auto drive = mlir::dyn_cast<pulse::DriveBasebandOp>(op))
+      return pulse::waveformCycles(drive.getPulse()).value_or(0);
   if (mlir::isa<classical::SubmitOp>(op))
     return classical::intAttr(op, "classical.submit_cycles", 1);
   if (mlir::isa<classical::WaitOp>(op))
@@ -182,6 +207,9 @@ static mlir::FailureOr<int64_t> placedDuration(mlir::Operation *op) {
     return checkPulse(drive.getPulse());
   if (auto readout = mlir::dyn_cast<pulse::ReadoutOp>(op))
     return checkPulse(readout.getPulse());
+  if (pulse::kCoupled)
+    if (auto drive = mlir::dyn_cast<pulse::DriveBasebandOp>(op))
+      return checkPulse(drive.getPulse());
   auto wait = mlir::dyn_cast<pulse::WaitOp>(op);
   if (!wait || op->hasAttr("classical.variable"))
     return durationOf(op);
@@ -232,21 +260,14 @@ static bool holdsCalls(mlir::scf::ForOp loop) {
 /// that share a tone run in the order the tone is threaded through them.
 static bool isTimedType(mlir::Type type) {
   return mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType,
-                   pulse::ToneType, pulse::MeasurementType,
-                   pulse::CouplingLineType>(type) ||
-         pulse::isClassicalType(type);
+                   pulse::ToneType, pulse::MeasurementType>(type) ||
+         pulse::isClassicalType(type) ||
+         (pulse::kCoupled && mlir::isa<pulse::CouplingLineType>(type));
 }
 
 static bool isLineType(mlir::Type type) {
-  return mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType,
-                   pulse::CouplingLineType>(type);
-}
-
-/// A drive on a coupling line: it plays no tone, and takes none of the
-/// drives a control system plays at once.
-static bool isCouplingDrive(mlir::Operation *op) {
-  auto drive = mlir::dyn_cast<pulse::DriveOp>(op);
-  return drive && !drive.getTone();
+  return mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType>(type) ||
+         (pulse::kCoupled && mlir::isa<pulse::CouplingLineType>(type));
 }
 
 /// Visit the timed ops and schedule blocks of `region`, but not the ops in
@@ -466,8 +487,8 @@ private:
   }
 
   void visitOp(mlir::Operation *op, unsigned context) {
-    if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp,
-                  pulse::GetCouplingLineOp>(op)) {
+    if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op) ||
+        (pulse::kCoupled && mlir::isa<pulse::GetCouplingLineOp>(op))) {
       unsigned c = join(make(), context);
       lines.push_back({op, c});
       note(op, c);
@@ -570,7 +591,7 @@ private:
     if (resources.enabled) {
       int64_t drives = 0, readouts = 0;
       for (auto [op, c] : lines)
-        if (!mlir::isa<pulse::GetCouplingLineOp>(op))
+        if (!pulse::kCoupled || !mlir::isa<pulse::GetCouplingLineOp>(op))
           ++(mlir::isa<pulse::GetDriveLineOp>(op) ? drives : readouts);
       if (drives > resources.maxDrives || readouts > resources.maxReadouts)
         return result;
@@ -610,7 +631,7 @@ private:
       result.drives.assign(idOf.size(), 0);
       result.readouts.assign(idOf.size(), 0);
       for (auto [op, c] : lines)
-        if (!mlir::isa<pulse::GetCouplingLineOp>(op))
+        if (!pulse::kCoupled || !mlir::isa<pulse::GetCouplingLineOp>(op))
           ++(mlir::isa<pulse::GetDriveLineOp>(op)
                  ? result.drives
                  : result.readouts)[idOf[find(c)]];
@@ -826,7 +847,8 @@ static std::shared_ptr<const LoopGroups> loopGroups(mlir::scf::ForOp loop) {
     return llvm::all_of(line.getUsers(), [](mlir::Operation *user) {
       return mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp,
                        pulse::SyncOp, mlir::scf::YieldOp, mlir::scf::ForOp>(
-          user);
+                 user) ||
+             isBaseband(user);
     });
   };
   // The ops that relate the values they read: timed ops and syncs.
@@ -1083,10 +1105,9 @@ static std::shared_ptr<const LoopGroups> loopGroups(mlir::scf::ForOp loop) {
   groups->driveGroups.resize(groups->count);
   groups->readoutGroups.resize(groups->count);
   for (auto [op, group] : groups->ofOp) {
-    if (auto drive = mlir::dyn_cast<pulse::DriveOp>(op)) {
-      if (drive.getTone())
-        groups->driveGroups.set(group);
-    } else if (mlir::isa<pulse::ReadoutOp>(op))
+    if (mlir::isa<pulse::DriveOp>(op))
+      groups->driveGroups.set(group);
+    else if (mlir::isa<pulse::ReadoutOp>(op))
       groups->readoutGroups.set(group);
   }
   for (auto &[wait, decided] : waitDecides) {
@@ -1911,7 +1932,8 @@ private:
         std::fill(held.begin(), held.end(), true);
     };
     auto played = [](mlir::Operation *op) {
-      return mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(op);
+      return mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(op) ||
+             isBaseband(op);
     };
     int64_t instance = classical::intAttr(submit, classical::kInstanceAttr, -1);
     llvm::SmallVector<mlir::Value> sent = valueMeasurements(submit);
@@ -2034,8 +2056,9 @@ private:
     } else {
       for (mlir::Value operand : op->getOperands())
         if (mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType,
-                      pulse::ToneType, pulse::CouplingLineType>(
-                operand.getType())) {
+                      pulse::ToneType>(operand.getType()) ||
+            (pulse::kCoupled &&
+             mlir::isa<pulse::CouplingLineType>(operand.getType()))) {
           it->second = timelineOfValue(operand);
           break;
         }
@@ -3833,7 +3856,7 @@ private:
       if constexpr (Gridded)
         step = grid.of(op->getOperand(0), lines);
       if (resources.enabled && !mlir::isa<pulse::WaitOp>(op) &&
-          !isCouplingDrive(op)) {
+          !isBaseband(op)) {
         bool isDrive = mlir::isa<pulse::DriveOp>(op);
         auto &lanes = isDrive ? driveLanes[t] : readoutLanes[t];
         ++(isDrive ? driveUses : readoutUses)[t];
@@ -4293,9 +4316,10 @@ private:
       return withGroups(value, kNever);
     // Nothing waits for an unused future or untimed value; a line, tone or
     // link may run until the makespan.
-    if (classical && !mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType,
-                                pulse::ToneType, classical::LinkType,
-                                pulse::CouplingLineType>(type))
+    if (classical &&
+        !mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType,
+                   pulse::ToneType, classical::LinkType>(type) &&
+        !(pulse::kCoupled && mlir::isa<pulse::CouplingLineType>(type)))
       return kNever;
     if (isolated() && !mlir::isa<classical::LinkType>(type))
       return ends[timelineOfValue(value)];
@@ -4527,7 +4551,7 @@ private:
       if constexpr (Gridded)
         step = grid.of(op->getOperand(0), lines);
       if (resources.enabled && !mlir::isa<pulse::WaitOp>(op) &&
-          !isCouplingDrive(op)) {
+          !isBaseband(op)) {
         auto &lanes = isReadout ? readoutLanes[t] : driveLanes[t];
         ++(isReadout ? readoutUses : driveUses)[t];
         size_t best = 0;
@@ -5687,8 +5711,8 @@ placeableBlocks(mlir::Region &region) {
           blocks.push_back(block);
           return mlir::WalkResult::skip();
         }
-        if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp,
-                      pulse::GetCouplingLineOp>(op) &&
+        if ((mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op) ||
+             (pulse::kCoupled && mlir::isa<pulse::GetCouplingLineOp>(op))) &&
             mlir::failed(pulse::checkOneAcquisition(op)))
           return mlir::WalkResult::interrupt();
         return mlir::WalkResult::advance();
@@ -6602,6 +6626,14 @@ static mlir::LogicalResult schedule(mlir::func::FuncOp function,
   // A declaration has no body to schedule.
   if (function.isExternal())
     return mlir::success();
+#if PULSE_COUPLED == 0
+  // A module that holds a coupling line is scheduled by the variant of this
+  // file that knows its ops (Variant.h).
+  if (pulse::saysCouplingLines(function)) [[unlikely]]
+    return pulse::coupled::scheduleFunction(
+        function, resources.enabled, resources.maxDrives, resources.maxReadouts,
+        resources.readoutLatency, resources.switchPenalty, isAlap);
+#endif
   // The passes time the ops of one block, in their order.
   if (!function.getBody().hasOneBlock())
     return function.emitError(
@@ -6675,6 +6707,7 @@ static mlir::LogicalResult schedule(mlir::func::FuncOp function,
   return mlir::success();
 }
 
+#if PULSE_COUPLED == 0
 template <bool IsAlap>
 struct PulseSchedulePass
     : public mlir::PassWrapper<PulseSchedulePass<IsAlap>,
@@ -6900,8 +6933,11 @@ struct PulseUnrollClassicalLoopsPass
   }
 };
 
+#endif // PULSE_COUPLED == 0
+
 } // namespace
 
+#if PULSE_COUPLED == 0
 namespace pulse {
 std::unique_ptr<mlir::Pass> createPulseUnrollClassicalLoopsPass() {
   return std::make_unique<PulseUnrollClassicalLoopsPass>();
@@ -6942,3 +6978,19 @@ std::unique_ptr<mlir::Pass> createPulseInlineScheduleBlocksPass() {
   return std::make_unique<PulseInlineScheduleBlocksPass>();
 }
 } // namespace pulse
+#else
+namespace pulse {
+inline namespace coupled {
+mlir::LogicalResult scheduleFunction(mlir::func::FuncOp function, bool enabled,
+                                     int64_t maxDrives, int64_t maxReadouts,
+                                     int64_t readoutLatency,
+                                     int64_t switchPenalty, bool isAlap) {
+  return schedule(
+      function,
+      Resources{
+          enabled, maxDrives, maxReadouts, readoutLatency, switchPenalty, {}},
+      isAlap);
+}
+} // namespace coupled
+} // namespace pulse
+#endif // PULSE_COUPLED == 0

@@ -88,10 +88,6 @@ struct FuseAdjacentSquareDrives
     if (!firstWf)
       return mlir::failure();
 
-    // Pulses on a coupling line stay as written.
-    if (!firstDrive.getTone())
-      return mlir::failure();
-
     auto updatedLine = firstDrive.getUpdatedLine();
     if (!updatedLine.hasOneUse())
       return mlir::failure();

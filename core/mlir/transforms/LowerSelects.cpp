@@ -395,8 +395,7 @@ private:
           if (mlir::Operation *def = operand.getDefiningOp())
             if (computesOnly(def) &&
                 !mlir::isa<pulse::QuditAllocOp, pulse::GetDriveLineOp,
-                           pulse::GetReadoutLineOp, pulse::GetCouplingLineOp>(
-                    def))
+                           pulse::GetReadoutLineOp>(def))
               dead.insert(def);
         op->erase();
         erased = true;

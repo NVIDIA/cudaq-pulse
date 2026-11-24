@@ -6,7 +6,23 @@
 //
 // Include after the Pulse dialect op and type headers.
 
-#pragma once
+#include "cudaq-pulse/Analysis/Variant.h"
+
+// Included once per variant (see Variant.h).
+#if PULSE_COUPLED == 0
+#ifdef CUDAQ_PULSE_ANALYSIS_LINETRACE_H
+#define CUDAQ_PULSE_LINETRACE_SEEN
+#else
+#define CUDAQ_PULSE_ANALYSIS_LINETRACE_H
+#endif
+#else
+#ifdef CUDAQ_PULSE_ANALYSIS_LINETRACE_COUPLED_H
+#define CUDAQ_PULSE_LINETRACE_SEEN
+#else
+#define CUDAQ_PULSE_ANALYSIS_LINETRACE_COUPLED_H
+#endif
+#endif
+#ifndef CUDAQ_PULSE_LINETRACE_SEEN
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
@@ -15,6 +31,7 @@
 #include "mlir/IR/Value.h"
 
 namespace pulse {
+PULSE_VARIANT_OPEN
 
 /// A `classical` link or call handle: linear and timed, like a line.
 inline bool isClassicalType(mlir::Type type) {
@@ -28,7 +45,7 @@ inline bool isClassicalType(mlir::Type type) {
 /// read for it (`couplingQudits` gives its qudits).
 inline int64_t quditOf(mlir::Operation *acquisition) {
   if (auto alloc = acquisition->getOperand(0).getDefiningOp<QuditAllocOp>())
-    return mlir::isa<GetCouplingLineOp>(acquisition)
+    return kCoupled && mlir::isa<GetCouplingLineOp>(acquisition)
                ? -1
                : alloc.getQuditAttr().getInt();
   return -1;
@@ -58,9 +75,9 @@ inline bool sameCouplingLine(mlir::Operation *a, mlir::Operation *b) {
 }
 
 inline bool isLinearPulseType(mlir::Type type) {
-  return mlir::isa<DriveLineType, ReadoutLineType, ToneType, CouplingLineType>(
-             type) ||
-         isClassicalType(type);
+  return mlir::isa<DriveLineType, ReadoutLineType, ToneType>(type) ||
+         isClassicalType(type) ||
+         (kCoupled && mlir::isa<CouplingLineType>(type));
 }
 
 /// Whether `user` reads a line without consuming it, so the version it reads
@@ -107,7 +124,8 @@ inline mlir::Value linearPredecessor(mlir::Value value) {
   // sync of n lines takes n steps instead of n^2.
   if (mlir::isa<SyncOp>(op))
     return op->getOperand(index);
-  if (mlir::isa<GetDriveLineOp, GetReadoutLineOp, GetCouplingLineOp>(op) ||
+  if (mlir::isa<GetDriveLineOp, GetReadoutLineOp>(op) ||
+      (kCoupled && mlir::isa<GetCouplingLineOp>(op)) ||
       op->getName().getStringRef() == "classical.get_link")
     return {};
   mlir::Type type = value.getType();
@@ -202,7 +220,7 @@ inline bool runsBefore(mlir::Operation *a, mlir::Operation *b) {
 /// earlier acquisition of it may also have run would make two versions of
 /// the same line, with two timelines.
 inline mlir::LogicalResult checkOneAcquisition(mlir::Operation *acquisition) {
-  bool coupling = mlir::isa<GetCouplingLineOp>(acquisition);
+  bool coupling = kCoupled && mlir::isa<GetCouplingLineOp>(acquisition);
   for (mlir::Operation *first : acquisition->getOperand(0).getUsers()) {
     if (first == acquisition || first->getName() != acquisition->getName() ||
         (coupling && !sameCouplingLine(first, acquisition)) ||
@@ -248,7 +266,7 @@ public:
           found = firstAcquisition(def);
           break;
         }
-        if (mlir::isa<GetCouplingLineOp>(def)) {
+        if (kCoupled && mlir::isa<GetCouplingLineOp>(def)) {
           found = firstCouplingAcquisition(def);
           break;
         }
@@ -290,4 +308,8 @@ private:
   llvm::DenseMap<mlir::Value, mlir::Operation *> memo;
 };
 
+PULSE_VARIANT_CLOSE
 } // namespace pulse
+
+#endif // CUDAQ_PULSE_LINETRACE_SEEN
+#undef CUDAQ_PULSE_LINETRACE_SEEN

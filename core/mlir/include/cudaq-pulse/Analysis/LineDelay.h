@@ -13,12 +13,15 @@
 
 #pragma once
 
+#include "cudaq-pulse/Analysis/Variant.h"
+
 #include "cudaq-pulse/Analysis/LineGrid.h"
 #include "cudaq-pulse/Analysis/LineTrace.h"
 #include "cudaq-pulse/Analysis/Timing.h"
 #include "mlir/IR/BuiltinOps.h"
 
 namespace pulse {
+PULSE_VARIANT_OPEN
 
 /// The delay of each line of a module's control system, as `clocks` reads
 /// it.
@@ -70,4 +73,5 @@ inline bool applyLineDelays(mlir::Operation *function,
   return moved;
 }
 
+PULSE_VARIANT_CLOSE
 } // namespace pulse

@@ -12,6 +12,7 @@
 // none of the drives a control system plays at once.
 
 // CHECK-LABEL: func @beside_the_drive_line
+module attributes {pulse.coupling_lines} {
 func.func @beside_the_drive_line() {
   %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
   %q1 = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qudit
@@ -41,23 +42,24 @@ func.func @beside_the_drive_line() {
   %d1a, %t1a = pulse.drive %d1, %w20, %t1 : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
   // The coupling line of qudit 0 plays while its drive line does, and takes
   // no drive of the control system.
-  // ASAP: pulse.drive %{{.*}}, %{{.*}} <{duration_cycles = 60 : i64, start_cycles = 0 : i64}> : !pulse.coupling_line
-  // ALAP: pulse.drive %{{.*}}, %{{.*}} <{duration_cycles = 60 : i64, start_cycles = 0 : i64}> : !pulse.coupling_line
-  // RCP: pulse.drive %{{.*}}, %{{.*}} <{duration_cycles = 60 : i64, start_cycles = 0 : i64}> : !pulse.coupling_line
-  // ALAPRCP: pulse.drive %{{.*}}, %{{.*}} <{duration_cycles = 60 : i64, start_cycles = 0 : i64}> : !pulse.coupling_line
-  %c1 = pulse.drive %c, %w60 : !pulse.coupling_line, !pulse.waveform -> !pulse.coupling_line
-  // ASAP: pulse.drive %{{.*}}, %{{.*}} <{duration_cycles = 20 : i64, start_cycles = 60 : i64}> : !pulse.coupling_line
-  // ALAP: pulse.drive %{{.*}}, %{{.*}} <{duration_cycles = 20 : i64, start_cycles = 60 : i64}> : !pulse.coupling_line
-  // RCP: pulse.drive %{{.*}}, %{{.*}} <{duration_cycles = 20 : i64, start_cycles = 60 : i64}> : !pulse.coupling_line
-  // ALAPRCP: pulse.drive %{{.*}}, %{{.*}} <{duration_cycles = 20 : i64, start_cycles = 60 : i64}> : !pulse.coupling_line
-  %c2 = pulse.drive %c1, %w20 : !pulse.coupling_line, !pulse.waveform -> !pulse.coupling_line
+  // ASAP: pulse.drive_baseband %{{.*}}, %{{.*}} <{duration_cycles = 60 : i64, start_cycles = 0 : i64}> : !pulse.coupling_line
+  // ALAP: pulse.drive_baseband %{{.*}}, %{{.*}} <{duration_cycles = 60 : i64, start_cycles = 0 : i64}> : !pulse.coupling_line
+  // RCP: pulse.drive_baseband %{{.*}}, %{{.*}} <{duration_cycles = 60 : i64, start_cycles = 0 : i64}> : !pulse.coupling_line
+  // ALAPRCP: pulse.drive_baseband %{{.*}}, %{{.*}} <{duration_cycles = 60 : i64, start_cycles = 0 : i64}> : !pulse.coupling_line
+  %c1 = pulse.drive_baseband %c, %w60 : !pulse.coupling_line, !pulse.waveform -> !pulse.coupling_line
+  // ASAP: pulse.drive_baseband %{{.*}}, %{{.*}} <{duration_cycles = 20 : i64, start_cycles = 60 : i64}> : !pulse.coupling_line
+  // ALAP: pulse.drive_baseband %{{.*}}, %{{.*}} <{duration_cycles = 20 : i64, start_cycles = 60 : i64}> : !pulse.coupling_line
+  // RCP: pulse.drive_baseband %{{.*}}, %{{.*}} <{duration_cycles = 20 : i64, start_cycles = 60 : i64}> : !pulse.coupling_line
+  // ALAPRCP: pulse.drive_baseband %{{.*}}, %{{.*}} <{duration_cycles = 20 : i64, start_cycles = 60 : i64}> : !pulse.coupling_line
+  %c2 = pulse.drive_baseband %c1, %w20 : !pulse.coupling_line, !pulse.waveform -> !pulse.coupling_line
   // Every line meets at 80, and the pair's line plays from there.
   %c3, %p1, %d0b, %d1b = pulse.sync %c2, %p, %d0a, %d1a
       : !pulse.coupling_line, !pulse.coupling_line, !pulse.drive_line, !pulse.drive_line
       -> !pulse.coupling_line, !pulse.coupling_line, !pulse.drive_line, !pulse.drive_line
-  // CHECK: pulse.drive %{{.*}}, %{{.*}} <{duration_cycles = 20 : i64, start_cycles = 80 : i64}> : !pulse.coupling_line
-  %p2 = pulse.drive %p1, %w20 : !pulse.coupling_line, !pulse.waveform -> !pulse.coupling_line
+  // CHECK: pulse.drive_baseband %{{.*}}, %{{.*}} <{duration_cycles = 20 : i64, start_cycles = 80 : i64}> : !pulse.coupling_line
+  %p2 = pulse.drive_baseband %p1, %w20 : !pulse.coupling_line, !pulse.waveform -> !pulse.coupling_line
   // CHECK: pulse.drive %{{.*}}, %{{.*}}, %{{.*}} <{duration_cycles = 20 : i64, start_cycles = 80 : i64}>
   %d0c, %t0c = pulse.drive %d0b, %w20, %t0a : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
   return
+}
 }

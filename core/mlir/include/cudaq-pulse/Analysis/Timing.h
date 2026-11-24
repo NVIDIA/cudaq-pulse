@@ -11,7 +11,23 @@
 //
 // Include after the Pulse and Classical dialect op headers.
 
-#pragma once
+#include "cudaq-pulse/Analysis/Variant.h"
+
+// Included once per variant (see Variant.h).
+#if PULSE_COUPLED == 0
+#ifdef CUDAQ_PULSE_ANALYSIS_TIMING_H
+#define CUDAQ_PULSE_TIMING_SEEN
+#else
+#define CUDAQ_PULSE_ANALYSIS_TIMING_H
+#endif
+#else
+#ifdef CUDAQ_PULSE_ANALYSIS_TIMING_COUPLED_H
+#define CUDAQ_PULSE_TIMING_SEEN
+#else
+#define CUDAQ_PULSE_ANALYSIS_TIMING_COUPLED_H
+#endif
+#endif
+#ifndef CUDAQ_PULSE_TIMING_SEEN
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -23,6 +39,7 @@
 #include <vector>
 
 namespace pulse {
+PULSE_VARIANT_OPEN
 
 inline std::optional<int64_t> constantIndex(mlir::Value value) {
   if (auto constant = value.getDefiningOp<mlir::arith::ConstantOp>())
@@ -122,6 +139,9 @@ inline R withTiming(mlir::Operation *op, R otherwise, Fn &&fn) {
     return fn(timed);
   if (auto timed = mlir::dyn_cast<ScheduleBlockOp>(op))
     return fn(timed);
+  if (kCoupled)
+    if (auto timed = mlir::dyn_cast<DriveBasebandOp>(op))
+      return fn(timed);
   return otherwise;
 }
 
@@ -259,4 +279,8 @@ kernelReadoutKey(mlir::Operation *op, llvm::ArrayRef<int64_t> iteration,
   return key;
 }
 
+PULSE_VARIANT_CLOSE
 } // namespace pulse
+
+#endif // CUDAQ_PULSE_TIMING_SEEN
+#undef CUDAQ_PULSE_TIMING_SEEN

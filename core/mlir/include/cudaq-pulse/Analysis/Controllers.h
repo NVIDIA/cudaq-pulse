@@ -32,6 +32,8 @@
 
 #pragma once
 
+#include "cudaq-pulse/Analysis/Variant.h"
+
 #include "cudaq-pulse/Analysis/LineGrid.h"
 #include "cudaq-pulse/Analysis/LineTrace.h"
 #include "llvm/ADT/APFloat.h"
@@ -49,6 +51,7 @@
 #include <utility>
 
 namespace pulse {
+PULSE_VARIANT_OPEN
 
 class Controllers {
 public:
@@ -609,4 +612,5 @@ private:
   llvm::SmallVector<int64_t> drive, readout;
 };
 
+PULSE_VARIANT_CLOSE
 } // namespace pulse

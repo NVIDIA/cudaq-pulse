@@ -162,7 +162,11 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   them; the error names what is missing and the lines that reach the
   qudits. In the IR
   it is a `!pulse.coupling_line` from `pulse.get_coupling_line`, and
-  `pulse.drive` on it has no tone operand; a waveform that may have an
+  a pulse on it is a `pulse.drive_baseband`, which has no tone (a kernel
+  still writes `drive`, and `pulse.drive` is unchanged); a module that
+  holds a coupling line says so with the unit attribute
+  `pulse.coupling_lines`, which the passes ask once; a waveform that may
+  have an
   imaginary part is a `CompilationError`, at the kernel's line where the
   kernel says so and from `pulse-verify` otherwise. A tone on it,
   `line.tone`, a frame op, a readout or a calibrated pulse on it are
@@ -172,8 +176,12 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   controller's limits on it (compiling such a program for a control system
   raises the same error), its simulation and emulation (`simulate` and
   `classical.emulation.emulate` raise `UnsupportedError`), and the
-  calibrated gate of a coupling as one call. A coupling line that is
-  fetched and never used is dropped as any unused line. Programs without coupling lines compile, schedule
+  calibrated gate of a coupling as one call, and, in the same program as
+  a coupling line, a classical call, a kernel with its own `schedule=`
+  (compile with `flatten_schedules=True`) and a value a measurement
+  selects at run time (each an `UnsupportedError` that says so). A
+  coupling line that is fetched and never used is dropped as any unused
+  line. Programs without coupling lines compile, schedule
   and export as before.
 - **Coupling lines of a controller.** `Controller(coupling_lines=[...])`
   lists the outputs that play a baseband waveform on a control of the

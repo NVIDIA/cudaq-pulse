@@ -75,14 +75,18 @@ def GetCouplingLineOp : PulseOp<"get_coupling_line", [Pure]> {
     The coupling line that reaches the control of `qudits`: of one qudit,
     its own tuning; of two, the control of their coupling; of more, a
     control they share. The line is named by the set of its qudits, which
-    must be distinct. It has no tone: `pulse.drive` plays a real waveform
-    on it at baseband. As with the other lines, it starts at time 0 and is
+    must be distinct. It has no tone: `pulse.drive_baseband` plays a real
+    waveform on it. As with the other lines, it starts at time 0 and is
     a linear value.
 
     ```mlir
     %c = pulse.get_coupling_line %q0 : (!pulse.qudit) -> !pulse.coupling_line
     %p = pulse.get_coupling_line %q0, %q1 : (!pulse.qudit, !pulse.qudit) -> !pulse.coupling_line
     ```
+
+    A module that holds one says so with the unit attribute
+    `pulse.coupling_lines`: the passes ask that of the module once and
+    look for the ops of a coupling line only then.
   }];
   let arguments = (ins Variadic<QuditType>:$qudits);
   let results = (outs CouplingLineType:$line);
@@ -258,34 +262,49 @@ def CustomSamplesOp : PulseOp<"custom_samples", [Pure]> {
 //===----------------------------------------------------------------------===//
 
 def DriveOp : PulseOp<"drive", []> {
-  let summary = "Apply a waveform to a drive line at a tone, or to a coupling line";
+  let summary = "Apply a waveform to a drive line at a tone";
   let description = [{
     Applies a waveform to a drive line at the specified tone's frequency and
     phase. Advances line time by pulse duration. Returns the updated drive
     line and tone. The tone's frame is as the frame changes before the drive
     on that tone left it: a change takes effect at the next pulse.
+  }];
+  let arguments = !con((ins
+    DriveLineType:$line,
+    WaveformType:$pulse,
+    ToneType:$tone
+  ),
+                       PulseTimingArgs);
+  let results = (outs DriveLineType:$updated_line, ToneType:$updated_tone);
+  let assemblyFormat = [{
+    $line `,` $pulse `,` $tone `` custom<Timing>("getOperationName()", $start_cycles, $duration_cycles, $period_cycles) attr-dict `:` qualified(type($line))
+    `,` qualified(type($pulse)) `,` qualified(type($tone))
+    `->` qualified(type($updated_line)) `,` qualified(type($updated_tone))
+  }];
+}
 
-    On a coupling line the waveform plays at baseband: the op takes no tone
-    and returns the updated line only, and the waveform must be real
-    (`pulse-verify` checks it).
+def DriveBasebandOp : PulseOp<"drive_baseband", []> {
+  let summary = "Apply a waveform to a coupling line, at baseband";
+  let description = [{
+    Applies a waveform to a coupling line. The line plays the waveform
+    itself: the op takes no tone, and the waveform must be real
+    (`pulse-verify` checks it). Advances line time by pulse duration and
+    returns the updated line.
 
     ```mlir
-    %d1, %t1 = pulse.drive %d0, %w, %t0 : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
-    %c1 = pulse.drive %c0, %w : !pulse.coupling_line, !pulse.waveform -> !pulse.coupling_line
+    %c1 = pulse.drive_baseband %c0, %w : !pulse.coupling_line, !pulse.waveform -> !pulse.coupling_line
     ```
   }];
   let arguments = !con((ins
-    DrivenLineType:$line,
-    WaveformType:$pulse,
-    Optional<ToneType>:$tone
+    CouplingLineType:$line,
+    WaveformType:$pulse
   ),
                        PulseTimingArgs);
-  let results = (outs DrivenLineType:$updated_line,
-                      Optional<ToneType>:$updated_tone);
+  let results = (outs CouplingLineType:$updated_line);
   let assemblyFormat = [{
-    $line `,` $pulse (`,` $tone^)? `` custom<Timing>("getOperationName()", $start_cycles, $duration_cycles, $period_cycles) attr-dict `:` qualified(type($line))
-    `,` qualified(type($pulse)) (`,` qualified(type($tone))^)?
-    `->` qualified(type($updated_line)) (`,` qualified(type($updated_tone))^)?
+    $line `,` $pulse `` custom<Timing>("getOperationName()", $start_cycles, $duration_cycles, $period_cycles) attr-dict `:` qualified(type($line))
+    `,` qualified(type($pulse))
+    `->` qualified(type($updated_line))
   }];
   let hasVerifier = 1;
 }

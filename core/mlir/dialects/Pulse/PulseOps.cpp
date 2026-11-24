@@ -64,7 +64,19 @@ int64_t CustomSamplesOp::getDurationCycles() {
   return count;
 }
 
+/// Whether the module `op` is in says that it holds a coupling line.
+static bool saysCouplingLines(Operation *op) {
+  auto module = op->getParentOfType<ModuleOp>();
+  return module && module->hasAttr("pulse.coupling_lines");
+}
+
+static const char *const kSayCouplingLines =
+    "is in a module that does not say it holds a coupling line; give the "
+    "module the unit attribute pulse.coupling_lines";
+
 LogicalResult GetCouplingLineOp::verify() {
+  if (!saysCouplingLines(getOperation()))
+    return emitOpError(kSayCouplingLines);
   auto qudits = getQudits();
   if (qudits.empty())
     return emitOpError("needs at least one qudit: the qudits whose control "
@@ -81,21 +93,11 @@ LogicalResult GetCouplingLineOp::verify() {
   return success();
 }
 
-LogicalResult DriveOp::verify() {
-  // The form follows the line: a drive line plays at a tone and returns it,
-  // a coupling line plays at baseband and has none.
-  bool coupling = isa<CouplingLineType>(getLine().getType());
-  if (getUpdatedLine().getType() != getLine().getType())
-    return emitOpError("returns a ")
-           << getUpdatedLine().getType() << " for a " << getLine().getType();
-  if (coupling) {
-    if (getTone() || getUpdatedTone())
-      return emitOpError("on a coupling line takes no tone: a coupling line "
-                         "plays the waveform itself, at baseband");
-    return success();
-  }
-  if (!getTone() || !getUpdatedTone())
-    return emitOpError("on a drive line needs a tone, and returns it");
+LogicalResult DriveBasebandOp::verify() {
+  // The passes look for the ops of a coupling line only in a module that
+  // says it holds one.
+  if (!saysCouplingLines(getOperation()))
+    return emitOpError(kSayCouplingLines);
   return success();
 }
 
@@ -176,8 +178,7 @@ void IsSetOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
 /// The types AnyTimedType admits: lines, tones, measurements, and the
 /// classical dialect's links and call handles.
 static bool isTimedValueType(Type type) {
-  return isa<DriveLineType, ReadoutLineType, ToneType, MeasurementType,
-             CouplingLineType>(type) ||
+  return isa<DriveLineType, ReadoutLineType, ToneType, MeasurementType>(type) ||
          type.getDialect().getNamespace() == "classical";
 }
 

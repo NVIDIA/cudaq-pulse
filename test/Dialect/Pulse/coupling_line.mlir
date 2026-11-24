@@ -20,12 +20,13 @@
 // CHECK: %[[C:.*]] = pulse.get_coupling_line %[[Q0]] : (!pulse.qudit) -> !pulse.coupling_line
 // CHECK: %[[P:.*]] = pulse.get_coupling_line %[[Q0]], %[[Q1]] : (!pulse.qudit, !pulse.qudit) -> !pulse.coupling_line
 // CHECK: %[[D:.*]], %[[T:.*]] = pulse.get_drive_line %[[Q0]]
-// CHECK: %[[C1:.*]] = pulse.drive %[[C]], %[[W:.*]] : !pulse.coupling_line, !pulse.waveform -> !pulse.coupling_line
+// CHECK: %[[C1:.*]] = pulse.drive_baseband %[[C]], %[[W:.*]] : !pulse.coupling_line, !pulse.waveform -> !pulse.coupling_line
 // CHECK: %[[C2:.*]] = pulse.wait %[[C1]], %{{.*}} : (!pulse.coupling_line, !pulse.duration) -> !pulse.coupling_line
 // CHECK: %[[D1:.*]], %[[T1:.*]] = pulse.drive %[[D]], %[[W]], %[[T]] : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
 // CHECK: %[[S:.*]]:2 = pulse.sync %[[C2]], %[[D1]] : !pulse.coupling_line, !pulse.drive_line -> !pulse.coupling_line, !pulse.drive_line
-// CHECK: %[[C3:.*]] = pulse.drive %[[S]]#0, %[[W]] : !pulse.coupling_line, !pulse.waveform -> !pulse.coupling_line
+// CHECK: %[[C3:.*]] = pulse.drive_baseband %[[S]]#0, %[[W]] : !pulse.coupling_line, !pulse.waveform -> !pulse.coupling_line
 // CHECK: pulse.get_current_time %[[C3]] : !pulse.coupling_line -> !pulse.timepoint
+module attributes {pulse.coupling_lines} {
 func.func @coupling_lines() -> !pulse.timepoint {
   %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
   %q1 = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qudit
@@ -37,13 +38,13 @@ func.func @coupling_lines() -> !pulse.timepoint {
   %amplitude = arith.constant 0.31 : f64
   %zero = arith.constant 0.0 : f64
   %w = pulse.square %duration, %amplitude, %zero : i64, f64, f64 -> !pulse.waveform
-  %c1 = pulse.drive %c, %w : !pulse.coupling_line, !pulse.waveform -> !pulse.coupling_line
+  %c1 = pulse.drive_baseband %c, %w : !pulse.coupling_line, !pulse.waveform -> !pulse.coupling_line
   %cycles = arith.constant 20 : i64
   %length = pulse.duration_from_int %cycles : (i64) -> !pulse.duration
   %c2 = pulse.wait %c1, %length : (!pulse.coupling_line, !pulse.duration) -> !pulse.coupling_line
   %d1, %t1 = pulse.drive %d, %w, %t : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
   %c3, %d2 = pulse.sync %c2, %d1 : !pulse.coupling_line, !pulse.drive_line -> !pulse.coupling_line, !pulse.drive_line
-  %c4 = pulse.drive %c3, %w : !pulse.coupling_line, !pulse.waveform -> !pulse.coupling_line
+  %c4 = pulse.drive_baseband %c3, %w : !pulse.coupling_line, !pulse.waveform -> !pulse.coupling_line
   %now = pulse.get_current_time %c4 : !pulse.coupling_line -> !pulse.timepoint
   return %now : !pulse.timepoint
 }
@@ -53,17 +54,17 @@ func.func @coupling_lines() -> !pulse.timepoint {
 
 // CHECK-LABEL: func @carried
 // CHECK: %[[IF:.*]] = scf.if %{{.*}} -> (!pulse.coupling_line) {
-// CHECK: pulse.drive %{{.*}}, %{{.*}} : !pulse.coupling_line, !pulse.waveform -> !pulse.coupling_line
+// CHECK: pulse.drive_baseband %{{.*}}, %{{.*}} : !pulse.coupling_line, !pulse.waveform -> !pulse.coupling_line
 // CHECK: scf.yield %{{.*}} : !pulse.coupling_line
 // CHECK: %{{.*}} = scf.for %{{.*}} iter_args(%[[IN:.*]] = %[[IF]]) -> (!pulse.coupling_line) {
-// CHECK: %[[OUT:.*]] = pulse.drive %[[IN]], %{{.*}} : !pulse.coupling_line, !pulse.waveform -> !pulse.coupling_line
+// CHECK: %[[OUT:.*]] = pulse.drive_baseband %[[IN]], %{{.*}} : !pulse.coupling_line, !pulse.waveform -> !pulse.coupling_line
 // CHECK: scf.yield %[[OUT]] : !pulse.coupling_line
 func.func @carried(%bit : i1) {
   %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
   %c = pulse.get_coupling_line %q0 : (!pulse.qudit) -> !pulse.coupling_line
   %samples = pulse.custom_samples [0.1, 0.2, -0.3, 0.0] : !pulse.waveform
   %c1 = scf.if %bit -> (!pulse.coupling_line) {
-    %driven = pulse.drive %c, %samples : !pulse.coupling_line, !pulse.waveform -> !pulse.coupling_line
+    %driven = pulse.drive_baseband %c, %samples : !pulse.coupling_line, !pulse.waveform -> !pulse.coupling_line
     scf.yield %driven : !pulse.coupling_line
   } else {
     scf.yield %c : !pulse.coupling_line
@@ -72,8 +73,9 @@ func.func @carried(%bit : i1) {
   %upper = arith.constant 3 : index
   %step = arith.constant 1 : index
   %c2 = scf.for %i = %lower to %upper step %step iter_args(%line = %c1) -> (!pulse.coupling_line) {
-    %next = pulse.drive %line, %samples : !pulse.coupling_line, !pulse.waveform -> !pulse.coupling_line
+    %next = pulse.drive_baseband %line, %samples : !pulse.coupling_line, !pulse.waveform -> !pulse.coupling_line
     scf.yield %next : !pulse.coupling_line
   }
   return
+}
 }

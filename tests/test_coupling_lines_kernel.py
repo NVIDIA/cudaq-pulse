@@ -103,13 +103,12 @@ def test_a_kernel_traces_to_the_coupling_line_ops():
     assert sum("pulse.get_coupling_line" in line for line in lines) == 2
     pair = next(line for line in lines if "(!pulse.qudit, !pulse.qudit)" in line)
     assert pair.endswith(": (!pulse.qudit, !pulse.qudit) -> !pulse.coupling_line")
-    # A drive on it has no tone, and a drive on a drive line prints as ever.
-    assert (
-        sum(
-            line.endswith(": !pulse.coupling_line, !pulse.waveform -> !pulse.coupling_line")
-            for line in lines
-        )
-        == 2
+    # A drive on it is its own op, with no tone, and a drive on a drive
+    # line prints as ever.
+    baseband = [line for line in lines if "pulse.drive_baseband " in line]
+    assert len(baseband) == 2 and all(
+        line.endswith(": !pulse.coupling_line, !pulse.waveform -> !pulse.coupling_line")
+        for line in baseband
     )
     toned = ": !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone"
     assert sum(line.endswith(toned) for line in lines) == 1
@@ -348,7 +347,7 @@ def test_a_coupling_line_plays_a_real_waveform():
 
     # Not known until the program is verified: the same kind of error.
     message = _raises(beta_given, A, 0.0)
-    assert "on a coupling line plays a real waveform" in message
+    assert "plays a real waveform" in message
     assert "this pulse.drag may have an imaginary part" in message
 
 
@@ -430,7 +429,54 @@ def test_simulating_a_pulse_on_a_coupling_line_is_refused_for_now():
     for run in (lambda: pulse.simulate(lowered, levels=2), lambda: emulate(lowered, seed=1)):
         with pytest.raises(pulse.UnsupportedError) as raised:
             run()
-        assert "pulses on a coupling line are not simulated or emulated yet" in str(raised.value)
+        assert "a program with a coupling line is not simulated or emulated yet" in str(
+            raised.value
+        )
+
+
+@pulse.classical(max_latency_ns=200)
+def coupling_test_decide(bits: pulse.Length[pulse.Bits, 1]) -> float:
+    return 0.1 + 0.1 * bits[0]
+
+
+def test_what_the_passes_do_not_do_beside_a_coupling_line_is_refused():
+    @pulse.kernel
+    def answered(a):
+        c = get_coupling_line(a)
+        m = readout(get_readout_line(a), square(100, 0.2))
+        amplitude = coupling_test_decide.submit([m]).result()
+        drive(get_drive_line(a), gaussian(40, amplitude, 10.0))
+        drive(c, square(40, 0.1))
+
+    @pulse.kernel
+    def fetched_after(a):
+        m = readout(get_readout_line(a), square(100, 0.2))
+        amplitude = coupling_test_decide.submit([m]).result()
+        drive(get_drive_line(a), gaussian(40, amplitude, 10.0))
+        drive(get_coupling_line(a), square(40, 0.1))
+
+    for kernel in (answered, fetched_after):
+        with pytest.raises(pulse.UnsupportedError) as raised:
+            kernel.lower(A)
+        assert "a program that holds a coupling line cannot hold a classical call yet" in str(
+            raised.value
+        )
+
+    @pulse.kernel(schedule="alap")
+    def late(a):
+        drive(get_coupling_line(a), square(40, 0.1))
+
+    @pulse.kernel
+    def calls_scheduled(a):
+        drive(get_drive_line(a), gaussian(40, 0.2, 10.0))
+        late(a)
+
+    with pytest.raises(pulse.UnsupportedError) as raised:
+        calls_scheduled.lower(A)
+    assert "cannot hold a kernel with its own schedule (schedule=)" in str(raised.value)
+    # Flattened, the called kernel's pulses are scheduled with the caller's.
+    flat = pulse.compile(calls_scheduled, quantum_system=QS, flatten_schedules=True).lower(A)
+    assert len(flat.schedule) == 2
 
 
 def test_a_coupling_line_that_is_fetched_and_never_used_changes_nothing():

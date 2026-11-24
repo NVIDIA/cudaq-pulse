@@ -39,6 +39,8 @@
 
 #pragma once
 
+#include "cudaq-pulse/Analysis/Variant.h"
+
 #include "cudaq-pulse/Analysis/Controllers.h"
 #include "cudaq-pulse/Dialect/Classical/Schema.h"
 
@@ -55,6 +57,7 @@
 #include <vector>
 
 namespace classical {
+PULSE_VARIANT_OPEN
 
 struct LinkModel {
   double fixedNs = 0.0;
@@ -182,7 +185,8 @@ inline bool readers(mlir::Value value, const pulse::Controllers &controllers,
     return reader >= 0;
   }
   if (mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType, pulse::ToneType,
-                LinkType, pulse::CouplingLineType>(value.getType()))
+                LinkType>(value.getType()) ||
+      (pulse::kCoupled && mlir::isa<pulse::CouplingLineType>(value.getType())))
     return true;
   mlir::Operation *def = value.getDefiningOp();
   if (!def || mlir::isa<WaitOp, SubmitOp>(def) || def->getNumRegions())
@@ -210,14 +214,17 @@ inline bool takers(mlir::Value value, const pulse::Controllers &controllers,
   };
   for (mlir::OpOperand &use : value.getUses()) {
     mlir::Operation *user = use.getOwner();
-    if (mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(user)) {
+    if (mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(user) ||
+        (pulse::kCoupled && mlir::isa<pulse::DriveBasebandOp>(user))) {
       if (!pulse(user))
         return false;
     } else if (auto branch = mlir::dyn_cast<mlir::scf::IfOp>(user)) {
       bool known = true;
       branch->walk([&](mlir::Operation *inner) {
         if (known &&
-            mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(inner))
+            (mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(
+                 inner) ||
+             (pulse::kCoupled && mlir::isa<pulse::DriveBasebandOp>(inner))))
           known = pulse(inner);
       });
       if (!known)
@@ -545,4 +552,5 @@ inline int64_t intAttr(mlir::Operation *op, mlir::StringAttr name,
   return fallback;
 }
 
+PULSE_VARIANT_CLOSE
 } // namespace classical

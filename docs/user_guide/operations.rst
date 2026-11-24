@@ -136,7 +136,10 @@ loop rolled. A program that holds a coupling line is not exported yet:
 coupling line yet, it compiles only without a control system, where it
 raises the same error with one. ``simulate`` and
 ``classical.emulation.emulate`` do not play a pulse on a coupling line yet
-either, and raise ``UnsupportedError`` too. A coupling line that is
+either, and raise ``UnsupportedError`` too; so does a program that holds
+a coupling line beside a classical call, a kernel with its own
+``schedule=`` (compile with ``flatten_schedules=True``) or a value a
+measurement selects while the program runs. A coupling line that is
 fetched and never used is dropped, as any unused line: the program
 exports and simulates. The calibrated two-qudit gate of a
 coupling, played as one call, comes with a later release.

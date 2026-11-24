@@ -262,7 +262,7 @@ def drive(emitter: PulseIREmitter, fname: str, call_args: list[Any]) -> tuple[An
         )
         results = (IRValue(vid, _LINE),)
     else:
-        results = b.emit("pulse.drive", (line, waveform), (_LINE,), {})
+        results = b.emit("pulse.drive_baseband", (line, waveform), (_LINE,), {})
     # Through the channels, which note the move for an open if.
     emitter._lines.rebind_linear(emitter, fname, [line, waveform], results)
     return results
