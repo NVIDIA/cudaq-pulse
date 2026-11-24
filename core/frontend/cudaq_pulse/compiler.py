@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from ._device import QuantumSystem
     from ._idle_windows import IdleWindow as IdleWindow
     from ._idle_windows import IdleWindows as IdleWindows
+    from ._lines import Line as Line
     from ._programs import _Role
     from ._system import Controller, ControlSystem
     from ._waits import _WaitLengths
@@ -86,6 +87,13 @@ class _Module(ModuleType):
         from ._idle_windows import IdleWindows
 
         return IdleWindows
+
+    # Line, likewise, with the first table of lines.
+    @property
+    def Line(self) -> type[Line]:  # noqa: N802
+        from ._lines import Line
+
+        return Line
 
 
 sys.modules[__name__].__class__ = _Module
@@ -1080,6 +1088,29 @@ class ScheduledKernel:
         from ._loops import Schedule
 
         return Schedule(events[0], ScheduledEvent)
+
+    @property
+    def lines(self) -> tuple[Line, ...]:
+        """The drive, readout and coupling lines of the program, in
+        allocation order: ``lines[event.line]`` is the line of a drive,
+        readout or wait of ``schedule`` (the ``line`` of a classical call's
+        ``"submit"`` or ``"answer"`` is its link id, not a line of the
+        table). Each ``Line`` has its ``role`` and ``qudits``, the
+        controller that plays it with the qudits that output reaches and its
+        delay, and, for a coupling line, the component it reaches in the
+        quantum system with what the control system declares of the line.
+
+        The table is made when it is asked for, from the program and from
+        what its quantum system and control system say then; a program whose
+        lines are never asked for does nothing for it.
+        """
+        from ._lines import table
+
+        # The module schedule reads, which numbers the lines of its events.
+        module = self._concrete() if self.rescheduled or self.carriers else self._module
+        with self._lock:
+            rows = module.lines()
+        return table(rows, self.quantum_system, self.options.machine)
 
     def segments(self) -> list[Segment]:
         """The segments of the program, separated by variable and blocking waits.
