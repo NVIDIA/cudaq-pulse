@@ -38,6 +38,7 @@ def load(
     entry: str,
     qudits: Sequence[Qudit],
     control_system: ControlSystem | Controller | None = None,
+    classical: Sequence[Any] = (),
 ) -> ScheduledKernel:
     """The compiled program of *entry*, a scheduled function of *module*.
 
@@ -48,7 +49,8 @@ def load(
     and is scheduled: every timed operation has its ``start_cycles`` and
     ``duration_cycles``, in cycles of the quantum system's clock, and the
     function is marked ``pulse.schedule_state = #pulse.schedule_state<timed>``.
-    Its calls must be inlined. A module that states its clock
+    A call in it states its start (``pulse.start_cycles``) and is written in
+    place. A module that states its clock
     (``pulse.control_system`` with ``clock_period_fs``) must state the
     quantum system's.
 
@@ -56,6 +58,13 @@ def load(
     system it plays on; their quantum system is the program's. The lines get
     that system's frequencies. *control_system* is as for ``compile``; without
     it, the quantum system's own control system is used.
+
+    The classical functions the function calls are the module's
+    ``classical.callable`` declarations: their types, latency, link and
+    dispatch key. *classical* gives functions declared here
+    (``pulse.classical``) for them, by name: each must take and give what the
+    module states, and its latency and implementation replace the module's,
+    so a schedule that takes an answer before that latency allows is refused.
 
     The schedule is kept as written: ``load`` does not schedule again. The
     function is verified as every scheduled program is, and checked against
@@ -75,6 +84,7 @@ def load(
         CompileMetrics,
         CompileOptions,
         _check_controller,
+        _ClassicalFunctions,
         _clocked_builder,
         _clocked_module,
         _lowered,
@@ -115,10 +125,26 @@ def load(
             "delays, which move it; load on a control system without line delays"
         )
     try:
+        declared = native.PulseModuleBuilder().load_callables(text)
+    except (RuntimeError, ValueError) as error:
+        raise CompilationError(str(error), code="load") from None
+    given = _given_functions(classical, declared)
+    try:
         generic: Any = native.PulseModuleBuilder().load_function(
-            text, entry, target.clock_ghz, len(placed)
+            text,
+            entry,
+            target.clock_ghz,
+            len(placed),
+            {
+                name: (fn.min_latency_ns, fn.nominal_latency_ns, fn.max_latency_ns)
+                for name, fn in given.items()
+            },
         )
-        generic.run_passes(["pulse-verify"])
+        # A module that calls classical functions is also checked against
+        # their latencies: an answer is taken no earlier than it is due.
+        generic.run_passes(
+            ["pulse-verify", "pulse-classical-check"] if declared else ["pulse-verify"]
+        )
     except (RuntimeError, ValueError) as error:
         raise CompilationError(str(error), code="load") from None
     _, frequencies, readouts = target._frequency_tables(max(carriers) + 1)
@@ -136,6 +162,132 @@ def load(
         qudits=tuple(sorted(carriers)),
         options=options,
     )
+    if declared:
+        # The module states the classical functions it calls: their schema,
+        # latency, link and dispatch key.
+        called = _ClassicalFunctions(
+            _stated_function(*row, given.get(row[0])) for row in declared
+        )
+        called.routes = [(row[2], row[1], None) for row in declared]
+        program.classical = called
     program = _check_controller(program)
     program.metrics.op_count = len(program.schedule)
     return program
+
+
+def _stated_type(descriptor: str, function: str) -> Any:
+    """The value type a module spells *descriptor*."""
+    import re
+
+    from ._errors import UnsupportedError
+    from .classical import _Bits, _Byte, _Float, _Floats, _Integer
+
+    found = re.fullmatch(r"(bits|levels|iq):(\d+)|(u8|i32|i64|f32|f64)(?:\[(\d+)\])?", descriptor)
+    if found is not None:
+        kind, count, scalar, length = found.groups()
+        if kind == "bits":
+            return _Bits(int(count))
+        if scalar == "u8" and length is None:
+            return _Byte()
+        if scalar in ("f32", "f64"):
+            bits = int(scalar[1:])
+            return _Float(bits) if length is None else _Floats(int(length), bits)
+        if scalar in ("i32", "i64") and length is None:
+            return _Integer(int(scalar[1:]))
+    raise UnsupportedError(
+        f"load: the classical function {function} takes or gives {descriptor!r}, "
+        "which a loaded module cannot state yet"
+    )
+
+
+def _stated_function(
+    name: str,
+    key: int,
+    link: int,
+    args: Sequence[str],
+    results: Sequence[str],
+    latency_ns: Sequence[float],
+    mode: str,
+    submit: str,
+    timeout_ns: float | None,
+    deadline_ns: float | None,
+    reaction_deadline_ns: float | None,
+    given: Any,
+) -> Any:
+    """The classical function a module declares; with *given*, the function
+    declared for it, its implementation and latency."""
+    from .classical import ClassicalFunction
+
+    if given is not None:
+        latency_ns = (given.min_latency_ns, given.nominal_latency_ns, given.max_latency_ns)
+    function: Any = ClassicalFunction(
+        None if given is None else given.implementation,
+        name=name,
+        min_latency_ns=latency_ns[0],
+        nominal_latency_ns=latency_ns[1],
+        max_latency_ns=latency_ns[2],
+        latency_mode=mode,
+        timeout_ns=timeout_ns,
+        submit=submit,
+        deadline_ns=deadline_ns,
+        reaction_deadline_ns=reaction_deadline_ns,
+        link=link,
+        _dispatch_key=key,
+    )
+    function.args = tuple(_stated_type(spelled, name) for spelled in args)
+    function.results = tuple(_stated_type(spelled, name) for spelled in results)
+    return function
+
+
+def _given_functions(given: Sequence[Any], declared: Sequence[Any]) -> dict[str, Any]:
+    """Per classical function the module declares, the function of
+    ``load(classical=)`` given for it: the one of its name, or the one it is
+    a version of (``decode__1`` of ``decode``). Their types must agree."""
+    import re
+
+    from ._errors import CompilationError, InvalidTypeError, InvalidValueError
+    from .classical import ClassicalFunction, _resolve, _unsized_names
+
+    out: dict[str, Any] = {}
+    for function in given:
+        if not isinstance(function, ClassicalFunction):
+            raise InvalidTypeError(
+                "load(classical=) takes classical functions (pulse.classical), "
+                f"got {type(function).__name__}"
+            )
+        rows = [
+            row
+            for row in declared
+            if row[0] == function.name or row[0].startswith(function.name + "__")
+        ]
+        if not rows:
+            raise InvalidValueError(
+                f"load(classical=): the module calls no classical function named {function.name}"
+            )
+        for row in rows:
+            # A function with lists of unstated length is declared once for
+            # every length: its version for the module's lengths is compared.
+            version: Any = function
+            _resolve(function)
+            if function._shape is not None:
+                names = _unsized_names(function)
+                counts = [int(n) for spelled in row[3] for n in re.findall(r"[:\[](\d+)", spelled)]
+                try:
+                    version = function.specialize(**dict(zip(names, counts, strict=True)))
+                except (ValueError, InvalidTypeError, InvalidValueError):
+                    version = None
+            took = None if version is None else [value.descriptor for value in version.args]
+            gave = None if version is None else [value.descriptor for value in version.results]
+            if (took, gave) != (list(row[3]), list(row[4])):
+                raise CompilationError(
+                    f"load: the module's {row[0]} takes ({', '.join(row[3])}) and gives "
+                    f"({', '.join(row[4])}), and the function given for it "
+                    + (
+                        "has no version of those lengths"
+                        if took is None or gave is None
+                        else f"takes ({', '.join(took)}) and gives ({', '.join(gave)})"
+                    ),
+                    code="load",
+                )
+            out[row[0]] = function
+    return out

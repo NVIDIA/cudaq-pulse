@@ -7700,8 +7700,48 @@ public:
     }
   }
 
-  PulseModule load_function(const std::string &text, const std::string &entry,
-                            double clock_ghz, int64_t qudits) {
+  using LoadedCallable =
+      std::tuple<std::string, int64_t, int64_t, std::vector<std::string>,
+                 std::vector<std::string>, std::array<double, 3>, std::string,
+                 std::string, std::optional<double>, std::optional<double>,
+                 std::optional<double>>;
+  /// The classical functions a module declares, in its order: name, dispatch
+  /// key, link, argument and result descriptors, (min, nominal, max) latency
+  /// in ns, mode, submit policy, timeout, deadline and reaction deadline.
+  std::vector<LoadedCallable> load_callables(const std::string &text) {
+    std::lock_guard<std::mutex> guard(lock_);
+    auto source =
+        parseModule(text, ctx_.get(), "load: cannot read the module");
+    auto strings = [](mlir::ArrayAttr values) {
+      std::vector<std::string> out;
+      for (mlir::Attribute value : values)
+        out.push_back(mlir::cast<mlir::StringAttr>(value).getValue().str());
+      return out;
+    };
+    auto number = [](std::optional<llvm::APFloat> value) {
+      return value ? std::optional<double>(value->convertToDouble())
+                   : std::nullopt;
+    };
+    std::vector<LoadedCallable> out;
+    for (mlir::Operation &op : *source->getBody())
+      if (auto fn = mlir::dyn_cast<classical::CallableOp>(op))
+        out.emplace_back(
+            fn.getSymName().str(), static_cast<int64_t>(fn.getDispatchKey()),
+            static_cast<int64_t>(fn.getDevice()), strings(fn.getArgs()),
+            strings(fn.getResults()),
+            std::array<double, 3>{fn.getLatencyMinNs().convertToDouble(),
+                                  fn.getLatencyNominalNs().convertToDouble(),
+                                  fn.getLatencyMaxNs().convertToDouble()},
+            fn.getMode().str(), fn.getSubmit().str(),
+            number(fn.getTimeoutNs()), number(fn.getDeadlineNs()),
+            number(fn.getReactionDeadlineNs()));
+    return out;
+  }
+
+  PulseModule
+  load_function(const std::string &text, const std::string &entry,
+                double clock_ghz, int64_t qudits,
+                const std::map<std::string, std::array<double, 3>> &latencies) {
     std::lock_guard<std::mutex> guard(lock_);
     SharedContextPool::charge(ctx_.get(),
                               static_cast<int64_t>(text.size() / 8));
@@ -7763,8 +7803,21 @@ public:
     if (mlir::Attribute links = source->getOperation()->getAttr("classical.links"))
       module->getOperation()->setAttr("classical.links", links);
     for (mlir::Operation &op : *source->getBody())
-      if (op.getName().getStringRef() == "classical.callable")
-        module->push_back(op.clone());
+      if (auto stated = mlir::dyn_cast<classical::CallableOp>(op)) {
+        mlir::Operation *callable = op.clone();
+        // A latency given for the function replaces the one the module
+        // states: (min, nominal, max) in ns.
+        auto given = latencies.find(stated.getSymName().str());
+        if (given != latencies.end()) {
+          callable->setAttr("latency_min_ns",
+                            builder_->getF64FloatAttr(given->second[0]));
+          callable->setAttr("latency_nominal_ns",
+                            builder_->getF64FloatAttr(given->second[1]));
+          callable->setAttr("latency_max_ns",
+                            builder_->getF64FloatAttr(given->second[2]));
+        }
+        module->push_back(callable);
+      }
     auto main = mlir::cast<mlir::func::FuncOp>(found->clone());
     module->push_back(main);
     writeCallsInPlace(*source, main, entry);
@@ -8377,17 +8430,30 @@ NB_MODULE(_cudaq_pulse_native, m) {
           nb::arg("module"), nb::arg("source"), nb::arg("run_time"),
           nb::arg("rewrites"))
       .def(
-          "load_function",
-          [](PulseModuleBuilder &self, nb::bytes module,
-             const std::string &entry, double clock_ghz, int64_t qudits) {
+          "load_callables",
+          [](PulseModuleBuilder &self, nb::bytes module) {
             std::string text(module.c_str(), module.size());
             nb::gil_scoped_release release;
-            return self.load_function(text, entry, clock_ghz, qudits);
+            return self.load_callables(text);
+          },
+          "The classical functions a module (assembly or bytecode) declares",
+          nb::arg("module"))
+      .def(
+          "load_function",
+          [](PulseModuleBuilder &self, nb::bytes module,
+             const std::string &entry, double clock_ghz, int64_t qudits,
+             const std::map<std::string, std::array<double, 3>> &latencies) {
+            std::string text(module.c_str(), module.size());
+            nb::gil_scoped_release release;
+            return self.load_function(text, entry, clock_ghz, qudits,
+                                      latencies);
           },
           "The scheduled function `entry` of a module (assembly or bytecode) "
           "as a module whose main takes the function's qudits as slots",
           nb::arg("module"), nb::arg("entry"), nb::arg("clock_ghz"),
-          nb::arg("qudits"));
+          nb::arg("qudits"),
+          nb::arg("latencies") =
+              std::map<std::string, std::array<double, 3>>());
 
   m.def(
       "build_stamp", [] { return std::string(cudaqPulseBuildStamp); },
