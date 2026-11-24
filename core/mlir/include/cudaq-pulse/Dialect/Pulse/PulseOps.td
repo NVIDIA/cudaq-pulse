@@ -70,6 +70,31 @@ def GetReadoutLineOp : PulseOp<"get_readout_line", [Pure]> {
   let assemblyFormat = "$qudit attr-dict `:` functional-type(operands, results)";
 }
 
+def GetCouplingLineOp : PulseOp<"get_coupling_line", [Pure]> {
+  let summary = "Get the coupling line of a qudit or of several qudits";
+  let description = [{
+    The coupling line that reaches the control of `qudits`: of one qudit,
+    its own tuning; of two, the control of their coupling; of more, a
+    control they share. The line is named by the set of its qudits, which
+    must be distinct. It has no tone: `pulse.drive_baseband` plays a real
+    waveform on it. As with the other lines, it starts at time 0 and is
+    a linear value.
+
+    ```mlir
+    %c = pulse.get_coupling_line %q0 : (!pulse.qudit) -> !pulse.coupling_line
+    %p = pulse.get_coupling_line %q0, %q1 : (!pulse.qudit, !pulse.qudit) -> !pulse.coupling_line
+    ```
+
+    A module that holds one says so with the unit attribute
+    `pulse.coupling_lines`: the passes ask that of the module once and
+    look for the ops of a coupling line only then.
+  }];
+  let arguments = (ins Variadic<QuditType>:$qudits);
+  let results = (outs CouplingLineType:$line);
+  let assemblyFormat = "$qudits attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
 //===----------------------------------------------------------------------===//
 // Tone operations
 //===----------------------------------------------------------------------===//
@@ -259,6 +284,32 @@ def DriveOp : PulseOp<"drive", []> {
   }];
 }
 
+def DriveBasebandOp : PulseOp<"drive_baseband", []> {
+  let summary = "Apply a waveform to a coupling line, at baseband";
+  let description = [{
+    Applies a waveform to a coupling line. The line plays the waveform
+    itself: the op takes no tone, and the waveform must be real
+    (`pulse-verify` checks it). Advances line time by pulse duration and
+    returns the updated line.
+
+    ```mlir
+    %c1 = pulse.drive_baseband %c0, %w : !pulse.coupling_line, !pulse.waveform -> !pulse.coupling_line
+    ```
+  }];
+  let arguments = !con((ins
+    CouplingLineType:$line,
+    WaveformType:$pulse
+  ),
+                       PulseTimingArgs);
+  let results = (outs CouplingLineType:$updated_line);
+  let assemblyFormat = [{
+    $line `,` $pulse `` custom<Timing>("getOperationName()", $start_cycles, $duration_cycles, $period_cycles) attr-dict `:` qualified(type($line))
+    `,` qualified(type($pulse))
+    `->` qualified(type($updated_line))
+  }];
+  let hasVerifier = 1;
+}
+
 def ReadoutOp : PulseOp<"readout", []> {
   let summary = "Apply a readout pulse and produce a measurement result";
   let description = [{
@@ -366,8 +417,8 @@ def IsSetOp : PulseOp<"is_set", [Pure]> {
 def WaitOp : PulseOp<"wait", [AllTypesMatch<["line", "updated_line"]>]> {
   let summary = "Idle a line for a specified duration";
   let description = [{
-    Idles a drive or readout line for `duration` and returns the updated
-    line, of the same kind. The scheduler reads the length from a
+    Idles a drive, readout or coupling line for `duration` and returns the
+    updated line, of the same kind. The scheduler reads the length from a
     `pulse.duration_from_int` of a constant. A wait does not change any
     tone's frame phase (unlike an OpenPulse delay, which advances the
     frame); the carrier runs on, so a detuned tone's phase in its qudit's
