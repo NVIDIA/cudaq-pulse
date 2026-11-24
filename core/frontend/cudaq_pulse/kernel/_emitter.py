@@ -1629,6 +1629,21 @@ def _current(value: IRValue) -> IRValue:
 _identity_keys = None
 
 
+def _runtime_branch(
+    self: PulseIREmitter, prog: bc.DecodedCode, index: int, cond: Any, jump_if_true: bool
+) -> int:
+    """Emit the ``if`` whose conditional jump is ``prog.instrs[index]``:
+    ``_measured_if._runtime_branch``, imported at a trace's first such if,
+    which then takes this name's place, so every later if calls it
+    directly. Rebinding a module's name leaves the classes and what the
+    interpreter specialised on them as they were."""
+    global _runtime_branch
+    from ._measured_if import _runtime_branch as traced
+
+    _runtime_branch = traced
+    return traced(self, prog, index, cond, jump_if_true)
+
+
 def _load_identity_keys() -> Callable[[dict[str, Any], Any, Any], tuple[str | None, str | None]]:
     """The native identity scan, imported on first use."""
     global _identity_keys
@@ -2055,7 +2070,7 @@ class PulseIREmitter:
                         if _is_answer_condition(cond):
                             cond = _trace_condition(self.b, cond)
                         if isinstance(cond, (IRValue, _NotMeasurement)):
-                            pc = self._runtime_branch(prog, pc - 1, cond, op is _jit)
+                            pc = _runtime_branch(self, prog, pc - 1, cond, op is _jit)
                             pc = self._jump(pc, lo, hi, header)
                             if pc < 0:
                                 return None
@@ -2427,19 +2442,6 @@ class PulseIREmitter:
 
     # ── Measurement-conditioned branches ─────────────────────────────
 
-    def _runtime_branch(
-        self, prog: bc.DecodedCode, index: int, cond: Any, jump_if_true: bool
-    ) -> int:
-        """Emit the ``if`` whose conditional jump is ``prog.instrs[index]``
-        (``_measured_if``, imported at the trace's first such if, which
-        puts its own ``_runtime_branch`` and ``_trace_arm`` in place of
-        these)."""
-        from ._measured_if import _runtime_branch
-
-        return _runtime_branch(self, prog, index, cond, jump_if_true)
-
-    _runtime_branch.loads_measured_if = True  # type: ignore[attr-defined]
-
     def _check_choosable(
         self,
         name: str,
@@ -2513,21 +2515,6 @@ class PulseIREmitter:
             f"at line {line} and has no value before it, so it has no value after the "
             "if when the other arm runs; assign it in both arms, or before the if",
         )
-
-    def _trace_arm(
-        self,
-        view: bc.DecodedCode,
-        branch: int,
-        join: int,
-        start: int,
-        snapshot: tuple[list[tuple[Any, Any]], list[tuple[Any, int]]],
-    ) -> tuple[dict[str, StackVal], list[tuple[list[Any], int, IRValue]], list[tuple[Any, Any]]]:
-        """Trace one arm of a measurement-conditioned if (``_measured_if``)."""
-        from ._measured_if import _trace_arm
-
-        return _trace_arm(self, view, branch, join, start, snapshot)
-
-    _trace_arm.loads_measured_if = True  # type: ignore[attr-defined]
 
     @staticmethod
     def _jump(target: int, lo: int, hi: int, header: int) -> int:

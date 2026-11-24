@@ -62,23 +62,28 @@ def test_a_compile_without_a_measured_if_does_not_load_its_tracing():
     assert out.split() == ["False"]
 
 
-def test_the_first_measured_if_loads_its_tracing_in_place_of_the_stubs():
+def test_the_first_measured_if_loads_its_tracing_in_place_of_the_loader():
     out = _run(
         """
         import sys
 
-        from cudaq_pulse.kernel._emitter import PulseIREmitter
+        from cudaq_pulse.kernel import _emitter
 
-        stub = PulseIREmitter._runtime_branch
+        # From import on, the name holds the loader.
+        loader = _emitter._runtime_branch
+        print(loader.__module__ == "cudaq_pulse.kernel._emitter")
+        before = dict(vars(_emitter.PulseIREmitter))
         first = pulse.compile(measured).lower(Q[0], Q[1]).mlir()
         module = sys.modules["cudaq_pulse.kernel._measured_if"]
-        print(PulseIREmitter._runtime_branch is module._runtime_branch)
-        print(PulseIREmitter._trace_arm is module._trace_arm)
-        print(PulseIREmitter._runtime_branch is not stub)
+        print(_emitter._runtime_branch is module._runtime_branch)
+        print(_emitter._runtime_branch is not loader)
+        # The emitter's class is never changed: what the interpreter
+        # specialised on it stays.
+        print(dict(vars(_emitter.PulseIREmitter)) == before)
         print(pulse.compile(measured).lower(Q[0], Q[1]).mlir() == first)
         """
     )
-    assert out.split() == ["True"] * 4
+    assert out.split() == ["True"] * 5
 
 
 def test_two_threads_reaching_their_first_measured_if_at_once_trace_it_alike():

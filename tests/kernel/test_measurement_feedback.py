@@ -919,17 +919,17 @@ def _traced(body: str, tag: str) -> str:
 
 @pytest.mark.parametrize("case", list(_EMPTY_ELSE))
 def test_an_else_arm_that_only_jumps_back_is_taken_as_traced(case, monkeypatch):
-    from cudaq_pulse.kernel import _emitter, _measured_if
+    from cudaq_pulse.kernel import _measured_if
 
     body = _EMPTY_ELSE[case]
     arms = []
-    trace_arm = _emitter.PulseIREmitter._trace_arm
+    trace_arm = _measured_if._trace_arm
 
     def counted(self, view, branch, join, start, snapshot):
         arms.append(start)
         return trace_arm(self, view, branch, join, start, snapshot)
 
-    monkeypatch.setattr(_emitter.PulseIREmitter, "_trace_arm", counted)
+    monkeypatch.setattr(_measured_if, "_trace_arm", counted)
     taken = _traced(body, case)
     skipped = len(arms)
     arms.clear()

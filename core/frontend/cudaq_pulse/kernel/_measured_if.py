@@ -1,11 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Measurement-conditioned ifs: PulseIREmitter._runtime_branch and
-_trace_arm, imported at a trace's first such if.
+"""Measurement-conditioned ifs: _runtime_branch and _trace_arm, imported
+at a trace's first such if.
 
-Importing this module puts these functions on PulseIREmitter in place
-of the stubs that import it, so later ifs call them directly. A trace
-without such an if, as a first compile often is, never loads them.
+_emitter._runtime_branch imports this module and takes the name of its
+_runtime_branch, so every later if calls it directly. A trace without
+such an if, as a first compile often is, never loads it.
 """
 
 from __future__ import annotations
@@ -166,8 +166,8 @@ def _runtime_branch(
     try:
         first = builder._next_id  # the first id made in the if
         builder.emit("scf.if", (value,), ())
-        then_locals, then_slots, then_copies = self._trace_arm(
-            view, index, join, then_start, (containers, lazy)
+        then_locals, then_slots, then_copies = _trace_arm(
+            self, view, index, join, then_start, (containers, lazy)
         )
         then_stack = list(stack)
         stack[:] = saved_stack
@@ -262,8 +262,8 @@ def _runtime_branch(
                 else_log: Any = {}
                 else_made: dict[int, list[Any]] = {}
             else:
-                else_locals, else_slots, else_copies = self._trace_arm(
-                    view, index, join, else_start, (containers, lazy)
+                else_locals, else_slots, else_copies = _trace_arm(
+                    self, view, index, join, else_start, (containers, lazy)
                 )
                 if started:
                     else_log = lazy.log
@@ -278,8 +278,8 @@ def _runtime_branch(
             if then_copies:
                 for obj, copy in then_copies:
                     lines.restore_container(self, obj, copy)
-            else_locals, else_slots, else_copies = self._trace_arm(
-                view, index, join, else_start, (containers, lazy)
+            else_locals, else_slots, else_copies = _trace_arm(
+                self, view, index, join, else_start, (containers, lazy)
             )
         # Names, and stack slots (ints), the arms leave different numbers,
         # waveforms or conditions on.
@@ -632,10 +632,3 @@ def _trace_arm(
             code="runtime_value",
         )
     return dict(self.locals), slots, copies
-
-
-# In place of the stubs that imported this module, where they still are.
-for _name, _function in (("_runtime_branch", _runtime_branch), ("_trace_arm", _trace_arm)):
-    if getattr(PulseIREmitter.__dict__.get(_name), "loads_measured_if", False):
-        setattr(PulseIREmitter, _name, _function)
-del _name, _function

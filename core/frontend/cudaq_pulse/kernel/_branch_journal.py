@@ -573,14 +573,14 @@ class SlotJournalLines(JournalLines):
 
     @staticmethod
     def canonical_list(emitter: PulseIREmitter, obj: list[Any], full: bool) -> None:
-        """``_canonical_list``, for the emitter's ``_runtime_branch``."""
+        """``_canonical_list``, for ``_measured_if._runtime_branch``."""
         _canonical_list(emitter, obj, full)
 
     @staticmethod
     def log_by_list(
         log: dict[tuple[int, int], tuple[list[Any], int, IRValue]],
     ) -> dict[int, list[tuple[int, IRValue]]]:
-        """``_log_by_list``, for the emitter's ``_runtime_branch``."""
+        """``_log_by_list``, for ``_measured_if._runtime_branch``."""
         return _log_by_list(log)
 
     def start(self, emitter: PulseIREmitter) -> None:
