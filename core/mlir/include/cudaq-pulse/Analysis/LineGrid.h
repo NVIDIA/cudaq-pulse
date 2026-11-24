@@ -15,6 +15,8 @@
 
 #pragma once
 
+#include "cudaq-pulse/Analysis/Variant.h"
+
 #include "cudaq-pulse/Analysis/LineTrace.h"
 #include "cudaq-pulse/Dialect/Pulse/PulseAttrs.h"
 #include "llvm/ADT/SmallVector.h"
@@ -22,6 +24,7 @@
 #include <numeric>
 
 namespace pulse {
+PULSE_VARIANT_OPEN
 
 /// What a module's control system says of its lines, by qudit, read once.
 struct ClockAttributes {
@@ -135,4 +138,5 @@ private:
   llvm::SmallVector<int64_t> drive, readout;
 };
 
+PULSE_VARIANT_CLOSE
 } // namespace pulse

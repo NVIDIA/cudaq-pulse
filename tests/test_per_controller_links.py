@@ -235,7 +235,7 @@ def _reads_of_calls(count, per_controller, monkeypatch):
     )
     first = [lowered.export_to_controller(controller=k) for k in range(count)]
     reads = {"segments": 0, "reports": 0}
-    segments, report = type(lowered)._segments, wire._report
+    segments, report = type(lowered)._exported_segments, wire._report
 
     def counted_segments(self):
         reads["segments"] += 1
@@ -245,7 +245,7 @@ def _reads_of_calls(count, per_controller, monkeypatch):
         reads["reports"] += 1
         return report(program)
 
-    monkeypatch.setattr(type(lowered), "_segments", counted_segments)
+    monkeypatch.setattr(type(lowered), "_exported_segments", counted_segments)
     monkeypatch.setattr(wire, "_report", counted_report)
     parts = [lowered.export_to_controller(controller=k) for k in range(count)]
     monkeypatch.undo()
