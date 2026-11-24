@@ -189,6 +189,7 @@ constexpr int kOpClassicalCompare = 39;
 constexpr int kOpVariableWait = 40;
 constexpr int kOpSelect = 41;
 constexpr int kOpMaxCycles = 42;
+constexpr int kOpSite = 43;
 // A payload length of 0xFF means the length is in the next word.
 constexpr int kExtendedPayload = 0xFF;
 
@@ -7708,6 +7709,43 @@ public:
               "packed: longest program must be positive");
         controllerLimit = p[0] < maxCycles;
         maxCycles = std::min(maxCycles, p[0]);
+        break;
+      }
+
+      case kOpSite: {
+        // [site number, kind: 0 drive, 1 readout, 2 wait, 3 sync, 4 frame
+        // change] of the op just built, written by idle replacement's trace
+        // only: the op's location is pulse.site:<number>, as number_sites()
+        // gives it, and an op written into an idle window (a negative
+        // number) is marked pulse.written.
+        requirePayload(2);
+        mlir::Block *block = builder_->getInsertionBlock();
+        auto at = builder_->getInsertionPoint();
+        if (!block || at == block->begin())
+          throw std::invalid_argument("packed: a site record follows no op");
+        mlir::Operation *op = &*std::prev(at);
+        int64_t kind =
+            mlir::isa<pulse::DriveOp>(op)     ? 0
+            : mlir::isa<pulse::ReadoutOp>(op) ? 1
+            : mlir::isa<pulse::WaitOp>(op)    ? 2
+            : mlir::isa<pulse::SyncOp>(op)    ? 3
+            : mlir::isa<pulse::ShiftPhaseOp, pulse::SetPhaseOp,
+                        pulse::ShiftFrequencyOp, pulse::SetFrequencyOp>(op)
+                ? 4
+                : -1;
+        if (kind != p[1])
+          throw std::invalid_argument(
+              "packed: a site record names another kind of op");
+        int64_t site = p[0];
+        if (site < INT32_MIN || site > INT32_MAX)
+          throw std::invalid_argument("packed: a site is out of range");
+        op->setLoc(mlir::FileLineColLoc::get(
+            builder_->getContext(), "pulse.site",
+            static_cast<unsigned>(site < 0 ? -site - 1 : site),
+            site < 0 ? 1 : 0));
+        if (site < 0)
+          op->setAttr("pulse.written",
+                      mlir::UnitAttr::get(builder_->getContext()));
         break;
       }
 

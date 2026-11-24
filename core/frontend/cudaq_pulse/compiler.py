@@ -39,7 +39,6 @@ if TYPE_CHECKING:
     from . import _clocks
     from ._classical_report import ClassicalCall as ClassicalCall
     from ._device import QuantumSystem
-    from ._idle import IdleReplacement
     from ._idle_windows import IdleWindow as IdleWindow
     from ._idle_windows import IdleWindows as IdleWindows
     from ._programs import _Role
@@ -75,7 +74,7 @@ class _Module(ModuleType):
         return ClassicalCall
 
     # The types of ScheduledKernel.idle_windows, loaded with the first
-    # compilation that replaces idle windows.
+    # program whose idle windows are replaced.
     @property
     def IdleWindow(self) -> type[IdleWindow]:  # noqa: N802
         from ._idle_windows import IdleWindow
@@ -103,9 +102,7 @@ class Pass(StrEnum):
     in any order; the pattern passes (all but ``VERIFY`` and
     ``HOIST_LOOP_INVARIANTS``) that follow one another run as one rewrite of
     the program, and each of them also removes the operations its rewrites
-    leave unused. ``IDLE_REPLACEMENT`` is the exception: it works on the
-    schedule, so its place in the list changes nothing, and it is listed
-    together with ``idle_replacement=``, which gives it its kernel.
+    leave unused.
     """
 
     #: Check waveform durations and that each line is used once at each step.
@@ -128,9 +125,6 @@ class Pass(StrEnum):
     #: Move operations that compute the same value in every iteration out of
     #: loops.
     HOIST_LOOP_INVARIANTS = "hoist_loop_invariants"
-    #: Replace each idle window of the schedule with the kernel that
-    #: ``idle_replacement=`` gives (a ``pulse.IdleReplacement``).
-    IDLE_REPLACEMENT = "idle_replacement"
 
 
 # The cudaq-pulse-opt pass each member runs.
@@ -567,11 +561,14 @@ class CompileOptions:
     # compilation with unit warnings has options of a subclass
     # (kernel/_unit_warnings.py).
     unit_warnings = False
-    # Not a field either: a compilation that replaces idle windows has
-    # options of a subclass that holds its rule (_idle.py), and each of its
-    # two compilations options that hold the record its trace keeps.
-    idle_replacement = None
-    _sites = None
+
+    def tracer(self, builder: Any, target: QuantumSystem) -> Any:
+        """The tracer of a compilation whose ``unit_warnings`` is set: the
+        one that warns of bare numbers, or (``_idle._SiteOptions``) the one
+        that also keeps idle replacement's record of the operations."""
+        from .kernel._unit_warnings import unit_checked
+
+        return unit_checked(builder, target)
 
     @staticmethod
     def make(
@@ -581,7 +578,6 @@ class CompileOptions:
         flatten_schedules: bool = False,
         unroll_threshold: int | None = None,
         unit_warnings: bool = False,
-        idle_replacement: IdleReplacement | None = None,
     ) -> CompileOptions:
         if schedule not in _VALID_SCHEDULES:
             close = _closest(str(schedule).lower(), _VALID_SCHEDULES)
@@ -591,9 +587,6 @@ class CompileOptions:
                 f"Choose from: {', '.join(sorted(_VALID_SCHEDULES))}"
             )
         passes = DEFAULT_PASSES if passes is None else _passes(passes)
-        listed = passes is not DEFAULT_PASSES and Pass.IDLE_REPLACEMENT in passes
-        if listed:
-            passes = tuple(p for p in passes if p is not Pass.IDLE_REPLACEMENT)
         if control_system is None:
             machine = _DEFAULT_MACHINE
         else:
@@ -623,11 +616,7 @@ class CompileOptions:
         if unit_warnings:
             from .kernel._unit_warnings import with_unit_warnings
 
-            options = with_unit_warnings(options)
-        if listed or idle_replacement is not None:
-            from ._idle import with_idle_replacement
-
-            return with_idle_replacement(options, idle_replacement, listed)
+            return with_unit_warnings(options)
         return options
 
     def schedule_args(self) -> tuple[str, int, int, int, int]:
@@ -1141,10 +1130,10 @@ class ScheduledKernel:
 
     @property
     def idle_windows(self) -> IdleWindows | None:
-        """The idle windows of a program compiled with ``idle_replacement=``:
+        """The idle windows of a program lowered by ``compiled.replace_idle(rule)``:
         each stretch of at least the rule's threshold in which a qudit idles,
         with what was done there (see ``IdleWindow``). ``None`` for a program
-        compiled without it."""
+        whose idle windows were not replaced."""
         return getattr(self.metrics, "idle_windows", None)
 
     def export_to_emulator(self, *, controller: int | None = None) -> dict[str, Any]:
@@ -1452,17 +1441,9 @@ def build(
     plain = machine._plain
     clocks = None if plain else _clocked_builder(builder, machine, target)
     # One try for the trace and the module: a try statement costs a bytecode.
-    # One of the two compilations of an idle replacement (_idle.py) has sites.
-    sites = options._sites
     try:
-        if options.unit_warnings or sites is not None:
-            checked = None
-            if options.unit_warnings:
-                from .kernel._unit_warnings import unit_checked
-
-                checked = unit_checked(builder, target)
-            if sites is not None:
-                checked = sites.attach(builder, checked)
+        if options.unit_warnings:
+            checked = options.tracer(builder, target)
             builder.returned = _trace_kernel_with_builder(fn, builder, trace_args, checked)
         else:
             builder.returned = _trace_kernel_with_builder(fn, builder, trace_args)
@@ -1561,8 +1542,6 @@ def build(
         if plain and max_duration_cycles is None
         else _clocked_module(module, machine, target, clocks, max_duration_cycles)
     )
-    if sites is not None:
-        sites.number(module)
     metrics.ffi_ms = (time.perf_counter() - t0) * 1000
 
     t0 = time.perf_counter()
@@ -2071,7 +2050,6 @@ def compile[**P](
     flatten_schedules: bool = False,
     unroll_threshold: int | None = None,
     unit_warnings: bool = False,
-    idle_replacement: IdleReplacement | None = None,
 ) -> CompiledKernel[P]:
     """Compile a ``@cudaq_pulse.kernel`` without its arguments.
 
@@ -2094,7 +2072,6 @@ def compile[**P](
     passes:
         Optimization passes (``Pass`` members or their names), run in the
         order given; ``DEFAULT_PASSES`` by default, ``()`` for none.
-        ``Pass.IDLE_REPLACEMENT`` goes with *idle_replacement*.
     control_system:
         The ``ControlSystem`` to compile for: every program is checked
         against its controllers' wiring, capabilities and limits, and its
@@ -2121,11 +2098,6 @@ def compile[**P](
         frequency far below the quantum system's carriers (one probably in
         MHz or kHz rather than Hz). Off by default. The warnings are
         issued when the kernel traces; they do not change the program.
-    idle_replacement:
-        A ``pulse.IdleReplacement``: the kernel that replaces each idle
-        window of the schedule, and the shortest idle that counts as one.
-        Given together with ``Pass.IDLE_REPLACEMENT`` in *passes*; either
-        one without the other is an ``InvalidValueError``.
     quantum_system:
         Pin the compiled kernel to one quantum system: a call with handles of
         another raises ``QuantumSystemMismatchError``, and a call without handles
@@ -2144,6 +2116,5 @@ def compile[**P](
         flatten_schedules,
         kernel.unroll_threshold if unroll_threshold is None else unroll_threshold,
         unit_warnings,
-        idle_replacement,
     )
     return CompiledKernel(kernel, options, quantum_system)
