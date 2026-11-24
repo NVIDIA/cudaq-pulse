@@ -726,6 +726,29 @@ def test_a_sample_rate_is_a_positive_number(rate):
         Controller(sample_rate_ghz=rate)
 
 
+_COUNT_LIMITS = ["waveform_memory_samples", "max_frequencies_per_line", "max_pulses"]
+
+
+@pytest.mark.parametrize("name", _COUNT_LIMITS)
+@pytest.mark.parametrize("wrong", [0, -1, 1.5, math.nan, math.inf, True, "2", 2 * pulse.ns])
+def test_a_count_limit_is_a_positive_int(name, wrong):
+    # No comparison refuses a NaN: `nan < 1` is false, and so is every check
+    # of a count against the limit, which left the limit off without an error.
+    with pytest.raises(
+        pulse.InvalidValueError, match=f"Controller.{name} must be a positive int or None, got"
+    ):
+        Controller(**{name: wrong})
+
+
+@pytest.mark.parametrize("name", _COUNT_LIMITS)
+def test_a_whole_number_of_another_type_is_that_count_limit(name):
+    # As before: a description may state a count as 1e6, which TOML reads as a float.
+    for whole in (2.0, np.int64(2)):
+        limit = getattr(Controller(**{name: whole}), name)
+        assert limit == 2 and type(limit) is int
+    assert getattr(Controller(**{name: None}), name) is None
+
+
 def test_samples_per_cycles_is_no_longer_a_limit():
     with pytest.raises(TypeError, match="samples_per_cycles"):
         Controller(samples_per_cycles=2)  # type: ignore[call-arg]
@@ -947,7 +970,7 @@ def test_limits_are_part_of_the_control_system_identity():
         Controller(instruction_cycles=0)
     with pytest.raises(ValueError, match="cannot be negative"):
         Controller(detector_recovery_cycles=-1)
-    with pytest.raises(ValueError, match="positive or None"):
+    with pytest.raises(ValueError, match="must be a positive int or None"):
         Controller(waveform_memory_samples=0)
 
 

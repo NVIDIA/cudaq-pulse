@@ -111,14 +111,76 @@ def test_a_controller_checks_its_wiring_fields():
     ("kwargs", "message"),
     [
         ({"instruction_cycles": 0}, r"instruction_cycles must be at least 1, got 0$"),
+        ({"instruction_cycles": -1}, r"instruction_cycles cannot be negative, got -1$"),
         ({"min_idle_cycles": -1}, r"min_idle_cycles cannot be negative, got -1$"),
         ({"detector_recovery_cycles": -1}, r"detector_recovery_cycles cannot be negative, got -1$"),
     ],
-    ids=["instruction_cycles", "min_idle_cycles", "detector_recovery_cycles"],
+    ids=[
+        "instruction_cycles",
+        "negative_instruction_cycles",
+        "min_idle_cycles",
+        "detector_recovery_cycles",
+    ],
 )
 def test_a_controller_cycle_count_error_names_the_value(kwargs, message):
     with pytest.raises(InvalidValueError, match=message):
         pulse.Controller(**kwargs)
+
+
+_CYCLE_COUNTS = ["instruction_cycles", "min_idle_cycles", "detector_recovery_cycles"]
+
+
+@pytest.mark.parametrize("name", _CYCLE_COUNTS)
+@pytest.mark.parametrize(
+    ("wrong", "error"),
+    [
+        # `nan < 1` and `nan < 0` are false, so a comparison alone lets a NaN in.
+        (math.nan, InvalidValueError),
+        (math.inf, InvalidValueError),
+        (2.5, InvalidValueError),
+        (True, pulse.InvalidTypeError),
+        ("6", pulse.InvalidTypeError),
+    ],
+    ids=["nan", "inf", "fraction", "bool", "string"],
+)
+def test_a_controllers_cycle_count_is_a_whole_number_of_cycles(name, wrong, error):
+    with pytest.raises(error, match=f"Controller.{name} is a whole number of cycles, got"):
+        pulse.Controller(**{name: wrong})
+
+
+@pytest.mark.parametrize("name", _CYCLE_COUNTS)
+def test_a_controllers_cycle_count_is_in_its_own_cycles(name):
+    # As for feedback_latency_cycles: a whole float is that many cycles, and
+    # a time is not a number of cycles.
+    cycles = getattr(pulse.Controller(**{name: 6.0}), name)
+    assert cycles == 6 and type(cycles) is int
+    with pytest.raises(
+        pulse.InvalidTypeError, match=f"Controller.{name} is a whole number of the controller's own"
+    ):
+        pulse.Controller(**{name: 6 * pulse.ns})
+
+
+@pytest.mark.parametrize(
+    ("name", "message"),
+    [
+        ("max_pulses", "Controller.max_pulses must be a positive int or None, got nan"),
+        ("min_idle_cycles", "Controller.min_idle_cycles is a whole number of cycles, got nan"),
+    ],
+)
+def test_a_nan_limit_in_a_system_file_or_a_description_is_refused(name, message, tmp_path):
+    # Python's json reads NaN, and so does TOML.
+    text = json.dumps(
+        {"name": TRANSMON_SURFACE17, "control_system": {"controllers": [{name: math.nan}]}}
+    )
+    with pytest.raises(QuantumSystemDefinitionError) as raised:
+        pulse.QuantumSystem.from_dict(json.loads(text))
+    found = [(p.path, p.message) for p in raised.value.problems]
+    assert found == [("control_system.controllers[0]", message)]
+    path = tmp_path / "box.toml"
+    path.write_text(f'model = "lab.box"\nversion = "2"\n{name} = nan\n')
+    with pytest.raises(QuantumSystemDefinitionError) as raised:
+        pulse.controller(path)
+    assert [p.message for p in raised.value.problems] == [message]
 
 
 def test_a_control_system_reports_every_wiring_problem_at_once():
