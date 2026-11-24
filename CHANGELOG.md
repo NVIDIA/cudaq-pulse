@@ -34,21 +34,22 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   starts a submission, and a seed that is not a whole number gets the usage
   line. `challenges/README.rst` says what a scorer reads and what it cannot
   check.
-- **Idle replacement.** `pulse.compile(k, passes=(*DEFAULT_PASSES,
-  pulse.Pass.IDLE_REPLACEMENT), idle_replacement=pulse.IdleReplacement(fill,
-  threshold=100 * pulse.ns))` writes the kernel `fill(qudit, window)` into
-  each idle window of the schedule: a stretch of at least the threshold in
-  which a qudit's drive line has no operation, none of its tones plays and
-  its own readout does not run, such as a data qudit's wait through an
-  ancilla readout. A fill shorter than its window is centred with waits
-  (`align=`), a longer one is an error; windows in loops are filled in
-  every round and the loop stays rolled. Every operation of the kernel
-  keeps its start and the program its length under every schedule policy,
-  which compiling checks. `ScheduledKernel.idle_windows` lists each window
-  with what was done there or why it was left alone, and
+- **Idle replacement.** `pulse.compile(k).replace_idle(pulse.IdleReplacement(fill,
+  threshold=100 * pulse.ns))` is the compiled kernel with the kernel
+  `fill(qudit, window)` written into each idle window of its schedules: a
+  stretch of at least the threshold in which a qudit's drive line has no
+  operation, none of its tones plays and its own readout does not run, such
+  as a data qudit's wait through an ancilla readout. A fill shorter than its
+  window is centred with waits (`align=`), a longer one is an error; windows
+  in loops are filled in every round and the loop stays rolled. Every
+  operation of the kernel keeps its start and the program its length under
+  every schedule policy, which compiling checks; under `rcp` and `alap_rcp`
+  a window whose fill would move another operation for lack of a drive lane
+  is left unfilled. `ScheduledKernel.idle_windows` lists each window with
+  what was done there or why it was left alone, and
   `IdleReplacement(None, threshold=...)` only lists them. In this version a
-  fill drives and waits on its own qudit's drive line. A compilation
-  without the rule is unchanged.
+  fill drives and waits on its own qudit's drive line. A kernel whose idle
+  windows are not replaced compiles exactly as before.
 - **Error codes.** Every `CompilationError` has a `code`, a
   `pulse.ErrorCode` (`unknown_name`, `wrong_argument`, `runtime_value`,
   `invalid_duration` and the others listed under Errors), so a program or
