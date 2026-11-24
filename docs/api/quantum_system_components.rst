@@ -62,7 +62,9 @@ when its qudits are tuned; all are components of their modality, as
 frequency, a coupling that is always on). An amplitude is in the
 component's ``unit``, an offset from the idle point, and signed.
 ``PhysicalQudit.frequency_at``, ``anharmonicity_at`` and ``amplitude_for``
-and ``Coupling.at`` read them without compiling anything:
+and ``Coupling.at`` read what is declared without compiling anything, and
+``QuantumSystem.tuning``, ``control`` and ``interaction`` give a system's
+answer, declared or from its calibration:
 
 .. code-block:: python
 
@@ -70,9 +72,9 @@ and ``Coupling.at`` read them without compiling anything:
 
    qs = pulse.quantum_system("transmon_surface17")
    d4, x2 = qs.qudit("D4"), qs.qudit("X2")
-   qs.physical_qudits[d4.index].frequency_at(-0.3)         # Hz, 0.3 flux quanta off idle
-   qs.physical_qudits[d4.index].amplitude_for(5.276e9)     # -0.3015
-   point = qs.coupling(x2, d4).at({d4: -0.3015})           # X2 idles
+   qs.tuning(d4).frequency_at(-0.3)                        # Hz, 0.3 flux quanta off idle
+   qs.tuning(d4).amplitude_for(5.276e9)                    # -0.3015
+   point = qs.interaction(x2, d4).at((x2, d4), {d4: -0.3015})   # X2 idles
    print(point.frequencies_hz, point.exchange_hz, point.exchanges_hz[(1, 1), (2, 0)])
 
 Each component records where its values come from in ``source``: on the

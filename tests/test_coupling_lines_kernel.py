@@ -385,6 +385,21 @@ def test_a_line_the_quantum_system_declares_no_control_for_is_refused():
     assert "qudit 0 has no tuning" in _raises(tuned, untuned.qudits[0])
 
 
+def test_systems_that_differ_in_tunings_share_no_specialization():
+    def system(tuning):
+        return pulse.quantum_system(
+            name="one",
+            qudits={0: PhysicalQudit(0, 5.0e9, 50.0, 30.0, anharmonicity_hz=-3.0e8, tuning=tuning)},
+        )
+
+    with_tuning, without = system(_TUNING), system(None)
+    assert with_tuning.fingerprint != without.fingerprint
+    assert len(tuned.lower(with_tuning.qudits[0]).schedule) == 1
+    # The kernel compiled for the tuned system is not reused for the other.
+    assert "qudit 0 has no tuning" in _raises(tuned, without.qudits[0])
+    assert len(tuned.lower(with_tuning.qudits[0]).schedule) == 1
+
+
 def test_a_line_the_control_system_does_not_have_is_refused():
     box = pulse.Controller(coupling_lines=[CouplingLine(0), CouplingLine((0, 1)), CouplingLine(2)])
     qs = _system(pulse.ControlSystem(controllers=[box]))

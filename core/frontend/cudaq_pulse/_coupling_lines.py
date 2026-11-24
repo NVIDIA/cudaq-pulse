@@ -300,10 +300,6 @@ def wiring_problems(
     problems: list[Problem] = []
     if calibration is False:
         return problems
-    if calibration is not None:
-        target = calibration._with_components(target)
-    known = target.qudits
-    couplings = {frozenset(c.qudits): c for c in target.couplings}
     first: dict[tuple[int, ...], str] = {}
     for index, controller in enumerate(system.controllers):
         if not controller.coupling_lines:
@@ -332,7 +328,7 @@ def wiring_problems(
                         fix="a control is reached by one coupling line",
                     )
                 )
-            problem = reach_problem(line.qudits, known, couplings, system)
+            problem = reach_problem(line.qudits, target, calibration, system)
             if problem is not None:
                 problems.append(Problem(problem[0], path=path, value=line, fix=problem[1]))
     return problems
@@ -340,13 +336,17 @@ def wiring_problems(
 
 def reach_problem(
     reached: tuple[int, ...],
-    known: Mapping[int, Any],
-    couplings: Mapping[frozenset[int], Any],
+    target: _Description,
+    calibration: Any,
     system: ControlSystem | None = None,
 ) -> tuple[str, str] | None:
-    """What is wrong with a line acting on *reached* in a quantum system of
-    the qudits *known* and *couplings*, with its fix; None when the system
-    declares the component for exactly those qudits."""
+    """What is wrong with a line acting on *reached* in the quantum system
+    *target* with its *calibration* (which gives the tunings and
+    interactions that are not declared), with its fix; None when the
+    system has the control of exactly those qudits."""
+    from .quantum_systems.components import interaction_of, tuning_of
+
+    known = target.qudits
     for qudit in reached:
         if qudit not in known:
             return (
@@ -355,7 +355,7 @@ def reach_problem(
             )
     if len(reached) == 1:
         (qudit,) = reached
-        if known[qudit].tuning is None:
+        if tuning_of(target, calibration, qudit) is None:
             return (
                 f"qudit {qudit} has no tuning, so no coupling line reaches it",
                 f"give PhysicalQudit({qudit}, ..., tuning=...) the component that tunes it, as "
@@ -371,7 +371,7 @@ def reach_problem(
             "pair's control, as CouplingLine((0, 1))",
         )
     a, b = reached
-    coupling = couplings.get(frozenset(reached))
+    coupling = next((c for c in target.couplings if set(c.qudits) == set(reached)), None)
     if coupling is None:
         return (
             f"qudits {a} and {b} are not coupled, so no coupling line reaches their control",
@@ -379,7 +379,7 @@ def reach_problem(
         )
     if coupling.control is not None:
         return None
-    if coupling.interaction is not None:
+    if interaction_of(target, calibration, coupling) is not None:
         through = [
             repr(line)
             for q in reached

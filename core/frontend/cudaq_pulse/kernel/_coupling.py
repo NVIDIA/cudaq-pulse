@@ -122,7 +122,6 @@ def _require_declared(b: Any, reached: list[int | None]) -> None:
     from .._coupling_lines import _and, lines_of, reach_problem
 
     acts_on = tuple(sorted(q for q in reached if q is not None))
-    described = target._tuned()
     # The control system the kernel is compiled for, else the quantum system's.
     machine: Any = getattr(b, "machine", None)
     system = getattr(machine, "_system", None)
@@ -160,12 +159,7 @@ def _require_declared(b: Any, reached: list[int | None]) -> None:
                 code="wrong_argument",
                 fix=fix,
             )
-    problem = reach_problem(
-        acts_on,
-        described.qudits,
-        {frozenset(c.qudits): c for c in described.couplings},
-        system,
-    )
+    problem = reach_problem(acts_on, target._description, target.calibration, system)
     if problem is not None:
         raise CompilationError(
             f"get_coupling_line(): {problem[0]}", code="wrong_argument", fix=problem[1]

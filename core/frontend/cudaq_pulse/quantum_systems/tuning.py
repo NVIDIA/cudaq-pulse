@@ -465,6 +465,22 @@ class ChargeCoupling(CouplingInteraction):
                 problems += tuning._problems(path)
         return problems
 
+    def at(self, qudits: Sequence[Any], amplitude: Mapping[Any, Any]) -> CouplingPoint:
+        """The coupling of *qudits* (the pair's indices or ``Qudit`` handles,
+        in the order of ``tunings``) with the tunings of its qudits at
+        *amplitude*, a mapping from a qudit to its amplitude (a float or an
+        array; a qudit left out idles): what ``Coupling.at`` reads of a
+        coupling that declares this interaction, for one a quantum system
+        answers for (``QuantumSystem.interaction``)."""
+        a, b = map(_carrier, qudits)
+        given = {_carrier(k): v for k, v in amplitude.items()}
+        other = sorted(set(given) - {a, b}, key=repr)
+        if other:
+            raise InvalidValueError(
+                f"{other[0]!r} is not a qudit of the coupling of qudits {a} and {b}"
+            )
+        return self._point(a, b, given.get(a, 0.0), given.get(b, 0.0))
+
     def _point(self, a: int, b: int, amplitude_a: Any, amplitude_b: Any) -> CouplingPoint:
         import numpy as np
 

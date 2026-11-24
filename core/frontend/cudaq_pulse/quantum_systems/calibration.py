@@ -409,49 +409,44 @@ class Calibration:
         self._tuning_values = found
         return found  # type: ignore[no-any-return]
 
-    def _with_components(self, target: Any) -> Any:
-        """*target* with what the calibration says of its controls, made when
-        something first asks for them: each qudit whose circuit is
-        calibrated and that gives no tuning takes a ``FluxTuning`` of it,
-        and each coupling of two tuned qudits that gives no control and no
-        interaction a ``ChargeCoupling`` with the calibration's g_c, made
-        through those tunings. A qudit matches its label; a target the
-        calibration says nothing of is returned as it is."""
-        used, g_c, circuits = self._tunings()
-        by_label = dict(circuits)
-        qudits = target.qudits
-        if by_label.keys().isdisjoint(q.label for q in qudits.values()):
-            return target
-        from .base import _derived_interaction, _derived_tuning
-        from .tuning import ChargeCoupling, FluxTuning
+    def _tuning(self, label: str) -> Any:
+        """The ``FluxTuning`` of the qudit labelled *label*, from its
+        calibrated circuit, or None for a qudit whose circuit the calibration
+        does not give. Made when first asked for, once per label."""
+        made: dict[str, Any] = self.__dict__.setdefault("_flux_tunings", {})
+        if label not in made:
+            circuit = dict(self._tunings()[2]).get(label)
+            if circuit is None:
+                made[label] = None
+            else:
+                from .tuning import FluxTuning
 
-        tuned = {}
-        for i, q in qudits.items():
-            circuit = by_label.get(q.label)
-            if circuit is not None and q.tuning is None:
                 ec, ej_max, d, idle = circuit
-                q = _derived_tuning(
-                    q,
-                    FluxTuning(
-                        ec_hz=ec,
-                        ej_max_hz=ej_max,
-                        asymmetry=d,
-                        idle_flux=idle,
-                        source=f"{self.name} calibration, qudits.{q.label}: ec, ej_max, "
-                        "asymmetry_d, sweet_spot_idle",
-                    ),
+                made[label] = FluxTuning(
+                    ec_hz=ec,
+                    ej_max_hz=ej_max,
+                    asymmetry=d,
+                    idle_flux=idle,
+                    source=f"{self.name} calibration, qudits.{label}: ec, ej_max, asymmetry_d, "
+                    "sweet_spot_idle",
                 )
-            tuned[i] = q
-        source = f"{self.name} calibration, coupling.charge_coupling_g_c.{used}"
-        couplings = []
-        for c in target.couplings:
-            a, b = tuned[c.qudits[0]].tuning, tuned[c.qudits[1]].tuning
-            if a is not None and b is not None and c.control is None and c.interaction is None:
-                c = _derived_interaction(
-                    c, ChargeCoupling(charge_coupling_hz=g_c, tunings=(a, b), source=source)
-                )
-            couplings.append(c)
-        return target.replace(qudits=tuned, couplings=couplings)
+        return made[label]
+
+    def _interaction(self, a: str, b: str) -> Any:
+        """The ``ChargeCoupling`` of the qudits labelled *a* and *b*, made
+        through the tunings the calibration gives them, with its g_c; made
+        once per pair."""
+        made: dict[tuple[str, str], Any] = self.__dict__.setdefault("_charge_couplings", {})
+        if (a, b) not in made:
+            from .tuning import ChargeCoupling
+
+            used, g_c, _ = self._tunings()
+            made[a, b] = ChargeCoupling(
+                charge_coupling_hz=g_c,
+                tunings=(self._tuning(a), self._tuning(b)),
+                source=f"{self.name} calibration, coupling.charge_coupling_g_c.{used}",
+            )
+        return made[a, b]
 
     @cached_property
     def _idle_exchange(self) -> Mapping[str, tuple[float, Any]]:

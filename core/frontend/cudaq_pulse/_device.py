@@ -57,10 +57,13 @@ if TYPE_CHECKING:
     from .gates import Gate
     from .quantum_systems.base import (
         Coupling,
+        CouplingControl,
+        CouplingInteraction,
         DragPulse,
         PhysicalQudit,
         ReadoutPulse,
         ResidualZZ,
+        Tuning,
         VirtualZ,
     )
     from .quantum_systems.calibration import Calibration
@@ -404,11 +407,7 @@ class QuantumSystem:
         if control_system is not None:
             from ._system import _wiring_problems
 
-            # A variant's coupling lines are checked when a kernel fetches
-            # one: the tunings its qudits take are made then.
-            problems.extend(
-                _wiring_problems(control_system, target, False if _variant else calibration)
-            )
+            problems.extend(_wiring_problems(control_system, target, calibration))
         if layout is None or problems:
             raise QuantumSystemDefinitionError(problems=problems)
         self.control_system = control_system
@@ -430,24 +429,6 @@ class QuantumSystem:
         # (__getattr__): most are only simulated against, which reads none of it.
         if not _variant:
             self._finish()
-
-    def _tuned(self) -> _Description:
-        """The description with the tunings and interactions its calibration
-        gives its qudits and couplings: they are made the first time
-        something asks for the system's physical qudits or couplings, not
-        when the system is built. The fingerprint, pickles and system
-        files are of the description as it was given and of the
-        calibration, and so make none."""
-        description: _Description = self.__dict__["_description"]
-        made = self.__dict__.get("_tuned_description")
-        if made is None or made[0] is not description:
-            calibration = self.__dict__.get("_components") or self.__dict__.get("calibration")
-            tuned = (
-                description if calibration is None else calibration._with_components(description)
-            )
-            made = self.__dict__["_tuned_description"] = (description, tuned)
-        found: _Description = made[1]
-        return found
 
     def _finish(self) -> None:
         """The frequencies, fingerprint, identity and qudit handles."""
@@ -590,7 +571,41 @@ class QuantumSystem:
                 raise QuantumSystemMismatchError(
                     f"{handle!r} is a qudit of {handle.quantum_system.name!r}, not of {self.name!r}"
                 )
-        return self._tuned().coupling(a.index, b.index)
+        return self._description.coupling(a.index, b.index)
+
+    def tuning(self, qudit: Qudit | int) -> Tuning | None:
+        """How the frequency of *qudit* (a handle, or its index in the
+        system) is tuned: the ``tuning`` its ``PhysicalQudit`` declares,
+        else the one the system's calibration gives it (``transmon_surface17``:
+        the ``FluxTuning`` of its calibrated circuit), else ``None``. What a
+        calibration gives is made when first asked for and is not part of
+        the qudit: ``physical_qudits[i].tuning`` is only what was declared."""
+        from .quantum_systems.components import tuning_of
+
+        index = qudit.index if isinstance(qudit, Qudit) else qudit
+        return tuning_of(self._description, self.calibration, index)
+
+    def control(self, a: Qudit | int, b: Qudit | int) -> CouplingControl | None:
+        """The control of the coupling of *a* and *b* (handles or indices, in
+        either order), which a coupling line reaches: what its ``Coupling``
+        declares, or ``None``. A ``NotFoundError`` when they are not coupled."""
+        return self._pair(a, b).control
+
+    def interaction(self, a: Qudit | int, b: Qudit | int) -> CouplingInteraction | None:
+        """How *a* and *b* (handles or indices, in either order) interact
+        through a coupling with no line of its own: the ``interaction`` its
+        ``Coupling`` declares, else the one the system's calibration gives
+        it (``transmon_surface17``: a ``ChargeCoupling`` of its g_c, made
+        through the two qudits' tunings), else ``None``. A ``NotFoundError``
+        when they are not coupled."""
+        from .quantum_systems.components import interaction_of
+
+        coupling = self._pair(a, b)
+        return interaction_of(self._description, self.calibration, coupling)
+
+    def _pair(self, a: Qudit | int, b: Qudit | int) -> Coupling:
+        first, second = (q.index if isinstance(q, Qudit) else q for q in (a, b))
+        return self._description.coupling(first, second)
 
     def _line_calibration(
         self, index: int, readout: bool, gate: Any, transition: Any
@@ -681,9 +696,7 @@ class QuantumSystem:
         ``thermal_populations``, ``coupling_map``, ``connectivity_graph()`` and
         ``drive_amplitude_scale(i)``."""
         if name == "physical_qudits":
-            return self._tuned().qudits
-        if name == "couplings":
-            return self._tuned().couplings
+            return self.__dict__["_description"].qudits
         if (
             name in ("qudits", "fingerprint", "_identity", "frequencies")
             and "layout" in self.__dict__
@@ -706,7 +719,7 @@ class QuantumSystem:
         }:
             return getattr(self.__dict__["_description"], name)
         if name == "true_qudits":
-            return self._tuned().qudits
+            return self.__dict__["_description"].qudits
         if name == "parameter_drift" or name == "parameter_drift_time":
             return None
         if name == "advance":
@@ -759,7 +772,7 @@ class QuantumSystem:
                 f"it takes {', '.join(_DESCRIPTION_FIELDS[:-1])}, layout, control_system, "
                 "clock_ghz, parameter_drift and parameter_drift_seed"
             )
-        variant = QuantumSystem(
+        return QuantumSystem(
             described.replace(**changes),
             name=changes.get("name", self.name),
             layout=layout,
@@ -768,12 +781,6 @@ class QuantumSystem:
             clock_ghz=clock_ghz,
             _variant=True,
         )
-        # A variant has no calibration of its own; its qudits and couplings
-        # keep the tunings and interactions this one's gives them.
-        components = self.__dict__.get("_components", self.calibration)
-        if components is not None:
-            variant.__dict__["_components"] = components
-        return variant
 
     def as_dict(self) -> dict[str, Any]:
         """The quantum system as JSON-serializable data, which ``QuantumSystem.from_dict``

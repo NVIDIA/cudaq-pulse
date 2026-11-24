@@ -201,27 +201,36 @@ The helpers read the components without compiling anything:
 
    qs = pulse.quantum_system("transmon_surface17")
    x2, d4 = qs.qudit("X2"), qs.qudit("D4")
-   data = qs.physical_qudits[d4.index]
+   data = qs.tuning(d4)                      # the FluxTuning the calibration gives D4
    data.frequency_at(0.0)                    # 3.878e9: the idle point
    assert math.isclose(data.frequency_at(-0.3), data.frequency_at(0.3))   # even about the sweet spot
    at = data.amplitude_for(5.276e9)          # -0.3015 flux quanta to the CZ's frequency
-   point = qs.coupling(x2, d4).at({d4: at})
+   point = qs.interaction(x2, d4).at((x2, d4), {d4: at})
    print(point.frequencies_hz[d4.index], point.exchange_hz)
 
-On a coupling whose interaction is made by tuning its qudits, ``Coupling.at`` takes the
-amplitude of each tuned qudit as a mapping, ``{d4: ...}`` or ``{x2: ...,
-d4: ...}``; a qudit left out stays at its idle point. On a pair's own
-control it takes the control's amplitude. The point gives the qudits' 0-1 frequencies
+An interaction made by tuning its qudits takes the amplitude of each tuned
+qudit as a mapping, ``{d4: ...}`` or ``{x2: ..., d4: ...}``; a qudit left
+out stays at its idle point (``Coupling.at`` reads a coupling that
+declares one the same way). A pair's own control takes the control's
+amplitude. The point gives the qudits' 0-1 frequencies
 and anharmonicities, the 0-1 exchange, and the exchange of the other level
-pairs, as ``exchanges_hz[(1, 1), (2, 0)]`` for ``|11> <-> |20>``. On
-``transmon_surface17`` with its calibration, every qudit has the
-``FluxTuning`` of its calibrated circuit and every coupling a
-``ChargeCoupling`` of the system-wide g_c, each naming in ``source`` the
-calibration entries it is read from; at X2-D4's CZ operating point the 0-1
-exchange is 6.38 MHz and ``|11> <-> |20>`` 8.88 MHz. They follow from the
-calibration and are made the first time ``physical_qudits`` or
-``couplings`` is read, so building the system, its fingerprint and its
-system file do not make them. With ``calibration=None`` there are none.
+pairs, as ``exchanges_hz[(1, 1), (2, 0)]`` for ``|11> <-> |20>``.
+
+A quantum system answers for its controls: ``qs.tuning(q)``,
+``qs.control(a, d)`` and ``qs.interaction(a, d)`` give what the qudit or
+the coupling declares, else what the system's calibration gives. On
+``transmon_surface17`` with its calibration, ``qs.tuning(q)`` is the
+``FluxTuning`` of the qudit's calibrated circuit and ``qs.interaction(a,
+d)`` a ``ChargeCoupling`` of the system-wide g_c, each naming in
+``source`` the calibration entries it is read from; at X2-D4's CZ
+operating point the 0-1 exchange is 6.38 MHz and ``|11> <-> |20>`` 8.88
+MHz. They are made when first asked for and are not part of the system's
+``physical_qudits`` and ``couplings``, whose ``tuning``, ``control`` and
+``interaction`` are only what was declared: building the system, its
+fingerprint, its pickles and its system file are as without them. A
+variant made with ``replace`` and a system built from the same qudits
+answer alike; a qudit that is changed is no longer the calibrated one and
+has the tuning it declares. With ``calibration=None`` there are none.
 
 The wiring between a controller and the device does not pass a pulse on
 unchanged. A ``FluxTuning`` or an ``ExchangeControl`` declares it with

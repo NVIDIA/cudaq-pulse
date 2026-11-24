@@ -131,12 +131,15 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   point. A `FluxTuning` or an `ExchangeControl` may declare the `response`
   of the wiring that carries its amplitude, an `ExponentialSettling`, a
   `HighPass` or a sequence of them; a program's samples stay as written.
-  Each component names its `source`. `transmon_surface17` gives every
-  qudit the `FluxTuning` of its calibrated circuit and every coupling a
-  `ChargeCoupling` of its g_c: they follow from its calibration and are
-  made the first time its `physical_qudits` or `couplings` are read, so
-  building the system, its fingerprint, its pickles and its system file
-  are what they were. System files keep the components a system is given.
+  Each component names its `source`. A quantum system answers for its
+  controls: `qs.tuning(q)`, `qs.control(a, d)` and `qs.interaction(a, d)`
+  give what the qudit or the coupling declares, else what the system's
+  calibration gives. `transmon_surface17` answers with the `FluxTuning`
+  of each qudit's calibrated circuit and a `ChargeCoupling` of its g_c
+  for each coupling; they are made when first asked for and are not part
+  of its qudits and couplings, so building the system, its
+  `physical_qudits`, its fingerprint, its pickles and its system file are
+  what they were. System files keep the components a system declares.
   Nothing compiles, schedules, exports or simulates differently.
 - **Coupling lines in a kernel.** `get_coupling_line(*qudits)` fetches the
   line of a control of the quantum system, of one qudit the line that tunes

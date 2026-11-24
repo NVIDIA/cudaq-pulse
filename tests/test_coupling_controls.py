@@ -35,8 +35,21 @@ D4, X2 = 3, 10
 
 
 @pytest.fixture(scope="module")
-def qs():
+def shipped():
     return pulse.quantum_system("transmon_surface17")
+
+
+@pytest.fixture(scope="module")
+def qs(shipped):
+    """The shipped system's values with what its calibration gives its
+    qudits and couplings declared on them."""
+    return pulse.quantum_system(
+        name="declared17",
+        qudits={i: q.replace(tuning=shipped.tuning(i)) for i, q in shipped.physical_qudits.items()},
+        couplings=[
+            c.replace(interaction=shipped.interaction(*c.qudits)) for c in shipped.couplings
+        ],
+    )
 
 
 def _pair(control=None, tunings=(None, None), interaction=None):
@@ -277,26 +290,119 @@ def test_a_wrong_tuning_or_control_is_refused_even_when_falsy():
         _pair(None, (outside, None))
 
 
+def test_the_shipped_system_answers_for_what_its_calibration_gives(shipped):
+    # Nothing rides on the qudits and couplings: they are what was declared.
+    assert all(q.tuning is None for q in shipped.physical_qudits.values())
+    assert all(c.control is None and c.interaction is None for c in shipped.couplings)
+    assert shipped.true_qudits is shipped.physical_qudits
+    d4, x2 = shipped.qudits[D4], shipped.qudits[X2]
+    tuning = shipped.tuning(d4)
+    assert isinstance(tuning, FluxTuning) and shipped.tuning(D4) is tuning
+    assert tuning.source.startswith("transmon_surface17 calibration, qudits.D4:")
+    made = shipped.interaction(x2, d4)
+    assert isinstance(made, ChargeCoupling) and shipped.interaction(D4, X2) is made
+    assert made.tunings == (shipped.tuning(X2), tuning)
+    assert shipped.control(x2, d4) is None
+    point = made.at((X2, D4), {d4: tuning.amplitude_for(5.276e9)})
+    assert point.frequencies_hz[D4] == pytest.approx(5.276e9, abs=1e3)
+    with pytest.raises(pulse.NotFoundError, match="not coupled"):
+        shipped.interaction(0, 1)
+    with pytest.raises(pulse.NotFoundError, match="qudit 99 is not in"):
+        shipped.tuning(99)
+    # A system with no calibration and other qudits has none.
+    lattice = pulse.quantum_system("transmon_lattice:4")
+    assert lattice.tuning(0) is None and lattice.interaction(0, 1) is None
+    assert transmon_surface17(calibration=None).tuning(D4) is None
+
+
 def test_the_shipped_tunings_are_made_when_first_asked_for():
     code = (
         "import sys, pickle, cudaq_pulse as pulse\n"
         "loaded = lambda: 'cudaq_pulse.quantum_systems.tuning' in sys.modules\n"
         "qs = pulse.quantum_system('transmon_surface17')\n"
         "qs.fingerprint, qs.as_dict(), pickle.dumps(qs), qs.replace(layout=[3, 10])\n"
+        "qs.physical_qudits, qs.couplings, qs.coupling(qs.qudits[10], qs.qudits[3])\n"
+        "drifting = pulse.quantum_system('transmon_surface17', parameter_drift=True)\n"
         "@pulse.kernel\n"
         "def k(q):\n"
         "    drive(get_drive_line(q), square(20, 0.1))\n"
         "k.lower(qs.qudits[0]).mlir()\n"
         "print(loaded())\n"
-        "print(type(qs.physical_qudits[3].tuning).__name__, loaded())\n"
-        "print(type(qs.couplings[0].interaction).__name__, qs.couplings[0].control)\n"
-        "lattice = pulse.quantum_system('transmon_lattice:4')\n"
-        "print(lattice.physical_qudits[0].tuning, lattice.couplings[0].interaction)\n"
+        "print(type(qs.tuning(3)).__name__, loaded())\n"
+        "print(type(drifting.tuning(3)).__name__)\n"
     )
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
-    assert out.stdout.split() == [
-        "False", "FluxTuning", "True", "ChargeCoupling", "None", "None", "None",
-    ]  # fmt: skip
+    assert out.stdout.split() == ["False", "FluxTuning", "True", "FluxTuning"]
+
+
+def test_a_system_rebuilt_from_anothers_values_gives_the_same_answers(shipped):
+    # Built from the shipped qudits and couplings, with no calibration of
+    # its own: its qudits are the calibrated ones, so they have their tunings.
+    twin = pulse.quantum_system(
+        name="twin", qudits=shipped.physical_qudits, couplings=shipped.couplings
+    )
+    assert twin.calibration is None
+    assert twin.tuning(D4) == shipped.tuning(D4) and twin.tuning(D4) is shipped.tuning(D4)
+    assert twin.interaction(X2, D4) is shipped.interaction(X2, D4)
+    # The system file holds what was declared, nothing, and reads back as the system.
+    data = json.loads(json.dumps(twin.as_dict()))
+    assert "tuning" not in data["qudits"][D4] and "interaction" not in data["couplings"][0]
+    loaded = pulse.QuantumSystem.from_dict(data)
+    assert loaded == twin and loaded.fingerprint == twin.fingerprint
+    assert loaded.tuning(D4) == twin.tuning(D4)
+    # A qudit that is changed is no longer the calibrated one.
+    changed = shipped.physical_qudits[D4].replace(t1_us=40.0)
+    assert changed.tuning is None
+    variant = shipped.replace(qudits={**shipped.physical_qudits, D4: changed})
+    assert variant.tuning(D4) is None and variant.tuning(X2) is shipped.tuning(X2)
+    assert variant.interaction(X2, D4) is None
+    built = pulse.quantum_system(
+        name=shipped.name,
+        qudits={**shipped.physical_qudits, D4: changed},
+        couplings=shipped.couplings,
+    )
+    assert variant.fingerprint == built.fingerprint and built.tuning(X2) is shipped.tuning(X2)
+    # Declaring it changes what the system is.
+    declared = shipped.replace(
+        qudits={**shipped.physical_qudits, D4: changed.replace(tuning=shipped.tuning(D4))}
+    )
+    assert declared.tuning(D4) == shipped.tuning(D4)
+    assert declared.fingerprint != variant.fingerprint
+
+
+def test_a_variant_keeps_its_answers_in_another_process(shipped):
+    from cudaq_pulse.controller import CouplingLine
+
+    plain = shipped.replace(layout=[D4, X2])
+    wired = shipped.replace(
+        control_system=pulse.ControlSystem(
+            controllers=[pulse.Controller(coupling_lines=(CouplingLine(D4), CouplingLine(X2)))]
+        )
+    )
+    code = (
+        "import sys, pickle, cudaq_pulse as pulse\n"
+        "for line in sys.stdin.read().split():\n"
+        "    qs = pickle.loads(bytes.fromhex(line))\n"
+        "    lines = () if qs.control_system is None else "
+        "qs.control_system.controllers[0].coupling_lines\n"
+        "    print(type(qs.tuning(3)).__name__, type(qs.interaction(10, 3)).__name__, len(lines))\n"
+    )
+    sent = "\n".join(pickle.dumps(qs).hex() for qs in (plain, wired))
+    out = subprocess.run(
+        [sys.executable, "-c", code], input=sent, capture_output=True, text=True, check=True
+    )
+    assert out.stdout.split() == ["FluxTuning", "ChargeCoupling", "0"] + [
+        "FluxTuning",
+        "ChargeCoupling",
+        "2",
+    ]
+    # A variant's coupling lines are checked when it is made.
+    with pytest.raises(pulse.QuantumSystemDefinitionError, match="qudits 3 and 10 has no control"):
+        shipped.replace(
+            control_system=pulse.ControlSystem(
+                controllers=[pulse.Controller(coupling_lines=(CouplingLine((D4, X2)),))]
+            )
+        )
 
 
 def test_tunings_change_the_fingerprint():

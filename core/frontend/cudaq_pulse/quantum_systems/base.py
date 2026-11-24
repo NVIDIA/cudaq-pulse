@@ -938,9 +938,6 @@ class PhysicalQudit(_QuditFields):
             # After the metadata, so a qudit without one pickles as before
             # tunings existed; its calibrations without the tuning's content.
             state = (*state, *(() if self.metadata else ({},)), tuning)
-            if len(self._calibrations._content) == 2:  # type: ignore[attr-defined]
-                # A tuning its calibration gave it (_derived_tuning).
-                state = (*state, False)
         return (object.__new__, (type(self),), state)
 
     def __setstate__(self, state: tuple[Any, ...]) -> None:
@@ -963,8 +960,7 @@ class PhysicalQudit(_QuditFields):
         self.metadata = MappingProxyType(metadata[0]) if metadata and metadata[0] else _EMPTY
         if len(metadata) > 1:
             self._tuning = metadata[1]
-            if len(metadata) == 2:
-                self._calibrations = _with_parts(self._calibrations, (("tuning", metadata[1]),))
+            self._calibrations = _with_parts(self._calibrations, (("tuning", metadata[1]),))
         self.__class__ = cls
 
     def replace(self, **changes: Any) -> Self:
@@ -1064,30 +1060,6 @@ class PhysicalQudit(_QuditFields):
         calibration it neither publishes nor derives is a ``NotFoundError``
         naming the qubit."""
         return _qudit_calibration(self, gate, transition)
-
-
-def _derived_tuning(qudit: PhysicalQudit, tuning: Tuning) -> PhysicalQudit:
-    """A copy of *qudit* with the *tuning* its calibration gives it: what
-    the qudit is, and so its content for a fingerprint, stays as it was
-    (the calibration is in the fingerprint), unlike with a tuning given to
-    ``PhysicalQudit``."""
-    made = object.__new__(type(qudit))
-    made.__setstate__(qudit.__reduce__()[2])
-    cls = made.__class__
-    object.__setattr__(made, "__class__", _QuditFields)
-    made._calibrations = qudit._calibrations
-    made.metadata = qudit.metadata
-    made._tuning = tuning
-    made.__class__ = cls
-    return made
-
-
-def _derived_interaction(coupling: Coupling, interaction: CouplingInteraction) -> Coupling:
-    """A copy of *coupling* with the *interaction* its calibration gives it,
-    its content for a fingerprint as it was (see ``_derived_tuning``)."""
-    made = type(coupling)(coupling.qudits, coupling.strength_hz, coupling._calibrations)
-    object.__setattr__(made, "_interaction", interaction)
-    return made
 
 
 def _tuning_of(qudit: PhysicalQudit) -> Tuning:
@@ -1235,10 +1207,6 @@ class Coupling:
         control, interaction = self.control, self.interaction
         if control is None and interaction is None:
             return (type(self), (self.qudits, self.strength_hz, self._calibrations))
-        if len(self._calibrations._content) == 2:  # type: ignore[attr-defined]
-            # An interaction its calibration gave it.
-            plain = type(self)(self.qudits, self.strength_hz, self._calibrations)
-            return (_derived_interaction, (plain, interaction))
         return (
             type(self),
             (self.qudits, self.strength_hz, dict(self._calibrations), control, interaction),
