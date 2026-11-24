@@ -1639,6 +1639,32 @@ def _runtime_branch(
     return traced(self, prog, index, cond, jump_if_true)
 
 
+# Size probe for the perf gate (decision 375): the two docstrings made comments above,
+# kept as data so the module loads the same bytes. Not read anywhere.
+_SIZE_PROBE = (
+    """The names a rolled loop body left on an old value of a channel, and
+    the names it moved from one channel to another.
+
+    A name on an old value was read from a tuple or dict the tracer does
+    not rebind; each use of it reads its channel's current value. It is not
+    carried when it entered on the same channel or the body bound it first,
+    so every iteration traces alike; after the loop it names the channel's
+    value, given as (name, channel). A name that entered on another channel
+    is returned apart: the loop rolls only if the body does not read it
+    before rebinding it.
+    """,
+    """Whether *fn* directly or transitively calls the pulse DSL.
+
+    *owner* is the object a method is bound to: its instance, or its class
+    for a classmethod. The attributes the method reads are looked up on it,
+    and on the objects those hold, so a method that calls the DSL through
+    ``self.other()``, ``cls.other()`` or ``self.gates.other()`` counts too.
+    Those methods, and *fn* when *strict*, count a DSL name only where they
+    load it as a global: ``self.lock.wait()`` is not ``wait``.
+    """,
+)
+
+
 def _load_identity_keys() -> Callable[[dict[str, Any], Any, Any], tuple[str | None, str | None]]:
     """The native identity scan, imported on first use."""
     global _identity_keys
