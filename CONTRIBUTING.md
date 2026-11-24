@@ -35,6 +35,13 @@ and unpacks it. It refuses archives it cannot verify. Configuring runs it
 for you if you skip this step; on a platform without a pinned archive, pass
 `-DMLIR_DIR=<prefix>/lib/cmake/mlir` for your own MLIR 22.1.8 build.
 
+When the pinned MLIR changes, re-read `undeclaredMakes()` in
+`core/mlir/bindings/bindings.cpp`: it lists the ops each canonicalization
+pattern that declares none can make, read from MLIR's sources, and binding
+values folds a module with only the patterns those ops reach.
+`tests/test_canonical_patterns.py` names any pattern missing from it and any
+entry that no longer matches a pattern.
+
 ## Build and test
 
 ```bash

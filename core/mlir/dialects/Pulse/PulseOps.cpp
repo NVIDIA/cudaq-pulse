@@ -109,7 +109,8 @@ LogicalResult SyncOp::verify() {
 namespace {
 /// `arith.cmpi ne, (pulse.outcome %m), 0` is `pulse.is_set %m`.
 struct OutcomeNonzeroToIsSet : OpRewritePattern<arith::CmpIOp> {
-  using OpRewritePattern::OpRewritePattern;
+  explicit OutcomeNonzeroToIsSet(MLIRContext *ctx)
+      : OpRewritePattern(ctx, /*benefit=*/1, {IsSetOp::getOperationName()}) {}
 
   LogicalResult matchAndRewrite(arith::CmpIOp cmp,
                                 PatternRewriter &rewriter) const override {

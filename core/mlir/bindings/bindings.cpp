@@ -32,6 +32,8 @@
 #include <thread>
 #include <unordered_map>
 
+#include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringSet.h"
 #include "mlir/AsmParser/AsmParser.h"
 #include "mlir/Bytecode/BytecodeWriter.h"
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
@@ -669,6 +671,33 @@ public:
   ContextStore(const ContextStore &) = delete;
   ContextStore &operator=(const ContextStore &) = delete;
 
+  /// The frozen pattern set of `context` kept under `key`, made by `make`
+  /// the first time (outside the lock: two threads may both make it, and
+  /// the first kept is the one every caller gets). A context without a
+  /// store keeps none: each call makes the set anew.
+  static std::shared_ptr<const mlir::FrozenRewritePatternSet>
+  frozen(mlir::MLIRContext *context, const std::string &key,
+         llvm::function_ref<mlir::RewritePatternSet()> make) {
+    {
+      std::lock_guard<std::mutex> guard(lock());
+      auto found = contexts().find(context);
+      if (found != contexts().end()) {
+        auto &sets = found->second->patternSets;
+        if (auto it = sets.find(key); it != sets.end())
+          return it->second;
+      }
+    }
+    auto made = std::make_shared<const mlir::FrozenRewritePatternSet>(make());
+    std::lock_guard<std::mutex> guard(lock());
+    auto found = contexts().find(context);
+    if (found == contexts().end())
+      return made;
+    auto &sets = found->second->patternSets;
+    if (sets.size() >= kMaxPatternSets && !sets.count(key))
+      sets.clear();
+    return sets.emplace(key, std::move(made)).first->second;
+  }
+
   /// A kept pass manager of `context` built with `options`, or null.
   static std::unique_ptr<mlir::PassManager> take(mlir::MLIRContext *context,
                                                  const Options &options) {
@@ -804,6 +833,11 @@ private:
   std::unique_ptr<AttrNames> attrNames;
   static constexpr size_t kMaxTexts = 64;
   std::unordered_map<std::string, mlir::Attribute> texts;
+  // Frozen pattern sets by key (canonicalPatternsFor, foldBinding).
+  static constexpr size_t kMaxPatternSets = 64;
+  std::unordered_map<std::string,
+                     std::shared_ptr<const mlir::FrozenRewritePatternSet>>
+      patternSets;
 
   // Never destroyed, as the shared pool's last context is not.
   static std::mutex &lock() {
@@ -816,6 +850,197 @@ private:
     return *all;
   }
 };
+
+// ---- The canonicalization patterns a binding's module can match ----
+//
+// Folding a binding's module (foldBinding) runs the canonicalizer's patterns
+// on it. MLIR sorts every pattern of the set by benefit each time it applies
+// them, so a module takes only the patterns rooted at an op it holds or can
+// come to hold: its own op names, closed under the ops each kept pattern
+// makes. A pattern declares those (RewritePattern::getGeneratedOps); the
+// table below lists them for the patterns that declare none.
+
+/// The ops a canonicalization pattern that declares none can make, by
+/// "root|debug name" (an empty list: it makes none, only moving, inlining or
+/// erasing ops). Read from the patterns' sources at the pinned MLIR
+/// (llvmorg-22.1.8): RE-READ THIS TABLE WHEN THE TOOLCHAIN IS BUMPED. A
+/// pattern that declares nothing and is not listed here makes every module
+/// take the whole set; tests/test_canonical_patterns.py fails and names it.
+const llvm::StringMap<llvm::SmallVector<llvm::StringRef, 4>> &
+undeclaredMakes() {
+  static const auto *table = [] {
+    auto *t = new llvm::StringMap<llvm::SmallVector<llvm::StringRef, 4>>();
+    auto add = [&](llvm::StringRef key,
+                   std::initializer_list<llvm::StringRef> made) {
+      (*t)[key] = llvm::SmallVector<llvm::StringRef, 4>(made);
+    };
+    add("arith.cmpf|CmpFIntToFPConst", {"arith.cmpi", "arith.constant"});
+    add("arith.index_castui|{anonymous}::IndexCastUIOfIndexCastUI", {});
+    add("arith.index_cast|{anonymous}::IndexCastOfIndexCast", {});
+    add("arith.select|SelectToExtUI",
+        {"arith.constant", "arith.extui", "arith.xori"});
+    add("func.call_indirect|", {"func.call"});
+    add("scf.execute_region|MultiBlockExecuteInliner", {"cf.br"});
+    add("scf.execute_region|SingleBlockExecuteInliner", {});
+    for (llvm::StringRef root : {"scf.execute_region", "scf.for", "scf.if",
+                                 "scf.index_switch", "scf.while"})
+      for (llvm::StringRef name :
+           {"{anonymous}::MakeRegionBranchOpSuccessorInputsDead",
+            "{anonymous}::RemoveDeadRegionBranchOpSuccessorInputs",
+            "{anonymous}::RemoveDuplicateSuccessorInputUses"})
+        add((root + "|" + name).str(), {});
+    add("scf.forall|{anonymous}::FoldTensorCastOfOutputIntoForallOp",
+        {"scf.forall", "tensor.cast"});
+    add("scf.forall|{anonymous}::ForallOpControlOperandsFolder", {});
+    add("scf.forall|{anonymous}::ForallOpIterArgsFolder", {});
+    add("scf.forall|{anonymous}::ForallOpReplaceConstantInductionVar", {});
+    add("scf.forall|{anonymous}::ForallOpSingleOrZeroIterationDimsFolder",
+        {"scf.forall"});
+    add("scf.for|{anonymous}::ForOpTensorCastFolder", {"tensor.cast"});
+    add("scf.for|{anonymous}::SimplifyTrivialLoops", {});
+    add("scf.if|{anonymous}::CombineIfs", {"scf.if", "scf.yield"});
+    add("scf.if|{anonymous}::CombineNestedIfs",
+        {"scf.if", "scf.yield", "arith.andi", "arith.select"});
+    add("scf.if|{anonymous}::ConditionPropagation", {"arith.constant"});
+    add("scf.if|{anonymous}::ConvertTrivialIfToSelect",
+        {"scf.if", "scf.yield", "arith.select"});
+    add("scf.if|{anonymous}::RemoveEmptyElseBranch", {});
+    add("scf.if|{anonymous}::RemoveStaticCondition", {});
+    add("scf.if|{anonymous}::ReplaceIfYieldWithConditionOrValue",
+        {"arith.xori", "arith.constant"});
+    add("scf.index_switch|FoldConstantCase", {});
+    add("scf.parallel|{anonymous}::MergeNestedParallelLoops", {"scf.parallel"});
+    add("scf.parallel|{anonymous}::ParallelOpSingleOrZeroIterationDimsFolder",
+        {"scf.parallel"});
+    add("scf.while|{anonymous}::WhileCmpCond", {"arith.constant"});
+    add("scf.while|{anonymous}::WhileConditionTruth", {"arith.constant"});
+    add("scf.while|{anonymous}::WhileMoveIfDown", {"scf.while"});
+    add("scf.while|{anonymous}::WhileOpAlignBeforeArgs",
+        {"scf.condition", "scf.while"});
+    add("tensor.dim|{anonymous}::DimOfForallOp", {});
+    return t;
+  }();
+  return *table;
+}
+
+/// "root|debug name" of `pattern`, "*" for a pattern rooted at any op. A
+/// debug name is the pattern's type name as the compiler spells it: an
+/// anonymous namespace is "{anonymous}" for GCC and "(anonymous namespace)"
+/// for Clang, spelled the first way here.
+std::string patternKey(const mlir::RewritePattern &pattern) {
+  std::optional<mlir::OperationName> root = pattern.getRootKind();
+  std::string name = pattern.getDebugName().str();
+  for (size_t at;
+       (at = name.find("(anonymous namespace)")) != std::string::npos;)
+    name.replace(at, std::strlen("(anonymous namespace)"), "{anonymous}");
+  return (root ? root->getStringRef().str() : std::string("*")) + "|" + name;
+}
+
+/// The canonicalization patterns of `context`'s loaded dialects and
+/// registered ops, as the canonicalizer gathers them.
+mlir::RewritePatternSet allCanonicalPatterns(mlir::MLIRContext *context) {
+  mlir::RewritePatternSet set(context);
+  for (mlir::Dialect *dialect : context->getLoadedDialects())
+    dialect->getCanonicalizationPatterns(set);
+  for (mlir::RegisteredOperationName op : context->getRegisteredOperations())
+    op.getCanonicalizationPatterns(set, context);
+  return set;
+}
+
+/// The patterns of `all` that declare no ops they make and are not in
+/// undeclaredMakes(), by key.
+std::vector<std::string> unlistedPatterns(mlir::RewritePatternSet &all) {
+  std::vector<std::string> unlisted;
+  for (const std::unique_ptr<mlir::RewritePattern> &pattern :
+       all.getNativePatterns())
+    if (pattern->getGeneratedOps().empty() &&
+        !undeclaredMakes().count(patternKey(*pattern)))
+      unlisted.push_back(patternKey(*pattern));
+  return unlisted;
+}
+
+/// Of `all`, the patterns a module holding the ops `held` can match while it
+/// is canonicalized: those rooted at any op, and those rooted at an op of
+/// `held` closed under what each kept pattern makes. All of `all` if a
+/// pattern on the way declares nothing and is not listed.
+mlir::RewritePatternSet reachablePatterns(mlir::MLIRContext *context,
+                                          mlir::RewritePatternSet all,
+                                          const llvm::StringSet<> &held) {
+#if MLIR_ENABLE_PDL_IN_PATTERNMATCH
+  // Patterns in PDL are not sorted out here: all of them, then.
+  if (all.getPDLPatterns().getModule())
+    return all;
+#endif
+  llvm::StringSet<> roots = held;
+  // What folding makes: the constants it materializes.
+  roots.insert("arith.constant");
+  roots.insert("ub.poison");
+  auto &patterns = all.getNativePatterns();
+  for (bool grew = true; grew;) {
+    grew = false;
+    for (const std::unique_ptr<mlir::RewritePattern> &pattern : patterns) {
+      std::optional<mlir::OperationName> root = pattern->getRootKind();
+      if (root && !roots.contains(root->getStringRef()))
+        continue;
+      llvm::ArrayRef<mlir::OperationName> declared = pattern->getGeneratedOps();
+      if (!declared.empty()) {
+        for (mlir::OperationName made : declared)
+          grew |= roots.insert(made.getStringRef()).second;
+        continue;
+      }
+      auto listed = undeclaredMakes().find(patternKey(*pattern));
+      if (listed == undeclaredMakes().end())
+        return all;
+      for (llvm::StringRef made : listed->second)
+        grew |= roots.insert(made).second;
+    }
+  }
+  mlir::RewritePatternSet kept(context);
+  for (std::unique_ptr<mlir::RewritePattern> &pattern : patterns) {
+    std::optional<mlir::OperationName> root = pattern->getRootKind();
+    if (!root || roots.contains(root->getStringRef()))
+      kept.add(std::move(pattern));
+  }
+  return kept;
+}
+
+/// Whether CUDAQ_PULSE_FULL_CANONICAL=1 asks folding to take every
+/// canonicalization pattern, as the canonicalizer does: the tests compare
+/// what it makes with what the patterns a module can match make. Read once
+/// per process.
+bool fullCanonicalSet() {
+  static const bool on = [] {
+    const char *text = std::getenv("CUDAQ_PULSE_FULL_CANONICAL");
+    return text && std::strcmp(text, "1") == 0;
+  }();
+  return on;
+}
+
+/// The canonicalization patterns `module` can match while it is folded,
+/// frozen once per context for each set of op names.
+std::shared_ptr<const mlir::FrozenRewritePatternSet>
+canonicalPatternsFor(mlir::MLIRContext *context, mlir::ModuleOp module) {
+  if (fullCanonicalSet())
+    return ContextStore::frozen(
+        context,
+        "canonical:*:" + std::to_string(context->getLoadedDialects().size()),
+        [&] { return allCanonicalPatterns(context); });
+  std::set<std::string> names;
+  module.walk([&](mlir::Operation *op) {
+    names.insert(op->getName().getStringRef().str());
+  });
+  // Patterns of a dialect loaded since may be rooted at these ops too.
+  std::string key =
+      "canonical:" + std::to_string(context->getLoadedDialects().size()) + ":";
+  llvm::StringSet<> held;
+  for (const std::string &name : names) {
+    key += name + ",";
+    held.insert(name);
+  }
+  return ContextStore::frozen(context, key, [&] {
+    return reachablePatterns(context, allCanonicalPatterns(context), held);
+  });
+}
 
 /// A new context with `registry`'s dialects and its ContextStore, destroyed
 /// before it.
@@ -5079,7 +5304,7 @@ public:
     dropArguments(funcOp);
 
     // Fold parameter expressions before deriving concrete durations.
-    foldBinding(clonedModule, bound);
+    foldBinding(clonedModule, bound, placed);
     auto owning = mlir::OwningOpRef<mlir::ModuleOp>(clonedModule);
     PulseModule result(ctx_, std::move(owning));
     result.loops_ = loops_;
@@ -5780,6 +6005,9 @@ private:
   void changed() {
     ++version_;
     specialized_.ops.store(-1);
+    // The canonicalization patterns were chosen for the ops the module held.
+    canonicalPatterns_[0].reset();
+    canonicalPatterns_[1].reset();
   }
 
   /// Note that the module, as it is now, has been verified.
@@ -5848,8 +6076,11 @@ private:
   /// `values`: as the canonicalizer does, then with the pattern passes this
   /// module ran, on the only ops the values can open to them, frame changes
   /// by a constant phase and drives of a square pulse, if the values reach
-  /// one. Both pattern sets are gathered once per module.
-  void foldBinding(mlir::ModuleOp module, llvm::ArrayRef<mlir::Value> values) {
+  /// one. Both pattern sets are gathered once per module, the canonical one
+  /// for its bindings placed on slots (which allocate qudits) and once for
+  /// the others.
+  void foldBinding(mlir::ModuleOp module, llvm::ArrayRef<mlir::Value> values,
+                   bool placed) {
     bool phases = false, amplitudes = false;
     if (!rewrites_.empty()) {
       // What the values reach, as mlir::getForwardSlice gathers it (the
@@ -5880,20 +6111,15 @@ private:
       }
     }
 
-    if (!canonicalPatterns_) {
-      mlir::RewritePatternSet set(ctx_.get());
-      for (mlir::Dialect *dialect : ctx_->getLoadedDialects())
-        dialect->getCanonicalizationPatterns(set);
-      for (mlir::RegisteredOperationName op : ctx_->getRegisteredOperations())
-        op.getCanonicalizationPatterns(set, ctx_.get());
-      canonicalPatterns_ =
-          std::make_shared<const mlir::FrozenRewritePatternSet>(std::move(set));
-    }
+    std::shared_ptr<const mlir::FrozenRewritePatternSet> &canonical =
+        canonicalPatterns_[placed];
+    if (!canonical)
+      canonical = canonicalPatternsFor(ctx_.get(), module);
     // The canonicalizer pass's defaults.
     mlir::GreedyRewriteConfig config;
     config.setRegionSimplificationLevel(
         mlir::GreedySimplifyRegionLevel::Normal);
-    (void)mlir::applyPatternsGreedily(module, *canonicalPatterns_, config);
+    (void)mlir::applyPatternsGreedily(module, *canonical, config);
     if (!phases && !amplitudes)
       return;
 
@@ -5912,11 +6138,16 @@ private:
     if (ops.empty())
       return;
     if (!rewritePatterns_) {
-      mlir::RewritePatternSet set(ctx_.get());
+      // One frozen set per context for each list of stages.
+      std::string key = "rewrite:";
       for (const pulse::RewriteStage *stage : rewrites_)
-        stage->populate(set);
-      rewritePatterns_ =
-          std::make_shared<const mlir::FrozenRewritePatternSet>(std::move(set));
+        key += stage->argument.str() + ",";
+      rewritePatterns_ = ContextStore::frozen(ctx_.get(), key, [&] {
+        mlir::RewritePatternSet set(ctx_.get());
+        for (const pulse::RewriteStage *stage : rewrites_)
+          stage->populate(set);
+        return set;
+      });
     }
     mlir::GreedyRewriteConfig opConfig;
     opConfig.enableFolding(false).enableConstantCSE(false);
@@ -5927,8 +6158,9 @@ private:
   // The pattern passes run_passes ran that rerun on a binding
   // (pulse-fold-phases, pulse-fuse-pulses), in the order first run.
   llvm::SmallVector<const pulse::RewriteStage *, 4> rewrites_;
-  // What foldBinding rewrites with, once gathered.
-  std::shared_ptr<const mlir::FrozenRewritePatternSet> canonicalPatterns_;
+  // What foldBinding rewrites with, once gathered: the canonical patterns
+  // of the bindings not placed on slots, then of those placed.
+  std::shared_ptr<const mlir::FrozenRewritePatternSet> canonicalPatterns_[2];
   std::shared_ptr<const mlir::FrozenRewritePatternSet> rewritePatterns_;
   // Lowered operator programs by module attribute dictionary.
   std::map<const void *, ProgramTemplate> programs_;
@@ -8169,6 +8401,45 @@ NB_MODULE(_cudaq_pulse_native, m) {
   m.def("shared_context_stats", &SharedContextPool::stats,
         "(contexts created, builders on the current context, its packed "
         "words)");
+  m.def(
+      "_canonical_pattern_audit",
+      [](std::vector<std::string> held) {
+        // Every dialect of the registry loaded, so that every pattern a
+        // module can meet is in the set.
+        mlir::MLIRContext context(makeRegistry());
+        context.loadAllAvailableDialects();
+        mlir::RewritePatternSet all = allCanonicalPatterns(&context);
+        llvm::StringSet<> keys;
+        for (const std::unique_ptr<mlir::RewritePattern> &pattern :
+             all.getNativePatterns())
+          keys.insert(patternKey(*pattern));
+        std::vector<std::string> unused;
+        for (const auto &entry : undeclaredMakes())
+          if (!keys.contains(entry.getKey()))
+            unused.push_back(entry.getKey().str());
+        std::sort(unused.begin(), unused.end());
+        nb::dict audit;
+        audit["patterns"] = all.getNativePatterns().size();
+        audit["unlisted"] = unlistedPatterns(all);
+        audit["unused_entries"] = unused;
+        llvm::StringSet<> names;
+        for (const std::string &name : held)
+          names.insert(name);
+        mlir::RewritePatternSet reached =
+            reachablePatterns(&context, std::move(all), names);
+        std::vector<std::string> kept;
+        for (const std::unique_ptr<mlir::RewritePattern> &pattern :
+             reached.getNativePatterns())
+          kept.push_back(patternKey(*pattern));
+        audit["kept"] = kept;
+        return audit;
+      },
+      nb::arg("held") = std::vector<std::string>(),
+      "For tests: the canonicalization patterns of every dialect (count), "
+      "those that declare no ops they make and are not listed in "
+      "bindings.cpp's undeclaredMakes() (unlisted), the entries there that "
+      "match no pattern (unused_entries), and how many patterns a module "
+      "holding the ops `held` keeps (kept, as root|name).");
   m.def("verifies_everything", &verifyEverything,
         "Whether CUDAQ_PULSE_VERIFY=1 asks for the verifications that only "
         "catch a bug of the compiler itself");
