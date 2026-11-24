@@ -7,10 +7,12 @@
 // `pulse.coupling_lines`. A pass asks that of the module once
 // (`saysCouplingLines`) and hands a module that says so to the variant of
 // itself that knows the ops of a coupling line. That variant is the same
-// source compiled a second time with PULSE_COUPLED defined to 1: every test
-// for a coupling line is written `kCoupled && ...`, which the compiler drops
-// from the first variant, so a module without coupling lines runs the code
-// it ran before coupling lines existed.
+// source compiled a second time with PULSE_COUPLED defined to 1. What only
+// the second variant has is under `#if PULSE_COUPLED`, so the first variant
+// is, past the test that hands such a module over, the text it was before
+// coupling lines existed and compiles to the code it was; inside such a block a
+// test for a coupling line may also be written `kCoupled && ...`, which is true
+// there.
 //
 // The analysis headers put their contents between PULSE_VARIANT_OPEN and
 // PULSE_VARIANT_CLOSE, which are empty in the first variant and the

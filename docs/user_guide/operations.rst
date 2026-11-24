@@ -94,6 +94,25 @@ calibration value does:
 
 .. code-block:: python
 
+   import cudaq_pulse as pulse
+   from cudaq_pulse.quantum_systems import Coupling, PhysicalQudit
+   from cudaq_pulse.quantum_systems.tuning import ExchangeControl, FluxTuning
+
+   qs = pulse.quantum_system(
+       name="pair",
+       qudits={
+           i: PhysicalQudit(i, 5.0e9 + 1.0e8 * i, 50.0, 30.0, anharmonicity_hz=-2.0e8)
+           for i in range(2)
+       },
+       couplings=[Coupling((0, 1), strength_hz=4.0e6)],
+       tunings={0: FluxTuning(ec_hz=1.65e8, ej_max_hz=2.6e10, asymmetry=0.47, idle_flux=0.5)},
+       controls={
+           (0, 1): ExchangeControl(
+               unit="volt", amplitudes=(0.0, 0.2), exchange_hz=(4.0e6, 2.4e7)
+           )
+       },
+   )
+
    @pulse.kernel
    def detune(a, d, amplitude: float, length: int):
        tuning = get_coupling_line(a)         # the line that tunes a
@@ -138,15 +157,30 @@ loop rolled. A program that holds a coupling line is not exported yet:
 ``export_to_controller`` and ``export_to_emulator`` raise
 ``UnsupportedError``, and since a controller's limits are not checked on a
 coupling line yet, it compiles only without a control system, where it
-raises the same error with one. ``simulate`` and
-``classical.emulation.emulate`` do not play a pulse on a coupling line yet
-either, and raise ``UnsupportedError`` too; so does a program that holds
+raises the same error with one. ``classical.emulation.emulate`` does not
+play a pulse on a coupling line yet either, and raises ``UnsupportedError``
+too; so does a program that holds
 a coupling line beside a classical call, a kernel with its own
 ``schedule=`` (compile with ``flatten_schedules=True``) or a value a
 measurement selects while the program runs, even when the line is never
 used. Beside none of those, a coupling line that is fetched and never
 used is dropped, as any unused line: the program exports and simulates. The calibrated two-qudit gate of a
 coupling, played as one call, comes with a later release.
+
+``simulate`` plays a pulse on a coupling line with what the quantum system
+it simulates says of the control. On the line of one qudit, the pulse's
+amplitude at each program cycle moves the qudit's levels by its tuning's
+``frequency_at`` and ``anharmonicity_at`` (for a ``FluxTuning``, the
+transmon circuit at that flux); on the line of a pair, it changes the
+pair's exchange by its control's ``at(amplitude).exchange_hz``. The step of
+the integrator is shortened where a pulse moves a frequency faster than
+the step given follows. The CPU backend simulates such a program; the GPU
+backend, a ``response`` of the wiring, and a qudit that a call binds are
+``UnsupportedError`` for now, and a qudit with no tuning on the simulated
+system is a ``NotFoundError`` that names it. The interaction of a pair
+made through its qudits (a ``ChargeCoupling``) acts through the static
+exchange of the two qudits as their frequencies move; the change of its
+matrix elements with the flux is not modelled yet.
 
 Phase and Frequency Control
 ---------------------------

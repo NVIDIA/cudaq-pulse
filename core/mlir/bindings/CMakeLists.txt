@@ -56,6 +56,7 @@ nanobind_add_module(
   ${_cudaq_pulse_free_threaded}
   ${_cudaq_pulse_nostrip}
   bindings.cpp
+  bindingsCoupled.cpp
   "${_build_stamp}"
   ContextDialects.cpp
   LengthInference.cpp

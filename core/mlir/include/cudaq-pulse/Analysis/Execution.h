@@ -13,9 +13,25 @@
 //
 // Include after the Pulse dialect op and type headers.
 
-#pragma once
+// Included once per variant (see Variant.h): plain, and as the variant that
+// reports the pulses on a coupling line (`onCouplingDrive`).
 
 #include "cudaq-pulse/Analysis/Variant.h"
+
+#if PULSE_COUPLED == 0
+#ifdef CUDAQ_PULSE_ANALYSIS_EXECUTION_H
+#define CUDAQ_PULSE_EXECUTION_SEEN
+#else
+#define CUDAQ_PULSE_ANALYSIS_EXECUTION_H
+#endif
+#else
+#ifdef CUDAQ_PULSE_ANALYSIS_EXECUTION_COUPLED_H
+#define CUDAQ_PULSE_EXECUTION_SEEN
+#else
+#define CUDAQ_PULSE_ANALYSIS_EXECUTION_COUPLED_H
+#endif
+#endif
+#ifndef CUDAQ_PULSE_EXECUTION_SEEN
 
 #include "cudaq-pulse/Analysis/Affine.h"
 #include "cudaq-pulse/Analysis/LineTrace.h"
@@ -139,6 +155,10 @@ public:
   std::function<bool(const Occurrence &)> onSubmit;
   /// An op of the function's body the walk ends at, before running it.
   mlir::Operation *stopBefore = nullptr;
+#if PULSE_COUPLED
+  /// Called for every occurrence of a pulse on a coupling line.
+  std::function<void(const Occurrence &)> onCouplingDrive;
+#endif
 
   /// The readout whose measurement `value` is, if the walk has seen it.
   std::optional<MeasurementKey> measurementKeyOf(mlir::Value value) const {
@@ -263,6 +283,16 @@ private:
       Occurrence occurrence;
       return timed(op, occurrence);
     }
+#if PULSE_COUPLED
+    if (mlir::isa<DriveBasebandOp>(op)) {
+      Occurrence occurrence;
+      if (!timed(op, occurrence))
+        return false;
+      if (onCouplingDrive)
+        onCouplingDrive(occurrence);
+      return true;
+    }
+#endif
     if (name == "classical.submit") {
       Occurrence occurrence;
       if (!timed(op, occurrence))
@@ -427,3 +457,6 @@ private:
 
 PULSE_VARIANT_CLOSE
 } // namespace pulse
+
+#endif // CUDAQ_PULSE_EXECUTION_SEEN
+#undef CUDAQ_PULSE_EXECUTION_SEEN
