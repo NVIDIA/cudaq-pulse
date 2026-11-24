@@ -14,7 +14,7 @@ a controller that is given coupling lines loads this."""
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Mapping, Sequence, Set
+from collections.abc import Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, ClassVar, NoReturn
 
 from ._errors import InvalidTypeError, InvalidValueError, Problem, _ranges
@@ -220,13 +220,9 @@ def keep_lines(controller: Controller) -> None:
     keeps them as a tuple: each a ``CouplingLine``, no two acting on one set
     of qudits."""
     given: Any = controller.coupling_lines
-    if isinstance(given, (str, bytes, CouplingLine, Mapping, Set)) or not isinstance(
-        given, Iterable
-    ):
-        # A set or a mapping has no order to keep, and a controller compares
-        # by its lines in the order they are given.
+    if isinstance(given, (str, bytes, CouplingLine, Mapping)) or not isinstance(given, Iterable):
         raise InvalidTypeError(
-            f"Controller.coupling_lines is a sequence of CouplingLine, got {given!r}"
+            f"Controller.coupling_lines is a collection of CouplingLine, got {given!r}"
         )
     kept = tuple(given)
     first: dict[tuple[int, ...], int] = {}
@@ -242,7 +238,11 @@ def keep_lines(controller: Controller) -> None:
                 f"{_what(line.qudits)} is reached by two coupling lines, {kept[seen]!r} and "
                 f"{line!r}; a control is reached by one coupling line"
             )
-    object.__setattr__(controller, "coupling_lines", kept)
+    # The lines of a controller are a set: kept in the order of their
+    # qudits, so that controllers given the same lines in any order are equal.
+    object.__setattr__(
+        controller, "coupling_lines", tuple(sorted(kept, key=lambda line: line.qudits))
+    )
 
 
 def list_lines(data: list[dict[str, Any]], controllers: Sequence[Controller]) -> None:
@@ -271,6 +271,35 @@ def line_from(reader: _Reader, data: Any, path: str) -> CouplingLine | None:
         return None
     options = {k: entry[k] for k in ("amplitude_per_volt", "max_volts", "delay_ns") if k in entry}
     return reader.build(path, CouplingLine, qudits=qudits, **options)
+
+
+def lines_from(reader: _Reader, data: Any, path: str) -> list[CouplingLine] | None:
+    """A system file's controller's coupling lines at *path*, checked as a
+    controller checks them, each problem at the line's own path."""
+    if not isinstance(data, list):
+        reader.problem(
+            path,
+            f"must be a list of coupling lines, got {type(data).__name__}",
+            data,
+            fix='give each line its qudits, as [{"qudits": [0]}, {"qudits": [1, 2]}]',
+        )
+        return None
+    read = [line_from(reader, item, f"{path}[{i}]") for i, item in enumerate(data)]
+    if None in read:
+        return None
+    first: dict[tuple[int, ...], int] = {}
+    for position, line in enumerate(read):
+        assert line is not None
+        seen = first.setdefault(line.qudits, position)
+        if seen != position:
+            reader.problem(
+                f"{path}[{position}]",
+                f"{_what(line.qudits)} is reached by two coupling lines, this one and "
+                f"{path}[{seen}]; a control is reached by one coupling line",
+                data[position],
+            )
+            return None
+    return [line for line in read if line is not None]
 
 
 def reaching(system: ControlSystem, qudit: int) -> list[CouplingLine]:

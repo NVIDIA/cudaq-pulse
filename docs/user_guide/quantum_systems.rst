@@ -221,7 +221,11 @@ A quantum system answers for its controls: ``qs.tuning(q)``,
 the coupling declares, else what the system's calibration gives. On
 ``transmon_surface17`` with its calibration, ``qs.tuning(q)`` is the
 ``FluxTuning`` of the qudit's calibrated circuit and ``qs.interaction(a,
-d)`` a ``ChargeCoupling`` of the system-wide g_c, each naming in
+d)`` a ``ChargeCoupling`` of the system-wide g_c, made through the
+tunings the system answers with for the two qudits (so a qudit that
+declares its own tuning, to give it a ``response``, keeps the
+calibration's interaction), its ``tunings`` in the order asked, each
+naming in
 ``source`` the calibration entries it is read from; at X2-D4's CZ
 operating point the 0-1 exchange is 6.38 MHz and ``|11> <-> |20>`` 8.88
 MHz. They are made when first asked for and are not part of the system's

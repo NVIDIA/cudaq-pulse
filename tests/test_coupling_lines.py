@@ -13,6 +13,7 @@ import subprocess
 import sys
 
 import cudaq_pulse as pulse
+import numpy as np
 import pytest
 from cudaq_pulse.controller import CouplingLine
 from cudaq_pulse.quantum_systems import (
@@ -262,11 +263,11 @@ def test_a_line_that_reaches_no_control_is_refused_at_its_path(line, message, fi
     ("given", "error", "match"),
     [
         ([0], pulse.InvalidTypeError, "holds CouplingLines, as CouplingLine"),
-        (CouplingLine(0), pulse.InvalidTypeError, "is a sequence of CouplingLine"),
-        (5, pulse.InvalidTypeError, "is a sequence of CouplingLine"),
-        (None, pulse.InvalidTypeError, "is a sequence of CouplingLine"),
-        ({CouplingLine(0)}, pulse.InvalidTypeError, "is a sequence of CouplingLine"),
-        ({CouplingLine(0): 1}, pulse.InvalidTypeError, "is a sequence of CouplingLine"),
+        (CouplingLine(0), pulse.InvalidTypeError, "is a collection of CouplingLine"),
+        (5, pulse.InvalidTypeError, "is a collection of CouplingLine"),
+        (None, pulse.InvalidTypeError, "is a collection of CouplingLine"),
+        (np.array([1.0]), pulse.InvalidTypeError, "holds CouplingLines, as CouplingLine"),
+        ({CouplingLine(0): 1}, pulse.InvalidTypeError, "is a collection of CouplingLine"),
         (
             [CouplingLine(0), CouplingLine(0, delay_ns=2.0)],
             pulse.InvalidValueError,
@@ -301,6 +302,12 @@ def test_controllers_compare_by_their_lines_however_they_are_given():
     assert as_list == as_tuple and hash(as_list) == hash(as_tuple)
     assert as_list.coupling_lines == tuple(lines)
     assert pulse.Controller(coupling_lines=iter(lines)) == as_tuple
+    # The lines are a set: any order, and a set of them, give one controller.
+    backwards = pulse.Controller(coupling_lines=lines[::-1])
+    assert backwards == as_tuple and hash(backwards) == hash(as_tuple)
+    assert backwards.coupling_lines == tuple(lines)
+    assert pulse.Controller(coupling_lines=set(lines)) == as_tuple
+    assert pulse.Controller(coupling_lines=np.array([])) == pulse.Controller()
     assert pulse.Controller(coupling_lines=[]) == pulse.Controller()
     assert hash(pulse.Controller(coupling_lines=[])) == hash(pulse.Controller())
 
@@ -337,3 +344,27 @@ def test_a_system_file_names_a_coupling_line_that_is_not_one():
             p.path.startswith("control_system.controllers[0].coupling_lines[0]")
             for p in raised.value.problems
         ), str(raised.value)
+
+
+@pytest.mark.parametrize(
+    ("lines", "path", "match"),
+    [
+        (5, "control_system.controllers[0].coupling_lines", "must be a list of coupling lines"),
+        (None, "control_system.controllers[0].coupling_lines", "must be a list of coupling lines"),
+        ({}, "control_system.controllers[0].coupling_lines", "must be a list of coupling lines"),
+        (
+            [{"qudits": [3]}, {"qudits": [0]}, {"qudits": [3]}],
+            "control_system.controllers[0].coupling_lines[2]",
+            "qudit 3's tuning is reached by two coupling lines, this one and "
+            "control_system.controllers[0].coupling_lines[0]",
+        ),
+    ],
+)
+def test_a_system_files_coupling_lines_are_reported_at_their_own_path(lines, path, match):
+    qs = _system([pulse.Controller(coupling_lines=[CouplingLine(0)])])
+    data = json.loads(json.dumps(qs.as_dict()))
+    data["control_system"]["controllers"][0]["coupling_lines"] = lines
+    with pytest.raises(pulse.QuantumSystemDefinitionError) as raised:
+        pulse.QuantumSystem.from_dict(data)
+    found = {p.path: p.message for p in raised.value.problems}
+    assert path in found and match in found[path], found

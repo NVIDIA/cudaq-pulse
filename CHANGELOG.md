@@ -136,7 +136,8 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   give what the qudit or the coupling declares, else what the system's
   calibration gives. `transmon_surface17` answers with the `FluxTuning`
   of each qudit's calibrated circuit and a `ChargeCoupling` of its g_c
-  for each coupling; they are made when first asked for and are not part
+  for each coupling, made through the tunings the system answers with and
+  given in the order asked; they are made when first asked for and are not part
   of its qudits and couplings, so building the system, its
   `physical_qudits`, its fingerprint, its pickles and its system file are
   what they were. For a system that holds no calibration of its own (a
@@ -156,7 +157,8 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   for a `FluxTuning`), signed. `wait` and `sync` take the line, and every
   schedule (`asap`, `alap`, `rcp`, `alap_rcp`) treats it as a line of its
   own, in rolled loops and measurement-conditioned branches too. The line
-  must exist: the quantum system declares the control of exactly those
+  must exist (the line of a qudit a call binds needs a control system,
+  which checks it when the qudit is bound): the quantum system declares the control of exactly those
   qudits (a qudit's `tuning`, a coupling's `control`), and a control
   system, when one is given, has a `CouplingLine` that acts on exactly
   them; the error names what is missing and the lines that reach the
@@ -198,7 +200,8 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   keep the lines; a controller's exported limits do not list them, and a
   controller without them builds, prints, pickles and exports as before.
   A controller checks its lines where it is built (each a `CouplingLine`,
-  no two on the same qudits).
+  no two on the same qudits); they are a set, kept in the order of their
+  qudits.
 - **Post-selection.** `SimulationResult.postselect(keep)` is the result
   over the branches the test `keep` accepts (a function of a `Branch`, as
   `lambda b: b.answers("herald")[-1]`): their state, normalized, their

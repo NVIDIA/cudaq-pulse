@@ -175,6 +175,10 @@ class CouplingInteraction(_Component):
         *known* of the quantum system its coupling of *qudits* is in."""
         return []
 
+    def _reversed(self) -> Self:
+        """The interaction as the coupling's qudits in the other order see it."""
+        return self
+
 
 class _ComponentQudits(tuple[int, ...]):
     """The qudits of a coupling that declares a control or an interaction: a

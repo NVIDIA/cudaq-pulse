@@ -485,6 +485,10 @@ class ChargeCoupling(CouplingInteraction):
                 )
         return problems
 
+    def _reversed(self) -> ChargeCoupling:
+        g, tunings, source = self._values
+        return ChargeCoupling(charge_coupling_hz=g, tunings=tunings[::-1], source=source)
+
     def at(self, qudits: Sequence[Any], amplitude: Mapping[Any, Any]) -> CouplingPoint:
         """The coupling of *qudits* (the pair's indices or ``Qudit`` handles,
         in the order of ``tunings``) with the tunings of its qudits at
@@ -492,7 +496,13 @@ class ChargeCoupling(CouplingInteraction):
         array; a qudit left out idles): what ``Coupling.at`` reads of a
         coupling that declares this interaction, for one a quantum system
         answers for (``QuantumSystem.interaction``)."""
-        a, b = map(_carrier, qudits)
+        pair = tuple(map(_carrier, qudits))
+        if len(pair) != 2 or pair[0] == pair[1]:
+            raise InvalidValueError(
+                "ChargeCoupling.at takes the coupling's two qudits, in the order of its "
+                f"tunings, as (a, b); got {tuple(qudits)!r}"
+            )
+        a, b = pair
         given = {_carrier(k): v for k, v in amplitude.items()}
         other = sorted(set(given) - {a, b}, key=repr)
         if other:

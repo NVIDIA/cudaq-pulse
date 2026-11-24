@@ -720,7 +720,9 @@ tunings, and the error names the lines that reach them), three or more
 qudits, or what another line already reaches, is a
 ``QuantumSystemDefinitionError`` naming the line and the fix. Building a
 controller checks its coupling lines themselves: each a ``CouplingLine``,
-no two acting on the same qudits. In a system file a
+no two acting on the same qudits. They are a set: a controller keeps them
+in the order of their qudits, and controllers given the same lines in any
+order are equal. In a system file a
 coupling line is ``{"qudits": [1, 2], "amplitude_per_volt": 0.31}``.
 
 Shared lines

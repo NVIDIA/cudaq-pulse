@@ -538,6 +538,48 @@ def test_a_line_the_quantum_system_declares_no_control_for_is_refused():
     assert "qudit 0 has no tuning" in _raises(tuned, untuned.qudits[0])
 
 
+def test_a_run_time_qudits_line_needs_a_control_system():
+    @pulse.kernel
+    def bound(a: pulse.Qudit):
+        drive(get_coupling_line(a), square(20, 0.1))
+
+    # The line of a qudit a call binds is checked when it is bound, by the
+    # control system's check of the call: with none, it is refused.
+    message = _raises(bound, A)
+    assert "the line of a qudit that a call binds" in message
+    assert "a kernel with no control system does not do" in message
+    # Passed as a static argument, the line is checked when the kernel is traced.
+    assert len(tuned.lower(A).schedule) == 1
+
+
+def test_a_helper_kernel_plays_on_the_line_it_is_given():
+    @pulse.kernel
+    def helper(line, amplitude):
+        drive(line, square(20, amplitude))
+        wait(line, 8)
+
+    @pulse.kernel
+    def caller(a):
+        c = get_coupling_line(a)
+        helper(c, 0.1)
+        helper(c, -0.1)
+
+    @pulse.kernel
+    def gives_a_gate(a):
+        c = get_coupling_line(a)
+        helper_gate(c, get_drive_line(a).get_calibration(pulse.gates.X))
+
+    @pulse.kernel
+    def helper_gate(line, gate):
+        drive(line, gate)
+
+    assert [e[0] for e in _events(caller.lower(A))] == ["drive", "wait", "drive", "wait"]
+    shipped = pulse.quantum_system("transmon_surface17")
+    assert "the calibrated gates of a coupling line are not available yet" in _raises(
+        gives_a_gate, shipped.qudits[3]
+    )
+
+
 def test_systems_that_differ_in_tunings_share_no_specialization():
     def system(tuning):
         return pulse.quantum_system(

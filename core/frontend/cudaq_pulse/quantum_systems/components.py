@@ -16,6 +16,8 @@ takes of a qudit, so two systems of one fingerprint give the same answers.
 
 from __future__ import annotations
 
+import threading
+import weakref
 from operator import attrgetter
 from typing import TYPE_CHECKING, Any
 
@@ -57,6 +59,86 @@ def _shipped() -> list[tuple[Calibration, _Description]]:
     return [(shipped_calibration(name), _calibrated_surface17(name)) for name in SHIPPED_TUNINGS]
 
 
+# What was made of each calibration, kept apart from the calibration (its
+# pickle and its values are what they were): its tuning values, the tuning
+# of each label, and the interaction last made for each pair of labels.
+_MADE: weakref.WeakKeyDictionary[Calibration, _Made] = weakref.WeakKeyDictionary()
+_MADE_LOCK = threading.Lock()
+
+
+class _Made:
+    __slots__ = ("values", "tunings", "interactions")
+
+    def __init__(self, calibration: Calibration) -> None:
+        used, g_c, circuits = calibration._tunings()
+        self.values = (used, g_c, dict(circuits))
+        self.tunings: dict[str, Any] = {}
+        self.interactions: dict[tuple[tuple[str, str], int, int], Any] = {}
+
+
+def _made(calibration: Calibration) -> _Made:
+    """What is kept of *calibration*; called under ``_MADE_LOCK``."""
+    made = _MADE.get(calibration)
+    if made is None:
+        made = _MADE[calibration] = _Made(calibration)
+    return made
+
+
+def _derived_tuning(calibration: Calibration, label: str) -> Tuning | None:
+    """The ``FluxTuning`` of the qudit labelled *label*, from its circuit in
+    *calibration*, or None for a qudit whose circuit the calibration does
+    not give. Made once per calibration and label."""
+    with _MADE_LOCK:
+        made = _made(calibration)
+        if label not in made.tunings:
+            circuit = made.values[2].get(label)
+            if circuit is None:
+                made.tunings[label] = None
+            else:
+                from .tuning import FluxTuning
+
+                ec, ej_max, d, idle = circuit
+                made.tunings[label] = FluxTuning(
+                    ec_hz=ec,
+                    ej_max_hz=ej_max,
+                    asymmetry=d,
+                    idle_flux=idle,
+                    source=f"{calibration.name} calibration, qudits.{label}: ec, ej_max, "
+                    "asymmetry_d, sweet_spot_idle",
+                )
+        found: Tuning | None = made.tunings[label]
+        return found
+
+
+def _derived_interaction(
+    calibration: Calibration, labels: tuple[str, str], tunings: tuple[Tuning, Tuning]
+) -> CouplingInteraction | None:
+    """The ``ChargeCoupling`` of the qudits labelled *labels*, made through
+    *tunings* (the ones the system answers with, declared or derived) with
+    the g_c of *calibration*; None if the calibration gives no g_c. Made
+    once per pair and pair of tunings."""
+    with _MADE_LOCK:
+        made = _made(calibration)
+        used, g_c, _ = made.values
+        if g_c is None:
+            return None
+        # By the tunings themselves (the interaction keeps them, so the key
+        # stays theirs): systems of one calibration that answer with
+        # different tunings each keep their own.
+        key = (labels, id(tunings[0]), id(tunings[1]))
+        kept = made.interactions.get(key)
+        if kept is None:
+            from .tuning import ChargeCoupling
+
+            kept = made.interactions[key] = ChargeCoupling(
+                charge_coupling_hz=g_c,
+                tunings=tunings,
+                source=f"{calibration.name} calibration, coupling.charge_coupling_g_c.{used}",
+            )
+        found: CouplingInteraction = kept
+        return found
+
+
 def _origin(calibration: Calibration | None, qudit: Any) -> tuple[Calibration, str] | None:
     """The calibration that gives *qudit* a tuning and the label it has
     there: the system's *calibration*, or with none a shipped one that
@@ -84,33 +166,39 @@ def tuning_of(
     origin = _origin(calibration, qudit)
     if origin is None:
         return None
-    found: Tuning | None = origin[0]._tuning(origin[1])
-    return found
+    return _derived_tuning(*origin)
 
 
 def interaction_of(
-    description: _Description, calibration: Calibration | None, coupling: Coupling
+    description: _Description,
+    calibration: Calibration | None,
+    coupling: Coupling,
+    first: int | None = None,
 ) -> CouplingInteraction | None:
     """The interaction of *coupling* of *description*: declared, else, for a
-    coupling with no control whose two qudits a calibration gives tunings,
-    the charge coupling that calibration gives, else None."""
+    coupling with no control, the charge coupling made through the tunings
+    the system answers with for its two qudits (declared or derived), with
+    the g_c of the calibration that gives the qudits; else None. With
+    *first*, the index of one of its qudits, as that qudit and then the
+    other see it (its tunings in that order)."""
     declared = coupling.interaction
+    turned = first is not None and first != coupling.qudits[0]
     if declared is not None or coupling.control is not None:
-        return declared
+        return declared._reversed() if turned and declared is not None else declared
     qudits = description.qudits
-    a, b = (qudits[q] for q in coupling.qudits)
-    if a.tuning is not None or b.tuning is not None:
+    a, b = (qudits[q] for q in (coupling.qudits[::-1] if turned else coupling.qudits))
+    one, other = _origin(calibration, a), _origin(calibration, b)
+    known = one or other
+    if known is None or (one and other and one[0] is not other[0]):
         return None
-    first, second = _origin(calibration, a), _origin(calibration, b)
-    if first is None or second is None or first[0] is not second[0]:
-        return None
-    source = first[0]
+    source = known[0]
     if calibration is None:
         # With no calibration of its own, only a coupling the shipped one builds.
         built = next(d for c, d in _shipped() if c is source)
         if not any(_same(_COUPLING_VALUES, c, coupling) for c in built.couplings):
             return None
-    if source._tuning(first[1]) is None or source._tuning(second[1]) is None:
+    through_a = tuning_of(description, calibration, a.index)
+    through_b = tuning_of(description, calibration, b.index)
+    if through_a is None or through_b is None:
         return None
-    found: CouplingInteraction = source._interaction(first[1], second[1])
-    return found
+    return _derived_interaction(source, (a.label, b.label), (through_a, through_b))

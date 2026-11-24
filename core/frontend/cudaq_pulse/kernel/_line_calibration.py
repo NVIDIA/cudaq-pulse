@@ -68,10 +68,6 @@ def play_calibrated(emitter: PulseIREmitter, fname: str, call_args: list[Any]) -
                 code="calibration",
             )
         if line.__class__ is not IRValue or line.vtype != "drive_line":
-            if line.__class__ is IRValue and line.vtype == "coupling_line":
-                from ._coupling import drive
-
-                return drive(emitter, fname, call_args)
             from ._emit_errors import operand_error
 
             raise operand_error(fname, call_args)
@@ -87,13 +83,6 @@ def play_calibrated(emitter: PulseIREmitter, fname: str, call_args: list[Any]) -
             args = list(call_args)
             args[index] = played
             return emitter._emit_pulse_call(fname, args)
-    # What is left is an operand that is not of its op's type, or a drive on
-    # a coupling line, which takes no tone (kernel/_coupling.py).
-    line = call_args[0]
-    if line.__class__ is IRValue and line.vtype == "coupling_line":
-        from ._coupling import drive
-
-        return drive(emitter, fname, call_args)
     from ._emit_errors import operand_error
 
     raise operand_error(fname, call_args)
@@ -106,15 +95,6 @@ def calibrated_waveform(emitter: PulseIREmitter, pulse: Any) -> IRValue | None:
 
     cls = pulse.__class__
     if cls is FluxCZ:
-        import sys
-
-        # Asked for by play_calibrated: on a coupling line it is the gate
-        # that is to come, not a wait.
-        line = (sys._getframe(1).f_locals.get("call_args") or (None,))[0]
-        if line.__class__ is IRValue and line.vtype == "coupling_line":
-            from ._coupling import calibrated_error
-
-            raise calibrated_error(pulse)
         raise CompilationError(
             "a FluxCZ does not play: flux lines are not modeled yet; wait its duration_ns on "
             "the coupled qudits' lines instead",

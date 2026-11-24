@@ -362,6 +362,10 @@ def _update_buses(value: Any) -> tuple[UpdateBus, ...]:
 
 _QUDIT: Callable[[Any], int] = itemgetter(0)
 _COUPLING_LINES: Callable[[Any], Any] = attrgetter("coupling_lines")
+# A controller's coupling lines when it is given none: the empty tuple
+# itself, so that the constructor asks "was anything given" by identity (a
+# comparison would ask the given value, which need not answer with a bool).
+_NO_COUPLING_LINES: tuple[Any, ...] = ()
 _DELAY: Callable[[Any], float] = itemgetter(1)
 # Lines given as carrier indices only.
 _PLAIN = frozenset({int})
@@ -819,7 +823,8 @@ class Controller:
     is the line of qudit 0's own tuning and ``CouplingLine((1, 2))`` that of
     the control of the coupling of qudits 1 and 2. They are checked where
     the controller is built (each a ``CouplingLine``, no two on the same
-    qudits) and kept as a tuple, in the order given.
+    qudits) and kept as a tuple in the order of their qudits: they are a
+    set, and controllers given the same lines in any order are equal.
     ``update_buses``: the groups of its lines whose updates share one bus
     (``UpdateBus``), which carries one update at a time; updates on one bus
     must start ``cycles_per_update`` apart, else the program is a violation
@@ -876,7 +881,7 @@ class Controller:
     version: str | None = None
     processors: Sequence[Processor] = ()
     # A controller without them prints as before they existed.
-    coupling_lines: Sequence[CouplingLine] = field(default=(), repr=False)
+    coupling_lines: Sequence[CouplingLine] = field(default=_NO_COUPLING_LINES, repr=False)
     # The fields as_dict lists for every controller.
     if TYPE_CHECKING:
         _listed_fields: ClassVar[tuple[str, ...]]
@@ -884,7 +889,7 @@ class Controller:
         _listed_fields = _ListedFields()
 
     def __post_init__(self) -> None:
-        if self.coupling_lines != ():
+        if self.coupling_lines is not _NO_COUPLING_LINES:
             from ._coupling_lines import keep_lines
 
             keep_lines(self)
@@ -3440,17 +3445,13 @@ class _Reader:
                 if None in read:
                     return None
                 given[name] = read
-        coupling = given.get("coupling_lines")
-        if isinstance(coupling, list):
-            from ._coupling_lines import line_from
+        if "coupling_lines" in given:
+            from ._coupling_lines import lines_from
 
-            read = [
-                line_from(self, item, f"{path}.coupling_lines[{i}]")
-                for i, item in enumerate(coupling)
-            ]
-            if None in read:
+            coupling = lines_from(self, given["coupling_lines"], f"{path}.coupling_lines")
+            if coupling is None:
                 return None
-            given["coupling_lines"] = read
+            given["coupling_lines"] = coupling
         controller: Controller | None = self.build(path, Controller, **given)
         if controller is not None:
             _notice_version(controller, path if self.file is None else f"{self.file}: {path}")

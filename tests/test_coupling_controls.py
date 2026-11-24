@@ -330,7 +330,10 @@ def test_the_shipped_system_answers_for_what_its_calibration_gives(shipped):
     assert isinstance(tuning, FluxTuning) and shipped.tuning(D4) is tuning
     assert tuning.source.startswith("transmon_surface17 calibration, qudits.D4:")
     made = shipped.interaction(x2, d4)
-    assert isinstance(made, ChargeCoupling) and shipped.interaction(D4, X2) is made
+    assert isinstance(made, ChargeCoupling) and shipped.interaction(X2, D4) is made
+    # Asked the other way, it is the same coupling with its tunings in that order.
+    turned = shipped.interaction(D4, X2)
+    assert turned.tunings == made.tunings[::-1] and shipped.interaction(d4, x2) is turned
     assert made.tunings == (shipped.tuning(X2), tuning)
     assert shipped.control(x2, d4) is None
     point = made.at((X2, D4), {d4: tuning.amplitude_for(5.276e9)})
@@ -545,3 +548,59 @@ def test_the_tuning_module_loads_only_with_a_system_that_declares_one():
     )
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert out.stdout.split() == ["False"]
+
+
+def test_an_interaction_is_made_through_the_tunings_the_system_answers_with(shipped):
+    # One qudit declares its tuning (here, with the wiring's response); the
+    # other's comes from the calibration: the interaction is made of both.
+    settled = shipped.tuning(D4).replace(response=ExponentialSettling(amplitude=0.02, tau_ns=40.0))
+    declared = shipped.physical_qudits[D4].replace(tuning=settled)
+    variant = shipped.replace(qudits={**shipped.physical_qudits, D4: declared})
+    made = variant.interaction(X2, D4)
+    assert isinstance(made, ChargeCoupling)
+    assert made.tunings == (shipped.tuning(X2), settled)
+    assert made.charge_coupling_hz == shipped.interaction(X2, D4).charge_coupling_hz
+    assert variant.interaction(X2, D4) is made
+    # The tunings are in the order asked, so at() reads them in that order.
+    turned = variant.interaction(D4, X2)
+    assert turned.tunings == (settled, shipped.tuning(X2))
+    at = shipped.tuning(D4).amplitude_for(5.276e9)
+    one = shipped.interaction(X2, D4).at((X2, D4), {D4: at})
+    other = shipped.interaction(D4, X2).at((D4, X2), {D4: at})
+    assert one.exchange_hz == pytest.approx(other.exchange_hz)
+    assert one.frequencies_hz[D4] == pytest.approx(other.frequencies_hz[D4])
+    for pair in ((D4,), (D4, D4), (X2, D4, D4)):
+        with pytest.raises(pulse.InvalidValueError, match="takes the coupling's two qudits"):
+            shipped.interaction(X2, D4).at(pair, {})
+
+
+def test_the_answers_take_handles_of_the_system_or_indices(shipped):
+    other = pulse.quantum_system("transmon_lattice:2")
+    for ask in (
+        lambda: shipped.tuning(other.qudits[0]),
+        lambda: shipped.interaction(other.qudits[0], D4),
+        lambda: shipped.control(X2, other.qudits[1]),
+    ):
+        with pytest.raises(pulse.QuantumSystemMismatchError, match="not of 'transmon_surface17'"):
+            ask()
+    with pytest.raises(pulse.InvalidTypeError, match="takes qudit handles"):
+        shipped.tuning(True)
+    assert shipped.tuning(shipped.qudits[0]) is shipped.tuning(shipped.qudits[0].index)
+
+
+def test_a_calibration_without_circuits_gives_no_tunings_and_pickles_as_it_was(shipped):
+    cal = shipped_calibration("transmon_surface17")
+    data = json.loads(json.dumps(cal._data))
+    del data["coupling"]["charge_coupling_g_c"]["used"]
+    for entry in data["qudits"].values():
+        entry.pop("ec", None)
+    bare = type(cal)(data, name="bare")
+    qs = pulse.quantum_system("transmon_surface17", calibration=bare)
+    before = pickle.dumps(bare)
+    assert qs.tuning(D4) is None and qs.interaction(X2, D4) is None
+    # What is made of a calibration is kept apart from it.
+    custom = type(cal)(json.loads(json.dumps(cal._data)), name="custom")
+    held = pulse.quantum_system("transmon_surface17", calibration=custom)
+    before_custom = pickle.dumps(custom)
+    assert held.tuning(D4) == shipped.tuning(D4).replace(source=held.tuning(D4).source)
+    assert pickle.dumps(custom) == before_custom and pickle.dumps(bare) == before

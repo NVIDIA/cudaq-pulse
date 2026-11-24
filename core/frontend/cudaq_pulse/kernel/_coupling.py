@@ -13,7 +13,6 @@ first kernel that fetches one."""
 from __future__ import annotations
 
 import struct
-import sys
 from typing import TYPE_CHECKING, Any
 
 from .._errors import CompilationError, UnsupportedError
@@ -90,6 +89,7 @@ def get_coupling_line(emitter: PulseIREmitter, call_args: list[Any]) -> tuple[An
     # Counted as an acquisition and not listed among those a rolled loop
     # lifts out: a loop whose body first fetches a coupling line is unrolled.
     emitter._acquired[0] += 1
+    _take_plays(emitter)
     results: tuple[IRValue, ...]
     if isinstance(b, PackedIRBuilder):
         results = (_packed_line(b, qudits, indices),)
@@ -97,6 +97,41 @@ def get_coupling_line(emitter: PulseIREmitter, call_args: list[Any]) -> tuple[An
         results = b.emit("pulse.get_coupling_line", tuple(qudits), (_LINE,), {})
     lines.add(key, results)
     return results
+
+
+class _TakesPlays:
+    """A tracer that has fetched a coupling line: its pulse calls come here
+    first. A ``drive`` or ``readout`` whose line is a coupling line is this
+    module's (it takes no tone, and no calibrated pulse yet); every other
+    call goes on to the tracer."""
+
+    __slots__ = ()
+
+    def _emit_pulse_call(self, fname: str, call_args: list[Any]) -> Any:
+        if (fname == "drive" or fname == "readout") and call_args:
+            line = call_args[0]
+            if line.__class__ is IRValue and line.vtype == _LINE:
+                return drive(self, fname, call_args)  # type: ignore[arg-type]
+        return super()._emit_pulse_call(fname, call_args)  # type: ignore[misc]
+
+
+# The class of a tracer that has fetched a coupling line, by the class it had.
+_TAKING: dict[type, type] = {}
+
+
+def _take_plays(emitter: Any) -> None:
+    """From the first coupling line of a trace on, the tracer is of a class
+    that looks at its pulse calls first (``_TakesPlays``). A trace without
+    coupling lines keeps the tracer's class."""
+    cls = emitter.__class__
+    if issubclass(cls, _TakesPlays):
+        return
+    taking = _TAKING.get(cls)
+    if taking is None:
+        taking = _TAKING[cls] = type(
+            f"Coupled{cls.__name__}", (_TakesPlays, cls), {"__slots__": ()}
+        )
+    emitter.__class__ = taking
 
 
 def _require_scheduled(b: Any) -> None:
@@ -128,13 +163,11 @@ def _require_declared(b: Any, reached: list[int | None]) -> None:
     """Refuses a line the quantum system declares no control for, or that no
     coupling line of the control system reaches: *reached* are the qudits'
     indices in the system (None, or negative, for a qudit a call binds at
-    run time, which is checked when it is bound)."""
+    run time: its line is checked when it is bound, by the control system's
+    check of each call, so it is refused without a control system)."""
     target = getattr(getattr(b, "line_tones", None), "__self__", None)
-    if target is None or any(q is None or q < 0 for q in reached):
+    if target is None:
         return
-    from .._coupling_lines import _and, reach_problem
-
-    acts_on = tuple(sorted(q for q in reached if q is not None))
     # The control system the kernel is compiled for, else the quantum system's.
     machine: Any = getattr(b, "machine", None)
     system = getattr(machine, "_system", None)
@@ -145,6 +178,20 @@ def _require_declared(b: Any, reached: list[int | None]) -> None:
     else:
         system = target.control_system
         controllers = None if system is None else system.controllers
+    if any(q is None or q < 0 for q in reached):
+        if controllers is None:
+            raise CompilationError(
+                "get_coupling_line(): the line of a qudit that a call binds (a parameter "
+                "annotated Qudit) is checked when the qudit is bound, which a kernel with no "
+                "control system does not do",
+                code="control_system",
+                fix="compile the kernel for a control system, or pass the qudit as a static "
+                "argument (leave its parameter unannotated)",
+            )
+        return
+    from .._coupling_lines import _and, reach_problem
+
+    acts_on = tuple(sorted(q for q in reached if q is not None))
     if controllers is not None:
         declared = [line for controller in controllers for line in controller.coupling_lines]
         if not any(line.qudits == acts_on for line in declared):
@@ -214,24 +261,12 @@ def drive(emitter: PulseIREmitter, fname: str, call_args: list[Any]) -> tuple[An
             fix="call it as drive(line, waveform)",
         )
     waveform = call_args[1]
-    # play_calibrated hands a drive over after it has made the waveform of a
-    # calibrated pulse among the operands: its earlier frame, past the
-    # tracer's call (and a checking tracer's own), holds the pulse. A
-    # coupling line has no calibrated pulses yet.
-    here = sys._getframe(1)
-    made = here.f_back
-    for _ in range(4):
-        if made is None or made.f_code is here.f_code:
-            break
-        made = made.f_back
-    if made is not None and made.f_code is here.f_code and made.f_locals.get("played") is waveform:
-        raise calibrated_error(made.f_locals.get("value"))
     if waveform.__class__ is not IRValue or waveform.vtype != "waveform":
         from ..quantum_systems.base import _Component
         from ._emitter import _describe
 
         if isinstance(waveform, _Component):
-            raise calibrated_error(waveform)
+            raise calibrated_error(waveform, fname)
         raise CompilationError(
             f"drive(): argument 2 must be a waveform, got {_describe(waveform)}",
             code="wrong_argument",
@@ -268,10 +303,10 @@ def drive(emitter: PulseIREmitter, fname: str, call_args: list[Any]) -> tuple[An
     return results
 
 
-def calibrated_error(pulse: Any) -> CompilationError:
+def calibrated_error(pulse: Any, fname: str = "drive") -> CompilationError:
     """The error for a calibrated pulse driven on a coupling line."""
     return CompilationError(
-        f"drive(): {pulse!r} is a calibrated pulse; the calibrated gates of a coupling line "
+        f"{fname}(): {pulse!r} is a calibrated pulse; the calibrated gates of a coupling line "
         "are not available yet",
         code="calibration",
         fix="drive the coupling line with a waveform, such as square(duration, amplitude)",

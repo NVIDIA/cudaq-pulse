@@ -126,7 +126,10 @@ or a ``control`` on the coupling of the two; a pair whose ``interaction``
 is made through its qudits has no line of its own, and the error names
 the qudits' lines. With a control system, one of its ``CouplingLine``\ s
 must act on exactly those qudits, and the error names the lines that reach
-them.
+them. The line of a qudit that a call binds (a parameter annotated
+``Qudit``) is checked when the qudit is bound, by the control system's
+check of the call; in a kernel with no control system it is a
+``CompilationError``: pass the qudit as a static argument there.
 
 A coupling line first fetched inside a loop is fetched once per program as
 well, but that loop is unrolled; fetch the line before the loop to keep the

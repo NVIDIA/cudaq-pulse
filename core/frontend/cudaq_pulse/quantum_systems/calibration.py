@@ -371,82 +371,47 @@ class Calibration:
 
     def _tunings(
         self,
-    ) -> tuple[str, float, tuple[tuple[str, tuple[float, float, float, float]], ...]]:
+    ) -> tuple[str, float | None, tuple[tuple[str, tuple[float, float, float, float]], ...]]:
         """What a quantum system's tuning components take of the calibration:
         the key of the charge coupling used, g_c in Hz, and each qudit whose
-        circuit is calibrated with (E_C, E_J,max, d, idle flux), by label.
-        Read when first asked for; an indexed shipped calibration's is in
-        ``_shipped_calibrations.SHIPPED_TUNINGS``."""
-        found: Any = self.__dict__.get("_tuning_values")
-        if found is not None:
-            return found  # type: ignore[no-any-return]
+        circuit is calibrated with (E_C, E_J,max, d, idle flux), by label; a
+        calibration that does not give them gives ``("", None, ())``. An
+        indexed shipped calibration's is in
+        ``_shipped_calibrations.SHIPPED_TUNINGS``. Asked through
+        ``components``, which keeps what it makes of it."""
         from .._source_stamp import CALIBRATIONS
 
         if CALIBRATIONS.get(self.name) == self.__dict__.get("_shipped", 0):
             from ._shipped_calibrations import SHIPPED_TUNINGS
 
             found = SHIPPED_TUNINGS.get(self.name)
-        if found is None:
+            if found is not None:
+                return found
+        try:
             couplings = self._couplings()
             used = couplings["used"]
-            found = (
-                used,
-                couplings[used]["value"],
-                tuple(
-                    (
-                        label,
+            g_c = couplings[used]["value"]
+        except (KeyError, TypeError):
+            used, g_c = "", None
+        circuits = []
+        for label, q in self._data.get("qudits", {}).items():
+            try:
+                if q.get("flux_quanta_capable"):
+                    circuits.append(
                         (
-                            q["ec"]["value"],
-                            q["ej_max"]["value"],
-                            q["asymmetry_d"]["value"],
-                            _SWEET_SPOT_FLUX[q["sweet_spot_idle"]],
-                        ),
+                            label,
+                            (
+                                q["ec"]["value"],
+                                q["ej_max"]["value"],
+                                q["asymmetry_d"]["value"],
+                                _SWEET_SPOT_FLUX[q["sweet_spot_idle"]],
+                            ),
+                        )
                     )
-                    for label, q in self._data["qudits"].items()
-                    if q.get("flux_quanta_capable")
-                ),
-            )
-        self._tuning_values = found
-        return found  # type: ignore[no-any-return]
-
-    def _tuning(self, label: str) -> Any:
-        """The ``FluxTuning`` of the qudit labelled *label*, from its
-        calibrated circuit, or None for a qudit whose circuit the calibration
-        does not give. Made when first asked for, once per label."""
-        made: dict[str, Any] = self.__dict__.setdefault("_flux_tunings", {})
-        if label not in made:
-            circuit = dict(self._tunings()[2]).get(label)
-            if circuit is None:
-                made[label] = None
-            else:
-                from .tuning import FluxTuning
-
-                ec, ej_max, d, idle = circuit
-                made[label] = FluxTuning(
-                    ec_hz=ec,
-                    ej_max_hz=ej_max,
-                    asymmetry=d,
-                    idle_flux=idle,
-                    source=f"{self.name} calibration, qudits.{label}: ec, ej_max, asymmetry_d, "
-                    "sweet_spot_idle",
-                )
-        return made[label]
-
-    def _interaction(self, a: str, b: str) -> Any:
-        """The ``ChargeCoupling`` of the qudits labelled *a* and *b*, made
-        through the tunings the calibration gives them, with its g_c; made
-        once per pair."""
-        made: dict[tuple[str, str], Any] = self.__dict__.setdefault("_charge_couplings", {})
-        if (a, b) not in made:
-            from .tuning import ChargeCoupling
-
-            used, g_c, _ = self._tunings()
-            made[a, b] = ChargeCoupling(
-                charge_coupling_hz=g_c,
-                tunings=(self._tuning(a), self._tuning(b)),
-                source=f"{self.name} calibration, coupling.charge_coupling_g_c.{used}",
-            )
-        return made[a, b]
+            except (KeyError, TypeError, AttributeError):
+                # A qudit whose circuit is not all there has no tuning.
+                continue
+        return (used, g_c, tuple(circuits))
 
     @cached_property
     def _idle_exchange(self) -> Mapping[str, tuple[float, Any]]:

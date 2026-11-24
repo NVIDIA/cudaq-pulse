@@ -582,8 +582,7 @@ class QuantumSystem:
         the qudit: ``physical_qudits[i].tuning`` is only what was declared."""
         from .quantum_systems.components import tuning_of
 
-        index = qudit.index if isinstance(qudit, Qudit) else qudit
-        return tuning_of(self._description, self.calibration, index)
+        return tuning_of(self._description, self.calibration, self._index(qudit, "tuning"))
 
     def control(self, a: Qudit | int, b: Qudit | int) -> CouplingControl | None:
         """The control of the coupling of *a* and *b* (handles or indices, in
@@ -596,16 +595,33 @@ class QuantumSystem:
         through a coupling with no line of its own: the ``interaction`` its
         ``Coupling`` declares, else the one the system's calibration gives
         it (``transmon_surface17``: a ``ChargeCoupling`` of its g_c, made
-        through the two qudits' tunings), else ``None``. A ``NotFoundError``
-        when they are not coupled."""
+        through the tunings the system answers with for the two qudits),
+        else ``None``. Its ``tunings`` are in the order asked, *a* then *b*,
+        so ``qs.interaction(a, b).at((a, b), {...})`` reads it. A
+        ``NotFoundError`` when they are not coupled."""
         from .quantum_systems.components import interaction_of
 
-        coupling = self._pair(a, b)
-        return interaction_of(self._description, self.calibration, coupling)
+        return interaction_of(
+            self._description, self.calibration, self._pair(a, b), self._index(a, "interaction")
+        )
+
+    def _index(self, qudit: Qudit | int, asked: str) -> int:
+        """The index of *qudit*, a handle of this system or an index."""
+        if isinstance(qudit, Qudit):
+            if qudit.quantum_system is not self and qudit.quantum_system != self:
+                raise QuantumSystemMismatchError(
+                    f"{qudit!r} is a qudit of {qudit.quantum_system.name!r}, not of {self.name!r}"
+                )
+            return qudit.index
+        if qudit.__class__ is not int:
+            raise InvalidTypeError(
+                f"QuantumSystem.{asked} takes qudit handles, as qs.qudits[i], or their "
+                f"indices; got {qudit!r}"
+            )
+        return qudit
 
     def _pair(self, a: Qudit | int, b: Qudit | int) -> Coupling:
-        first, second = (q.index if isinstance(q, Qudit) else q for q in (a, b))
-        return self._description.coupling(first, second)
+        return self._description.coupling(self._index(a, "control"), self._index(b, "control"))
 
     def _line_calibration(
         self, index: int, readout: bool, gate: Any, transition: Any
