@@ -14,7 +14,7 @@ a controller that is given coupling lines loads this."""
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence, Set
 from typing import TYPE_CHECKING, Any, ClassVar, NoReturn
 
 from ._errors import InvalidTypeError, InvalidValueError, Problem, _ranges
@@ -220,14 +220,18 @@ def keep_lines(controller: Controller) -> None:
     keeps them as a tuple: each a ``CouplingLine``, no two acting on one set
     of qudits."""
     given: Any = controller.coupling_lines
-    if isinstance(given, (str, bytes, CouplingLine)) or not isinstance(given, Iterable):
+    if isinstance(given, (str, bytes, CouplingLine, Mapping, Set)) or not isinstance(
+        given, Iterable
+    ):
+        # A set or a mapping has no order to keep, and a controller compares
+        # by its lines in the order they are given.
         raise InvalidTypeError(
             f"Controller.coupling_lines is a sequence of CouplingLine, got {given!r}"
         )
     kept = tuple(given)
     first: dict[tuple[int, ...], int] = {}
     for position, line in enumerate(kept):
-        if line.__class__ is not CouplingLine:
+        if not isinstance(line, CouplingLine):
             raise InvalidTypeError(
                 "Controller.coupling_lines holds CouplingLines, as CouplingLine(0) for a qudit's "
                 f"tuning or CouplingLine((0, 1)) for a pair's control, got {line!r}"

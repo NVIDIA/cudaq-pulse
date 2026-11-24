@@ -264,6 +264,14 @@ def test_a_line_that_reaches_no_control_is_refused_at_its_path(line, message, fi
         ([0], pulse.InvalidTypeError, "holds CouplingLines, as CouplingLine"),
         (CouplingLine(0), pulse.InvalidTypeError, "is a sequence of CouplingLine"),
         (5, pulse.InvalidTypeError, "is a sequence of CouplingLine"),
+        (None, pulse.InvalidTypeError, "is a sequence of CouplingLine"),
+        ({CouplingLine(0)}, pulse.InvalidTypeError, "is a sequence of CouplingLine"),
+        ({CouplingLine(0): 1}, pulse.InvalidTypeError, "is a sequence of CouplingLine"),
+        (
+            [CouplingLine(0), CouplingLine(0, delay_ns=2.0)],
+            pulse.InvalidValueError,
+            "reached by two coupling lines",
+        ),
         (
             [CouplingLine(3), CouplingLine([3])],
             pulse.InvalidValueError,
@@ -278,6 +286,10 @@ def test_a_controllers_lines_are_checked_where_it_is_built(given, error, match):
     line = CouplingLine(0)
     with pytest.raises(pulse.InvalidValueError, match="reached by two coupling lines"):
         pulse.Controller(coupling_lines=[line, line])
+    # A changed copy is checked as it is built, too.
+    with pytest.raises(error, match=match):
+        dataclasses.replace(pulse.Controller(), coupling_lines=given)
+    assert dataclasses.replace(pulse.Controller(), coupling_lines=[line]).coupling_lines == (line,)
 
 
 def test_controllers_compare_by_their_lines_however_they_are_given():

@@ -229,11 +229,15 @@ MHz. They are made when first asked for and are not part of the system's
 ``interaction`` are only what was declared: building the system, its
 fingerprint, its pickles and its system file are as without them. A
 variant made with ``replace`` and a system built from the same qudits
-answer alike. The answer is for the calibrated values: a qudit changed in
-any of its values (its frequency, a coherence time, its anharmonicity) is
-no longer the calibrated one, and ``qs.tuning`` of it is ``None`` unless
-the changed qudit declares a ``tuning``, and a coupling of it has no
-``qs.interaction``. With ``calibration=None`` there are none.
+answer alike. Such a system holds no calibration of its own
+(``qs.calibration`` is ``None``), and the answer is for the shipped
+calibration's values: a qudit changed in any of its values (its
+frequency, a coherence time, its anharmonicity) is no longer the
+calibrated one, and ``qs.tuning`` of it is ``None`` unless the changed
+qudit declares a ``tuning``, and a coupling of it has no
+``qs.interaction``. A system built with ``calibration=`` answers from
+that calibration by the qudit's label. With ``calibration=None`` on
+``transmon_surface17`` there are none.
 
 A ``ChargeCoupling`` is made through its qudits, so the ``tunings`` it is
 given must be the ones those qudits declare, in the order of the

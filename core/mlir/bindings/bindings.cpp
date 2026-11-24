@@ -246,13 +246,20 @@ struct KernelRefused : std::runtime_error {
 
 /// Whether `module` holds a coupling line. The attribute says that one was
 /// made; a walk, made only for a module with the attribute, says whether it
-/// is still there (a line fetched and never used is dropped as unused).
-inline bool holdsCouplingLine(mlir::ModuleOp module) {
+/// is still there (a line fetched and never used is dropped as unused): an
+/// op that fetches one, or a drive with no tone, on a line that is a
+/// function's argument. With `driven`, whether a pulse plays on one.
+inline bool holdsCouplingLine(mlir::ModuleOp module, bool driven = false) {
   if (!module->hasAttr(kCouplingLinesAttr)) [[likely]]
     return false;
   return module
-      ->walk([](pulse::GetCouplingLineOp) {
-        return mlir::WalkResult::interrupt();
+      ->walk([driven](mlir::Operation *op) {
+        if (!driven && mlir::isa<pulse::GetCouplingLineOp>(op))
+          return mlir::WalkResult::interrupt();
+        if (auto drive = mlir::dyn_cast<pulse::DriveOp>(op))
+          if (!drive.getTone())
+            return mlir::WalkResult::interrupt();
+        return mlir::WalkResult::advance();
       })
       .wasInterrupted();
 }
@@ -268,11 +275,11 @@ inline void refuseCouplingLines(mlir::ModuleOp module) {
         "controller's limits are not checked on them yet");
 }
 
-/// Refuse a program that holds a coupling line where it is simulated or
+/// Refuse a program that plays on a coupling line where it is simulated or
 /// emulated.
 inline void refuseSimulatedCouplingLines(mlir::ModuleOp module) {
-  if (holdsCouplingLine(module)) [[unlikely]]
-    throw Unsupported("this program holds a coupling line; pulses on a "
+  if (holdsCouplingLine(module, /*driven=*/true)) [[unlikely]]
+    throw Unsupported("this program plays on a coupling line; pulses on a "
                       "coupling line are not simulated or emulated yet");
 }
 
@@ -632,7 +639,7 @@ public:
       throw KernelRefused(what + messages_);
     if (messages_.find("a pulse on a coupling line is not simulated yet") !=
         std::string::npos)
-      throw Unsupported("this program holds a coupling line; pulses on a "
+      throw Unsupported("this program plays on a coupling line; pulses on a "
                         "coupling line are not simulated or emulated yet");
     throw std::runtime_error(what + messages_);
   }
@@ -4298,6 +4305,7 @@ public:
   /// segment_boundaries() for an export, which a program that holds a
   /// coupling line is refused.
   std::vector<SegmentWalk::Boundary> exported_segment_boundaries() {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
     refuseCouplingLines(*module_);
     return segment_boundaries();
   }

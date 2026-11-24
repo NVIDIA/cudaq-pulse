@@ -8,7 +8,8 @@
 
 // The schedule passes refuse an op they cannot time. The ops of a coupling
 // line are ops they time: a drive with no tone, a wait and a sync on it
-// are placed, with no diagnostic.
+// raise no diagnostic (coupling_line_schedule.mlir checks where they are
+// placed).
 
 func.func @a_coupling_line_is_timed() {
   %q0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit

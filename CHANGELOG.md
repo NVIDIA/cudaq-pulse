@@ -139,8 +139,10 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   for each coupling; they are made when first asked for and are not part
   of its qudits and couplings, so building the system, its
   `physical_qudits`, its fingerprint, its pickles and its system file are
-  what they were. The answer is for the calibrated values: a qudit changed
-  in any value has none unless it declares one. A
+  what they were. For a system that holds no calibration of its own (a
+  variant made with `replace`, a system built from qudits) the answer is
+  for the shipped calibration's values: a qudit changed in any value has
+  none unless it declares one. A
   `ChargeCoupling` must give the tunings its qudits declare; another is a
   `QuantumSystemDefinitionError` where the system is built. System files
   keep the components a system declares.

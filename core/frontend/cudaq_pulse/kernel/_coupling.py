@@ -215,10 +215,15 @@ def drive(emitter: PulseIREmitter, fname: str, call_args: list[Any]) -> tuple[An
         )
     waveform = call_args[1]
     # play_calibrated hands a drive over after it has made the waveform of a
-    # calibrated pulse among the operands: its frame, two calls up, holds
-    # the pulse. A coupling line has no calibrated pulses yet.
+    # calibrated pulse among the operands: its earlier frame, past the
+    # tracer's call (and a checking tracer's own), holds the pulse. A
+    # coupling line has no calibrated pulses yet.
     here = sys._getframe(1)
-    made = here.f_back.f_back if here.f_back is not None else None
+    made = here.f_back
+    for _ in range(4):
+        if made is None or made.f_code is here.f_code:
+            break
+        made = made.f_back
     if made is not None and made.f_code is here.f_code and made.f_locals.get("played") is waveform:
         raise calibrated_error(made.f_locals.get("value"))
     if waveform.__class__ is not IRValue or waveform.vtype != "waveform":

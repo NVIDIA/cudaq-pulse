@@ -817,7 +817,9 @@ class Controller:
     outputs that play a baseband waveform on a control of the quantum
     system, each named by the set of qudits it acts on: ``CouplingLine(0)``
     is the line of qudit 0's own tuning and ``CouplingLine((1, 2))`` that of
-    the control of the coupling of qudits 1 and 2.
+    the control of the coupling of qudits 1 and 2. They are checked where
+    the controller is built (each a ``CouplingLine``, no two on the same
+    qudits) and kept as a tuple, in the order given.
     ``update_buses``: the groups of its lines whose updates share one bus
     (``UpdateBus``), which carries one update at a time; updates on one bus
     must start ``cycles_per_update`` apart, else the program is a violation

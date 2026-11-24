@@ -332,6 +332,17 @@ def test_a_coupling_line_plays_a_real_waveform():
     assert len(real.lower(A).schedule) == 3
 
     @pulse.kernel
+    def retraced(a, count: int):
+        c = get_coupling_line(a)
+        for i in range(count):
+            # A body that differs by iteration is undone and traced again.
+            drive(c, square(20 + 4 * i, 0.1))
+        drive(c, square(20, 0.1))
+        drive(c, wf_neg(square(20, 0.2j)))
+
+    assert "square() with the amplitude's imaginary part 0.2" in _raises(retraced, A, 3)
+
+    @pulse.kernel
     def beta_given(a, beta: float):
         drive(get_coupling_line(a), drag(20, 0.1, 5.0, beta))
 
@@ -366,6 +377,9 @@ def test_a_calibrated_pulse_does_not_play_on_a_coupling_line_yet():
         message = _raises(kernel, *args)
         assert f"drive(): {named}" in message
         assert "the calibrated gates of a coupling line are not available yet" in message
+        # The same under a tracer that checks units.
+        with pytest.raises(pulse.CompilationError, match="calibrated gates of a coupling line"):
+            pulse.compile(kernel, quantum_system=shipped, unit_warnings=True).lower(*args)
 
     @pulse.kernel
     def on_its_own_line(a):
