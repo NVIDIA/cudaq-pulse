@@ -123,10 +123,12 @@ public:
     mlir::Operation *allocation = trace(line);
     if (!allocation)
       return -1;
-    if (kCoupled && mlir::isa<GetCouplingLineOp>(allocation)) {
+#if PULSE_COUPLED
+    if (mlir::isa<GetCouplingLineOp>(allocation)) {
       int64_t named = couplingFact(allocation, "controller", -1);
       return named >= 0 && named < n ? named : -1;
     }
+#endif
     int64_t qudit = quditOf(allocation);
     const llvm::SmallVector<int64_t> &owners =
         mlir::isa<GetDriveLineOp>(allocation) ? drive : readout;

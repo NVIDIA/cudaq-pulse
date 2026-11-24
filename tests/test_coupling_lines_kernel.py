@@ -406,16 +406,18 @@ def test_a_check_of_limits_refuses_it_and_the_program_pickles():
         back.export_to_controller()
 
 
-def test_simulating_a_pulse_on_a_coupling_line_is_refused_for_now():
+def test_emulating_a_pulse_on_a_coupling_line_is_refused_for_now():
     from cudaq_pulse.classical.emulation import emulate
 
     lowered = detune.lower(A, D, 0.31)
-    for run in (lambda: pulse.simulate(lowered, levels=2), lambda: emulate(lowered, seed=1)):
-        with pytest.raises(pulse.UnsupportedError) as raised:
-            run()
-        assert "a program with a coupling line is not simulated or emulated yet" in str(
-            raised.value
-        )
+    with pytest.raises(pulse.UnsupportedError) as raised:
+        emulate(lowered, seed=1)
+    assert "a program with a coupling line is not simulated or emulated yet" in str(raised.value)
+    # It is simulated (tests/runtime/test_coupling_lines_simulate.py), also
+    # after a refusal and before one: the module is shared.
+    assert pulse.simulate(lowered, levels=2).density_matrix.shape == (4, 4)
+    with pytest.raises(pulse.UnsupportedError):
+        emulate(lowered, seed=1)
 
 
 @pulse.classical(max_latency_ns=200)
@@ -728,6 +730,149 @@ def test_what_scheduling_does_not_do_yet_is_refused():
         pulse.InvalidValueError, match=r"CouplingLine\(0, delay_ns=2.2\) is delayed"
     ):
         pulse.compile(tuned, quantum_system=QS, control_system=uneven).lower(A)
+
+
+def test_what_is_refused_of_a_program_with_a_coupling_line_reaches_python_as_before():
+    """The decoder and the event walks of a program that holds a coupling
+    line are compiled apart from those of a program without one. What they
+    refuse is the same error, of the same type, with the same text and the
+    kernel's line, and the module they walked is left whole."""
+    import inspect
+
+    from cudaq_pulse._native import _cudaq_pulse_native as native
+
+    def rejected(a):
+        c = get_coupling_line(a)
+        drive(c, square(40, 0.1))
+        drive(get_drive_line(a), gaussian(40, 0.1, 0.0))
+
+    def rejected_plain(a):
+        d = get_drive_line(a)
+        drive(d, square(40, 0.1))
+        drive(get_drive_line(a), gaussian(40, 0.1, 0.0))
+
+    # A value the decoder rejects, in the record after a coupling line's.
+    texts = []
+    for function in (rejected, rejected_plain):
+        with pytest.raises(pulse.CompilationError) as raised:
+            pulse.kernel(function).lower(A)
+        first = inspect.getsourcelines(function)[1]
+        note = "\n".join(getattr(raised.value, "__notes__", []))
+        assert f"line {first + 3}, in {function.__name__}" in note
+        assert type(raised.value) is pulse.CompilationError
+        texts.append(str(raised.value))
+    assert texts[0] == texts[1]
+    assert texts[0].startswith("gaussian sigma must be positive, got 0.0")
+
+    # What the event walks do not support yet, thrown inside the walk of a
+    # module that holds a coupling line.
+    @pulse.kernel
+    def measured(a):
+        drive(get_coupling_line(a), square(40, 0.1))
+        return readout(get_readout_line(a), square(400, 0.05))
+
+    text = measured.lower(A).mlir()
+    assert "pulse.coupling_lines" in text and ", iq <{" in text
+    module = native.MLIRPipeline().parse_to_module(text.replace(", iq <{", ", trace <{"))
+    before = module.print()
+    message = "readout mode trace is not supported by the exports yet; only iq is"
+    for _ in range(2):
+        with pytest.raises(NotImplementedError) as refused:
+            module.events()
+        assert str(refused.value) == message
+        # The tree of a program this short is its events.
+        with pytest.raises(NotImplementedError) as refused:
+            module.event_tree(100)
+        assert str(refused.value) == message
+    # The module is the caller's still: it prints as it did, and the same
+    # module with the mode the walks know lists its events.
+    assert module.print() == before
+    del module
+    again = native.MLIRPipeline().parse_to_module(text)
+    assert [event[0] for event in again.events()] == ["drive", "readout"]
+    assert again.print() == native.MLIRPipeline().parse_to_module(text).print()
+
+
+def test_a_module_told_later_that_it_holds_a_coupling_line_is_asked_again():
+    """A module keeps what it answered when first asked whether it holds a
+    coupling line. set_attributes(), which can say so later, has it asked
+    again. A line's fetch and a pulse on it verify only in a module that
+    says so, so a compiled program told so later holds neither, and its
+    walks answer what they answered; a module written by hand can hold a
+    value of a coupling line without them, and is then refused its export."""
+    from cudaq_pulse._native import _cudaq_pulse_native as native
+
+    @pulse.kernel
+    def plain(a):
+        drive(get_drive_line(a), gaussian(40, 0.2, 10.0))
+        return readout(get_readout_line(a), square(400, 0.05))
+
+    text = plain.lower(A).mlir()
+    assert "pulse.coupling_lines" not in text
+    module = native.MLIRPipeline().parse_to_module(text)
+
+    def answers():
+        return (
+            module.events(),
+            module.event_tree(0),
+            module.site_tree(),
+            module.exported_segment_boundaries(),
+        )
+
+    asked = answers()
+    module.set_attributes("{pulse.coupling_lines}")
+    assert "pulse.coupling_lines" in module.print()
+    assert answers() == asked
+    # The same module read with the attribute from the start.
+    marked = native.MLIRPipeline().parse_to_module(module.print())
+    assert (marked.events(), marked.event_tree(0), marked.site_tree()) == asked[:3]
+    # An op of a coupling line in a module that does not say so does not parse.
+    coupled = detune.lower(A, D, 0.31).mlir()
+    assert " pulse.coupling_lines," in coupled
+    with pytest.raises(RuntimeError, match="does not say it holds a coupling line"):
+        native.MLIRPipeline().parse_to_module(coupled.replace(" pulse.coupling_lines,", "", 1))
+    # A coupling line that a call gives verifies without the attribute. The
+    # export asks the module, which does not say so, and keeps the answer;
+    # told so, the module is asked again, and the export is refused.
+    given = native.MLIRPipeline().parse_to_module(
+        "module {\n"
+        "  func.func private @given() -> !pulse.coupling_line\n"
+        "  func.func @main() {\n"
+        "    %line = call @given() : () -> !pulse.coupling_line\n"
+        "    return\n"
+        "  }\n"
+        "}\n"
+    )
+    assert given.exported_segment_boundaries() == []
+    given.set_attributes("{pulse.coupling_lines}")
+    with pytest.raises(pulse.UnsupportedError, match="it is not exported yet"):
+        given.exported_segment_boundaries()
+
+
+def test_a_stream_written_by_hand_with_a_bad_coupling_record_is_refused():
+    """The frontend fetches a coupling line before it drives one, and writes
+    whole records. A stream that does not is read by the decoder of programs
+    with coupling lines, whose errors these are."""
+    import numpy as np
+    from cudaq_pulse._native import _cudaq_pulse_native as native
+
+    frequencies = np.array([5.0e9], dtype=np.float64)
+
+    def decode(*words):
+        stream = np.array(words, dtype=np.int64)
+        return native.PulseModuleBuilder().build_from_packed(stream, 2.0, 1, frequencies)
+
+    # A pulse on a coupling line (opcode 45) that no record fetched.
+    with pytest.raises(RuntimeError) as raised:
+        decode(45 | (5 << 8), 0, 1, 2, -1, -1)
+    assert str(raised.value) == "packed: SSA value not found for vid=0"
+    with pytest.raises(ValueError) as raised:
+        decode(45 | (4 << 8), 0, 1, 2, -1)
+    assert str(raised.value) == "packed: opcode 45 expects 5 payload words, got 4"
+    # The record that fetches one (opcode 44) with no qudit.
+    with pytest.raises(ValueError) as raised:
+        decode(44 | (2 << 8), 1, 0)
+    assert str(raised.value) == "packed: malformed coupling line"
 
 
 def test_the_tracing_module_loads_only_for_a_kernel_with_a_coupling_line():

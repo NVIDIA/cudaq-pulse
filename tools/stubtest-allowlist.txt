@@ -24,6 +24,7 @@ cudaq_pulse(\._device)?\.QuantumSystem\.(physical_qudits|true_qudits|parameter_d
 cudaq_pulse\.quantum_systems\.tuning\.(FluxTuning\.source|ChargeCoupling\.(tunings|source)|ExchangeControl\.(unit|amplitudes|exchange_hz|source))
 # Tuning declares for type checkers the methods each tuning (FluxTuning) defines.
 cudaq_pulse\.quantum_systems\.tuning\.Tuning\.(frequency_at|anharmonicity_at|amplitude_for)
+cudaq_pulse\.quantum_systems\.tuning\.(CouplingControl|CouplingInteraction)\.at
 cudaq_pulse\.quantum_systems\.tuning\.(FluxTuning|ExchangeControl)\.response
 # QuantumSystem answers these through __getattr__ (quantum_systems.components.answer).
 cudaq_pulse(\._device)?\.QuantumSystem\.(tuning|control|interaction)
