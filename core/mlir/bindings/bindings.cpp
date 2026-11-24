@@ -3699,7 +3699,7 @@ public:
     out.reserve(walk.result.size());
     for (size_t i = 0; i < walk.result.size(); ++i) {
       const ControllerRecord &r = walk.result[i];
-      bool loop = std::strcmp(r.kind, "loop") == 0;
+      bool loop = isKind(r.kind, "loop");
       out.emplace_back(r.kind, loop ? r.trips : -1,
                        std::move(walk.dependencies[i]));
     }
