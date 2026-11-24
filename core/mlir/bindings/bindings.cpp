@@ -7585,6 +7585,121 @@ public:
   /// qudits as slots, in argument order: what place_carriers() binds. The
   /// function's results and its attributes other than its schedule state are
   /// dropped.
+  /// Writes every call in `main` in place: the callee's operations, each
+  /// starting the call's stated start later, and in the call's loops. A call
+  /// states its start (`pulse.start_cycles`), may state its length
+  /// (`pulse.length_cycles`, which the callee must fit in) and, inside loops,
+  /// its periods (`pulse.period_cycles`). The spelling of a timed call is
+  /// read in `statedCall` alone.
+  struct StatedCall {
+    int64_t start = 0;
+    std::optional<int64_t> length;
+    llvm::SmallVector<int64_t, 2> periods;
+  };
+  static StatedCall statedCall(mlir::func::CallOp call,
+                               const std::string &entry) {
+    StatedCall stated;
+    auto start = call->getAttrOfType<mlir::IntegerAttr>("pulse.start_cycles");
+    if (!start)
+      throw std::invalid_argument(
+          "load: " + entry + " calls " + call.getCallee().str() +
+          " without stating when it starts; a call in a loaded function "
+          "states its start in cycles");
+    stated.start = start.getInt();
+    if (auto length =
+            call->getAttrOfType<mlir::IntegerAttr>("pulse.length_cycles"))
+      stated.length = length.getInt();
+    mlir::Attribute periods = call->getAttr("pulse.period_cycles");
+    if (auto one = mlir::dyn_cast_or_null<mlir::IntegerAttr>(periods))
+      stated.periods.push_back(one.getInt());
+    else if (auto many =
+                 mlir::dyn_cast_or_null<mlir::DenseI64ArrayAttr>(periods))
+      stated.periods.assign(many.asArrayRef().begin(),
+                            many.asArrayRef().end());
+    return stated;
+  }
+  static void writeCallsInPlace(mlir::ModuleOp source, mlir::func::FuncOp main,
+                                const std::string &entry) {
+    // Each round writes the calls now in `main`; a callee's own calls are
+    // written by the next. A chain longer than the module has functions
+    // calls itself.
+    size_t functions = 0;
+    for (mlir::Operation &op : *source.getBody())
+      functions += mlir::isa<mlir::func::FuncOp>(op);
+    for (size_t round = 0;; ++round) {
+      llvm::SmallVector<mlir::func::CallOp> calls;
+      main.walk([&](mlir::func::CallOp call) { calls.push_back(call); });
+      if (calls.empty())
+        return;
+      if (round > functions)
+        throw std::invalid_argument("load: " + entry +
+                                    " calls a function that calls itself");
+      for (mlir::func::CallOp call : calls) {
+        std::string name = call.getCallee().str();
+        StatedCall stated = statedCall(call, entry);
+        auto callee = source.lookupSymbol<mlir::func::FuncOp>(name);
+        if (!callee || callee.isDeclaration())
+          throw std::invalid_argument("load: " + entry + " calls " + name +
+                                      ", which the module does not define");
+        if (pulse::scheduleStateOf(callee) != pulse::ScheduleState::Timed)
+          throw std::invalid_argument("load: " + entry + " calls " + name +
+                                      ", which is not scheduled");
+        if (!llvm::hasSingleElement(callee.getBody()))
+          throw std::invalid_argument("load: " + name +
+                                      " has more than one block");
+        mlir::IRMapping mapping;
+        for (auto [formal, actual] :
+             llvm::zip(callee.getArguments(), call.getArgOperands()))
+          mapping.map(formal, actual);
+        mlir::OpBuilder builder(call);
+        int64_t end = 0;
+        for (mlir::Operation &op : callee.getBody().front()) {
+          if (auto ret = mlir::dyn_cast<mlir::func::ReturnOp>(op)) {
+            for (auto [result, value] :
+                 llvm::zip(call.getResults(), ret.getOperands()))
+              result.replaceAllUsesWith(mapping.lookupOrDefault(value));
+            break;
+          }
+          mlir::Operation *copy = builder.clone(op, mapping);
+          copy->walk([&](mlir::Operation *inner) {
+            if (auto nested = mlir::dyn_cast<mlir::func::CallOp>(inner)) {
+              // Written by the next round, from the same start and loops.
+              StatedCall within = statedCall(nested, name);
+              mlir::Builder attrs(inner->getContext());
+              inner->setAttr("pulse.start_cycles",
+                             attrs.getI64IntegerAttr(within.start +
+                                                     stated.start));
+              if (!stated.periods.empty())
+                inner->setAttr("pulse.period_cycles",
+                               attrs.getDenseI64ArrayAttr(stated.periods));
+              if (within.length)
+                end = std::max(end, within.start + *within.length);
+              return;
+            }
+            std::optional<int64_t> start = pulse::startCycles(inner);
+            if (!start)
+              return;
+            if (!pulse::periodCycles(inner).empty())
+              throw std::invalid_argument(
+                  "load: " + name +
+                  " has a loop; a called function is written without loops");
+            end = std::max(end,
+                           *start + pulse::durationCycles(inner).value_or(0));
+            pulse::setStartCycles(inner, *start + stated.start);
+            pulse::setPeriodCycles(inner, stated.periods);
+          });
+        }
+        if (stated.length && end > *stated.length)
+          throw std::invalid_argument(
+              "load: " + entry + " gives " + name + " " +
+              std::to_string(*stated.length) + " cycles at " +
+              std::to_string(stated.start) + ", and it takes " +
+              std::to_string(end));
+        call->erase();
+      }
+    }
+  }
+
   PulseModule load_function(const std::string &text, const std::string &entry,
                             double clock_ghz, int64_t qudits) {
     std::lock_guard<std::mutex> guard(lock_);
@@ -7639,19 +7754,20 @@ public:
           "load: " + entry +
           " is not scheduled; load() takes a function whose operations all "
           "have their start and duration");
-    bool calls = false;
-    found.walk([&](mlir::func::CallOp) { calls = true; });
-    if (calls)
-      throw std::invalid_argument(
-          "load: " + entry +
-          " calls another function; inline its calls before it is loaded");
-
     auto loc = builder_->getUnknownLoc();
     mlir::OwningOpRef<mlir::ModuleOp> module(
         mlir::ModuleOp::create(loc, mlir::StringRef(entry)));
     module->getOperation()->setAttr(pulse::kControlSystemAttr, controlSystem);
+    // The classical functions the program calls and the links they travel
+    // on are stated by the module, beside its functions.
+    if (mlir::Attribute links = source->getOperation()->getAttr("classical.links"))
+      module->getOperation()->setAttr("classical.links", links);
+    for (mlir::Operation &op : *source->getBody())
+      if (op.getName().getStringRef() == "classical.callable")
+        module->push_back(op.clone());
     auto main = mlir::cast<mlir::func::FuncOp>(found->clone());
     module->push_back(main);
+    writeCallsInPlace(*source, main, entry);
     mlir::NamedAttrList kept;
     for (mlir::NamedAttribute attribute : main->getAttrs()) {
       llvm::StringRef name = attribute.getName().getValue();
@@ -7662,7 +7778,8 @@ public:
     main.setSymName("main");
     main.setPublic();
     // Attributes of other compilers on the operations are not the program's:
-    // only an operation's own attributes and the Pulse dialect's are kept.
+    // only an operation's own attributes and those of the Pulse and
+    // classical dialects are kept.
     main.walk([&](mlir::Operation *op) {
       if (op == main.getOperation())
         return;
@@ -7671,6 +7788,7 @@ public:
       mlir::NamedAttrList attributes;
       for (mlir::NamedAttribute attribute : op->getAttrs())
         if (attribute.getName().getValue().starts_with("pulse.") ||
+            attribute.getName().getValue().starts_with("classical.") ||
             llvm::is_contained(own, attribute.getName()))
           attributes.append(attribute);
       op->setAttrs(attributes);

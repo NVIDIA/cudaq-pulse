@@ -122,3 +122,73 @@ def test_a_stated_clock_must_be_the_systems(system):
     other = MODULE.replace("module {", stated % (2 * period_fs), 1)
     with pytest.raises(pulse.CompilationError, match="clock"):
         pulse.load(other, entry="round", qudits=system.qudits[:2])
+
+
+T = "!pulse.drive_line, !pulse.tone"
+TIMED = "attributes {pulse.schedule_state = #pulse.schedule_state<timed>}"
+CALLS = f"""
+module {{
+  func.func private @x(%d: !pulse.drive_line, %t: !pulse.tone) -> ({T}) {TIMED} {{
+    %n = arith.constant 8 : i64
+    %amp = arith.constant 0.5 : f64
+    %zero = arith.constant 0.0 : f64
+    %w = pulse.square %n, %amp, %zero : i64, f64, f64 -> !pulse.waveform
+    %d1, %t1 = pulse.drive %d, %w, %t <{{duration_cycles = 8 : i64, start_cycles = 0 : i64}}> : !pulse.drive_line, !pulse.waveform, !pulse.tone -> {T}
+    return %d1, %t1 : {T}
+  }}
+  func.func private @pair(%a: !pulse.drive_line, %at: !pulse.tone, %b: !pulse.drive_line, %bt: !pulse.tone) -> ({T}, {T}) {TIMED} {{
+    %a1, %at1 = func.call @x(%a, %at) {{pulse.start_cycles = 0 : i64}} : ({T}) -> ({T})
+    %b1, %bt1 = func.call @x(%b, %bt) {{pulse.start_cycles = 8 : i64, pulse.length_cycles = 8 : i64}} : ({T}) -> ({T})
+    return %a1, %at1, %b1, %bt1 : {T}, {T}
+  }}
+  func.func @shot(%qa: !pulse.qudit, %qb: !pulse.qudit) {TIMED} {{
+    %a, %at = pulse.get_drive_line %qa : (!pulse.qudit) -> ({T})
+    %b, %bt = pulse.get_drive_line %qb : (!pulse.qudit) -> ({T})
+    %a1, %at1, %b1, %bt1 = func.call @pair(%a, %at, %b, %bt) {{pulse.start_cycles = 0 : i64, pulse.length_cycles = 16 : i64}} : ({T}, {T}) -> ({T}, {T})
+    %b2, %bt2 = func.call @x(%b1, %bt1) {{pulse.start_cycles = 40 : i64}} : ({T}) -> ({T})
+    %b3, %bt3, %a3, %at3 = func.call @pair(%b2, %bt2, %a1, %at1) {{pulse.start_cycles = 100 : i64}} : ({T}, {T}) -> ({T}, {T})
+    return
+  }}
+}}
+"""
+
+
+def test_calls_with_a_stated_start_are_written_in_place(system):
+    program = pulse.load(CALLS, entry="shot", qudits=system.qudits[:2])
+    assert events(program) == [
+        ("drive", 0, 0, 8),
+        ("drive", 1, 8, 8),
+        ("drive", 1, 40, 8),
+        ("drive", 1, 100, 8),
+        ("drive", 0, 108, 8),
+    ]
+    assert "call" not in program.mlir()
+
+
+@pytest.mark.parametrize(
+    "old, new, message",
+    [
+        (" {pulse.start_cycles = 40 : i64}", "", "without stating when it starts"),
+        ("pulse.start_cycles = 0 : i64, pulse.length_cycles = 16", "pulse.start_cycles = 0 : i64, pulse.length_cycles = 12", "and it takes 16"),
+        ("pulse.start_cycles = 40 : i64", "pulse.start_cycles = 12 : i64", None),
+        ("pulse.schedule_state = #pulse.schedule_state<timed>} {\n    %n", "made.by = 1 : i64} {\n    %n", "which is not scheduled"),
+    ],
+)
+def test_calls_that_cannot_be_written_in_place(system, old, new, message):
+    text = CALLS.replace(old, new)
+    assert text != CALLS
+    with pytest.raises(pulse.CompilationError, match=message):
+        pulse.load(text, entry="shot", qudits=system.qudits[:2])
+
+
+def test_a_function_that_calls_itself_is_refused(system):
+    text = f"""
+module {{
+  func.func @again(%q: !pulse.qudit) {TIMED} {{
+    func.call @again(%q) {{pulse.start_cycles = 0 : i64}} : (!pulse.qudit) -> ()
+    return
+  }}
+}}
+"""
+    with pytest.raises(pulse.CompilationError, match="calls itself"):
+        pulse.load(text, entry="again", qudits=system.qudits[:1])
