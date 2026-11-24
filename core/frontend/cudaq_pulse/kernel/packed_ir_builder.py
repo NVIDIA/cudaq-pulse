@@ -491,14 +491,20 @@ class PackedIRBuilder:
         the module is built: no schedule of it fits, since the operations of
         one line follow each other. Within that the schedule decides. Only a
         builder given a limit counts its lines, when its buffer is taken."""
+        import weakref
+
         at = self._cur + 2
         self._record(_MAX_CYCLES, [cycles, cycles])
-        get_buffer = self.get_buffer
+        # The builder holds the function and the function must not hold the
+        # builder: a builder under a limit is freed as any other is.
+        held = weakref.ref(self)
 
         def with_stop() -> Any:
-            lines = max(1, len(self._line_qudit))
-            self._buf[at] = min(cycles * lines, 1 << 60)
-            return get_buffer()
+            builder = held()
+            assert builder is not None
+            lines = max(1, len(builder._line_qudit))
+            builder._buf[at] = min(cycles * lines, 1 << 60)
+            return PackedIRBuilder.get_buffer(builder)
 
         self.get_buffer = with_stop  # type: ignore[method-assign]
 

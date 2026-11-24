@@ -21,7 +21,11 @@ from tests._handles import Q
 
 # 5000 ns on the 2 GHz clock of Q's quantum system: 10,000 cycles.
 MACHINE = ControlSystem(controllers=[Controller(max_program_duration=5_000)])
-LIMIT = r"max_program_duration"
+# Either check's own sentence: the sum's, or the schedule's.
+LIMIT = (
+    r"the longest program of the controller \(Controller\.max_program_duration\)"
+    r"|lasts \d+ cycles, more than controllers\[0\]'s max_program_duration of"
+)
 BOUNDS = (4, 10**6)
 LENGTHS = [4.0, 1999.5, 3000.0, 4400.4, 6000.0, 7600.0, 9700.0, 12_000.0]
 SHAPES = ["longer other arm", "both arms", "no else", "nested in a loop", "loop in an arm"]

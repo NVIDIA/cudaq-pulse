@@ -263,15 +263,19 @@ so operations that play at the same time on different lines count once,
 and a scheduled program longer than the limit is a ``CompilationError``
 that gives its length. A wait whose length a float sets counts at the
 length each call gives it; a call whose values make the scheduled program
-longer is a ``ValueError`` when it binds them.
+longer is a ``ValueError`` when it binds them. A wait whose length is known
+only when the program runs (an answer of a classical call) is scheduled at
+its lowest length and counts at its highest, once for each time it runs:
+the error then gives the length as scheduled and what those waits add.
 
-Building the module also sums the program op after op, every iteration of
-its loops (the longer arm of an ``if``), to stop a kernel that no schedule
-can save before it is traced to its end. The operations of one line follow
-each other, so a program on ``n`` lines that fits sums to at most ``n``
-times the limit: past that, and past 2**60 cycles without a limit, it is a
-``CompilationError`` at the op or loop that passes it (for a wait whose
-length a float sets, a ``ValueError`` at the call). A line's ``delay_ns``
+Building the module from the traced kernel also sums the program op after
+op, every iteration of its loops (the longer arm of an ``if``), so that a
+program no schedule can save is refused before it is scheduled. The
+operations of one line follow each other, so a program on ``n`` lines that
+fits sums to at most ``n`` times the limit: past that, and past 2**60
+cycles without a limit, it is a ``CompilationError`` (for a wait whose
+length a float sets, a ``ValueError`` at the call). Without a controller
+limit the error is at the op or loop that passes 2**60 cycles. A line's ``delay_ns``
 counts too: a delay longer than 2**60 cycles, or one that takes the
 scheduled program past them, is a ``CompilationError``.
 

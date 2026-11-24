@@ -6515,22 +6515,41 @@ static mlir::LogicalResult checkProgramBudget(mlir::func::FuncOp function,
 inline constexpr llvm::StringLiteral kProgramLimitsAttr =
     "pulse.program_limits";
 
-/// Fail if the scheduled `function` lasts longer than a controller's
-/// longest program: to the end of its last op on the lines that controller
-/// plays (every line, with one), line delays included. `latency`: the
-/// feedback latency the schedule waits after a readout something depends
-/// on (0: none), which the message names.
-static mlir::LogicalResult
-checkProgramLimits(mlir::func::FuncOp function,
+/// How many cycles longer than scheduled one execution of `region` can
+/// take, by the waits in it whose length is known only when the program
+/// runs: each at its highest length, a loop's body once per trip. A wait
+/// with no highest length adds nothing, as it is scheduled. (Such a wait is
+/// in no arm of an if: the schedule refuses one there.)
+static int64_t stretchPast(mlir::Region &region) {
+  int64_t total = 0;
+  for (mlir::Block &block : region)
+    for (mlir::Operation &op : block) {
+      if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(&op)) {
+        total += pulse::constantTripCount(loop).value_or(0) *
+                 stretchPast(loop.getRegion());
+      } else if (op.getNumRegions()) {
+        for (mlir::Region &inner : op.getRegions())
+          total += stretchPast(inner);
+      } else if (op.hasAttr("classical.variable")) {
+        // Not a wait whose length a call's floats set: a call is scheduled
+        // with its values.
+        total += std::max<int64_t>(0, stretchOf(&op));
+      }
+    }
+  return total;
+}
+
+/// checkProgramLimits for a module that has limits: out of line, so that a
+/// module without any pays the look for the attribute and nothing else.
+LLVM_ATTRIBUTE_NOINLINE static mlir::LogicalResult
+checkAgainstLimits(mlir::func::FuncOp function, mlir::ArrayAttr limits,
                    const pulse::ClockAttributes &clocks, int64_t latency) {
   auto module = function->getParentOfType<mlir::ModuleOp>();
-  auto limits = module
-                    ? module->getAttrOfType<mlir::ArrayAttr>(kProgramLimitsAttr)
-                    : nullptr;
-  if (!limits)
-    return mlir::success();
   // A wait whose length a call sets counts at its length as scheduled: each
-  // call's values are scheduled, and checked, again.
+  // call's values are scheduled, and checked, again. A wait whose length is
+  // known only when the program runs is scheduled at its lowest length and
+  // can last its highest: the program is held to what it can then last.
+  int64_t stretch = stretchPast(function.getBody());
   for (mlir::Attribute entry : limits) {
     auto fields = mlir::dyn_cast<mlir::DictionaryAttr>(entry);
     auto controller =
@@ -6542,14 +6561,18 @@ checkProgramLimits(mlir::func::FuncOp function,
     if (!controller || !cycles || !name || !duration)
       continue;
     int64_t length = programLength(function, &clocks, controller.getInt());
-    if (length <= cycles.getInt())
+    if (length + stretch <= cycles.getInt())
       continue;
     auto diagnostic = function->emitError()
                       << "kernel '" << module.getSymName().value_or("main")
-                      << "' lasts " << length << " cycles, more than "
-                      << name.getValue() << "'s max_program_duration of "
-                      << duration.getValue() << " (" << cycles.getInt()
-                      << " cycles)";
+                      << "' lasts " << (stretch ? "up to " : "")
+                      << length + stretch << " cycles";
+    if (stretch)
+      diagnostic << " (" << length << " as scheduled, its waits of run-time "
+                 << "length add up to " << stretch << ")";
+    diagnostic << ", more than " << name.getValue()
+               << "'s max_program_duration of " << duration.getValue() << " ("
+               << cycles.getInt() << " cycles)";
     nameLatency(diagnostic, latency);
     diagnostic << "; let its operations overlap, shorten them or raise "
                   "max_program_duration";
@@ -6562,6 +6585,24 @@ checkProgramLimits(mlir::func::FuncOp function,
     return mlir::failure();
   }
   return mlir::success();
+}
+
+/// Fail if the scheduled `function` lasts longer than a controller's
+/// longest program: to the end of its last op on the lines that controller
+/// plays (every line, with one), line delays included, with its waits of
+/// run-time length at their highest. `latency`: the feedback latency the
+/// schedule waits after a readout something depends on (0: none), which the
+/// message names.
+static mlir::LogicalResult
+checkProgramLimits(mlir::func::FuncOp function,
+                   const pulse::ClockAttributes &clocks, int64_t latency) {
+  auto module = function->getParentOfType<mlir::ModuleOp>();
+  auto limits = module
+                    ? module->getAttrOfType<mlir::ArrayAttr>(kProgramLimitsAttr)
+                    : nullptr;
+  if (!limits)
+    return mlir::success();
+  return checkAgainstLimits(function, limits, clocks, latency);
 }
 
 // ── Driver ───────────────────────────────────────────────────────────────

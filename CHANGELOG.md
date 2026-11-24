@@ -431,8 +431,10 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   stop for a kernel no schedule can save: it is an error once it passes
   the limit times the number of lines the program has taken, which a
   program that fits cannot. A program on one line is checked as before. A
-  call whose values take the schedule past the limit is still a
-  `ValueError`; its message now gives the scheduled length.
+  wait whose length is known only when the program runs counts at its
+  highest length in the scheduled check, as it did in the sum. A call whose
+  values take the schedule past the limit is still a `ValueError`; its
+  message now gives the scheduled length.
 - **`viz.save_schedule` takes a path-like path and names its keywords.**
   `path` may be a `pathlib.Path` as well as a string, and the function takes
   `figsize` and `title`, the two keywords of `plot_schedule`, where it passed

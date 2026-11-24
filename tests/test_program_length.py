@@ -231,8 +231,9 @@ def test_a_call_checks_twenty_thousand_waits_of_one_float(shape):
     assert waits.length[1:3] == (4_000_000, 2_000_000)
     fits = (2_000_000 - cycles) // _MANY
     assert compiled.lower(Q[0], fits + 0.49) is not None
+    # One half more rounds every wait up a cycle.
     with pytest.raises(ValueError, match=r"lasts \d+ cycles, more than controllers\[0\]'s"):
-        compiled.lower(Q[0], fits + 1.0)
+        compiled.lower(Q[0], fits + 0.5)
     with pytest.raises(ValueError, match=r"Controller\.max_program_duration"):
         compiled.lower(Q[0], k + 0.5)
     # One length for the waits of one float, and one test of their bounds.
@@ -408,11 +409,146 @@ def test_lines_taken_in_a_called_kernel_count():
     assert max(e.start_cycles + e.duration_cycles for e in lowered.schedule) == 900
 
 
-def test_without_a_limit_no_line_is_counted():
-    # Only a builder given a limit wraps its buffer to count its lines.
+def test_without_a_limit_no_line_is_counted(monkeypatch):
+    # Only a builder given a limit wraps its buffer to count its lines: a
+    # compile without one never asks for the wrap.
+    import gc
+    import weakref
+
     from cudaq_pulse.kernel.packed_ir_builder import PackedIRBuilder
 
+    limited = []
+    limit_cycles = PackedIRBuilder.limit_cycles
+
+    def counted(self, cycles):
+        limited.append(cycles)
+        limit_cycles(self, cycles)
+
+    monkeypatch.setattr(PackedIRBuilder, "limit_cycles", counted)
+    assert pulse.compile(_together(3, 400)).lower(Q[0], Q[1], Q[2]) is not None
+    no_limit = ControlSystem(controllers=[Controller()])
+    assert pulse.compile(_together(3, 400), control_system=no_limit).lower(Q[0], Q[1], Q[2])
+    assert limited == []
+    machine = ControlSystem(controllers=[Controller(max_program_duration=500)])
+    assert pulse.compile(_together(3, 400), control_system=machine).lower(Q[0], Q[1], Q[2])
+    assert limited == [1000]
+
+    # The wrap holds its builder weakly: a builder under a limit is freed
+    # when its last reference goes, without the cyclic collector.
     builder = PackedIRBuilder()
     assert "get_buffer" not in vars(builder)
-    builder.limit_cycles(1000)
-    assert "get_buffer" in vars(builder)
+    limit_cycles(builder, 1000)
+    assert "get_buffer" in vars(builder) and len(builder.get_buffer()) == 3
+    gone = weakref.ref(builder)
+    gc.disable()
+    try:
+        del builder
+        assert gone() is None
+    finally:
+        gc.enable()
+
+
+# ── Waits whose length is an answer, known only when the program runs ──────
+
+
+@pulse.classical(max_latency_ns=50, name="how_long")
+def _how_long(bits: pulse.Bits) -> int:
+    return 900
+
+
+def _answered(shape):
+    """A readout, a call on it, then on the drive line of a (b's line is
+    taken and unused) a wait of 4 to 900 cycles set by the call's answer
+    and a 600-cycle drive: once, three times in a rolled loop, or with the
+    drive in an if arm beside a 300-cycle one."""
+
+    @pulse.kernel
+    def answered(a, b):
+        d = get_drive_line(a)
+        get_drive_line(b)
+        r = get_readout_line(a)
+        m = readout(r, square(100, 0.05))
+        n = _how_long.submit([m]).result()
+        sync(d, r)
+        if shape == "plain":
+            wait(d, n, bounds=(4, 900))
+            drive(d, square(600, 0.1))
+        elif shape == "loop":
+            for _ in range(3):
+                wait(d, n, bounds=(4, 900))
+                drive(d, square(600, 0.1))
+        else:
+            wait(d, n, bounds=(4, 900))
+            if m:
+                drive(d, square(600, 0.1))
+            else:
+                drive(d, square(300, 0.1))
+
+    return answered
+
+
+def _answering(cycles=None):
+    from cudaq_pulse.classical import Link
+
+    limit = None if cycles is None else cycles / 2
+    controller = Controller(max_program_duration=limit)
+    return ControlSystem(controllers=[controller], links={"controller": Link()})
+
+
+@pytest.mark.parametrize(
+    ("shape", "options", "stretch"),
+    [("plain", {}, 896), ("loop", {"unroll_threshold": 0}, 3 * 896), ("before an if", {}, 896)],
+)
+def test_a_wait_set_by_an_answer_counts_at_its_highest_length(shape, options, stretch):
+    kernel = _answered(shape)
+    free = pulse.compile(kernel, control_system=_answering(), **options).lower(Q[0], Q[1])
+    scheduled = max(e.start_cycles + e.duration_cycles for e in free.schedule)
+    # Exactly what it can last compiles, and one cycle less does not: the
+    # schedule holds the wait at its lowest length, and the check adds what
+    # each execution of it can add.
+    longest = scheduled + stretch
+    fits = pulse.compile(kernel, control_system=_answering(longest), **options)
+    assert fits.lower(Q[0], Q[1]) is not None
+    with pytest.raises(CompilationError) as caught:
+        pulse.compile(kernel, control_system=_answering(longest - 2), **options).lower(Q[0], Q[1])
+    assert (
+        f"kernel 'answered' lasts up to {longest} cycles ({scheduled} as scheduled, its waits "
+        f"of run-time length add up to {stretch}), more than controllers[0]'s "
+        "max_program_duration"
+    ) in str(caught.value)
+
+
+def test_a_wait_set_by_an_answer_is_in_no_arm_of_an_if():
+    # The stretch counts no arm against another: the schedule refuses such a
+    # wait inside one, with or without a limit.
+    @pulse.kernel
+    def in_an_arm(a):
+        d = get_drive_line(a)
+        r = get_readout_line(a)
+        m = readout(r, square(100, 0.05))
+        n = _how_long.submit([m]).result()
+        sync(d, r)
+        if m:
+            wait(d, n, bounds=(4, 900))
+        else:
+            drive(d, square(2000, 0.1))
+
+    for cycles in (None, 100_000):
+        with pytest.raises(Exception, match="a variable wait cannot be inside one arm"):
+            pulse.compile(in_an_arm, control_system=_answering(cycles)).lower(Q[0])
+
+
+def test_one_line_with_such_a_wait_is_refused_as_before():
+    @pulse.kernel
+    def one_line(a):
+        r = get_readout_line(a)
+        m = readout(r, square(100, 0.05))
+        n = _how_long.submit([m]).result()
+        wait(r, n, bounds=(4, 900))
+        readout(r, square(600, 0.05))
+
+    free = pulse.compile(one_line, control_system=_answering()).lower(Q[0])
+    scheduled = max(e.start_cycles + e.duration_cycles for e in free.schedule)
+    assert pulse.compile(one_line, control_system=_answering(scheduled + 896)).lower(Q[0])
+    with pytest.raises(CompilationError, match="max_program_duration"):
+        pulse.compile(one_line, control_system=_answering(scheduled + 894)).lower(Q[0])
