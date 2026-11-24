@@ -18,3 +18,12 @@ cudaq_pulse\.classical\.Bits
 cudaq_pulse\._waits\._computed
 # QuantumSystem reads these from its description (QuantumSystem.__getattr__).
 cudaq_pulse(\._device)?\.QuantumSystem\.(physical_qudits|true_qudits|parameter_drift|parameter_drift_time|advance|couplings|residual_zz|model|attribution|anharmonicities|t1_times|t2_times|t2_echo_times|thermal_populations|coupling_map|connectivity_graph|drive_amplitude_scale)
+# A component reads its fields through _Field descriptors (quantum_systems.base),
+# ints with a __get__, which stubtest accepts as a property only where an int
+# fits the property's type, as a float; these fields are strings and tuples.
+cudaq_pulse\.quantum_systems\.tuning\.(FluxTuning\.source|ChargeCoupling\.(tunings|source)|ExchangeControl\.(unit|amplitudes|exchange_hz|source))
+# Tuning declares for type checkers the methods each tuning (FluxTuning) defines.
+cudaq_pulse\.quantum_systems\.tuning\.Tuning\.(frequency_at|anharmonicity_at|amplitude_for)
+cudaq_pulse\.quantum_systems\.tuning\.(FluxTuning|ExchangeControl)\.response
+# QuantumSystem answers these through __getattr__ (quantum_systems.components.answer).
+cudaq_pulse(\._device)?\.QuantumSystem\.(tuning|control|interaction)
