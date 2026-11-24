@@ -21,7 +21,7 @@ from ._emitter import (
     _find_choice,
     _parameter_names,
 )
-from .ir_builder import OP_TABLE, CompilationError, IRValue, SymbolicValueError
+from .ir_builder import KERNEL_OPS, CompilationError, IRValue, SymbolicValueError
 
 
 def unknown(
@@ -42,7 +42,7 @@ def attribute_error(obj: Any, attr: str) -> CompilationError:
     code = "unknown_attribute"
     if isinstance(obj, types.ModuleType):
         module = obj.__name__
-        if module.split(".")[0] == "cudaq_pulse" and attr in OP_TABLE:
+        if module.split(".")[0] == "cudaq_pulse" and attr in KERNEL_OPS:
             return CompilationError(
                 f"module {module!r} has no attribute {attr!r}: the kernel language is in "
                 "cudaq_pulse.ops",
@@ -101,6 +101,10 @@ def operand_error(fname: str, call_args: list[Any]) -> CompilationError:
         if v.__class__ is not IRValue or v.vtype not in want:
             break
     value = call_args[index]
+    # Once a kernel of the process has fetched a coupling line, a wait takes
+    # one too; its message stays the one of the lines every kernel has.
+    if "coupling_line" in want:
+        want = _LINE_TYPES
     wanted = " or ".join(_TYPE_WORDS[t] for t in want)
     message = f"{fname}(): argument {index + 1} must be a {wanted}, got {_describe(value)}"
     vtype = value.vtype if value.__class__ is IRValue else None

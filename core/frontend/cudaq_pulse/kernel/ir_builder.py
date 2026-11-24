@@ -3,7 +3,7 @@
 """Shared IR types and builder for the pulse kernel compiler.
 
 This module contains the core data structures used by the bytecode
-compiler: Op, IRValue, Parameter, PythonIRBuilder, OP_TABLE, LINEAR_TYPES,
+compiler: Op, IRValue, Parameter, PythonIRBuilder, OP_TABLE, KERNEL_OPS, LINEAR_TYPES,
 and CompilationError.
 """
 
@@ -694,7 +694,7 @@ class IRValue(_UndecidableComparisons):
         return f"{self.name or f'%v{self.vid}'}:{self.vtype}"
 
 
-LINEAR_TYPES = frozenset({"drive_line", "readout_line", "tone"})
+LINEAR_TYPES = frozenset({"drive_line", "readout_line", "tone", "coupling_line"})
 
 # The vid of a loop-carried value that has no value entering the loop.
 UNDEFINED_VID = -1
@@ -729,6 +729,14 @@ OP_TABLE: dict[str, tuple[int, tuple[str, ...], tuple[str, ...] | None]] = {
     "wf_mul": (2, (), ("waveform",)),
     "wf_scale": (1, ("scale",), ("waveform",)),
     "wf_neg": (1, (), ("waveform",)),
+}
+
+# Every op a kernel calls by name: those the tracer emits from their row
+# above, and get_coupling_line (one or more qudits), which
+# kernel/_coupling.py traces: the tracer builds nothing for it.
+KERNEL_OPS: dict[str, tuple[int, tuple[str, ...], tuple[str, ...] | None]] = {
+    **OP_TABLE,
+    "get_coupling_line": (-1, (), ("coupling_line",)),
 }
 
 

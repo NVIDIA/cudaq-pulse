@@ -42,6 +42,15 @@ Channel Access
    whole program, with its tone in ``line.tone``. A readout line has only
    its own tone, so its ``line.tones`` holds that one entry.
 
+.. function:: get_coupling_line(*qudits) -> Line
+
+   Obtain the coupling line of a control of the quantum system: of one
+   qudit, the line that tunes it; of two, the line of the control of their
+   coupling. The qudits name the line as a set, in any order (the IR lists
+   them by ascending index), and it is the same one value for the whole
+   program, as the other lines are. See
+   :ref:`coupling-line-pulses`.
+
 Scheduling Operations
 ---------------------
 
@@ -49,7 +58,8 @@ Scheduling Operations
 
    Play a waveform envelope on a drive line, at the line's own tone or, given
    ``tone=``, at another one, such as ``drive(control, cr, tone=target.tone)``
-   for a cross-resonance pulse.
+   for a cross-resonance pulse. On a coupling line it plays the waveform
+   itself, at baseband, and takes no tone.
 
 .. function:: readout(line, waveform, *, tone=None)
 
@@ -69,6 +79,74 @@ Scheduling Operations
 
    Synchronize two or more lines to a common time point.
    All lines are padded to the latest time among them.
+
+.. _coupling-line-pulses:
+
+Pulses on a coupling line
+-------------------------
+
+A two-qudit gate made by a baseband control, such as a flux pulse that
+tunes a transmon or a tunable coupler, plays on a coupling line. The
+amplitude is what the control receives, in the unit of the quantum
+system's component (flux quanta from the idle point for a ``FluxTuning``),
+real and signed; the values come in as kernel arguments, as any
+calibration value does:
+
+.. code-block:: python
+
+   @pulse.kernel
+   def detune(a, d, amplitude: float, length: int):
+       tuning = get_coupling_line(a)         # the line that tunes a
+       pair = get_coupling_line(a, d)        # the control of the pair's coupling
+       drive(tuning, square(length, amplitude))
+       drive(tuning, square(length, -amplitude))   # back, with no net amplitude
+       sync(tuning, pair, get_drive_line(a))
+       wait(pair, 20 * pulse.ns)
+
+   lowered = detune.lower(qs.qudits[0], qs.qudits[1], 0.31, 60)
+
+A coupling line has no tone: ``line.tone`` and ``line.tones`` are errors on
+it, ``drive`` on it takes no ``tone=``, and the phase and frequency ops,
+which take a tone, do not apply. The phase a detuned qudit gains is not
+tracked for it: a calibration corrects it with ``shift_phase`` on the
+qudit's drive tone. Its waveform is real: a complex amplitude or a DRAG
+pulse with a nonzero ``beta`` on it is a ``CompilationError``, at the
+kernel's line where the kernel says so and when the program is verified
+otherwise (a ``beta`` that is a kernel argument is not known to be 0). A
+calibrated pulse (a ``DragPulse``, a ``ReadoutPulse``, a ``FluxCZ``) does
+not play on it: a coupling line has no calibrated gates yet. ``wait`` and
+``sync`` take it as any line, and it schedules as a line of its own, so a pulse on
+it plays while the qudit's drive and readout lines play theirs. In
+``lowered.schedule`` an event on a coupling line has the lowest of the
+line's qudits as its ``qudit``.
+
+The line must exist. Without a control system, the quantum system must
+declare the control of exactly those qudits: the one qudit's tuning
+(``tunings={q: ...}``), or the control of the coupling of the two
+(``controls={(a, d): ...}``); a pair whose interaction is made through
+its qudits has no line of its own, and the error names the qudits' lines. With a control system, one of its ``CouplingLine``\ s
+must act on exactly those qudits, and the error names the lines that reach
+them. The line of a qudit that a call binds (a parameter annotated
+``Qudit``) can only be checked when the qudit is bound, which is the
+control system's check of each call; a kernel with no control system has
+none, so the line is a ``CompilationError`` there: pass the qudit as a
+static argument (leave its parameter unannotated).
+
+A coupling line first fetched inside a loop is fetched once per program as
+well, but that loop is unrolled; fetch the line before the loop to keep the
+loop rolled. A program that holds a coupling line is not exported yet:
+``export_to_controller`` and ``export_to_emulator`` raise
+``UnsupportedError``, and since a controller's limits are not checked on a
+coupling line yet, it compiles only without a control system, where it
+raises the same error with one. ``simulate`` and
+``classical.emulation.emulate`` do not play a pulse on a coupling line yet
+either, and raise ``UnsupportedError`` too; so does a program that holds
+a coupling line beside a classical call, a kernel with its own
+``schedule=`` (compile with ``flatten_schedules=True``) or a value a
+measurement selects while the program runs, even when the line is never
+used. Beside none of those, a coupling line that is fetched and never
+used is dropped, as any unused line: the program exports and simulates. The calibrated two-qudit gate of a
+coupling, played as one call, comes with a later release.
 
 Phase and Frequency Control
 ---------------------------

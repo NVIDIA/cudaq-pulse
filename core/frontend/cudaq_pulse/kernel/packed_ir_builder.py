@@ -84,8 +84,9 @@ _SELECT = 41
 _MAX_CYCLES = 42
 # [site number, kind] of the op just written: idle replacement's trace only.
 _SITE = 43
-# A coupling line (count, result, qudits...) and a drive on one, which has
-# no tone (line, waveform, result, start, duration).
+# Written by kernel/_coupling.py: a coupling line (count, result, qudits...)
+# and a drive on one, which has no tone (line, waveform, result, start,
+# duration).
 _ALLOC_COUPLING = 44
 _DRIVE_COUPLING = 45
 _LATENCY_MODE = {"bounded": 0, "timeout": 1, "blocking": 2}

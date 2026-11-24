@@ -65,6 +65,7 @@ from ._bytecode_normalize import (
 from ._schedule_blocks import block_budget
 from ._unroll import resolve_unroll_threshold
 from .ir_builder import (
+    KERNEL_OPS,
     LINEAR_TYPES,
     MAX_CYCLES,
     OP_TABLE,
@@ -106,7 +107,7 @@ _WAVEFORMS = frozenset(
 )
 _WAVEFORM_ARITHMETIC = frozenset({"wf_add", "wf_sub", "wf_mul", "wf_scale", "wf_neg"})
 _MAKES_WAVEFORM = _WAVEFORMS | _WAVEFORM_ARITHMETIC | {"custom_samples"}
-_PULSE_OP_NAMES = frozenset(OP_TABLE.keys())
+_PULSE_OP_NAMES = frozenset(KERNEL_OPS.keys())
 _OP_NAMES = {name: f"pulse.{name}" for name in OP_TABLE}
 
 # Loops over Python iterables are unrolled; this bounds a runaway iterator.
@@ -249,13 +250,15 @@ def _load_pulse_functions() -> None:
     from .. import ops
 
     loaded = {}
-    for name in _PULSE_OP_NAMES:
+    for name in OP_TABLE:
         op = getattr(ops, name, None)
         if op is not None:
             loaded[op] = name
-    # Not an op: _emit_pulse_call computes it while tracing.
-    loaded[ops.round_duration] = "round_duration"
     _PLAY_FUNCTIONS.update({op: name for op, name in loaded.items() if name in _PLAYS})
+    # Without a row: _emit_pulse_call computes the one while tracing and
+    # hands the other to kernel/_coupling.py.
+    loaded[ops.round_duration] = "round_duration"
+    loaded[ops.get_coupling_line] = "get_coupling_line"
     # One update, so another thread never sees part of the map.
     _PULSE_FUNCTIONS.update(loaded)
 
@@ -1085,11 +1088,16 @@ def _describe(value: Any) -> str:
 
 
 # The current values of the lines passed to *fname*, with lists and
-# tuples of lines flattened.
+# tuples of lines flattened: the lines with a tone (_LINE_TYPES) and the
+# coupling line, which has none (kernel/_coupling.py).
 def _sync_lines(fname: str, call_args: list[Any]) -> list[IRValue]:
     lines: list[IRValue] = []
     for v in call_args:
-        if v.__class__ is not IRValue or v.vtype not in _LINE_TYPES:
+        if v.__class__ is not IRValue or v.vtype not in (
+            "drive_line",
+            "readout_line",
+            "coupling_line",
+        ):
             break
         chan = v.chan
         lines.append(v if chan is None else chan.value)
@@ -1099,7 +1107,11 @@ def _sync_lines(fname: str, call_args: list[Any]) -> list[IRValue]:
     lines = []
 
     def add(value: Any, where: str) -> None:
-        if value.__class__ is IRValue and value.vtype in _LINE_TYPES:
+        if value.__class__ is IRValue and value.vtype in (
+            "drive_line",
+            "readout_line",
+            "coupling_line",
+        ):
             lines.append(_current(value))
         elif value.__class__ in (list, tuple):
             for i, item in enumerate(value):
@@ -1983,7 +1995,7 @@ class PulseIREmitter:
                         and len(fn) == 2
                         and fn[0] is _UNRESOLVED
                         and not (fn[1] in _PLAYS and arg > 2)
-                        and fn[1] in OP_TABLE
+                        and fn[1] in KERNEL_OPS
                     ):
                         self._push_pulse_results(fn[1], call_args)
                     else:
@@ -3541,7 +3553,7 @@ class PulseIREmitter:
 
     # The error for calling *name*, which nothing in scope defines.
     def _unknown_name(self, name: str) -> CompilationError:
-        known = [*OP_TABLE, *self.locals, *self._fn_globals, *self._fn_closures, *self._builtins]
+        known = [*KERNEL_OPS, *self.locals, *self._fn_globals, *self._fn_closures, *self._builtins]
         from ._emit_errors import unknown
 
         return unknown(f"unknown pulse op: {name}", "unknown_name", name, known, call=True)
@@ -3581,7 +3593,7 @@ class PulseIREmitter:
                     from ._emit_errors import play_arity_error
 
                     raise play_arity_error(name, len(call_args))
-                if name in OP_TABLE:
+                if name in KERNEL_OPS:
                     self._push_pulse_results(name, call_args)
                 elif name == "range":
                     self._push_range(call_args)
@@ -4159,6 +4171,10 @@ class PulseIREmitter:
             from ._emit_errors import qudit_attribute_error
 
             raise qudit_attribute_error(self.locals, value, name)
+        if value.vtype == "coupling_line":
+            from ._coupling import attribute_error
+
+            raise attribute_error(name)
         word = _TYPE_WORDS.get(value.vtype, value.vtype)
         article = "an" if word[0] in "aeiou" else "a"
         hint = "its attributes are" if value.vtype in _LINE_TYPES else "only a line has attributes,"
@@ -4188,6 +4204,10 @@ class PulseIREmitter:
                 from ._durations import traced_round_duration
 
                 return (traced_round_duration(self.b, call_args, None),)
+            if fname == "get_coupling_line":
+                from ._coupling import get_coupling_line
+
+                return get_coupling_line(self, call_args)
             raise CompilationError(f"unknown pulse op: {fname}", code="unknown_name")
 
         value_count, attr_names, rtypes, operand_types = entry

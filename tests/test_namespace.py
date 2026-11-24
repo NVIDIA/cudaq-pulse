@@ -73,6 +73,7 @@ TOP_LEVEL = {
 DSL = {
     "get_drive_line",
     "get_readout_line",
+    "get_coupling_line",
     "drive",
     "readout",
     "wait",
@@ -129,13 +130,13 @@ def test_names_that_moved_or_went_are_not_top_level(name):
 
 def test_the_kernel_language_is_in_ops():
     assert DSL <= set(dir(pulse.ops))
-    assert len(DSL) == 23
+    assert len(DSL) == 24
 
 
 def test_ops_all_is_the_kernel_language_the_tracer_lowers():
-    from cudaq_pulse.kernel.ir_builder import OP_TABLE
+    from cudaq_pulse.kernel.ir_builder import KERNEL_OPS
 
-    assert set(pulse.ops.__all__) == DSL == set(OP_TABLE)
+    assert set(pulse.ops.__all__) == DSL == set(KERNEL_OPS)
     assert len(pulse.ops.__all__) == len(DSL)
 
 
