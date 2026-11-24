@@ -557,6 +557,36 @@ def test_the_pulses_at_once_are_counted_in_linear_time():
 
 
 @pytest.mark.scaling
+def test_the_pulses_of_a_round_kept_as_a_loop_are_bounded_in_linear_time():
+    from cudaq_pulse._concurrency import violations
+    from cudaq_pulse.quantum_systems import PhysicalQudit
+
+    @pulse.kernel
+    def rounds(qudits):
+        for _ in range(1000):
+            for q in qudits:
+                drive(get_drive_line(q), square(40, 0.1))
+
+    def program(n: int):
+        # Every drive of a round is in flight at once, and the limit lets
+        # them be: the bound on what a round plays settles it.
+        control = ControlSystem(
+            controllers=[Controller(drive_lines=range(n), readout_lines=range(n))],
+            max_concurrent_drives=n,
+        )
+        qudits = {i: PhysicalQudit(i, 5.0e9 + 1.0e3 * i, 50.0, 30.0) for i in range(n)}
+        system = pulse.quantum_system(name=f"round{n}", qudits=qudits, control_system=control)
+        lowered = pulse.compile(rounds, quantum_system=system, schedule="asap").lower(
+            system.qudits[0:n]
+        )
+        return lambda: violations(lowered)
+
+    # Eight times the drives: about 8x the time when linear, 64x when each
+    # drive is summed with every other in flight.
+    _assert_linear("a round's bound", {n: program(n) for n in (500, 4000)}, 8 * TOLERANCE)
+
+
+@pytest.mark.scaling
 def test_the_values_of_a_long_list_are_bound_in_linear_time():
     @pulse.kernel
     def stream(q, amplitudes: list[float], count: int):
