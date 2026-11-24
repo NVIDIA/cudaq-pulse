@@ -1546,6 +1546,102 @@ def _is_pure_host_call(fn: Any) -> bool:
     return module.split(".")[0] == "numpy" and not module.startswith("numpy.random")
 
 
+# A host call into these packages changes no Python state but an iterator
+# passed to it, unless it is to one of the functions in _WRITES.
+_COMPUTES = frozenset({"builtins", "math", "cmath", "numpy", "cudaq_pulse"})
+_WRITES = frozenset(
+    {
+        "setattr",
+        "delattr",
+        "exec",
+        "eval",
+        "input",
+        "copyto",
+        "put",
+        "place",
+        "putmask",
+        "put_along_axis",
+        "fill_diagonal",
+    }
+)
+_IMMUTABLE = frozenset({int, float, complex, bool, str, bytes, tuple, frozenset, range})
+# The operators of augmented assignments, and the methods through which one,
+# an item assignment or a del of an item changes an object in place.
+_AUGMENTED = frozenset(
+    {
+        operator.iadd,
+        operator.isub,
+        operator.imul,
+        operator.imatmul,
+        operator.itruediv,
+        operator.ifloordiv,
+        operator.imod,
+        operator.ipow,
+        operator.ilshift,
+        operator.irshift,
+        operator.iand,
+        operator.ixor,
+        operator.ior,
+    }
+)
+_IN_PLACE = (
+    "__iadd__",
+    "__isub__",
+    "__imul__",
+    "__imatmul__",
+    "__itruediv__",
+    "__ifloordiv__",
+    "__imod__",
+    "__ipow__",
+    "__ilshift__",
+    "__irshift__",
+    "__iand__",
+    "__ixor__",
+    "__ior__",
+    "__setitem__",
+    "__delitem__",
+)
+
+
+def _may_change_state(fn: Any, owner: Any, fname: str, kwargs: dict[str, Any] | None) -> bool:
+    """Whether a host call of *fn* may change Python state other than an
+    iterator passed to it: the object it is a method of, unless that is an
+    immutable value or a container ``_note_mutation`` copies; a random
+    generator it draws from; anything a user function reaches."""
+    if owner.__class__ in _IMMUTABLE or isinstance(owner, _MUTABLE):
+        return False
+    module = getattr(fn, "__module__", None) or ""
+    top = module.partition(".")[0]
+    if top not in _COMPUTES or module.startswith("numpy.random"):
+        return True
+    return fname in _WRITES or (kwargs is not None and "out" in kwargs)
+
+
+def _changes_in_place(obj: Any) -> bool:
+    """Whether an item assignment or an augmented assignment may change
+    *obj*, which is not one of the containers ``_MUTABLE`` names, in place."""
+    cls = obj.__class__
+    return any(hasattr(cls, name) for name in _IN_PLACE)
+
+
+def _changes_a_name_in_place(
+    instrs: Sequence[tuple[int, Any]], lo: int, ops: list[int], values: dict[str, Any]
+) -> bool:
+    """Whether an augmented assignment to a name among the instructions
+    *ops* from ``instrs[lo]`` on may change in place what the name holds in
+    *values*, other than a container ``_MUTABLE`` names: a NumPy array, say.
+    The tracer is told of no such change on a name (``NOTE_INPLACE``)."""
+    at = -1
+    for _ in range(ops.count(BINARY)):
+        at = ops.index(BINARY, at + 1)
+        if ops[at + 1 : at + 2] != [STORE_FAST] or instrs[lo + at][1] not in _AUGMENTED:
+            continue
+        value = values.get(instrs[lo + at + 1][1])
+        if value is not None and not isinstance(value, _MUTABLE) and _changes_in_place(value):
+            return True
+    return False
+
+
 def _parameter_names(value: Any) -> list[str]:
     """Names of the kernel parameters a symbolic value depends on."""
     if isinstance(value, Parameter):
@@ -1676,6 +1772,11 @@ class _NotRollableError(Exception):
     """The single traced iteration of a rolled loop left the loop body."""
 
 
+class _ChangesStateError(_NotRollableError):
+    """The traced iteration of a rolled loop was about to change Python state
+    that the iterations after it would read, and that cannot be put back."""
+
+
 class _UndefinedLocalError(CompilationError):
     """A name was read before the kernel bound it."""
 
@@ -1732,6 +1833,7 @@ class PulseIREmitter:
         "_slots",
         "_durations",
         "_mutated",
+        "_rolling",
         "_depth",
         "_acquired",
         "_lines",
@@ -1749,6 +1851,7 @@ class PulseIREmitter:
         _slots: dict[int, tuple[list[Any], int, IRValue]]
         _durations: dict[int, int]
         _mutated: dict[int, tuple[Any, Any]] | None
+        _rolling: bool
         _depth: int
         _acquired: list[int]
         _lines: _Lines
@@ -1780,6 +1883,7 @@ class PulseIREmitter:
             self._slots = caller._slots
             self._durations = caller._durations
             self._mutated = caller._mutated
+            self._rolling = caller._rolling
             self._depth = caller._depth + 1
             self._acquired = caller._acquired
             self._lines = caller._lines
@@ -1798,6 +1902,8 @@ class PulseIREmitter:
         # While a rolled loop body or a branch arm is traced: id -> (container,
         # contents before) for each list, dict or set a Python call changed.
         self._mutated = None
+        # True while a rolled loop body is traced, also in the branch arms in it.
+        self._rolling = False
         # Number of enclosing inlined kernel and helper calls.
         self._depth = 0
         # Lines acquired so far, counted across inlined calls.
@@ -2896,6 +3002,9 @@ class PulseIREmitter:
             lines.watched = ((mutated, tuple(obj for obj, _ in lazy)), *around)
         try:
             outcome = self._loop(view, start, branch, end, header)
+        except _ChangesStateError:
+            # For the rolled loop around the if, which is unrolled instead.
+            raise
         except _NotRollableError:
             from ._conditions import rejoin_error
 
@@ -2995,8 +3104,14 @@ class PulseIREmitter:
         (non-IR locals and the lists and dicts they hold, and any container
         a called kernel or helper reaches) unchanged, so all iterations would
         trace identically. Otherwise the emitted ops are rolled back.
+        A call or assignment that may change any other state (an iterator
+        made before the loop, an object, a NumPy array) stops the trace
+        before it runs, so the loop is unrolled from the state before it.
         The names in *unbound* are left unbound while the body is traced.
         """
+        body = list(map(_first, prog.instrs[for_idx + 1 : exit_idx]))
+        if BINARY in body and _changes_a_name_in_place(prog.instrs, for_idx + 1, body, self.locals):
+            return False
         rng = loop.rng
         stack = self.stack
         saved_stack = list(stack)
@@ -3028,6 +3143,8 @@ class PulseIREmitter:
         outer = self._mutated
         mutated: dict[int, tuple[Any, Any]] = {}
         self._mutated = mutated
+        rolling = self._rolling
+        self._rolling = True
         acquired = self._acquired[0]
         hoist = False
         stale: list[tuple[str, _Chan]] = []
@@ -3073,6 +3190,7 @@ class PulseIREmitter:
             ok = False
         finally:
             self._mutated = outer
+            self._rolling = rolling
             if outer is not None:
                 for key, entry in mutated.items():
                     outer.setdefault(key, entry)
@@ -3269,13 +3387,30 @@ class PulseIREmitter:
         return count * max(calls, 1) <= threshold
 
     def _note_mutation(self, obj: Any) -> None:
-        """Remember what *obj* held before a rolled body or branch arm changed it."""
+        """Remember what *obj* held before a rolled body or branch arm changed it.
+        A rolled body is unrolled instead if it may change another object in
+        place, which cannot be put back."""
         mutated = self._mutated
         if mutated is not None and id(obj) not in mutated:
             if obj.__class__ in _CONTAINERS:
                 mutated[id(obj)] = (obj, obj.copy())
             elif isinstance(obj, _MUTABLE):
                 mutated[id(obj)] = (obj, _contents(obj))
+            elif self._rolling and _changes_in_place(obj):
+                raise _ChangesStateError
+
+    def _advances_an_iterator(
+        self, call_args: list[StackVal], kwargs: dict[str, StackVal] | None
+    ) -> bool:
+        """Whether a call is passed an iterator the rolled body did not make."""
+        mutated = self._mutated
+        assert mutated is not None
+        for value in [*call_args, *kwargs.values()] if kwargs else call_args:
+            if hasattr(value.__class__, "__next__"):
+                noted = mutated.get(id(value))
+                if noted is None or noted[1] is not None:
+                    return True
+        return False
 
     def _note_fresh(self, obj: Any) -> None:
         """Mark a container built by the body or arm being traced as free to change."""
@@ -3562,6 +3697,11 @@ class PulseIREmitter:
                     pass
             owner = getattr(callable_val, "__self__", None)
             if self._mutated is not None:
+                if self._rolling and (
+                    _may_change_state(callable_val, owner, fname, kwargs)
+                    or self._advances_an_iterator(call_args, kwargs)
+                ):
+                    raise _ChangesStateError
                 if owner.__class__ in _CONTAINERS:
                     if fname not in _READ_METHODS:
                         self._note_mutation(owner)
@@ -3617,6 +3757,13 @@ class PulseIREmitter:
             if (callable_val.__class__ is type and callable_val in _CONTAINERS) or (
                 owner.__class__ in _CONTAINERS and fname == "copy"
             ):
+                self._note_fresh(result)
+            elif (
+                self._rolling
+                and (callable_val.__class__ is type or callable_val is iter)
+                and hasattr(result.__class__, "__next__")
+            ):
+                # An iterator made in the body, such as zip(...), is free to advance.
                 self._note_fresh(result)
             if owner.__class__ is list and fname in _MOVES_SLOTS:
                 self._track_slots(owner, len(owner) - 1 if fname == "append" else 0)
