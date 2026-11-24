@@ -60,6 +60,7 @@ nanobind_add_module(
   "${_build_stamp}"
   ContextDialects.cpp
   LengthInference.cpp
+  Lines.cpp
   ModuleLoader.cpp
   ProgramLimitError.cpp
   SegmentBoundaries.cpp

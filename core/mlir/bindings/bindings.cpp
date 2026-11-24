@@ -90,6 +90,7 @@
 #include "BindingsCoupled.h"
 #include "ContextDialects.h"
 #include "LengthInference.h"
+#include "Lines.h"
 #include "ModuleLoader.h"
 #include "SegmentBoundaries.h"
 #include "cudaq-pulse/Analysis/ClassicalTiming.h"
@@ -3873,6 +3874,15 @@ public:
     return out;
   }
 #endif
+
+  /// Runs `read` on the module of `self` (a PulseModule), under its lock: how
+  /// the unit that lists a module's lines reads it (Lines.cpp).
+  static void readModule(void *self, cudaq_pulse::ModuleReader read,
+                         void *state) {
+    auto *held = static_cast<PulseModule *>(self);
+    std::lock_guard<std::recursive_mutex> guard(*held->lock_);
+    read(held->module_->getOperation(), state);
+  }
 
   /// events(), or, when it lists more than `limit` events, a 1-tuple of
   /// their loops: a list of nodes in program order, each (kind, line, qubit,
@@ -9285,6 +9295,8 @@ NB_MODULE(_cudaq_pulse_native, m) {
       "per bit");
 
   cudaq_pulse::loadLengthInference();
+  if (!cudaq_pulse::bindLineTable(m.ptr(), &PulseModule::readModule))
+    throw nb::python_error();
   m.def(
       "infer_list_lengths",
       [](nb::handle function, nb::handle names, nb::handle lengths,

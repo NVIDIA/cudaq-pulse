@@ -137,7 +137,13 @@ not play on it: a coupling line has no calibrated gates yet. ``wait`` and
 ``sync`` take it as any line, and it schedules as a line of its own, so a pulse on
 it plays while the qudit's drive and readout lines play theirs. In
 ``lowered.schedule`` an event on a coupling line has the lowest of the
-line's qudits as its ``qudit``.
+line's qudits as its ``qudit``. ``lowered.lines`` lists the program's lines, drive,
+readout and coupling, in the order ``event.line`` numbers them: each with
+its ``role`` and ``qudits``, and a coupling line with the ``component`` it
+reaches, the tuning or the control the quantum system answers with. With a
+control system a line also has the ``controller`` that plays it, its
+``delay_ns`` and its ``output_qudits``, every qudit that output reaches: the
+lines of the qudits that share a drive or readout line have the same.
 
 The line must exist. Without a control system, the quantum system must
 declare the control of exactly those qudits: the one qudit's tuning
