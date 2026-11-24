@@ -12,6 +12,8 @@ first kernel that fetches one."""
 
 from __future__ import annotations
 
+import struct
+import sys
 from typing import TYPE_CHECKING, Any
 
 from .._errors import CompilationError, UnsupportedError
@@ -21,6 +23,18 @@ from .packed_ir_builder import (
     _DRIVE_COUPLING,
     _MAX_PAYLOAD,
     _UNSCHEDULED,
+    _WF_ADD,
+    _WF_COSINE,
+    _WF_CUSTOM_SAMPLES,
+    _WF_DRAG,
+    _WF_GAUSS_SQUARE,
+    _WF_GAUSSIAN,
+    _WF_MUL,
+    _WF_NEG,
+    _WF_SCALE,
+    _WF_SQUARE,
+    _WF_SUB,
+    _WF_TANH_RAMP,
     PackedIRBuilder,
     _header,
 )
@@ -29,6 +43,7 @@ if TYPE_CHECKING:
     from ._emitter import PulseIREmitter
 
 _FETCH = "get_coupling_line"
+_F64, _I64 = struct.Struct("=d"), struct.Struct("=q")
 _LINE = "coupling_line"
 
 
@@ -199,17 +214,19 @@ def drive(emitter: PulseIREmitter, fname: str, call_args: list[Any]) -> tuple[An
             fix="call it as drive(line, waveform)",
         )
     waveform = call_args[1]
+    # play_calibrated hands a drive over after it has made the waveform of a
+    # calibrated pulse among the operands: its frame, two calls up, holds
+    # the pulse. A coupling line has no calibrated pulses yet.
+    here = sys._getframe(1)
+    made = here.f_back.f_back if here.f_back is not None else None
+    if made is not None and made.f_code is here.f_code and made.f_locals.get("played") is waveform:
+        raise calibrated_error(made.f_locals.get("value"))
     if waveform.__class__ is not IRValue or waveform.vtype != "waveform":
         from ..quantum_systems.base import _Component
         from ._emitter import _describe
 
         if isinstance(waveform, _Component):
-            raise CompilationError(
-                f"drive(): {waveform!r} is a calibrated pulse; the calibrated gates of a "
-                "coupling line are not available yet",
-                code="calibration",
-                fix="drive the coupling line with a waveform, such as square(duration, amplitude)",
-            )
+            raise calibrated_error(waveform)
         raise CompilationError(
             f"drive(): argument 2 must be a waveform, got {_describe(waveform)}",
             code="wrong_argument",
@@ -219,6 +236,16 @@ def drive(emitter: PulseIREmitter, fname: str, call_args: list[Any]) -> tuple[An
     if chan is not None and chan.value is not line:
         line = chan.value
     b = emitter.b
+    if isinstance(b, PackedIRBuilder):
+        complex_by = _complex_by(b, waveform.vid)
+        if complex_by:
+            raise CompilationError(
+                "drive() on a coupling line plays a real waveform; this one is made from "
+                f"{complex_by}",
+                code="invalid_waveform",
+                fix="a coupling line plays at baseband: give it a real amplitude, and a "
+                "drag() only with beta 0",
+            )
     results: tuple[IRValue, ...]
     if isinstance(b, PackedIRBuilder):
         vid = b._next_id
@@ -234,6 +261,84 @@ def drive(emitter: PulseIREmitter, fname: str, call_args: list[Any]) -> tuple[An
     # Through the channels, which note the move for an open if.
     emitter._lines.rebind_linear(emitter, fname, [line, waveform], results)
     return results
+
+
+def calibrated_error(pulse: Any) -> CompilationError:
+    """The error for a calibrated pulse driven on a coupling line."""
+    return CompilationError(
+        f"drive(): {pulse!r} is a calibrated pulse; the calibrated gates of a coupling line "
+        "are not available yet",
+        code="calibration",
+        fix="drive the coupling line with a waveform, such as square(duration, amplitude)",
+    )
+
+
+# The waveform records pulse-verify knows to be real, and those made from
+# other waveforms.
+_REAL_SHAPES = frozenset(
+    {_WF_GAUSSIAN, _WF_COSINE, _WF_TANH_RAMP, _WF_GAUSS_SQUARE, _WF_CUSTOM_SAMPLES}
+)
+_COMBINED = frozenset({_WF_ADD, _WF_SUB, _WF_MUL})
+
+
+def _complex_by(b: Any, vid: int) -> str | None:
+    """What the waveform *vid* of the packed program is made from that has
+    an imaginary part, where the program says: a square with an imaginary
+    amplitude, a DRAG pulse with a beta other than 0, or a sum, difference,
+    product, multiple or negation of one. None for a real waveform and for
+    one the program does not decide (a beta that is a kernel argument, a
+    waveform chosen at run time), which pulse-verify decides. The records
+    are read once: each call reads those written since the last."""
+    scan = b.__dict__.get("_coupling_waveforms")
+    if scan is None:
+        scan = b._coupling_waveforms = [0, {}]
+        undo = b.rollback
+
+        def rollback(checkpoint: tuple[Any, ...]) -> None:
+            # A traced body that is undone gives its records and value ids
+            # back: read from the start again.
+            scan[0] = 0
+            scan[1].clear()
+            undo(checkpoint)
+
+        b.rollback = rollback
+    found: dict[int, str | None] = scan[1]
+    buf, cur, end = b._buf, scan[0], b._cur
+    while cur < end:
+        word = buf[cur]
+        opcode, length, mask = word & 0xFF, (word >> 8) & 0xFF, word >> 16
+        start = cur + 1
+        if length == _MAX_PAYLOAD:
+            length, start = buf[cur + 1], cur + 2
+        if opcode == _WF_SQUARE:
+            imaginary = _F64.unpack(_I64.pack(buf[start + 3]))[0]
+            literal = not mask & (1 << 3)
+            found[buf[start]] = (
+                f"square() with the amplitude's imaginary part {imaginary!r}"
+                if literal and imaginary != 0.0
+                else None
+            )
+        elif opcode == _WF_DRAG:
+            beta = _F64.unpack(_I64.pack(buf[start + 4]))[0]
+            if mask & (1 << 4):
+                found.pop(buf[start], None)
+            else:
+                found[buf[start]] = f"drag() with beta {beta!r}" if beta != 0.0 else None
+        elif opcode in _REAL_SHAPES:
+            found[buf[start]] = None
+        elif opcode in _COMBINED or opcode == _WF_NEG or opcode == _WF_SCALE:
+            operands = buf[start + 1 : start + (2 if opcode == _WF_SCALE else length)]
+            reasons = [found.get(v, "") for v in operands]
+            by = next((r for r in reasons if r), None)
+            if by:
+                found[buf[start]] = by
+            elif all(r is None for r in reasons):
+                found[buf[start]] = None
+            else:
+                found.pop(buf[start], None)
+        cur = start + length
+    scan[0] = end
+    return found.get(vid)
 
 
 def attribute_error(name: str) -> CompilationError:

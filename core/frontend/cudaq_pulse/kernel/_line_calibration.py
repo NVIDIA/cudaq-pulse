@@ -106,6 +106,15 @@ def calibrated_waveform(emitter: PulseIREmitter, pulse: Any) -> IRValue | None:
 
     cls = pulse.__class__
     if cls is FluxCZ:
+        import sys
+
+        # Asked for by play_calibrated: on a coupling line it is the gate
+        # that is to come, not a wait.
+        line = (sys._getframe(1).f_locals.get("call_args") or (None,))[0]
+        if line.__class__ is IRValue and line.vtype == "coupling_line":
+            from ._coupling import calibrated_error
+
+            raise calibrated_error(pulse)
         raise CompilationError(
             "a FluxCZ does not play: flux lines are not modeled yet; wait its duration_ns on "
             "the coupled qudits' lines instead",

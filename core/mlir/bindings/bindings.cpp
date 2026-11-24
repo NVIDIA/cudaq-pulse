@@ -238,15 +238,42 @@ struct Unsupported : std::runtime_error {
 /// nothing per op.
 constexpr const char *kCouplingLinesAttr = "pulse.coupling_lines";
 
+/// What a kernel asks that the compiler refuses; CompilationError
+/// (cudaq_pulse) in Python.
+struct KernelRefused : std::runtime_error {
+  using std::runtime_error::runtime_error;
+};
+
+/// Whether `module` holds a coupling line. The attribute says that one was
+/// made; a walk, made only for a module with the attribute, says whether it
+/// is still there (a line fetched and never used is dropped as unused).
+inline bool holdsCouplingLine(mlir::ModuleOp module) {
+  if (!module->hasAttr(kCouplingLinesAttr)) [[likely]]
+    return false;
+  return module
+      ->walk([](pulse::GetCouplingLineOp) {
+        return mlir::WalkResult::interrupt();
+      })
+      .wasInterrupted();
+}
+
 /// Refuse a program that holds a coupling line where a controller's program
 /// is walked, for an export or a check of a controller's limits.
 inline void refuseCouplingLines(mlir::ModuleOp module) {
-  if (module->hasAttr(kCouplingLinesAttr)) [[unlikely]]
+  if (holdsCouplingLine(module)) [[unlikely]]
     throw Unsupported(
         "this program holds a coupling line; coupling lines are not exported "
         "in formats /1 and /2 (cudaq-pulse.controller/1, "
         "cudaq-pulse.controller/2 and cudaq-pulse.emulation/1), and a "
         "controller's limits are not checked on them yet");
+}
+
+/// Refuse a program that holds a coupling line where it is simulated or
+/// emulated.
+inline void refuseSimulatedCouplingLines(mlir::ModuleOp module) {
+  if (holdsCouplingLine(module)) [[unlikely]]
+    throw Unsupported("this program holds a coupling line; pulses on a "
+                      "coupling line are not simulated or emulated yet");
 }
 
 /// The qudit of a schedule event on the line `allocation` acquires: the
@@ -599,6 +626,14 @@ public:
         }) {}
 
   [[noreturn]] void fail(const std::string &what) const {
+    // A waveform a coupling line cannot play is the kernel's to fix.
+    if (messages_.find("on a coupling line plays a real waveform") !=
+        std::string::npos)
+      throw KernelRefused(what + messages_);
+    if (messages_.find("a pulse on a coupling line is not simulated yet") !=
+        std::string::npos)
+      throw Unsupported("this program holds a coupling line; pulses on a "
+                        "coupling line are not simulated or emulated yet");
     throw std::runtime_error(what + messages_);
   }
 
@@ -4292,6 +4327,7 @@ public:
                                 int64_t maxReadouts, int64_t readoutLatency,
                                 int64_t switchPenalty) {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
+    refuseSimulatedCouplingLines(*module_);
     auto copy = mlir::OwningOpRef<mlir::ModuleOp>(source().clone());
     mlir::PassManager unroll(ctx_.get());
     unroll.addNestedPass<mlir::func::FuncOp>(
@@ -7995,6 +8031,10 @@ NB_MODULE(_cudaq_pulse_native, m) {
     } catch (const Unsupported &e) {
       nb::object raised =
           nb::module_::import_("cudaq_pulse._errors").attr("UnsupportedError");
+      PyErr_SetString(raised.ptr(), e.what());
+    } catch (const KernelRefused &e) {
+      nb::object raised =
+          nb::module_::import_("cudaq_pulse._errors").attr("CompilationError");
       PyErr_SetString(raised.ptr(), e.what());
     }
   });

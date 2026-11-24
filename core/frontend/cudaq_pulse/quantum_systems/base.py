@@ -168,6 +168,22 @@ class CouplingInteraction(_Component):
         """The problems with the interaction of the coupling of *qudits*, at *where*."""
         return []
 
+    def _system_problems(
+        self, qudits: tuple[int, ...], known: Mapping[int, Any], where: str
+    ) -> list[Problem]:
+        """The problems with the interaction, at *where*, against the qudits
+        *known* of the quantum system its coupling of *qudits* is in."""
+        return []
+
+
+class _ComponentQudits(tuple[int, ...]):
+    """The qudits of a coupling that declares a control or an interaction: a
+    tuple like any other, of its own class so that the quantum system's
+    check of every coupling at once (``_plain_entries``) leaves the coupling
+    to the check that reads its components."""
+
+    __slots__ = ()
+
 
 def _with_parts(calibrations: Any, parts: tuple[Any, ...]) -> Any:
     """*calibrations*, checked, as a mapping of the same gates whose content
@@ -1127,7 +1143,7 @@ class Coupling:
                 calibrations, f"the coupling of qudits {qudits}", _COUPLING_GATES
             )
         if control is not interaction:  # type: ignore[comparison-overlap]
-            calibrations = self._with_components(qudits, calibrations, control, interaction)
+            qudits, calibrations = self._with_components(qudits, calibrations, control, interaction)
         set_ = object.__setattr__
         set_(self, "qudits", qudits)
         set_(self, "strength_hz", strength_hz)
@@ -1143,7 +1159,9 @@ class Coupling:
         self, qudits: Any, calibrations: Any, control: Any, interaction: Any
     ) -> Any:
         """Keeps the control and the interaction a coupling is given, checked;
-        its calibrations with their content for a fingerprint."""
+        gives its qudits, marked for the system's check of the components
+        against its qudits, and its calibrations with their content for a
+        fingerprint."""
         set_ = object.__setattr__
         where = f"Coupling({qudits})"
         parts = []
@@ -1157,7 +1175,9 @@ class Coupling:
             problems = part._problems(qudits, path) if isinstance(part, base) else []
             set_(self, f"_{name}", _checked_part(part, base, name, path, problems))
             parts.append((name, part))
-        return _with_parts(calibrations, tuple(parts))
+        if qudits.__class__ is tuple:
+            qudits = _ComponentQudits(qudits)
+        return qudits, _with_parts(calibrations, tuple(parts))
 
     @property
     def control(self) -> CouplingControl | None:
@@ -1209,7 +1229,7 @@ class Coupling:
             return (type(self), (self.qudits, self.strength_hz, self._calibrations))
         return (
             type(self),
-            (self.qudits, self.strength_hz, dict(self._calibrations), control, interaction),
+            (tuple(self.qudits), self.strength_hz, dict(self._calibrations), control, interaction),
         )
 
     def replace(self, **changes: Any) -> Self:
@@ -1760,6 +1780,12 @@ def _entry_problems(
             )
         for key, cz in entry._calibrations.items():
             problems += _flux_cz_problems(cz, f"{where}.calibrations[{_key_label(key)}]")
+        if pair is not None and entry.qudits.__class__ is _ComponentQudits:
+            interaction = entry.interaction
+            if interaction is not None:
+                problems += interaction._system_problems(
+                    entry.qudits, known, f"{where}.interaction"
+                )
         return problems, pair
     if not _finite(entry.rate_hz):
         problems.append(

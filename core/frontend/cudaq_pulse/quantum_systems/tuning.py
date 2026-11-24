@@ -465,6 +465,26 @@ class ChargeCoupling(CouplingInteraction):
                 problems += tuning._problems(path)
         return problems
 
+    def _system_problems(
+        self, qudits: tuple[int, ...], known: Mapping[int, Any], where: str
+    ) -> list[Problem]:
+        problems = []
+        for j, (q, tuning) in enumerate(zip(qudits, self._values[1], strict=False)):
+            own = getattr(known[q], "tuning", None)
+            if own != tuning:
+                problems.append(
+                    Problem(
+                        f"is not the tuning of qudit {q}"
+                        + (", which declares none" if own is None else f", {own!r}"),
+                        path=f"{where}.tunings[{j}]",
+                        value=tuning,
+                        fix="a charge coupling is tuned through its qudits: give each "
+                        "qudit's own tuning (PhysicalQudit(..., tuning=...)), in the order "
+                        "of the coupling's qudits",
+                    )
+                )
+        return problems
+
     def at(self, qudits: Sequence[Any], amplitude: Mapping[Any, Any]) -> CouplingPoint:
         """The coupling of *qudits* (the pair's indices or ``Qudit`` handles,
         in the order of ``tunings``) with the tunings of its qudits at

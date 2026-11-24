@@ -110,8 +110,12 @@ it, ``drive`` on it takes no ``tone=``, and the phase and frequency ops,
 which take a tone, do not apply. The phase a detuned qudit gains is not
 tracked for it: a calibration corrects it with ``shift_phase`` on the
 qudit's drive tone. Its waveform is real: a complex amplitude or a DRAG
-pulse with a nonzero ``beta`` on it does not compile. ``wait`` and ``sync``
-take it as any line, and it schedules as a line of its own, so a pulse on
+pulse with a nonzero ``beta`` on it is a ``CompilationError``, at the
+kernel's line where the kernel says so and when the program is verified
+otherwise (a ``beta`` that is a kernel argument is not known to be 0). A
+calibrated pulse (a ``DragPulse``, a ``ReadoutPulse``, a ``FluxCZ``) does
+not play on it: a coupling line has no calibrated gates yet. ``wait`` and
+``sync`` take it as any line, and it schedules as a line of its own, so a pulse on
 it plays while the qudit's drive and readout lines play theirs. In
 ``lowered.schedule`` an event on a coupling line has the lowest of the
 line's qudits as its ``qudit``.
@@ -130,8 +134,11 @@ loop rolled. A program that holds a coupling line is not exported yet:
 ``export_to_controller`` and ``export_to_emulator`` raise
 ``UnsupportedError``, and since a controller's limits are not checked on a
 coupling line yet, it compiles only without a control system, where it
-raises the same error with one. ``simulate`` does not play a pulse on a
-coupling line yet either. The calibrated two-qudit gate of a
+raises the same error with one. ``simulate`` and
+``classical.emulation.emulate`` do not play a pulse on a coupling line yet
+either, and raise ``UnsupportedError`` too. A coupling line that is
+fetched and never used is dropped, as any unused line: the program
+exports and simulates. The calibrated two-qudit gate of a
 coupling, played as one call, comes with a later release.
 
 Phase and Frequency Control

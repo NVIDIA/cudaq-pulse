@@ -229,8 +229,17 @@ MHz. They are made when first asked for and are not part of the system's
 ``interaction`` are only what was declared: building the system, its
 fingerprint, its pickles and its system file are as without them. A
 variant made with ``replace`` and a system built from the same qudits
-answer alike; a qudit that is changed is no longer the calibrated one and
-has the tuning it declares. With ``calibration=None`` there are none.
+answer alike. The answer is for the calibrated values: a qudit changed in
+any of its values (its frequency, a coherence time, its anharmonicity) is
+no longer the calibrated one, and ``qs.tuning`` of it is ``None`` unless
+the changed qudit declares a ``tuning``, and a coupling of it has no
+``qs.interaction``. With ``calibration=None`` there are none.
+
+A ``ChargeCoupling`` is made through its qudits, so the ``tunings`` it is
+given must be the ones those qudits declare, in the order of the
+coupling's ``qudits``: a quantum system whose coupling gives another
+tuning, or names a qudit that declares none, is a
+``QuantumSystemDefinitionError`` at ``couplings[i].interaction.tunings[j]``.
 
 The wiring between a controller and the device does not pass a pulse on
 unchanged. A ``FluxTuning`` or an ``ExchangeControl`` declares it with

@@ -24,6 +24,9 @@ from cudaq_pulse.ops import (
     square,
     sync,
     wait,
+    wf_neg,
+    wf_scale,
+    wf_sub,
 )
 from cudaq_pulse.quantum_systems import (
     ChargeCoupling,
@@ -304,11 +307,74 @@ def test_a_coupling_line_plays_a_real_waveform():
         drive(c, gaussian(20, 0.1, 5.0))
         drive(c, drag(20, 0.1, 5.0, 0.0))
 
-    for kernel, made_by in ((complex_square, "pulse.square"), (dragged, "pulse.drag")):
-        message = _raises(kernel, A, error=RuntimeError)
-        assert "on a coupling line plays a real waveform" in message
-        assert f"this {made_by} may have an imaginary part" in message
+    @pulse.kernel
+    def combined(a):
+        mixed = wf_sub(gaussian(20, 0.1, 5.0), drag(20, 0.1, 5.0, 0.5))
+        drive(get_coupling_line(a), wf_scale(mixed, 0.5))
+
+    @pulse.kernel
+    def in_a_loop(a):
+        c = get_coupling_line(a)
+        for _ in range(3):
+            drive(c, square(20, 0.1))
+            drive(c, wf_neg(square(20, 0.2j)))
+
+    # Known while the kernel is traced: refused there, at the kernel's line.
+    for kernel, made_from in (
+        (complex_square, "square() with the amplitude's imaginary part 0.2"),
+        (dragged, "drag() with beta 0.5"),
+        (combined, "drag() with beta 0.5"),
+        (in_a_loop, "square() with the amplitude's imaginary part 0.2"),
+    ):
+        message = _raises(kernel, A)
+        assert "drive() on a coupling line plays a real waveform" in message
+        assert f"this one is made from {made_from}" in message
     assert len(real.lower(A).schedule) == 3
+
+    @pulse.kernel
+    def beta_given(a, beta: float):
+        drive(get_coupling_line(a), drag(20, 0.1, 5.0, beta))
+
+    # Not known until the program is verified: the same kind of error.
+    message = _raises(beta_given, A, 0.0)
+    assert "on a coupling line plays a real waveform" in message
+    assert "this pulse.drag may have an imaginary part" in message
+
+
+def test_a_calibrated_pulse_does_not_play_on_a_coupling_line_yet():
+    shipped = pulse.quantum_system("transmon_surface17")
+    d4, x2 = shipped.qudits[3], shipped.qudits[10]
+    cz = shipped.coupling(x2, d4).get_calibration(pulse.gates.CZ)
+
+    @pulse.kernel
+    def gate(a):
+        drive(get_coupling_line(a), get_drive_line(a).get_calibration(pulse.gates.X))
+
+    @pulse.kernel
+    def measured(a):
+        drive(get_coupling_line(a), get_readout_line(a).get_calibration(pulse.gates.READOUT))
+
+    @pulse.kernel
+    def flux_cz(a):
+        drive(get_coupling_line(a), cz)
+
+    for kernel, args, named in (
+        (gate, (d4,), "DragPulse("),
+        (measured, (d4,), "ReadoutPulse("),
+        (flux_cz, (d4,), "FluxCZ("),
+    ):
+        message = _raises(kernel, *args)
+        assert f"drive(): {named}" in message
+        assert "the calibrated gates of a coupling line are not available yet" in message
+
+    @pulse.kernel
+    def on_its_own_line(a):
+        d = get_drive_line(a)
+        drive(get_coupling_line(a), square(20, 0.1))
+        drive(d, d.get_calibration(pulse.gates.X))
+
+    # The pulse plays where it is calibrated, beside the coupling line.
+    assert len(on_its_own_line.lower(d4).schedule) == 2
 
 
 def test_exports_refuse_a_program_that_holds_a_coupling_line():
@@ -344,8 +410,35 @@ def test_a_check_of_limits_refuses_it_and_the_program_pickles():
 
 
 def test_simulating_a_pulse_on_a_coupling_line_is_refused_for_now():
-    with pytest.raises(RuntimeError, match="a pulse on a coupling line is not simulated yet"):
-        pulse.simulate(detune.lower(A, D, 0.31), levels=2)
+    from cudaq_pulse.classical.emulation import emulate
+
+    lowered = detune.lower(A, D, 0.31)
+    for run in (lambda: pulse.simulate(lowered, levels=2), lambda: emulate(lowered, seed=1)):
+        with pytest.raises(pulse.UnsupportedError) as raised:
+            run()
+        assert "pulses on a coupling line are not simulated or emulated yet" in str(raised.value)
+
+
+def test_a_coupling_line_that_is_fetched_and_never_used_changes_nothing():
+    @pulse.kernel
+    def fetched(a):
+        get_coupling_line(a)
+        drive(get_drive_line(a), gaussian(40, 0.2, 10.0))
+
+    @pulse.kernel
+    def plain(a):
+        drive(get_drive_line(a), gaussian(40, 0.2, 10.0))
+
+    # It is dropped as any line that is never used: the program exports and
+    # simulates as the one without it.
+    lowered, same = fetched.lower(A), plain.lower(A)
+    assert "get_coupling_line" not in lowered.mlir()
+    assert lowered.export_to_controller() == same.export_to_controller()
+    assert lowered.export_to_emulator() == same.export_to_emulator()
+    assert (
+        pulse.simulate(lowered, levels=2).density_matrix
+        == pulse.simulate(same, levels=2).density_matrix
+    ).all()
 
 
 @pulse.kernel

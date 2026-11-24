@@ -139,7 +139,11 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   for each coupling; they are made when first asked for and are not part
   of its qudits and couplings, so building the system, its
   `physical_qudits`, its fingerprint, its pickles and its system file are
-  what they were. System files keep the components a system declares.
+  what they were. The answer is for the calibrated values: a qudit changed
+  in any value has none unless it declares one. A
+  `ChargeCoupling` must give the tunings its qudits declare; another is a
+  `QuantumSystemDefinitionError` where the system is built. System files
+  keep the components a system declares.
   Nothing compiles, schedules, exports or simulates differently.
 - **Coupling lines in a kernel.** `get_coupling_line(*qudits)` fetches the
   line of a control of the quantum system, of one qudit the line that tunes
@@ -156,14 +160,18 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   them; the error names what is missing and the lines that reach the
   qudits. In the IR
   it is a `!pulse.coupling_line` from `pulse.get_coupling_line`, and
-  `pulse.drive` on it has no tone operand; `pulse-verify` refuses a
-  waveform that may have an imaginary part. A tone on it, `line.tone`, a
-  frame op or a readout on it are errors that say so. Not yet: the
+  `pulse.drive` on it has no tone operand; a waveform that may have an
+  imaginary part is a `CompilationError`, at the kernel's line where the
+  kernel says so and from `pulse-verify` otherwise. A tone on it,
+  `line.tone`, a frame op, a readout or a calibrated pulse on it are
+  errors that say so. Not yet: the
   exports (`export_to_controller` and `export_to_emulator` raise
   `UnsupportedError` for a program that holds a coupling line), a
   controller's limits on it (compiling such a program for a control system
-  raises the same error), its simulation, and the calibrated gate of a
-  coupling as one call. Programs without coupling lines compile, schedule
+  raises the same error), its simulation and emulation (`simulate` and
+  `classical.emulation.emulate` raise `UnsupportedError`), and the
+  calibrated gate of a coupling as one call. A coupling line that is
+  fetched and never used is dropped as any unused line. Programs without coupling lines compile, schedule
   and export as before.
 - **Coupling lines of a controller.** `Controller(coupling_lines=[...])`
   lists the outputs that play a baseband waveform on a control of the

@@ -248,6 +248,36 @@ def test_a_charge_coupling_is_an_interaction_made_through_its_qudits_tunings(qs)
     ]
 
 
+def test_a_charge_coupling_gives_the_tunings_its_qudits_declare(qs):
+    d4, x2 = qs.physical_qudits[D4].tuning, qs.physical_qudits[X2].tuning
+    made = ChargeCoupling(charge_coupling_hz=3.1e6, tunings=(d4, x2))
+    system = _pair(None, (d4, x2), made)
+    # Another tuning than the qudit's own, the other qudit's, or a qudit
+    # that declares none: refused where the quantum system is built.
+    for tunings, wrong in (
+        ((d4, d4), {1: f"is not the tuning of qudit 1, {d4!r}"}),
+        ((x2, d4), {0: "is not the tuning of qudit 0", 1: "is not the tuning of qudit 1"}),
+        ((d4, None), {1: "is not the tuning of qudit 1, which declares none"}),
+    ):
+        with pytest.raises(pulse.QuantumSystemDefinitionError) as raised:
+            _pair(None, tunings, made)
+        found = {p.path: p.message for p in raised.value.problems}
+        assert found.keys() == {f"couplings[0].interaction.tunings[{j}]" for j in wrong}, found
+        for j, message in wrong.items():
+            assert message in found[f"couplings[0].interaction.tunings[{j}]"]
+    # So is a copy of the system whose qudit's tuning alone is changed.
+    moved = system.physical_qudits[0].replace(tuning=d4.replace(idle_flux=0.1))
+    with pytest.raises(pulse.QuantumSystemDefinitionError, match="is not the tuning of qudit 0"):
+        system.replace(qudits={**system.physical_qudits, 0: moved})
+    # The coupling is its plain self everywhere else.
+    coupling = system.couplings[0]
+    assert coupling.qudits == (0, 1) and isinstance(coupling.qudits, tuple)
+    assert repr(coupling).startswith("Coupling(qudits=(0, 1), ")
+    back = pickle.loads(pickle.dumps(coupling))
+    assert back == coupling and back.interaction == made
+    assert coupling.replace(interaction=None).qudits.__class__ is tuple
+
+
 def test_the_published_system_and_untuned_systems_are_unchanged():
     published = transmon_surface17(calibration=None)
     assert all(q.tuning is None for q in published.physical_qudits.values())
