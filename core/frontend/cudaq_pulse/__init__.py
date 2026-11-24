@@ -67,6 +67,7 @@ from .classical import Bits as Bits
 from .compiler import Pass as Pass
 from .compiler import ScheduledKernel as ScheduledKernel
 from .compiler import compile as compile
+from ._load import load as load
 from .kernel import kernel as kernel
 from .kernel._kernel import CompiledKernel as CompiledKernel
 from .kernel._kernel import Kernel as Kernel
@@ -152,6 +153,7 @@ __all__ = [
     "kernel",
     "Kernel",
     "compile",
+    "load",
     "CompiledKernel",
     "ScheduledKernel",
     "Pass",

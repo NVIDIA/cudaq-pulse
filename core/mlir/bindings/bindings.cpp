@@ -7580,6 +7580,112 @@ public:
     return result;
   }
 
+  /// The scheduled function `entry` of the module `text` (assembly or
+  /// bytecode), as a module of its own whose `main` takes the function's
+  /// qudits as slots, in argument order: what place_carriers() binds. The
+  /// function's results and its attributes other than its schedule state are
+  /// dropped.
+  PulseModule load_function(const std::string &text, const std::string &entry,
+                            double clock_ghz, int64_t qudits) {
+    std::lock_guard<std::mutex> guard(lock_);
+    SharedContextPool::charge(ctx_.get(),
+                              static_cast<int64_t>(text.size() / 8));
+    auto controlSystem = pulse::controlSystemAt(ctx_.get(), clock_ghz);
+    if (!controlSystem)
+      throw std::invalid_argument("load: clock_ghz " +
+                                  std::to_string(clock_ghz) +
+                                  " has no exact period in femtoseconds");
+    auto source = parseModule(text, ctx_.get(), "load: cannot read the module");
+    // A module that states its clock must state the quantum system's: its
+    // times are counted in that clock's cycles.
+    if (pulse::ControlSystemAttr stated = pulse::controlSystemOf(*source))
+      if (stated.getClockPeriodFsNumerator() !=
+              controlSystem.getClockPeriodFsNumerator() ||
+          stated.getClockPeriodFsDenominator() !=
+              controlSystem.getClockPeriodFsDenominator())
+        throw std::invalid_argument(
+            "load: the module counts time in cycles of a " +
+            std::to_string(stated.clockGHz()) +
+            " GHz clock, and the quantum system's clock is " +
+            std::to_string(clock_ghz) + " GHz");
+    mlir::func::FuncOp found;
+    source->walk([&](mlir::func::FuncOp function) {
+      if (function.getSymName() == entry) {
+        if (found)
+          throw std::invalid_argument("load: the module has more than one "
+                                      "function named " +
+                                      entry);
+        found = function;
+      }
+    });
+    if (!found)
+      throw std::invalid_argument("load: the module has no function named " +
+                                  entry);
+    if (found.isDeclaration())
+      throw std::invalid_argument("load: " + entry + " is only declared");
+    for (mlir::Type type : found.getArgumentTypes())
+      if (!mlir::isa<pulse::QuditType>(type))
+        throw std::invalid_argument(
+            "load: " + entry +
+            " takes an argument that is not a qudit; a loaded function takes "
+            "one !pulse.qudit per qudit it plays on and nothing else");
+    if (static_cast<int64_t>(found.getNumArguments()) != qudits)
+      throw std::invalid_argument(
+          "load: " + entry + " takes " +
+          std::to_string(found.getNumArguments()) + " qudit(s), and " +
+          std::to_string(qudits) + " were given");
+    if (pulse::scheduleStateOf(found) != pulse::ScheduleState::Timed)
+      throw std::invalid_argument(
+          "load: " + entry +
+          " is not scheduled; load() takes a function whose operations all "
+          "have their start and duration");
+    bool calls = false;
+    found.walk([&](mlir::func::CallOp) { calls = true; });
+    if (calls)
+      throw std::invalid_argument(
+          "load: " + entry +
+          " calls another function; inline its calls before it is loaded");
+
+    auto loc = builder_->getUnknownLoc();
+    mlir::OwningOpRef<mlir::ModuleOp> module(
+        mlir::ModuleOp::create(loc, mlir::StringRef(entry)));
+    module->getOperation()->setAttr(pulse::kControlSystemAttr, controlSystem);
+    auto main = mlir::cast<mlir::func::FuncOp>(found->clone());
+    module->push_back(main);
+    mlir::NamedAttrList kept;
+    for (mlir::NamedAttribute attribute : main->getAttrs()) {
+      llvm::StringRef name = attribute.getName().getValue();
+      if (name == "function_type" || name == pulse::kScheduleStateAttr)
+        kept.append(attribute);
+    }
+    main->setAttrs(kept);
+    main.setSymName("main");
+    main.setPublic();
+    // Attributes of other compilers on the operations are not the program's:
+    // only an operation's own attributes and the Pulse dialect's are kept.
+    main.walk([&](mlir::Operation *op) {
+      if (op == main.getOperation())
+        return;
+      llvm::ArrayRef<mlir::StringAttr> own =
+          op->getName().getAttributeNames();
+      mlir::NamedAttrList attributes;
+      for (mlir::NamedAttribute attribute : op->getAttrs())
+        if (attribute.getName().getValue().starts_with("pulse.") ||
+            llvm::is_contained(own, attribute.getName()))
+          attributes.append(attribute);
+      op->setAttrs(attributes);
+    });
+    for (unsigned i = 0; i < main.getNumArguments(); ++i)
+      main.setArgAttr(i, "pulse.slot", builder_->getI64IntegerAttr(i));
+    main.walk([&](mlir::func::ReturnOp ret) {
+      if (ret->getParentOp() == main.getOperation())
+        ret->setOperands({});
+    });
+    main.setType(mlir::FunctionType::get(ctx_.get(), main.getArgumentTypes(),
+                                         {}));
+    return PulseModule(ctx_, std::move(module));
+  }
+
 private:
   std::shared_ptr<mlir::MLIRContext> ctx_;
   std::unique_ptr<mlir::OpBuilder> builder_;
@@ -8151,7 +8257,19 @@ NB_MODULE(_cudaq_pulse_native, m) {
           },
           "Read a PulseModule from what PulseModule.serialize returned",
           nb::arg("module"), nb::arg("source"), nb::arg("run_time"),
-          nb::arg("rewrites"));
+          nb::arg("rewrites"))
+      .def(
+          "load_function",
+          [](PulseModuleBuilder &self, nb::bytes module,
+             const std::string &entry, double clock_ghz, int64_t qudits) {
+            std::string text(module.c_str(), module.size());
+            nb::gil_scoped_release release;
+            return self.load_function(text, entry, clock_ghz, qudits);
+          },
+          "The scheduled function `entry` of a module (assembly or bytecode) "
+          "as a module whose main takes the function's qudits as slots",
+          nb::arg("module"), nb::arg("entry"), nb::arg("clock_ghz"),
+          nb::arg("qudits"));
 
   m.def(
       "build_stamp", [] { return std::string(cudaqPulseBuildStamp); },
