@@ -1,33 +1,66 @@
-# CUDA-Q pulse
+<p align="center">
+  <img src="https://raw.githubusercontent.com/NVIDIA/cudaq-pulse/ac6e994125b6c1095aa39e8cdc6c678ebb7fa5cc/docs/_static/cudaq-pulse-banner.svg"
+       alt="CUDA-Q Pulse: a Python pulse kernel beside a timeline of drive, readout and GPU lanes. A readout result goes to a GPU decoder over NVQLink within a latency budget, and the answer conditions the next drive pulse." width="100%">
+</p>
 
-CUDA-Q pulse (`cudaq-pulse`) puts the pulses, the measurements and the
-classical calls between them in one Python program, compiled to open MLIR,
-then simulated, emulated, or exported to your controller. One compiled
-program, three destinations:
+<p align="center">
+  <a href="https://github.com/NVIDIA/cudaq-pulse/actions/workflows/ci.yml"><img src="https://github.com/NVIDIA/cudaq-pulse/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://nvidia.github.io/cudaq-pulse/"><img src="https://github.com/NVIDIA/cudaq-pulse/actions/workflows/docs.yml/badge.svg?branch=main" alt="Docs"></a>
+  <a href="https://github.com/NVIDIA/cudaq-pulse/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache-2.0"></a>
+</p>
 
-- **Simulate** it with `pulse.simulate`: a NumPy reference on any machine, or
-  NVIDIA cuDensityMat on a GPU (a preview), over the measurement outcomes,
-  with the classical functions' Python bodies standing in for their services.
-- **Emulate** it with `classical.emulation.emulate`: the program runs in
-  virtual time against those services, with the request and answer bytes a
-  controller would send, and reports the answers that come late.
-- **Export** it with `export_to_controller()` to a controller backend, for a
-  control system described as data and checked when the program compiles.
+# CUDA-Q Pulse
 
-Underneath are a Python kernel DSL, the Pulse, Classical, QOp and
-CuDensityMat MLIR dialects, and their compiler passes. `cudaq-pulse` does not
-depend on CUDA-Q. The wheel contains its own statically linked MLIR, so `pip`
-is the only installer you need.
+## About
+
+`cudaq-pulse` is a Python library and compiler for programming quantum
+processors at the pulse level: the drive and readout pulses, their timing,
+and the real-time classical decisions between them. It is for people who
+build and run QPUs and their control systems: hardware and control
+engineers, calibration and quantum error correction researchers, and
+controller vendors who want one open format to compile to. It belongs to the
+CUDA-Q family and shares its goal of one programming model across QPUs, but
+works at the level below CUDA-Q's gates and kernels and installs on its own,
+without CUDA-Q. The [documentation](https://nvidia.github.io/cudaq-pulse/)
+covers the tutorials, user guide and API reference.
+
+## Highlights and Key Features
+
+`cudaq-pulse` lets developers write pulses, measurements and the real-time
+classical logic between them as one Python program. That program compiles to
+an open MLIR pulse dialect that any controller can target.
+
+- **Real-time control:** measure-and-react, feedback and calls to classical
+  services (such as decoders) are part of the program. The compiler checks
+  each answer arrives before the pulse that depends on it, given the
+  controller's latency.
+- **QEC at scale:** syndrome-extraction cycles compile in milliseconds; a
+  distance-31 surface code cycle compiles in 263 ms.
+- **Composable QPUs:** a QPU is described as data: its qudits, lines,
+  controllers and the links between them. One program can span several
+  controllers, and it is checked against that description when it compiles.
+- **Hardware portability:** the same compiled program exports to controller
+  backends, so Python front ends are decoupled from each underlying control
+  interface.
+
+Underneath are a Python kernel DSL, the Pulse and Classical MLIR dialects, and
+their compiler passes. `cudaq-pulse` does not depend on CUDA-Q. The wheel
+contains its own statically linked MLIR, so `pip` is the only installer you
+need.
+
+`cudaq-pulse` is an experimental, community-driven research project under
+active development. We're releasing it now because our partners want a
+stable, universal pulse dialect that separates Python DSLs from quantum
+control interfaces.
+
+Documentation: <https://nvidia.github.io/cudaq-pulse/>
 
 ## Project Status
 
-> [!NOTE]
-> CUDA-Q pulse is an early-stage research project. We are releasing it now
-> because the pulse layer is where much of the open work in quantum control
-> happens, and we want to build it in the open with the people who use it.
-> It is under active development: expect bugs, incomplete features, and
-> incompatible changes to the Python APIs, MLIR dialects and file formats
-> between releases. It is not a supported CUDA-Q product feature. We invite
+> **Note:** The pulse layer is where much of the open work in quantum control happens,
+> and we want to build it in the open with the people who use it. Expect
+> bugs, incomplete features, and incompatible changes to the Python APIs,
+> MLIR dialects and file formats between releases. It is not a supported CUDA-Q product feature. We invite
 > you to try it with your own quantum systems and help shape its direction.
 
 ## Install
@@ -40,12 +73,21 @@ python -m venv .venv && source .venv/bin/activate
 # Compiler and CPU simulation: compile kernels, inspect the MLIR, simulate
 # with the NumPy reference, run cudaq-pulse-opt.
 pip install cudaq-pulse
+```
 
-# Plus GPU simulation (Linux), with the CUDA 12 or CUDA 13 libraries.
+For GPU simulation on Linux, also install one CUDA extra, never both:
+
+```bash
+# CUDA 12 libraries: NVIDIA driver 525.60.13 or newer.
 pip install "cudaq-pulse[cu12]"
-pip install "cudaq-pulse[cu13]"
 
-# Check what was installed and whether it works.
+# CUDA 13 libraries instead: NVIDIA driver 580 or newer.
+# pip install "cudaq-pulse[cu13]"
+```
+
+Then check what was installed and whether it works:
+
+```bash
 python -m cudaq_pulse.doctor
 ```
 
@@ -84,10 +126,10 @@ GPU execution does not work (`--allow-no-gpu` accepts a working compiler-only
 installation).
 
 Without a usable GPU, everything except GPU simulation still works, including
-the CPU reference (`pulse.simulate(..., backend="cpu")`, the default). GPU
-simulation fails with a specific error rather than degrading:
+CPU simulation, the default. GPU simulation (`backend="gpu"`) fails with a
+specific error rather than degrading:
 
-| Situation | Error raised by `pulse.simulate(..., backend="gpu")` |
+| Situation | Error raised by GPU simulation |
 | --- | --- |
 | Wheel without GPU support (macOS, or a compiler-only source build) | `GpuSupportNotBuiltError` |
 | GPU support built in, but no CUDA extra, both extras, or a library fails to load | `GpuRuntimeLoadError` |
@@ -102,30 +144,35 @@ for CUDA 12 or 13 is chosen from the installed extra; set
 ```python
 import cudaq_pulse as pulse
 
-cal = {"duration": 32 * pulse.ns, "sigma": 8 * pulse.ns}
-
 
 @pulse.kernel
-def rabi_oscillation(qubit, amplitude: float):
+def rabi_oscillation(qubit, amplitude: float, duration, sigma):
     drive_line = get_drive_line(qubit)
-    drive(drive_line, gaussian(cal["duration"], amplitude, cal["sigma"]))
+    readout_line = get_readout_line(qubit)
+    drive(drive_line, gaussian(duration, amplitude, sigma))
+    sync(drive_line, readout_line)
+    return readout(readout_line, readout_line.get_calibration(pulse.gates.READOUT))
 
 
 qs = pulse.quantum_system("transmon_surface17")
 qubit = qs.qudits[0]
+duration = 32 * pulse.ns
+sigma = 8 * pulse.ns
 
-result = pulse.simulate(rabi_oscillation, qubit, 0.5)  # NumPy reference, no GPU needed
-print(f"P(1) = {result.level_population(1):.3f}")  # P(1) = 0.972
-print(rabi_oscillation.lower(qubit, 0.5).mlir())  # the scheduled Pulse MLIR
+# A call compiles the kernel and simulates one shot on the CPU, no GPU needed.
+outcome = rabi_oscillation(qubit, 0.5, duration, sigma)
+print(outcome)  # the readout's outcome: 1 in nearly every shot
+print(rabi_oscillation.lower(qubit, 0.5, duration, sigma).mlir())  # the scheduled Pulse MLIR
 ```
 
-`pulse.simulate(kernel, *args)` compiles the call for the quantum system of its
-qudit handles, with frequencies from the quantum system, and evolves it; this
-pulse leaves the qubit almost fully excited. `kernel.lower(*args)`
-compiles the call without running it. Calling the
-kernel, `rabi_oscillation(qubit, 0.5)`, compiles and runs it in one step, and
-`pulse.compile(kernel)` compiles ahead of the call. A `float`
-parameter stays symbolic, so a sweep over it compiles once. The compiler
+Calling the kernel compiles it for the quantum system of its qudit handles,
+with frequencies from the quantum system, simulates one shot and returns what
+the kernel returns: here the outcome of its readout. This pulse leaves the
+qubit almost fully excited, so most shots read 1. `kernel.lower(*args)`
+compiles the call without running it, and `pulse.compile(kernel)` compiles
+ahead of the call. The pulse's values are arguments of the kernel: the
+kernel is compiled for its duration and sigma, and a `float` parameter stays
+symbolic, so a sweep over the amplitude compiles once. The compiler
 traces the Python kernel, builds Pulse dialect IR, applies the selected
 transformations, and emits scheduled MLIR. The wheel also installs
 `cudaq-pulse-opt`, the MLIR driver for the pulse dialects:
@@ -197,43 +244,6 @@ What installing and building retrieve:
   archive (Apache-2.0 WITH LLVM-exception) from this repository's
   [`mlir-toolchain-22.1.8` release](https://github.com/NVIDIA/cudaq-pulse/releases/tag/mlir-toolchain-22.1.8).
 - pip and uv install the Python dependencies listed in `pyproject.toml`.
-
-## Current scope and limitations
-
-- The compiler, dialects, lowering experiments, and CPU unit tests are the
-  primary research surface.
-- GPU evolution models transmons in per-qubit rotating frames, as qubits or
-  with any number of levels (including their anharmonicity). The quantum system's T1/T2
-  data, exchange couplings, residual ZZ terms, and calibrated drive-amplitude
-  scaling are supported. Programs that measure and branch on the result are
-  evolved between measurements as an exact ensemble over outcomes, on the GPU
-  or with a NumPy reference (`pulse.simulate`).
-- GPU evolution supports the `rk1`, `rk2`, `rk4`, `magnus`, and
-  `crank_nicolson` integrators. Waveform sums, differences, scaling, and
-  negation are lowered exactly; products are sampled once per clock cycle.
-  Envelopes from Python functions (`custom`) are sampled once per clock
-  cycle while tracing. Observable evaluation, systems without a
-  simulation model and unspecialized parameters are rejected explicitly by
-  the execution lowering.
-- GPU numerical results are research regression coverage, with no production
-  compatibility or accuracy commitment.
-
-## Repository contents
-
-- `core/frontend/` — Python DSL, compiler pipeline, quantum systems, and
-  runtime
-- `core/mlir/` — Pulse, Classical, `QOp`, and CuDensityMat dialects, transformations,
-  bindings, and `cudaq-pulse-opt`
-- `core/runtime/` — cuDensityMat runtime library loaded by JIT-compiled code
-- `cmake/` — dependency, Python staging, testing, and documentation modules
-- `packaging/cudaq-pulse-tools/` — the `cudaq-pulse-tools` wheel
-  (`cudaq-pulse-opt`), built from this tree
-- `tools/` — MLIR toolchain build/fetch scripts and CI helpers
-- `test/` — lit and `FileCheck` compiler regression tests
-- `tests/` — pytest unit, workload, and GPU tests
-- `examples/` — pulse programming examples
-- `docs/` — user, API, and architecture documentation
-- `benchmarks/` — compiler and simulation benchmarks
 
 ## Contributing and support
 
