@@ -8,12 +8,15 @@
 
 #pragma once
 
+#include "cudaq-pulse/Analysis/Variant.h"
+
 #include "cudaq-pulse/Analysis/Timing.h"
 #include "mlir/IR/Value.h"
 
 #include <optional>
 
 namespace pulse {
+PULSE_VARIANT_OPEN
 
 /// The length of a waveform in cycles, when it is known: none for a
 /// waveform that is an argument, or whose duration is computed from one.
@@ -60,4 +63,5 @@ inline std::optional<int64_t> waitCycles(WaitOp wait) {
   return std::nullopt;
 }
 
+PULSE_VARIANT_CLOSE
 } // namespace pulse
