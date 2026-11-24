@@ -7602,12 +7602,19 @@ public:
   static constexpr int kMostNesting = 256;
   static mlir::OwningOpRef<mlir::ModuleOp>
   parseForeign(const std::string &text, mlir::MLIRContext *ctx) {
-    auto tooDeep = [] {
-      return std::invalid_argument("load: the module nests deeper than " +
-                                   std::to_string(kMostNesting));
+    auto tooDeep = [](const char *what) {
+      return std::invalid_argument(
+          std::string("load: the module nests ") + what + " deeper than " +
+          std::to_string(kMostNesting) + "; write it with less nesting");
     };
     if (!llvm::StringRef(text).starts_with("ML\xefR")) {
-      int depth = 0, minus = 0;
+      // The brackets open at this byte, innermost last. A `<` or `>` is a
+      // bracket only where the text nests by it: a `>` closes the `<` on
+      // top and nothing else (the `>` of `->`, of `>=` and of `> =` closes
+      // nothing), and a `)`, `]` or `}` closes its own opener, with any `<`
+      // opened since (the `<` of `<=`).
+      std::string open;
+      int minus = 0;
       for (size_t i = 0; i < text.size(); ++i) {
         char c = text[i];
         if (c == '"') {
@@ -7622,19 +7629,24 @@ public:
             ++i;
         } else if (c == '(' || c == '[' || c == '{' || c == '<') {
           minus = 0;
-          if (++depth > kMostNesting)
-            throw tooDeep();
-        } else if (c == ')' || c == ']' || c == '}' || c == '>') {
-          // The `>` of `->` and of `>=` closes nothing.
-          bool closes =
-              c != '>' || !((i > 0 && text[i - 1] == '-') ||
-                            (i + 1 < text.size() && text[i + 1] == '='));
-          if (closes)
-            depth = std::max(depth - 1, 0);
+          open.push_back(c);
+          if (open.size() > static_cast<size_t>(kMostNesting))
+            throw tooDeep("brackets");
+        } else if (c == ')' || c == ']' || c == '}') {
+          minus = 0;
+          char opener = c == ')' ? '(' : c == ']' ? '[' : '{';
+          while (!open.empty() && open.back() == '<')
+            open.pop_back();
+          if (!open.empty() && open.back() == opener)
+            open.pop_back();
+        } else if (c == '>') {
+          if (!(i > 0 && text[i - 1] == '-') && !open.empty() &&
+              open.back() == '<')
+            open.pop_back();
           minus = 0;
         } else if (c == '-') {
           if (++minus > kMostNesting)
-            throw tooDeep();
+            throw tooDeep("minus signs in a row");
         } else if (!llvm::isSpace(c)) {
           minus = 0;
         }
@@ -7647,13 +7659,13 @@ public:
       open.emplace_back(&op, 1);
     while (!open.empty()) {
       auto [op, depth] = open.pop_back_val();
-      if (mlir::isa<mlir::ModuleOp>(op) ||
-          op->hasTrait<mlir::OpTrait::SymbolTable>())
+      if (op->hasTrait<mlir::OpTrait::SymbolTable>())
         throw std::invalid_argument(
-            "load: the module holds another module; a loaded module is one "
-            "module of functions");
+            "load: the module holds '" + op->getName().getStringRef().str() +
+            "', which has symbols of its own (a module inside the module); "
+            "a loaded module is one module of functions");
       if (op->getNumRegions() && depth >= kMostNesting)
-        throw tooDeep();
+        throw tooDeep("regions");
       for (mlir::Region &region : op->getRegions())
         for (mlir::Block &block : region)
           for (mlir::Operation &inner : block)
@@ -7746,8 +7758,13 @@ public:
       if (auto many = mlir::dyn_cast<mlir::DenseI64ArrayAttr>(periods))
         stated.periods.assign(many.asArrayRef().begin(),
                               many.asArrayRef().end());
-      else
+      else if (mlir::isa<mlir::IntegerAttr>(periods))
         stated.periods.push_back(*cycles("pulse.period_cycles"));
+      else
+        throw std::invalid_argument(
+            "load: " + caller + " calls " + callee +
+            " with a pulse.period_cycles that is neither one count (i64) nor "
+            "a list of them (array<i64: outer, ..., inner>)");
     }
     // One period per loop the call is in, each a count of cycles: a call
     // written in a function's place takes the periods of the call it was
@@ -7759,7 +7776,9 @@ public:
                                     "count of cycles (i64)");
     if (stated.periods.size() > static_cast<size_t>(kMostNesting))
       throw std::invalid_argument("load: " + caller + " calls " + callee +
-                                  " with more periods than loops can nest");
+                                  " with more periods than the " +
+                                  std::to_string(kMostNesting) +
+                                  " loops that can nest");
     return stated;
   }
   /// The function `caller` calls by `name`, checked to be one a call can be
@@ -7822,6 +7841,11 @@ public:
     });
     for (mlir::func::CallOp nested : nestedCalls) {
       StatedCall within = statedCall(nested, name);
+      if (!within.periods.empty())
+        throw std::invalid_argument(
+            "load: " + name + " calls " + nested.getCallee().str() +
+            " with a pulse.period_cycles; a called function has no loop, and "
+            "its calls take the periods of the call it is written for");
       auto [inner, more] =
           extentOf(source, name, nested.getCallee().str(), known, open);
       written = std::min(written + more, kMostWritten + 1);
@@ -7878,8 +7902,11 @@ public:
         if (stated.periods.size() != loops)
           throw std::invalid_argument(
               "load: " + entry + " calls " + name + " inside " +
-              std::to_string(loops) + " loop(s) and states " +
-              std::to_string(stated.periods.size()) + " period(s)");
+              std::to_string(loops) + " scf.for loop(s) and states " +
+              std::to_string(stated.periods.size()) +
+              " period(s); give pulse.period_cycles one period per scf.for "
+              "around the call, outermost first (array<i64: outer, ..., "
+              "inner>), and none outside a loop");
         llvm::SmallVector<std::string> open;
         int64_t extent = extentOf(source, entry, name, extents, open).first;
         if (stated.length && extent > *stated.length)
@@ -8171,20 +8198,12 @@ public:
     main.setType(
         mlir::FunctionType::get(ctx_.get(), main.getArgumentTypes(), {}));
     // What was written here from another compiler's module is checked as IR
-    // before anything reads it; the verifier's first reason goes with the
-    // refusal.
-    std::string reason;
+    // before anything reads it; the verifier's reasons go with the refusal.
     {
-      mlir::ScopedDiagnosticHandler handler(ctx_.get(),
-                                            [&](mlir::Diagnostic &diagnostic) {
-                                              if (reason.empty())
-                                                reason = diagnostic.str();
-                                              return mlir::success();
-                                            });
+      DiagnosticCollector diagnostics(ctx_.get());
       if (mlir::failed(mlir::verify(*module)))
-        throw std::invalid_argument("load: " + entry +
-                                    " is not valid as a loaded function" +
-                                    (reason.empty() ? "" : ": " + reason));
+        diagnostics.fail("load: " + entry +
+                         " is not valid as a loaded function");
     }
     return PulseModule(ctx_, std::move(module));
   }
