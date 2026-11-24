@@ -101,6 +101,10 @@ def operand_error(fname: str, call_args: list[Any]) -> CompilationError:
         if v.__class__ is not IRValue or v.vtype not in want:
             break
     value = call_args[index]
+    # Once a kernel of the process has fetched a coupling line, a wait takes
+    # one too; its message stays the one of the lines every kernel has.
+    if "coupling_line" in want:
+        want = _LINE_TYPES
     wanted = " or ".join(_TYPE_WORDS[t] for t in want)
     message = f"{fname}(): argument {index + 1} must be a {wanted}, got {_describe(value)}"
     vtype = value.vtype if value.__class__ is IRValue else None
