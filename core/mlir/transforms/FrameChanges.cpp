@@ -501,8 +501,12 @@ private:
       return outside;
     }
     mlir::Operation *def = tone.getDefiningOp();
+#if PULSE_COUPLED
     if (isPulse(def) || mlir::isa<pulse::WaitOp>(def) ||
         (pulse::kCoupled && mlir::isa<pulse::DriveBasebandOp>(def))) {
+#else
+    if (isPulse(def) || mlir::isa<pulse::WaitOp>(def)) {
+#endif
       if (!pulse::hasStart(def))
         return std::nullopt;
       return timeOf(def, pulse::scheduledDuration(def).value_or(0));
@@ -563,8 +567,12 @@ private:
       return latest;
     }
     if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp,
+#if PULSE_COUPLED
                   pulse::ToneOp>(def) ||
         (pulse::kCoupled && mlir::isa<pulse::GetCouplingLineOp>(def)))
+#else
+                  pulse::ToneOp>(def))
+#endif
       return Time{};
     return std::nullopt;
   }

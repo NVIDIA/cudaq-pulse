@@ -56,8 +56,12 @@ bool verifyModule(mlir::ModuleOp module);
 namespace {
 
 static bool isTimedOp(mlir::Operation *op) {
+#if PULSE_COUPLED
   return mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(op) ||
          (pulse::kCoupled && mlir::isa<pulse::DriveBasebandOp>(op));
+#else
+  return mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(op);
+#endif
 }
 
 /// The measurement results a branch condition is computed from, not
@@ -260,9 +264,11 @@ private:
       return pulse::waveformCycles(drive.getPulse());
     if (auto readout = mlir::dyn_cast<pulse::ReadoutOp>(op))
       return pulse::waveformCycles(readout.getPulse());
+#if PULSE_COUPLED
     if (pulse::kCoupled)
       if (auto drive = mlir::dyn_cast<pulse::DriveBasebandOp>(op))
         return pulse::waveformCycles(drive.getPulse());
+#endif
     return pulse::waitCycles(mlir::cast<pulse::WaitOp>(op));
   }
 
@@ -624,9 +630,14 @@ LLVM_ATTRIBUTE_ALWAYS_INLINE static bool verifyModule(mlir::ModuleOp module) {
         for (mlir::Value arg : block.getArguments())
           checkLinear(arg, op);
     waveforms.visit(op);
-    if (!mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op) &&
-        !(pulse::kCoupled && mlir::isa<pulse::GetCouplingLineOp>(op)))
+#if PULSE_COUPLED
+    if (!mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp,
+                   pulse::GetCouplingLineOp>(op))
       return;
+#else
+    if (!mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
+      return;
+#endif
 #if PULSE_COUPLED
     if (mlir::isa<pulse::GetCouplingLineOp>(op) &&
         op->getResult(0).use_empty()) {

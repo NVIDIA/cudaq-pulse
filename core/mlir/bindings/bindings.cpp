@@ -261,7 +261,8 @@ using pulse::holdsCouplingLine;
 
 /// Refuse a program that holds a coupling line where a controller's program
 /// is walked, for an export or a check of a controller's limits.
-inline void refuseCouplingLines(mlir::ModuleOp module) {
+LLVM_ATTRIBUTE_NOINLINE __attribute__((cold)) inline void
+refuseCouplingLines(mlir::ModuleOp module) {
   if (holdsCouplingLine(module)) [[unlikely]]
     throw Unsupported(
         "this program holds a coupling line; coupling lines are not exported "
@@ -272,10 +273,21 @@ inline void refuseCouplingLines(mlir::ModuleOp module) {
 
 /// Refuse a program that holds a coupling line where it is simulated or
 /// emulated: the simulation does not know its ops.
-inline void refuseSimulatedCouplingLines(mlir::ModuleOp module) {
+LLVM_ATTRIBUTE_NOINLINE __attribute__((cold)) inline void
+refuseSimulatedCouplingLines(mlir::ModuleOp module) {
   if (holdsCouplingLine(module)) [[unlikely]]
     throw Unsupported("this program holds a coupling line; a program with a "
                       "coupling line is not simulated or emulated yet");
+}
+
+/// refuseSimulatedCouplingLines unless the module was asked to lower its
+/// pulses on coupling lines for whoever maps them (PulseToQOp.cpp).
+LLVM_ATTRIBUTE_NOINLINE __attribute__((cold)) inline void
+refuseUnaskedCouplingLines(mlir::ModuleOp module) {
+  auto asked =
+      module->getAttrOfType<mlir::BoolAttr>("pulse.simulate_coupling_lines");
+  if (!asked || !asked.getValue())
+    refuseSimulatedCouplingLines(module);
 }
 
 /// What the event walks ask of a module, in two variants (Variant.h): of a
@@ -3720,8 +3732,14 @@ public:
     std::lock_guard<std::recursive_mutex> guard(*lock_);
     // Asked once of the module (Variant.h, saysCouplingLines).
     if (saysCouplingLines()) [[unlikely]]
-      return eventsOf<CoupledEvents>();
+      return coupledEvents();
     return eventsOf<PlainEvents>();
+  }
+
+  /// events() of a module that holds a coupling line, a function of its own.
+  LLVM_ATTRIBUTE_NOINLINE __attribute__((cold)) std::vector<Event>
+  coupledEvents() {
+    return eventsOf<CoupledEvents>();
   }
 
   template <typename Variant>
@@ -3782,8 +3800,15 @@ public:
     std::lock_guard<std::recursive_mutex> guard(*lock_);
     // Asked once of the module (Variant.h, saysCouplingLines).
     if (saysCouplingLines()) [[unlikely]]
-      return eventTreeOf<CoupledEvents>(limit);
+      return coupledEventTree(limit);
     return eventTreeOf<PlainEvents>(limit);
+  }
+
+  /// event_tree() of a module that holds a coupling line, a function of
+  /// its own.
+  LLVM_ATTRIBUTE_NOINLINE __attribute__((cold)) nb::object
+  coupledEventTree(int64_t limit) {
+    return eventTreeOf<CoupledEvents>(limit);
   }
 
   template <typename Variant>
@@ -5669,12 +5694,8 @@ private:
   ProgramTemplate lowerOperatorProgram() {
     // The conversion maps no pulse on a coupling line itself: it lowers
     // one for whoever asked with pulse.simulate_coupling_lines.
-    if (saysCouplingLines()) [[unlikely]] {
-      auto asked = (*module_)->getAttrOfType<mlir::BoolAttr>(
-          "pulse.simulate_coupling_lines");
-      if (!asked || !asked.getValue())
-        refuseSimulatedCouplingLines(*module_);
-    }
+    if (saysCouplingLines()) [[unlikely]]
+      refuseUnaskedCouplingLines(*module_);
     auto lowered = mlir::OwningOpRef<mlir::ModuleOp>(module_->clone());
     mlir::PassManager pm(ctx_.get());
     pm.addPass(pulse::createPulseToQOpPass());
@@ -6781,10 +6802,26 @@ public:
                                  param_names, param_types, name, slot_count,
                                  readout_freqs);
     } catch (const HoldsCouplingLine &) {
-      return decodePacked<true>(stream, clock_ghz, qudit_count, qubit_freqs,
-                                param_names, param_types, name, slot_count,
-                                readout_freqs);
+      return decodeCoupled(stream, clock_ghz, qudit_count, qubit_freqs,
+                           param_names, param_types, name, slot_count,
+                           readout_freqs);
     }
+  }
+
+  /// The decoder of a program that holds a coupling line, a function of
+  /// its own: build_from_packed is then the code it is without it.
+  LLVM_ATTRIBUTE_NOINLINE __attribute__((cold)) PulseModule decodeCoupled(
+      const nb::ndarray<int64_t, nb::ndim<1>, nb::c_contig> &stream,
+      double clock_ghz, int64_t qudit_count,
+      const nb::ndarray<double, nb::ndim<1>, nb::c_contig> &qubit_freqs,
+      const std::vector<std::string> &param_names,
+      const std::vector<std::string> &param_types, const std::string &name,
+      int64_t slot_count,
+      const std::optional<nb::ndarray<const double, nb::ndim<1>, nb::c_contig>>
+          &readout_freqs) {
+    return decodePacked<true>(stream, clock_ghz, qudit_count, qubit_freqs,
+                              param_names, param_types, name, slot_count,
+                              readout_freqs);
   }
 
   /// What the plain decoder throws at the record of a coupling line.
