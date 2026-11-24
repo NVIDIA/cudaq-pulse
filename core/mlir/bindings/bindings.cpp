@@ -7597,61 +7597,147 @@ public:
     llvm::SmallVector<int64_t, 2> periods;
   };
   static StatedCall statedCall(mlir::func::CallOp call,
-                               const std::string &entry) {
+                               const std::string &caller) {
     StatedCall stated;
-    auto start = call->getAttrOfType<mlir::IntegerAttr>("pulse.start_cycles");
+    std::string callee = call.getCallee().str();
+    auto cycles = [&](llvm::StringRef name) -> std::optional<int64_t> {
+      mlir::Attribute attribute = call->getAttr(name);
+      if (!attribute)
+        return std::nullopt;
+      auto value = mlir::dyn_cast<mlir::IntegerAttr>(attribute);
+      if (!value || !value.getType().isSignlessInteger(64) ||
+          value.getInt() < 0 || value.getInt() > (int64_t(1) << 50))
+        throw std::invalid_argument("load: " + caller + " calls " + callee +
+                                    " with a " + name.str() +
+                                    " that is not a count of cycles (i64)");
+      return value.getInt();
+    };
+    std::optional<int64_t> start = cycles("pulse.start_cycles");
     if (!start)
       throw std::invalid_argument(
-          "load: " + entry + " calls " + call.getCallee().str() +
+          "load: " + caller + " calls " + callee +
           " without stating when it starts; a call in a loaded function "
           "states its start in cycles");
-    stated.start = start.getInt();
-    if (auto length =
-            call->getAttrOfType<mlir::IntegerAttr>("pulse.length_cycles"))
-      stated.length = length.getInt();
-    mlir::Attribute periods = call->getAttr("pulse.period_cycles");
-    if (auto one = mlir::dyn_cast_or_null<mlir::IntegerAttr>(periods))
-      stated.periods.push_back(one.getInt());
-    else if (auto many =
-                 mlir::dyn_cast_or_null<mlir::DenseI64ArrayAttr>(periods))
-      stated.periods.assign(many.asArrayRef().begin(), many.asArrayRef().end());
+    stated.start = *start;
+    stated.length = cycles("pulse.length_cycles");
+    if (mlir::Attribute periods = call->getAttr("pulse.period_cycles")) {
+      if (auto many = mlir::dyn_cast<mlir::DenseI64ArrayAttr>(periods))
+        stated.periods.assign(many.asArrayRef().begin(),
+                              many.asArrayRef().end());
+      else
+        stated.periods.push_back(*cycles("pulse.period_cycles"));
+    }
     return stated;
+  }
+  /// What a loaded function and the functions it calls may not hold: a
+  /// qudit of their own (the program's qudits are the entry's arguments).
+  static void refuseOwnQudits(mlir::func::FuncOp function) {
+    function.walk([&](mlir::Operation *op) {
+      if (op->getName().getStringRef() == "pulse.qudit_alloc")
+        throw std::invalid_argument(
+            "load: " + function.getSymName().str() +
+            " allocates a qudit; a loaded function plays on the qudits it "
+            "takes");
+    });
+  }
+  /// The function `caller` calls by `name`, checked to be one a call can be
+  /// written in place of: defined, scheduled, one block that ends in a
+  /// return, and no loop, schedule block or qudit of its own.
+  static mlir::func::FuncOp calledFunction(mlir::ModuleOp source,
+                                           const std::string &caller,
+                                           const std::string &name) {
+    auto callee = source.lookupSymbol<mlir::func::FuncOp>(name);
+    if (!callee || callee.isDeclaration())
+      throw std::invalid_argument("load: " + caller + " calls " + name +
+                                  ", which the module does not define");
+    if (pulse::scheduleStateOf(callee) != pulse::ScheduleState::Timed)
+      throw std::invalid_argument("load: " + caller + " calls " + name +
+                                  ", which is not scheduled");
+    if (!llvm::hasSingleElement(callee.getBody()))
+      throw std::invalid_argument("load: " + name + " has more than one block");
+    if (callee.getBody().front().empty() ||
+        !mlir::isa<mlir::func::ReturnOp>(callee.getBody().front().back()))
+      throw std::invalid_argument("load: " + name +
+                                  " does not end in a return");
+    callee.walk([&](mlir::Operation *op) {
+      if (mlir::isa<mlir::scf::ForOp, pulse::ScheduleBlockOp>(op))
+        throw std::invalid_argument(
+            "load: " + name +
+            " has a loop or a schedule block; a called function is written "
+            "without them");
+    });
+    refuseOwnQudits(callee);
+    return callee;
+  }
+  /// How long `name` takes from its start: the latest end of its operations
+  /// and of the functions it calls, each for its stated length or, without
+  /// one, its own extent. `open` holds the functions being measured: one
+  /// met again calls itself.
+  static int64_t extentOf(mlir::ModuleOp source, const std::string &caller,
+                          const std::string &name,
+                          llvm::StringMap<int64_t> &known,
+                          llvm::SmallVectorImpl<std::string> &open) {
+    auto found = known.find(name);
+    if (found != known.end())
+      return found->second;
+    if (llvm::is_contained(open, name))
+      throw std::invalid_argument("load: " + name +
+                                  " calls a function that calls itself");
+    mlir::func::FuncOp callee = calledFunction(source, caller, name);
+    open.push_back(name);
+    int64_t end = 0;
+    callee.walk([&](mlir::Operation *op) {
+      if (auto nested = mlir::dyn_cast<mlir::func::CallOp>(op)) {
+        StatedCall within = statedCall(nested, name);
+        int64_t inner =
+            extentOf(source, name, nested.getCallee().str(), known, open);
+        if (within.length && inner > *within.length)
+          throw std::invalid_argument(
+              "load: " + name + " gives " + nested.getCallee().str() + " " +
+              std::to_string(*within.length) + " cycles at " +
+              std::to_string(within.start) + ", and it takes " +
+              std::to_string(inner));
+        end = std::max(end, within.start + within.length.value_or(inner));
+        return;
+      }
+      if (std::optional<int64_t> start = pulse::startCycles(op))
+        end = std::max(end, *start + pulse::durationCycles(op).value_or(0));
+    });
+    open.pop_back();
+    known[name] = end;
+    return end;
   }
   static void writeCallsInPlace(mlir::ModuleOp source, mlir::func::FuncOp main,
                                 const std::string &entry) {
     // Each round writes the calls now in `main`; a callee's own calls are
-    // written by the next. A chain longer than the module has functions
-    // calls itself.
-    size_t functions = 0;
-    for (mlir::Operation &op : *source.getBody())
-      functions += mlir::isa<mlir::func::FuncOp>(op);
-    for (size_t round = 0;; ++round) {
+    // written by the next. Every callee is measured first, which also
+    // refuses a function that calls itself, so the rounds end.
+    llvm::StringMap<int64_t> extents;
+    for (;;) {
       llvm::SmallVector<mlir::func::CallOp> calls;
       main.walk([&](mlir::func::CallOp call) { calls.push_back(call); });
       if (calls.empty())
         return;
-      if (round > functions)
-        throw std::invalid_argument("load: " + entry +
-                                    " calls a function that calls itself");
       for (mlir::func::CallOp call : calls) {
         std::string name = call.getCallee().str();
+        if (name == entry)
+          throw std::invalid_argument("load: " + entry +
+                                      " calls a function that calls itself");
         StatedCall stated = statedCall(call, entry);
-        auto callee = source.lookupSymbol<mlir::func::FuncOp>(name);
-        if (!callee || callee.isDeclaration())
-          throw std::invalid_argument("load: " + entry + " calls " + name +
-                                      ", which the module does not define");
-        if (pulse::scheduleStateOf(callee) != pulse::ScheduleState::Timed)
-          throw std::invalid_argument("load: " + entry + " calls " + name +
-                                      ", which is not scheduled");
-        if (!llvm::hasSingleElement(callee.getBody()))
-          throw std::invalid_argument("load: " + name +
-                                      " has more than one block");
+        llvm::SmallVector<std::string> open;
+        int64_t extent = extentOf(source, entry, name, extents, open);
+        if (stated.length && extent > *stated.length)
+          throw std::invalid_argument(
+              "load: " + entry + " gives " + name + " " +
+              std::to_string(*stated.length) + " cycles at " +
+              std::to_string(stated.start) + ", and it takes " +
+              std::to_string(extent));
+        mlir::func::FuncOp callee = calledFunction(source, entry, name);
         mlir::IRMapping mapping;
         for (auto [formal, actual] :
              llvm::zip(callee.getArguments(), call.getArgOperands()))
           mapping.map(formal, actual);
         mlir::OpBuilder builder(call);
-        int64_t end = 0;
         for (mlir::Operation &op : callee.getBody().front()) {
           if (auto ret = mlir::dyn_cast<mlir::func::ReturnOp>(op)) {
             for (auto [result, value] :
@@ -7668,32 +7754,20 @@ public:
               inner->setAttr(
                   "pulse.start_cycles",
                   attrs.getI64IntegerAttr(within.start + stated.start));
-              if (!stated.periods.empty())
+              if (stated.periods.empty())
+                inner->removeAttr("pulse.period_cycles");
+              else
                 inner->setAttr("pulse.period_cycles",
                                attrs.getDenseI64ArrayAttr(stated.periods));
-              if (within.length)
-                end = std::max(end, within.start + *within.length);
               return;
             }
             std::optional<int64_t> start = pulse::startCycles(inner);
             if (!start)
               return;
-            if (!pulse::periodCycles(inner).empty())
-              throw std::invalid_argument(
-                  "load: " + name +
-                  " has a loop; a called function is written without loops");
-            end = std::max(end,
-                           *start + pulse::durationCycles(inner).value_or(0));
             pulse::setStartCycles(inner, *start + stated.start);
             pulse::setPeriodCycles(inner, stated.periods);
           });
         }
-        if (stated.length && end > *stated.length)
-          throw std::invalid_argument("load: " + entry + " gives " + name +
-                                      " " + std::to_string(*stated.length) +
-                                      " cycles at " +
-                                      std::to_string(stated.start) +
-                                      ", and it takes " + std::to_string(end));
         call->erase();
       }
     }
@@ -7786,6 +7860,10 @@ public:
                                   std::to_string(found.getNumArguments()) +
                                   " qudit(s), and " + std::to_string(qudits) +
                                   " were given");
+    if (!llvm::hasSingleElement(found.getBody()))
+      throw std::invalid_argument("load: " + entry +
+                                  " has more than one block");
+    refuseOwnQudits(found);
     if (pulse::scheduleStateOf(found) != pulse::ScheduleState::Timed)
       throw std::invalid_argument(
           "load: " + entry +
@@ -7829,8 +7907,8 @@ public:
     main.setSymName("main");
     main.setPublic();
     // Attributes of other compilers on the operations are not the program's:
-    // only an operation's own attributes and those of the Pulse and
-    // classical dialects are kept.
+    // only an operation's own attributes and the Pulse dialect's are kept
+    // (what the classical check writes on a call it writes again).
     main.walk([&](mlir::Operation *op) {
       if (op == main.getOperation())
         return;
@@ -7838,7 +7916,6 @@ public:
       mlir::NamedAttrList attributes;
       for (mlir::NamedAttribute attribute : op->getAttrs())
         if (attribute.getName().getValue().starts_with("pulse.") ||
-            attribute.getName().getValue().starts_with("classical.") ||
             llvm::is_contained(own, attribute.getName()))
           attributes.append(attribute);
       op->setAttrs(attributes);

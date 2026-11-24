@@ -287,9 +287,9 @@ Loading a scheduled function
 
 A program does not have to start as a kernel. ``pulse.load`` takes a module of
 the Pulse dialect that another compiler wrote, as assembly or bytecode, and
-returns what ``kernel.lower(...)`` returns: a ``ScheduledKernel`` that
-``schedule()``, ``timeline()``, ``export_to_controller()`` and the backends
-take.
+returns what ``kernel.lower(...)`` returns: a ``ScheduledKernel``, with its
+``schedule``, ``timeline()`` and ``export_to_controller()``, that the
+backends take.
 
 .. code-block:: python
 
@@ -306,19 +306,25 @@ clock. ``qudits`` gives the qudit of each argument, in order, and the lines
 get that system's frequencies.
 
 ``load`` keeps the schedule as written and does not schedule again. It does
-check it: the function is verified as every scheduled program is, and checked
-against the controller limits. A module that states its clock must state the
-quantum system's. Attributes another compiler put on the function or its
-operations are dropped.
+check it: on its qudits and control system the function is verified as every
+scheduled program is, and checked against what the controllers can play. A
+module that states its clock must state the quantum system's. Attributes
+another compiler put on the function or its operations are dropped. The
+function plays on the qudits it takes and allocates none. A control system
+with line delays, or a controller with ``max_instructions`` or
+``max_program_duration``, is refused: ``load`` does not apply or check those
+yet.
 
 A loaded function may hold loops, branches on measurements and calls of
 classical functions (:doc:`classical_calls`). The classical functions are the
 module's ``classical.callable`` declarations: their types, latency, link and
 dispatch key are enough to export the program. The links are the control
-system's, and an answer taken before its latency allows is refused.
-``classical=`` gives functions declared with ``pulse.classical`` for the
-module's, by name. Each must take and give what the module states, and its
-latency and implementation replace the module's:
+system's, by the link id the module states; an answer taken before the
+latency and the link allow is refused, and so is a submission given less
+time than the link takes. ``classical=`` gives functions declared with
+``pulse.classical`` for the module's, by name. Each must take and give what
+the module states, with its latency mode and submit policy, and its latency
+and implementation replace the module's:
 
 .. code-block:: python
 
@@ -332,8 +338,9 @@ A call of another function of the module states when it starts, as
 ``pulse.start_cycles`` on the ``func.call`` (with ``pulse.length_cycles``,
 which the callee must fit in, and ``pulse.period_cycles`` inside a loop), and
 is written in place: the callee's operations, each that much later. The
-callee takes and returns the lines and tones it plays on. This spelling is
-provisional and will follow the dialect's timed call.
+callee takes and returns the lines and tones it plays on, is scheduled, and
+holds no loop. This spelling is provisional and will follow the dialect's
+timed call.
 
 Threads
 -------

@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """``pulse.load``: a scheduled function another compiler built."""
 
+import re
+
 import cudaq_pulse as pulse
 import pytest
 
@@ -379,3 +381,85 @@ def test_calls_in_a_loop_keep_the_loop_and_state_its_period(system):
     text = program.mlir()
     assert text.count("scf.for") == 1 and text.count("pulse.drive ") == 2
     assert "call" not in text
+
+
+# ── What a review found ──────────────────────────────────────────────────────
+
+
+def test_a_failed_load_carries_a_documented_code(system):
+    with pytest.raises(pulse.CompilationError) as wrong:
+        pulse.load(MODULE, entry="missing", qudits=system.qudits[:2])
+    assert wrong.value.code == "wrong_argument"
+    text = MODULE.replace("start_cycles = 16 : i64", "start_cycles = 0 : i64").replace(
+        "%db1, %tb1 = pulse.drive %db, %w, %tb", "%db1, %tb1 = pulse.drive %da1, %w, %ta1"
+    )
+    with pytest.raises(pulse.CompilationError) as overlap:
+        pulse.load(text, entry="round", qudits=system.qudits[:2])
+    assert overlap.value.code == "other"
+
+
+def test_a_nested_call_without_a_length_still_counts(system):
+    text = re.sub(r", pulse\.length_cycles = 8 :\s+i64", "", CALLS).replace(
+        "pulse.length_cycles = 16", "pulse.length_cycles = 12"
+    )
+    assert text.count("pulse.length_cycles") == 1
+    with pytest.raises(pulse.CompilationError, match="and it takes 16"):
+        pulse.load(text, entry="shot", qudits=system.qudits[:2])
+
+
+def test_a_function_with_a_qudit_of_its_own_is_refused(system):
+    text = MODULE.replace(
+        "    %n = arith.constant 16 : i64",
+        "    %own = pulse.qudit_alloc {qudit = 5 : i64} : !pulse.qudit\n"
+        "    %n = arith.constant 16 : i64",
+    )
+    assert text != MODULE
+    with pytest.raises(pulse.CompilationError, match="allocates a qudit"):
+        pulse.load(text, entry="round", qudits=system.qudits[:2])
+
+
+@pytest.mark.parametrize("limit", [{"max_instructions": 1000}, {"max_program_duration": 1e6}])
+def test_program_limits_are_not_checked_yet_and_say_so(system, limit):
+    machine = pulse.Controller(**limit)
+    with pytest.raises(pulse.UnsupportedError, match="max_instructions or max_program_duration"):
+        pulse.load(MODULE, entry="round", qudits=system.qudits[:2], control_system=machine)
+
+
+def test_a_slower_link_is_refused(system):
+    from cudaq_pulse.classical import Link
+
+    machine = _links()
+    _, text = _as_written(system, machine)
+    qudits = [system.qudits[0], system.qudits[2]]
+    slower = pulse.ControlSystem(links={"host": Link(fixed_ns=5000, feedback_ns=100)})
+    with pytest.raises(pulse.CompilationError, match="due|it takes"):
+        pulse.load(text, entry="main", qudits=qudits, control_system=slower)
+
+
+def test_a_given_bool_function_keeps_its_own_types(system):
+    machine = _links()
+    _, text = _as_written(system, machine)
+    qudits = [system.qudits[0], system.qudits[2]]
+
+    @pulse.classical(name="decide", max_latency_ns=400, link="host")
+    def yes(bits: pulse.Bits) -> bool:
+        return bool(bits[0])
+
+    loaded = pulse.load(text, entry="main", qudits=qudits, control_system=machine, classical=[yes])
+    assert [type(r).__name__ for r in loaded.classical[0].results] == [
+        type(r).__name__ for r in yes.specialize(bits=1).results
+    ]
+    assert loaded.classical[0].base_name == "decide"
+
+
+def test_a_function_is_given_for_its_versions_only():
+    from cudaq_pulse._load import _given_functions
+
+    row = ("decide__fast", 1, 0, ["bits:1"], ["bits:1"], (0.0, 400.0, 400.0), "bounded", "eager")
+    with pytest.raises(pulse.InvalidValueError, match="calls no classical function named decide"):
+        _given_functions([decide], [row + (None, None, None)])
+    version = ("decide__1",) + row[1:] + (None, None, None)
+    assert set(_given_functions([decide], [version])) == {"decide__1"}
+    lazy = version[:7] + ("lazy",) + version[8:]
+    with pytest.raises(pulse.CompilationError, match="submit policy"):
+        _given_functions([decide], [lazy])

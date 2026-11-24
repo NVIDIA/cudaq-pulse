@@ -210,8 +210,10 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 - **Loading a scheduled function.** `pulse.load(module, entry=..., qudits=...)`
   turns a scheduled function of a Pulse-dialect module that another compiler
   wrote (assembly or bytecode) into a `ScheduledKernel`, as `kernel.lower(...)`
-  returns. The schedule is kept as written, verified and checked against the
-  controller limits; `qudits` gives the qudit of each argument and the lines
+  returns. The schedule is kept as written, verified on its qudits and
+  control system and checked against what the controllers can play (a
+  control system with line delays or program limits is refused for now);
+  `qudits` gives the qudit of each argument and the lines
   get that quantum system's frequencies. A loaded function may hold loops,
   branches and calls of classical functions: these are read from the module's
   `classical.callable` declarations, travel on the control system's links and
