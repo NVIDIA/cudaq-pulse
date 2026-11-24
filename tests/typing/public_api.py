@@ -44,6 +44,7 @@ from cudaq_pulse.quantum_systems.tuning import (
     ChargeCoupling,
     CouplingControl,
     CouplingInteraction,
+    CouplingPoint,
     ExchangeControl,
     FluxTuning,
     Tuning,
@@ -364,6 +365,11 @@ assert_type(declaring, pulse.QuantumSystem)
 assert_type(declaring.tuning(0), Tuning | None)
 assert_type(declaring.control(declaring.qudits[1], 2), CouplingControl | None)
 assert_type(declaring.interaction(0, 1), CouplingInteraction | None)
+made_through = declaring.interaction(0, 1)
+own_control = declaring.control(1, 2)
+assert made_through is not None and own_control is not None
+assert_type(made_through.at((0, 1), {0: 0.1}), CouplingPoint)
+assert_type(own_control.at(0.1), CouplingPoint)
 assert_type(declaring.replace(tunings={0: flux}), pulse.QuantumSystem)
 assert_type(flux.frequency_at(0.1), Any)
 pulse.quantum_system("transmon_lattice:3", tuning={0: flux})  # type: ignore[call-arg]

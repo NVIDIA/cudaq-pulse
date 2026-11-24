@@ -184,13 +184,20 @@ three keywords of ``pulse.quantum_system`` (and of ``qs.replace``):
 
 .. code-block:: python
 
+   import cudaq_pulse as pulse
+   from cudaq_pulse.quantum_systems import Coupling, PhysicalQudit
    from cudaq_pulse.quantum_systems.tuning import ChargeCoupling, ExchangeControl, FluxTuning
 
+   qudits = {
+       i: PhysicalQudit(i, 5.0e9 + 1.0e8 * i, 50.0, 30.0, anharmonicity_hz=-2.0e8)
+       for i in range(3)
+   }
+   couplings = [Coupling((0, 1), strength_hz=5.7e6), Coupling((1, 2), strength_hz=4.0e6)]
    flux = FluxTuning(ec_hz=1.65e8, ej_max_hz=2.6e10, asymmetry=0.47, idle_flux=0.5)
    qs = pulse.quantum_system(
        name="three",
-       qudits=qudits,                          # PhysicalQudits 0, 1 and 2, as before
-       couplings=couplings,                    # Couplings (0, 1) and (1, 2), as before
+       qudits=qudits,                          # as before: a qudit holds no tuning
+       couplings=couplings,                    # as before: a coupling holds no control
        tunings={0: flux, 1: flux},
        interactions={(0, 1): ChargeCoupling(charge_coupling_hz=3.1e6)},
        controls={
@@ -227,10 +234,12 @@ The helpers read the components without compiling anything:
    qs = pulse.quantum_system("transmon_surface17")
    x2, d4 = qs.qudit("X2"), qs.qudit("D4")
    data = qs.tuning(d4)                      # the FluxTuning the calibration gives D4
+   pair = qs.interaction(x2, d4)             # the ChargeCoupling of its g_c, through both tunings
+   assert data is not None and pair is not None   # None for a qudit or a pair with neither
    data.frequency_at(0.0)                    # 3.878e9: the idle point
    assert math.isclose(data.frequency_at(-0.3), data.frequency_at(0.3))   # even about the sweet spot
    at = data.amplitude_for(5.276e9)          # -0.3015 flux quanta to the CZ's frequency
-   point = qs.interaction(x2, d4).at((x2, d4), {d4: at})
+   point = pair.at((x2, d4), {d4: at})
    print(point.frequencies_hz[d4.index], point.exchange_hz)
 
 An interaction made by tuning its qudits takes the pair and the amplitude

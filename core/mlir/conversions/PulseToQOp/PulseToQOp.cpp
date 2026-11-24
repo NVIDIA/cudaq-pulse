@@ -73,6 +73,8 @@
 #include <functional>
 #include <limits>
 #include <optional>
+#include <type_traits>
+#include <variant>
 
 using namespace mlir;
 
@@ -652,7 +654,6 @@ struct PulseToQOpPass
     // which this pass does not hold: it writes the pulse's samples as a
     // term for whoever asked with `pulse.simulate_coupling_lines` to map
     // (see kMappedSamples), and refuses a module nobody asked that of.
-    bool coupled = false;
     if (module->hasAttr(pulse::kCouplingLinesAttr)) [[unlikely]]
       if (pulse::holdsCouplingLine(module)) {
         auto asked =
@@ -663,8 +664,17 @@ struct PulseToQOpPass
           pulse::lastRefusal = pulse::Refusal::NotSimulated;
           return signalPassFailure();
         }
-        coupled = true;
+        return lower<true>(module);
       }
+    lower<false>(module);
+  }
+
+  /// The lowering of `module`. `Coupled` is the lowering of a module that
+  /// holds a coupling line: the same code, with the walk that reports the
+  /// pulses on coupling lines and their terms compiled in. A module
+  /// without one runs the other, which has neither.
+  template <bool Coupled>
+  void lower(ModuleOp module) {
     OpBuilder b(module.getContext());
 
     func::FuncOp mainFunc;
@@ -843,8 +853,10 @@ struct PulseToQOpPass
     }
     // The pulses on coupling lines of this path, from the walk that reports
     // them; they count for where the program ends.
-    SmallVector<pulse::coupled::Occurrence> couplingPulses;
-    if (coupled) [[unlikely]] {
+    std::conditional_t<Coupled, SmallVector<pulse::coupled::Occurrence>,
+                       std::monostate>
+        couplingPulses;
+    if constexpr (Coupled) {
       pulse::coupled::Path taken;
       for (const auto &[key, outcome] : path)
         taken[{key.readout, key.iteration}] = outcome;
@@ -1020,7 +1032,7 @@ struct PulseToQOpPass
 
     // Each pulse on a coupling line as terms whose callback holds the
     // pulse's amplitude at every cycle, unmapped.
-    if (coupled) [[unlikely]] {
+    if constexpr (Coupled) {
       pulse::coupled::AllocationTracer lines;
       int index = 0;
       for (const pulse::coupled::Occurrence &o : couplingPulses) {
