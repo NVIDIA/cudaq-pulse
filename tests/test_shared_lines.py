@@ -480,6 +480,149 @@ def test_a_program_is_checked_against_a_controller_with_a_feedline():
     assert list(pulse.controller.check(lowered, roomy)) == []
 
 
+def _walked(lowered, feedline):
+    """The shared-line violations of *lowered* against *feedline* with
+    every iteration walked, as a check counted them before it counted
+    rolled loops from their summary."""
+    from cudaq_pulse import _shared_lines
+    from cudaq_pulse._system import _one_controller
+    from cudaq_pulse.controller import _walk
+
+    lines, events, _, _, _ = _walk(lowered, values=False)
+    return _shared_lines.violations(_one_controller(feedline), lowered, lines, events, None)
+
+
+@pytest.fixture
+def no_walk_of_every_round(monkeypatch):
+    """Fail, rather than take the machine's memory, if a check walks a
+    program without summarizing its loops."""
+    from cudaq_pulse import controller
+
+    walk = controller._walk
+
+    def summarizing(lowered, *args, summary=None, **options):
+        assert summary is not None, "a check walked every iteration"
+        return walk(lowered, *args, summary=summary, **options)
+
+    monkeypatch.setattr(controller, "_walk", summarizing)
+
+
+def _rounds(trips, together=True, beside=False):
+    """A kernel of *trips* rounds kept as a loop: two readouts on one
+    feedline, at once or in turn; with *beside*, a third qudit of the
+    feedline is read out while the loop runs."""
+
+    @pulse.kernel
+    def rounds(a, b, c):
+        ra = get_readout_line(a)
+        rb = get_readout_line(b)
+        if beside:
+            readout(get_readout_line(c), square(4000, 0.05))
+        for _ in range(trips):
+            sync(ra, rb)
+            readout(ra, square(100, 0.05))
+            if not together:
+                sync(ra, rb)
+            readout(rb, square(100, 0.05))
+
+    return rounds
+
+
+@pytest.mark.parametrize("together", [True, False])
+@pytest.mark.parametrize("beside", [False, True])
+@pytest.mark.parametrize("tones", [1, 2, 3])
+def test_a_check_against_a_feedline_counts_a_rolled_loop_as_walking_it_does(
+    together, beside, tones
+):
+    from cudaq_pulse import _shared_lines
+
+    system = _system([0, 1, 2], drive_lines=(0, 1, 2))
+    lowered = _lowered(_rounds(300, together, beside), system, 0, 1, 2, unroll_threshold=10)
+    feedline = pulse.Controller(readout_lines=[ReadoutLine([0, 1, 2], max_concurrent_tones=tones)])
+    found = _shared_lines.against(lowered, feedline)
+    assert found == _walked(lowered, feedline)
+    assert bool(found) == (tones < together + beside + 1)
+
+
+def test_a_check_against_a_feedline_does_not_grow_with_the_rounds(no_walk_of_every_round):
+    from tests._work import python_work
+
+    system = _system([0, 1, 2], drive_lines=(0, 1, 2))
+    feedline = pulse.Controller(readout_lines=[ReadoutLine([0, 1, 2], max_concurrent_tones=1)])
+
+    def checked(trips):
+        lowered = _lowered(_rounds(trips), system, 0, 1, 2, unroll_threshold=10)
+        work = python_work(lambda: pulse.controller.check(lowered, feedline))
+        return list(pulse.controller.check(lowered, feedline)), work
+
+    few, work_few = checked(1_000)
+    many, work_many = checked(2_700_000_000)
+    assert "plays 2 tones at once from cycle 0" in few[0]
+    assert "and does so 999 more times" in few[0]
+    assert "and does so 2699999999 more times" in many[0]
+    assert work_many == work_few
+
+
+def test_a_check_that_would_walk_too_many_rounds_says_so(no_walk_of_every_round):
+    # The readout beside the loop is on the feedline while the loop runs, so
+    # the loop's rounds cannot be counted from the first.
+    system = _system([0, 1, 2], drive_lines=(0, 1, 2))
+    feedline = pulse.Controller(readout_lines=[ReadoutLine([0, 1, 2], max_concurrent_tones=1)])
+    lowered = _lowered(_rounds(5_000_000, beside=True), system, 0, 1, 2, unroll_threshold=10)
+    with pytest.raises(
+        pulse.UnsupportedError,
+        match=r"would play \d+ copies of rolled loops one by one, more than the 1048576",
+    ):
+        pulse.controller.check(lowered, feedline)
+
+
+def _drifting(trips):
+    """Two readouts on one feedline in a loop of *trips* rounds, with no
+    sync between their lines: each line repeats by its own period."""
+
+    @pulse.kernel
+    def drifting(a, b):
+        ra = get_readout_line(a)
+        rb = get_readout_line(b)
+        for _ in range(trips):
+            readout(ra, square(100, 0.05))
+            readout(rb, square(160, 0.05))
+
+    return drifting
+
+
+def test_compiling_rounds_that_cannot_be_counted_from_one_stops_with_an_error():
+    # Lines of different periods on one feedline are played round by round:
+    # a few thousand rounds are, millions are refused before they are walked.
+    from cudaq_pulse import controller
+
+    system = _feedline(2, (0, 1))
+    assert len(_lowered(_drifting(2_000), system, 0, 1, unroll_threshold=10).schedule) == 4_000
+    walk = controller._walk
+
+    def summarizing(lowered, *args, summary=None, **options):
+        assert summary is not None, "the check walked every iteration"
+        return walk(lowered, *args, summary=summary, **options)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(controller, "_walk", summarizing)
+        with pytest.raises(pulse.UnsupportedError) as refused:
+            _lowered(_drifting(5_000_000), system, 0, 1, unroll_threshold=10)
+    assert "would play 4999998 copies of rolled loops one by one" in str(refused.value)
+    assert "give the loops fewer iterations" in str(refused.value)
+
+
+def test_a_check_of_rounds_on_lines_of_their_own_periods_stops_with_an_error(
+    no_walk_of_every_round,
+):
+    # Compiled for dedicated lines, then checked against a feedline.
+    dedicated = _system([0, 1], drive_lines=(0, 1))
+    lowered = _lowered(_drifting(5_000_000), dedicated, 0, 1, unroll_threshold=10)
+    feedline = pulse.Controller(readout_lines=[ReadoutLine([0, 1], max_concurrent_tones=1)])
+    with pytest.raises(pulse.UnsupportedError, match=r"would play \d+ copies of rolled loops"):
+        pulse.controller.check(lowered, feedline)
+
+
 @pulse.kernel
 def on_every_feedline(*qs):
     lines = []

@@ -3167,8 +3167,15 @@ def _compile_check(
             # A controller counting cycles of its own is walked in full.
             if any(c.ratio != 1 for c in clocks.controllers):
                 repeats = None
+    # The copies of rolled loops the next walk plays one by one, as far as
+    # the walk before it shows: past those a check plays, it stops here.
+    walked = every = 0
     for unsynced in passes:
         periods: list[tuple[int, int, int]] | None = [] if unsynced else None
+        if walked:
+            from ._loops import refuse_past_budget
+
+            refuse_past_budget(walked)
         lines, events, _, off, problems = _walk(
             lowered,
             values=False,
@@ -3187,7 +3194,14 @@ def _compile_check(
             )
             if checked is not None:
                 return checked
-        repeats = [] if unsynced and not problems else None
+        from ._loops import walked_copies
+
+        again = unsynced and not problems
+        # What a walk of every iteration plays, from the walk in which every
+        # loop still is one; the next summarizes those of one period, or none.
+        every = max(every, walked_copies(events, repeats, periods or ()))
+        walked = walked_copies(events, repeats, periods or (), unsynced=True) if again else every
+        repeats = [] if again else None
     if system is not None and slots and not system._plays_everything:
         # Which controller plays a line depends on the qudits a call binds.
         return [], False

@@ -676,12 +676,35 @@ def violations(
 
 def against(lowered: ScheduledKernel, controller: Controller) -> list[str]:
     """``violations`` of *lowered* on a system of *controller* alone, for
-    ``controller.check(lowered, controller)``: every iteration walked."""
+    ``controller.check(lowered, controller)``. Rolled loops of one period
+    are counted from the check walk's summary, as compiling counts them;
+    when they cannot be (``summarized``), or their lines move by periods
+    of their own, every iteration is walked, up to the copies a check
+    plays one by one (``_loops.refuse_past_budget``)."""
+    from . import _loops
     from ._system import _one_controller
     from .controller import _walk
 
+    system = _one_controller(controller)
+    repeats: list[tuple[int, ...]] = []
+    periods: list[tuple[int, int, int]] = []
+    lines, events, _, _, problems = _walk(lowered, values=False, summary=(repeats, periods))
+    # What a walk of every iteration plays, while every loop is one still.
+    every = _loops.walked_copies(events, repeats, periods) if repeats else 0
+    if repeats and periods:
+        # Shared lines are counted of loops of one period: a loop whose
+        # lines move by periods of their own is played round by round.
+        _loops.refuse_past_budget(_loops.walked_copies(events, repeats, periods, unsynced=True))
+        repeats = []
+        lines, events, _, _, problems = _walk(lowered, values=False, summary=(repeats, None))
+    if repeats:
+        if not problems:
+            found = summarized(system, lowered, lines, events, repeats, None)
+            if found is not None:
+                return found
+    _loops.refuse_past_budget(every)
     lines, events, _, _, _ = _walk(lowered, values=False)
-    return violations(_one_controller(controller), lowered, lines, events, None)
+    return violations(system, lowered, lines, events, None)
 
 
 def _first(item: tuple[int, int, Mapping[str, Any], Any]) -> tuple[int, int]:

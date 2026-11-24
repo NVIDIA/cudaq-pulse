@@ -17,6 +17,7 @@ import operator
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, overload
 
+from ._errors import UnsupportedError
 from .controller import (
     _PLAYED,
     WaveformMemoryScope,
@@ -491,6 +492,46 @@ class _Budget:
                 "one by one, whose events interleave with others on one line or depend on a "
                 "readout before the loop; give the loops fewer iterations"
             )
+
+
+def walked_copies(
+    events: Sequence[Mapping[str, Any]],
+    repeats: Sequence[Sequence[int]],
+    periods: Sequence[Sequence[int]] = (),
+    unsynced: bool = False,
+) -> int:
+    """The copies of rolled loops a walk of every iteration plays: of each
+    loop of *repeats*, its copies times those of the loops around it. With
+    *unsynced*, of the loops whose lines move by periods of their own
+    alone, which a walk that summarizes only loops of one period plays."""
+    tree, _ = _tree(events, repeats, periods)
+
+    def count(nodes: list[Any], times: int) -> int:
+        total = 0
+        for node in nodes:
+            if type(node) is not int:
+                if unsynced and node.lines is None:
+                    # Summarized by that walk: its body is listed once.
+                    total += count(node.body, times)
+                    continue
+                inner = times * int(node.copies)
+                total += inner + count(node.body, inner)
+        return total
+
+    return count(tree, 1)
+
+
+def refuse_past_budget(copies: int) -> None:
+    """Stop a check that would walk *copies* of rolled loops one by one when
+    they are more than a check plays (``_MAX_PLAYED``): walking them takes
+    time and memory in proportion to them."""
+    if copies > _MAX_PLAYED:
+        raise UnsupportedError(
+            f"the controller check would play {copies} copies of rolled loops one by one, more "
+            f"than the {_MAX_PLAYED} it plays: their events interleave with others on one line "
+            "or depend on a readout before the loop, so they cannot be counted from one copy; "
+            "give the loops fewer iterations"
+        )
 
 
 # An event of a check: (index, shift in cycles, the copies it is in).
