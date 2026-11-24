@@ -715,6 +715,61 @@ to what the kernel read while it was traced. A call's ``rescheduled`` says
 something else: whether its float values set a wait length (see
 :ref:`wait-lengths`).
 
+.. _coupling-lines:
+
+Coupling lines
+--------------
+
+A controller's coupling lines are its outputs that play a baseband
+waveform, with no tone, on a control of the quantum system: a flux pulse
+on a tunable qudit or on a tunable coupler, a gate voltage between two
+qudits. ``controller.with_coupling_lines([...])`` gives a controller its
+lines, each a ``CouplingLine`` (from ``cudaq_pulse.controller``) named by
+the set of qudits it acts on, and ``controller.coupling_lines`` lists
+them::
+
+    from cudaq_pulse.controller import CouplingLine
+
+    box = pulse.Controller(drive_lines=[0, 1, 2]).with_coupling_lines(
+        [
+            CouplingLine(0, amplitude_per_volt=0.52, max_volts=1.0),   # qudit 0's own tuning
+            CouplingLine((1, 2), amplitude_per_volt=0.31),             # the control of the coupling of 1 and 2
+        ]
+    )
+
+The result is a ``Controller`` with every field of the one it was made
+from, and the lines in place of any it had; with no lines it is the plain
+controller. One carrier index is the line of that qudit's own tuning
+(``qs.tuning(q)``); two are the line of the control of their coupling
+(``qs.control(a, d)``). The qudits are a set: a tuple, a list
+and any order mean the same, a kernel fetches the line with
+``get_coupling_line`` of the same qudits, and a pulse on it acts on all of
+them at once. What the control does to the device, and the response of
+the wiring to it, is the quantum system's (see "Tuning and coupling
+controls" in the quantum systems guide). The line holds what the
+installation adds: ``amplitude_per_volt``, the amplitude at the device (in
+the unit of the component it reaches, flux quanta for a ``FluxTuning``)
+per volt at the output; ``max_volts``, the most the output plays; and its
+``delay_ns``.
+
+A quantum system checks its control system's coupling lines when it is
+built: a line that reaches a qudit with no tuning, a pair that is not
+coupled or whose coupling has no control of its own (a pair whose
+``interaction`` is made through its qudits is reached through their
+tunings, and the error names the lines that reach them), three or more
+qudits, or what another line already reaches, is a
+``QuantumSystemDefinitionError`` naming the line and the fix. Building a
+controller checks its coupling lines themselves: each a ``CouplingLine``,
+no two acting on the same qudits. They are a set: a controller keeps them
+in the order of their qudits, and controllers given the same lines in any
+order are equal. In a system file a
+coupling line is ``{"qudits": [1, 2], "amplitude_per_volt": 0.31}`` in its
+controller's ``coupling_lines``, which ``as_dict()`` of a controller that
+has lines lists. The ``limits`` of ``export_to_controller()`` are the
+controller's data, so for a controller that has coupling lines they hold
+``"coupling_lines": [{"qudits": [3], "max_volts": 1.0}]``; an export for a
+controller without lines has no such key and is what it was.
+
 Shared lines
 ------------
 

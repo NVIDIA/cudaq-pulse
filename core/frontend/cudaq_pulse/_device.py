@@ -51,6 +51,7 @@ except ImportError:  # pragma: no cover - CPython builds without the _blake2 mod
 
 if TYPE_CHECKING:
     from array import array
+    from typing import TypedDict, Unpack
 
     from ._system import ControlSystem
     from ._units import Time
@@ -67,6 +68,15 @@ if TYPE_CHECKING:
     from .quantum_systems.drift import ParameterDriftModel
 
     type _MaybeSystem = QuantumSystem | None
+    from .quantum_systems.tuning import CouplingControl, CouplingInteraction, Tuning
+
+    class _Components(TypedDict, total=False):
+        """What a quantum system declares of its baseband controls."""
+
+        tunings: Mapping[Qudit | int, Tuning]
+        controls: Mapping[tuple[Qudit | int, Qudit | int], CouplingControl]
+        interactions: Mapping[tuple[Qudit | int, Qudit | int], CouplingInteraction]
+
 
 __all__ = [
     "QuantumSystem",
@@ -368,6 +378,16 @@ class QuantumSystem:
     # What a kernel whose qudits are runtime parameters depends on, made by
     # the first such kernel (_programs._structure).
     _structure: str | None = None
+    # The frequency arrays, made when first asked for (_frequency_arrays).
+    _arrays: tuple[Any, Any] | None = None
+    # The frequency tables a compiled module records, as _frequency_tables
+    # returns them: (count, 0-1 frequencies, readout tones); none before the
+    # first compile.
+    _tables: tuple[int, Any, Any] = (-1, None, None)
+    if TYPE_CHECKING:
+        # The built system a variant was made from (itself, for one that
+        # was built), or the sources a variant found (components.py).
+        _made_from: Any
 
     def __init__(
         self,
@@ -379,7 +399,7 @@ class QuantumSystem:
         calibration: Any = None,
         control_system: ControlSystem | None = None,
         clock_ghz: float | None = None,
-        _variant: bool = False,
+        _variant: QuantumSystem | bool = False,
     ) -> None:
         if control_system is not None:
             from ._system import ControlSystem
@@ -403,9 +423,11 @@ class QuantumSystem:
             else _layout(layout, target, name, problems)
         )
         if control_system is not None:
-            from ._system import _wiring_problems
-
-            problems.extend(_wiring_problems(control_system, target))
+            problems.extend(
+                control_system._wiring_problems(  # type: ignore[attr-defined]
+                    target, calibration, _variant
+                )
+            )
         if layout is None or problems:
             raise QuantumSystemDefinitionError(problems=problems)
         self.control_system = control_system
@@ -418,15 +440,17 @@ class QuantumSystem:
         self.calibration = calibration
         self.layout = layout
         self.clock_ghz = float(target.clock_ghz)
-        self._arrays: tuple[Any, Any] | None = None
-        # The frequency tables a compiled module records, as
-        # _frequency_tables returns them: (count, 0-1 frequencies, readout
-        # tones); none before the first compile.
-        self._tables: tuple[int, Any, Any] = (-1, None, None)
         # A variant (replace) makes the rest when it is first read
         # (__getattr__): most are only simulated against, which reads none of it.
+        # The system a variant was made from, whose calibration its answers
+        # for tunings come from (quantum_systems/components.py); a system
+        # that was built names itself, so a variant of a variant is made from
+        # the built system and holds no variant between.
         if not _variant:
+            self._made_from = self
             self._finish()
+        else:
+            self._made_from = _variant
 
     # The frequencies, fingerprint, identity and qudit handles.
     def _finish(self) -> None:
@@ -670,6 +694,24 @@ class QuantumSystem:
         def parameter_drift_time(self) -> Time | None: ...
         def advance(self, duration: Time) -> None: ...
 
+        # What the system says of its baseband controls, declared or given
+        # by its calibration: read by __getattr__ (quantum_systems.components).
+        def tuning(self, qudit: Qudit | int) -> Tuning | None:
+            """How the frequency of *qudit* (a handle, or its index) is
+            tuned: the tuning the system declares for it (``tunings=``),
+            else the one its calibration gives it, else ``None``."""
+
+        def control(self, a: Qudit | int, b: Qudit | int) -> CouplingControl | None:
+            """The control of the coupling of *a* and *b*, which a coupling
+            line reaches: what the system declares for the pair
+            (``controls=``), or ``None``."""
+
+        def interaction(self, a: Qudit | int, b: Qudit | int) -> CouplingInteraction | None:
+            """How *a* and *b* interact through a coupling with no line of
+            its own: what the system declares for the pair
+            (``interactions=``), else what its calibration gives, made
+            through the two qudits' tunings in the order asked; else ``None``."""
+
     def __getattr__(self, name: str) -> Any:
         """The description's fields, properties and methods, read from the
         description the quantum system was built from when asked for:
@@ -718,6 +760,10 @@ class QuantumSystem:
                 )
 
             return advance
+        if name == "tuning" or name == "control" or name == "interaction":
+            from .quantum_systems.components import answer
+
+            return answer(self, name)
         raise AttributeError(
             f"'QuantumSystem' object has no attribute {name!r}", name=name, obj=self
         )
@@ -751,6 +797,16 @@ class QuantumSystem:
         )
         unknown = sorted(changes.keys() - _DESCRIPTION_FIELDS)
         if unknown:
+            if unknown[0] in ("controls", "interactions", "tunings"):
+                # The components a system declares (quantum_systems.components).
+                from .quantum_systems.components import redeclared
+
+                if layout is not None:
+                    changes["layout"] = layout
+                changes["control_system"] = control_system
+                if clock_ghz is not None:
+                    changes["clock_ghz"] = clock_ghz
+                return redeclared(self, changes)
             raise InvalidTypeError(
                 f"QuantumSystem.replace() got an unexpected keyword argument {unknown[0]!r}; "
                 f"it takes {', '.join(_DESCRIPTION_FIELDS[:-1])}, layout, control_system, "
@@ -763,7 +819,7 @@ class QuantumSystem:
             source=f"{self.name}.replace()",
             control_system=control_system,
             clock_ghz=clock_ghz,
-            _variant=True,
+            _variant=self._made_from,
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -1067,6 +1123,13 @@ def _checked(config: Mapping[str, Any], source: str, problems: list[Problem]) ->
             )
         )
     for key in sorted(set(config) - set(_CONFIG_KEYS) - _RESERVED_CONFIG, key=str):
+        if key == "tunings" or key == "controls" or key == "interactions":
+            # What a system declares, read after the rest
+            # (quantum_systems.components.declared_in): noted, not a problem.
+            from ._coupling_lines import declares
+
+            problems.append(declares(key, config[key]))
+            continue
         close = _closest(str(key), _CONFIG_KEYS)
         problems.append(
             Problem(
@@ -1116,6 +1179,28 @@ def _checked(config: Mapping[str, Any], source: str, problems: list[Problem]) ->
             _program_clock(control, clock_ghz, 0.0 if target is None else target.clock_ghz)[1]
         )
     if problems or target is None:
+        if problems and target is not None:
+            # Only notes of what the file declares, perhaps.
+            from .quantum_systems.components import declared_in
+
+            described = target
+            return declared_in(
+                config,
+                problems,
+                lambda: _calibrated(
+                    described,
+                    spec if isinstance(spec, str) else None,
+                    source,
+                    layout,
+                    calibration,
+                    None,
+                    clock_ghz,
+                ),
+                control,
+                layout,
+                clock_ghz,
+                name,
+            )
         return None
     try:
         return _calibrated(
@@ -1128,6 +1213,12 @@ def _checked(config: Mapping[str, Any], source: str, problems: list[Problem]) ->
             clock_ghz,
         )
     except (KeyError, ValueError) as error:
+        # What the quantum system itself finds wrong, as with its control
+        # system's coupling lines, keeps its own paths.
+        found = getattr(error, "problems", None)
+        if found and all(p.path.startswith("control_system.") for p in found):
+            problems.extend(found)
+            return None
         problems.append(
             Problem(
                 f"does not fit quantum system {name!r}: {Exception.__str__(error)}",
@@ -1209,6 +1300,7 @@ def quantum_system(
     clock_ghz: float | None = None,
     parameter_drift: bool | ParameterDriftModel | Mapping[int, ParameterDriftModel] = False,
     parameter_drift_seed: int | None = None,
+    **components: Unpack[_Components],
 ) -> QuantumSystem:
     """A quantum system: a registered one by name, or one built from its qudits.
 
@@ -1258,6 +1350,28 @@ def quantum_system(
     Arguments with problems raise ``QuantumSystemDefinitionError`` listing all of
     them, each at the argument it is in.
     """
+    if components:
+        # Tunings, controls and interactions (quantum_systems.components).
+        from .quantum_systems.components import declaring
+
+        return declaring(
+            components,
+            {
+                "name": name,
+                "qudits": qudits,
+                "couplings": couplings,
+                "residual_zz": residual_zz,
+                "model": model,
+                "attribution": attribution,
+                "layout": layout,
+                "calibration": calibration,
+                "measurement_run": measurement_run,
+                "control_system": control_system,
+                "clock_ghz": clock_ghz,
+                "parameter_drift": parameter_drift,
+                "parameter_drift_seed": parameter_drift_seed,
+            },
+        )
     if qudits is not None:
         if name.__class__ is not str:
             _not_a_name(name)

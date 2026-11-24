@@ -235,6 +235,115 @@ takes them, so a calibration step can change one and keep the rest:
    tuned = q.replace(calibrations={**q.calibrations, pulse.gates.X: x.replace(amplitude=0.13)})
    qs = qs.replace(qudits={**qs.physical_qudits, 4: tuned})
 
+Tuning and coupling controls
+----------------------------
+
+A two-qudit gate made by a baseband control, such as a flux pulse that
+tunes a transmon into resonance with its neighbour, needs to know what the
+control does. A quantum system declares it, by qudit and by pair, with
+three keywords of ``pulse.quantum_system`` (and of ``qs.replace``):
+
+.. code-block:: python
+
+   from cudaq_pulse.quantum_systems.tuning import ChargeCoupling, ExchangeControl, FluxTuning
+
+   flux = FluxTuning(ec_hz=1.65e8, ej_max_hz=2.6e10, asymmetry=0.47, idle_flux=0.5)
+   qs = pulse.quantum_system(
+       name="three",
+       qudits=qudits,                          # PhysicalQudits 0, 1 and 2, as before
+       couplings=couplings,                    # Couplings (0, 1) and (1, 2), as before
+       tunings={0: flux, 1: flux},
+       interactions={(0, 1): ChargeCoupling(charge_coupling_hz=3.1e6)},
+       controls={
+           (1, 2): ExchangeControl(
+               unit="volt", amplitudes=(0.0, 0.2), exchange_hz=(4.0e6, 2.4e7)
+           )
+       },
+   )
+
+``tunings`` gives a qudit's tuning by its index: how its own frequency
+moves. ``controls`` gives, by the pair of a coupling, the coupling's own
+control, such as a tunable coupler or a gate voltage between two qudits,
+which a coupling line reaches: its exchange is tabulated against its
+amplitude. ``interactions`` gives, by pair, what a coupling with no line
+of its own does: a pair coupled through charge, whose interaction is made
+by tuning its qudits, each by its own tuning, so both qudits of the pair
+have one. A pair is named in either order, and a coupling has a control or
+an interaction, not both. Amplitudes are in the component's unit (flux
+quanta for a ``FluxTuning``), offsets from the idle point, and signed. A
+``PhysicalQudit`` and a ``Coupling`` hold none of this, and a system that
+declares nothing is built, compared, printed, pickled and written to a
+file as before, as is every program on it. ``qs.replace(tunings={...})``
+gives a system's tunings anew (``{}`` takes them away); a variant keeps
+what the system declares for the qudits and couplings that remain. A
+problem with what is declared is a ``QuantumSystemDefinitionError`` at its
+path, as ``tunings[3].ec_hz`` or ``controls[(1, 2)].amplitudes``.
+
+The helpers read the components without compiling anything:
+
+.. code-block:: python
+
+   import math
+
+   qs = pulse.quantum_system("transmon_surface17")
+   x2, d4 = qs.qudit("X2"), qs.qudit("D4")
+   data = qs.tuning(d4)                      # the FluxTuning the calibration gives D4
+   data.frequency_at(0.0)                    # 3.878e9: the idle point
+   assert math.isclose(data.frequency_at(-0.3), data.frequency_at(0.3))   # even about the sweet spot
+   at = data.amplitude_for(5.276e9)          # -0.3015 flux quanta to the CZ's frequency
+   point = qs.interaction(x2, d4).at((x2, d4), {d4: at})
+   print(point.frequencies_hz[d4.index], point.exchange_hz)
+
+An interaction made by tuning its qudits takes the pair and the amplitude
+of each tuned qudit as a mapping, ``{d4: ...}`` or ``{x2: ..., d4: ...}``;
+a qudit left out stays at its idle point. A pair's own control takes the
+control's amplitude (``qs.control(a, d).at(0.1)``). The point gives the
+qudits' 0-1 frequencies and anharmonicities, the 0-1 exchange, and the
+exchange of the other level pairs, as ``exchanges_hz[(1, 1), (2, 0)]`` for
+``|11> <-> |20>``.
+
+A quantum system answers for its controls: ``qs.tuning(q)``,
+``qs.control(a, d)`` and ``qs.interaction(a, d)`` give what the system
+declares for the qudit or the pair, else what its calibration gives. The
+interaction it answers with is made through the tunings it answers with
+for the two qudits, its ``tunings`` in the order asked. On
+``transmon_surface17`` with its calibration, which declares nothing,
+``qs.tuning(q)`` is the ``FluxTuning`` of the qudit's calibrated circuit
+and ``qs.interaction(a, d)`` a ``ChargeCoupling`` of the system-wide g_c
+(so a system that declares a qudit's tuning, to give it a ``response``,
+keeps the calibration's interaction), each naming in ``source`` the
+calibration entries it is read from; at X2-D4's CZ operating point the
+0-1 exchange is 6.38 MHz and ``|11> <-> |20>`` 8.88 MHz. They are made
+when first asked for: building the system, its fingerprint, its pickles
+and its system file are as without them.
+
+What a calibration gives is answered by value. The calibration is the one
+the system holds; for a variant made with ``replace`` (which holds none),
+the one of the system it was made from; for a system built from qudits, a
+shipped calibration that builds qudits of those values. A qudit has the
+calibration's tuning when it has the values of the qudit the calibration
+built: for a shipped calibration, its own system; for another, the
+registered quantum system the calibration is named after, with the
+calibration applied. A qudit changed in any of its values (its frequency,
+a coherence time, its anharmonicity) is no longer the calibrated one:
+``qs.tuning`` of it is ``None`` and a coupling of it has no
+``qs.interaction``, unless the system declares the qudit's tuning (the
+calibration's interaction is then made through it). A calibration named after no
+registered quantum system has nothing to be compared against, so it
+answers by label: for the qudits of the system that holds it, whatever
+their values. With ``calibration=None`` on ``transmon_surface17`` there
+are no answers.
+
+The wiring between a controller and the device does not pass a pulse on
+unchanged. A ``FluxTuning`` or an ``ExchangeControl`` declares it with
+``response=``: ``ExponentialSettling(amplitude=0.02, tau_ns=40.0)`` is a
+step that overshoots by 2% and settles in 40 ns, ``HighPass(tau_ns=19200.0)``
+a line that does not pass a constant, and a list of them is applied one
+after another. The samples of a program stay as written.
+
+The outputs that play on these controls are a controller's coupling lines;
+see :ref:`coupling-lines` in the controller backends guide.
+
 The process quantum system
 --------------------------
 
