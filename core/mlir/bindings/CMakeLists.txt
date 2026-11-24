@@ -59,6 +59,7 @@ nanobind_add_module(
   bindingsCoupled.cpp
   "${_build_stamp}"
   LengthInference.cpp
+  Lines.cpp
   ModuleLoader.cpp
   # The pulse-broadcast-lines pass, which registers itself (transforms/).
   $<TARGET_OBJECTS:CudaqPulseBroadcastLines>

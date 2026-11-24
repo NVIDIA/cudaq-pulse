@@ -18,7 +18,7 @@ import numpy as np
 import numpy.typing as npt
 from cudaq_pulse import Controller
 from cudaq_pulse.classical import Bits, ClassicalFunction, Pending
-from cudaq_pulse.compiler import CompileMetrics, ScheduledEvent
+from cudaq_pulse.compiler import CompileMetrics, Line, ScheduledEvent
 from cudaq_pulse.controller import (
     ControllerModule,
     ControllerNames,
@@ -110,6 +110,11 @@ assert_type(lowered.mlir(), str)
 assert_type(lowered.mlir("llvm"), str)
 assert_type(lowered.metrics, CompileMetrics)
 assert_type(lowered.schedule, Sequence[ScheduledEvent])
+assert_type(lowered.lines, tuple[Line, ...])
+assert_type(lowered.lines[0].qudits, tuple[int, ...])
+assert_type(lowered.lines[0].controller, int | None)
+assert_type(lowered.lines[0].output_qudits, tuple[int, ...] | None)
+lowered.lines[0].role = "readout"  # type: ignore[misc]
 assert_type(lowered.arguments, tuple[float, ...])
 pulse.viz.save_schedule(lowered, Path("schedule.png"))
 pulse.viz.save_schedule(lowered, "schedule.png", dpi=300)  # type: ignore[call-arg]
