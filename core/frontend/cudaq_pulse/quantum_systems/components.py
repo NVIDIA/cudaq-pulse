@@ -462,9 +462,12 @@ def declared_in(
     try:
         if controllers is not None and controllers != list(control.controllers):
             control = _with_lines(control, controllers)
-    except Exception as error:
-        # Whatever the control system finds wrong with its controllers as
-        # they now are is a problem of the file's control system.
+    except (TypeError, ValueError) as error:
+        # What the control system finds wrong with its controllers as they
+        # now are is a problem of the file's control system.
+        found = getattr(error, "problems", None)
+        if not found or any(p.__class__ is not Problem for p in found):
+            found = [Problem(Exception.__str__(error))]
         problems.extend(
             Problem(
                 p.message,
@@ -474,7 +477,7 @@ def declared_in(
                 value=p.value,
                 fix=p.fix,
             )
-            for p in getattr(error, "problems", None) or [Problem(Exception.__str__(error))]
+            for p in found
         )
         return None
     try:
@@ -616,6 +619,11 @@ def _rebuilt_drifting(*state: Any) -> QuantumSystem:
     """A drifting system that declares components, from its pickle."""
     from .drift import _rebuilt
 
+    # The twin has its fingerprint before anything copies what it holds.
+    twin = state[0]
+    if twin.__class__ is _Declaring:
+        twin.fingerprint  # noqa: B018
+        vars(twin)["_drifts"] = True
     return _keeping(_rebuilt(*state))
 
 
@@ -730,15 +738,19 @@ _MADE_LOCK = threading.Lock()
 # The interactions kept per calibration before they are made again.
 _INTERACTIONS_KEPT = 1024
 _UNSET: Any = object()
+# In place of a registry entry, for a shipped calibration's own build.
+_SHIPPED_BUILD: Any = object()
 
 
 class _Made:
-    __slots__ = ("values", "built", "tunings", "interactions")
+    __slots__ = ("values", "built", "building", "tunings", "interactions")
 
     def __init__(self, calibration: Calibration) -> None:
         used, g_c, circuits = _tuning_values(calibration)
         self.values = (used, g_c, dict(circuits))
         self.built: Any = _UNSET
+        # The thread that is building what the calibration is compared against.
+        self.building: int | None = None
         self.tunings: dict[str, Any] = {}
         self.interactions: dict[Any, Any] = {}
 
@@ -876,35 +888,56 @@ def _shipped() -> Sources:
 
 def _built_by(calibration: Calibration) -> _Description | None:
     """What *calibration* built: a shipped one that gives tunings, its own
-    build; another, the registered quantum system it names with the
-    calibration applied; None for one that names no registered system."""
+    build (a measurement run changes no value of it); another, the
+    registered quantum system it names with the calibration applied; None
+    for one that names no registered system, or that does not fit the one
+    it names (it then has nothing to be compared against and answers by
+    label). Kept with the registry's entry for the name, so a system
+    registered later is found the next time a tuning is asked."""
     with _MADE_LOCK:
         made = _made(calibration)
-        found: Any = made.built
-    if found is _UNSET:
-        # Built outside the lock: a registered system's factory is anyone's code.
-        from ._registry import _registry, make_quantum_system
-        from ._shipped_tunings import SHIPPED_TUNINGS
+        kept: Any = made.built
+    if kept is not _UNSET and kept[0] is _SHIPPED_BUILD:
+        shipped: _Description | None = kept[1]
+        return shipped
+    from ._shipped_tunings import SHIPPED_TUNINGS
 
-        name = calibration.name
-        if calibration._shipped is not None and name in SHIPPED_TUNINGS:
+    name = calibration.name
+    entry: Any
+    if calibration._shipped is not None and name in SHIPPED_TUNINGS:
+        entry = _SHIPPED_BUILD
+    else:
+        from ._registry import _registry
+
+        entry = _registry().get(name.partition(":")[0]) if isinstance(name, str) else None
+    if kept is _UNSET or kept[0] is not entry:
+        # Built outside the lock: a registered system's factory is anyone's
+        # code. One that asks for this calibration's answers while it is
+        # being built here is answered by label.
+        ident = threading.get_ident()
+        if made.building == ident:
+            return None
+        found: Any = None
+        if entry is _SHIPPED_BUILD:
             from .transmon import _calibrated_surface17
 
             found = _calibrated_surface17(name)
-        elif isinstance(name, str) and name.partition(":")[0] in _registry():
+        elif entry is not None:
+            from ._registry import make_quantum_system
+
+            made.building = ident
             try:
                 found = calibration._apply(make_quantum_system(name))
-            except Exception:
-                # A calibration that does not fit the system it names has
-                # nothing to be compared against: it answers by label.
+            except (KeyError, ValueError):
+                # Does not fit the system it names, as _device._checked says it.
                 found = None
-        else:
-            found = None
+            finally:
+                made.building = None
         with _MADE_LOCK:
-            if made.built is _UNSET:
-                made.built = found
-            found = made.built
-    built: _Description | None = found
+            if made.built is _UNSET or made.built[0] is not entry:
+                made.built = (entry, found)
+            kept = made.built
+    built: _Description | None = kept[1]
     return built
 
 
@@ -919,26 +952,27 @@ def sources_for(
     if calibration is not None:
         return [(calibration, _built_by(calibration) or description)]
     if made_from:
-        return made_from if isinstance(made_from, list) else sources_of(made_from)
+        return sources_of(made_from)
     return _shipped()
 
 
 def sources_of(system: Any) -> Sources:
     """``sources_for`` a quantum system. A variant is made from a system
     that was built (``QuantumSystem.replace`` hands on the system its own
-    system was made from), from the sources another variant found, or from
-    what its pickle carried; it keeps what it finds in place of that."""
+    system was made from) or from what another variant or its pickle
+    carried: that system's calibration and description, which it keeps in
+    place of the system when it is first asked. What the calibration is
+    compared against is found at each ask."""
     if system.calibration is not None:
         return sources_for(system.calibration, system._description)
     made = system.__dict__.get("_made_from")
     if made is None or made is system:
         return _shipped()
-    if not isinstance(made, list):
-        made = sources_for(made.calibration, made._description)
-        if made:
-            system._made_from = made
-    found: Sources = made
-    return found
+    if made.__class__ is not _Carried:
+        made = system._made_from = _Carried(made.calibration, made._description)
+    if made.calibration is None:
+        return _shipped()
+    return sources_for(made.calibration, made._description)
 
 
 class _Carried:
@@ -978,18 +1012,19 @@ def sourced_reduce(
             # It answers from the calibration it holds, which it pickles.
             return None
         root = system.__dict__["_made_from"]
-        if isinstance(root, list):
-            carried: Any = root
-            custom = [calibration for calibration, _ in root if calibration._shipped is None]
-        elif root.calibration is None or root.calibration._shipped is not None:
+        if root.calibration is None or root.calibration._shipped is not None:
             return None
-        else:
-            carried = _Carried(root.calibration, root._description)
-            custom = [root.calibration]
-        if not custom:
-            return None
-        parts[2]["_variant"] = carried
-        extension = tuple(calibration.fingerprint for calibration in custom)
+        held_by = root._description
+        parts[2]["_variant"] = _Carried(root.calibration, held_by)
+        # The key among unpickled systems: the calibration and the system
+        # that held it, by value and by label (two systems may hold one
+        # calibration, which then answers by label for each).
+        order = tuple(sorted(held_by.qudits))
+        extension = (
+            root.calibration.fingerprint,
+            _fingerprint(held_by, order, None),
+            tuple(held_by.qudits[q].label for q in order),
+        )
         kept = (
             rebuilt_sourced,
             (key, extension, pickle.dumps(parts, pickle.HIGHEST_PROTOCOL)),

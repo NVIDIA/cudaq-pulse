@@ -154,10 +154,8 @@ def device_reduce(quantum_system: Any) -> tuple[Any, ...]:
         if (
             made is not quantum_system
             and made is not None
-            and (
-                made.__class__ is list
-                or (made.calibration is not None and made.calibration._shipped is None)
-            )
+            and made.calibration is not None
+            and made.calibration._shipped is None
         ):
             from .quantum_systems.components import sourced_reduce
 
