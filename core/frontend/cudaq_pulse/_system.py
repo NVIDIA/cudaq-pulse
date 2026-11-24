@@ -33,7 +33,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from functools import partial
 from itertools import repeat
-from operator import itemgetter
+from operator import attrgetter, itemgetter
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -60,6 +60,7 @@ if TYPE_CHECKING:
     from . import _clocks
     from ._capability import Capability
     from ._controller_cost import FunctionUsage
+    from ._coupling_lines import CouplingLine
     from ._device import QuantumSystem
     from ._op_classes import OpClass
     from ._op_tables import OpCycles
@@ -918,6 +919,32 @@ class Controller:
     model: str | None = None
     version: str | None = None
     processors: Sequence[Processor] = ()
+
+    # Not a field: a controller that has coupling lines is of a class made
+    # from this one, which holds them (see with_coupling_lines).
+    # (Not annotated where the class is made: an annotated name would be one
+    # more entry for the dataclass to walk.)
+    if TYPE_CHECKING:
+        coupling_lines: ClassVar[tuple[CouplingLine, ...]]
+    else:
+        coupling_lines = ()
+
+    def with_coupling_lines(self, lines: Iterable[CouplingLine]) -> Controller:
+        """This controller with the coupling lines *lines*: its outputs that
+        play a baseband waveform on a control of the quantum system, each a
+        ``CouplingLine`` named by the set of qudits it acts on
+        (``CouplingLine(0)``: the line of qudit 0's own tuning;
+        ``CouplingLine((1, 2))``: that of the control of the coupling of
+        qudits 1 and 2). The lines are a set: no two act on the same qudits,
+        and they are kept in the order of their qudits. The controller
+        returned is of a class made from this one's, equal to this one in
+        everything else; ``coupling_lines`` gives its lines, ``()`` on a
+        controller that has none, and its ``as_dict()`` lists them under
+        ``"coupling_lines"`` as a system file holds them."""
+        from ._coupling_lines import with_lines
+
+        made: Controller = with_lines(self, lines)
+        return made
 
     def __post_init__(self) -> None:
         for name in ("persistent_frames", "blocks_on_calls", "space_updates"):
@@ -2759,6 +2786,29 @@ def _wiring_problems(system: ControlSystem, target: _Description) -> list[Proble
     return problems
 
 
+_COUPLING_LINES: Callable[[Any], Any] = attrgetter("coupling_lines")
+
+
+def _system_wiring_problems(
+    system: ControlSystem, target: _Description, calibration: Any, made_from: Any
+) -> list[Problem]:
+    """``_wiring_problems``, and the coupling lines of *system* that reach
+    what the quantum system does not have: *calibration* is the quantum
+    system's and *made_from* the system a variant is made from, which
+    answer for its tunings."""
+    problems = _wiring_problems(system, target)
+    if any(map(_COUPLING_LINES, system.controllers)):
+        from ._coupling_lines import wiring_problems as coupling_problems
+
+        problems.extend(coupling_problems(system, target, calibration, made_from))
+    return problems
+
+
+# The check a quantum system asks of its control system, as its method: the
+# quantum system then imports nothing to ask.
+ControlSystem._wiring_problems = _system_wiring_problems  # type: ignore[attr-defined]
+
+
 # ── Controller descriptions ──────────────────────────────────────────────────
 
 # Paths are strings here: building a control system does not need pathlib.
@@ -3220,6 +3270,13 @@ class _Reader:
         known = tuple(known)
         for key in data:
             if key not in known:
+                if key == "coupling_lines":
+                    # A controller's coupling lines, read after the rest
+                    # (_coupling_lines.declares): noted, not a problem.
+                    from ._coupling_lines import declares
+
+                    self.problems.append(declares(f"{path}.{key}", data[key]))
+                    continue
                 hint = _closest(str(key), known)
                 self.problem(
                     f"{path}.{key}",

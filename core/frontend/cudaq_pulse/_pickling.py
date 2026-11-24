@@ -148,6 +148,20 @@ def device_reduce(quantum_system: Any) -> tuple[Any, ...]:
             or quantum_system._base_target is not quantum_system._description
         ):
             parts += ({"_spec": quantum_system._spec, "_base_target": quantum_system._base_target},)
+        # A variant of a system whose calibration this package does not ship
+        # carries where its answers for tunings come from.
+        made = quantum_system.__dict__.get("_made_from")
+        if (
+            made is not quantum_system
+            and made is not None
+            and made.calibration is not None
+            and made.calibration._shipped is None
+        ):
+            from .quantum_systems.components import sourced_reduce
+
+            sourced = sourced_reduce(quantum_system, key, parts)
+            if sourced is not None:
+                return sourced
         description = pickle.dumps(parts, pickle.HIGHEST_PROTOCOL)
         quantum_system._pickled = description
     return (rebuilt_device, (key, description))

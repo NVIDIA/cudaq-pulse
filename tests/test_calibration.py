@@ -193,6 +193,43 @@ def _index_entry(name):
     )
 
 
+def _tuning_entry(name):
+    """What ``SHIPPED_TUNINGS`` holds of the shipped calibration *name*."""
+    data = json.loads(Path(_SHIPPED, f"{name}.json").read_text())
+    return (
+        data["coupling"]["charge_coupling_g_c"]["used"],
+        data["coupling"]["charge_coupling_g_c"][data["coupling"]["charge_coupling_g_c"]["used"]][
+            "value"
+        ],
+        tuple(
+            (
+                q,
+                (
+                    v["ec"]["value"],
+                    v["ej_max"]["value"],
+                    v["asymmetry_d"]["value"],
+                    {"upper": 0.0, "lower": 0.5}[v["sweet_spot_idle"]],
+                ),
+            )
+            for q, v in data["qudits"].items()
+            if v.get("flux_quanta_capable")
+        ),
+    )
+
+
+def test_the_shipped_tunings_are_of_the_shipped_files():
+    from cudaq_pulse.quantum_systems._shipped_calibrations import SHIPPED
+    from cudaq_pulse.quantum_systems._shipped_tunings import SHIPPED_TUNINGS
+
+    assert set(SHIPPED_TUNINGS) <= set(SHIPPED)
+    for name, entry in SHIPPED_TUNINGS.items():
+        expected = _tuning_entry(name)
+        assert entry == expected, (
+            f"quantum_systems/_shipped_tunings.py is stale for {name}; its tunings are\n"
+            f"{expected!r}"
+        )
+
+
 def test_the_shipped_calibration_index_is_of_the_shipped_files():
     from cudaq_pulse._source_stamp import CALIBRATIONS
     from cudaq_pulse.quantum_systems._shipped_calibrations import SHIPPED

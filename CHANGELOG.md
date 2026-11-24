@@ -160,6 +160,70 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   plays it as `shift_phase(line.tone, phase_rad)`: no pulse and no time.
   The operations guide's new "Phase frames and virtual Z gates" section
   gives the sign convention and why a simulated state is in the frame.
+- **Qudit tunings, coupling controls and interactions.** A quantum system
+  can state what a baseband control does, by qudit and by pair:
+  `pulse.quantum_system(..., tunings={q: FluxTuning(...)}, controls={(a,
+  d): ExchangeControl(...)}, interactions={(a, d): ChargeCoupling(...)})`,
+  and `qs.replace(tunings=...)` on a system that exists. A tuning is how a
+  qudit's own frequency moves with an amplitude (flux quanta from its idle
+  point, signed). A control is a coupling's own, which a coupling line
+  reaches and which sets its exchange (tabulated against its amplitude).
+  An interaction is a fixed coupling with no line of its own, turned on by
+  tuning its qudits, which both have a tuning. The classes are in
+  `cudaq_pulse.quantum_systems.tuning`. `PhysicalQudit` and `Coupling`
+  are unchanged and hold none of it, and a system that declares nothing
+  is built, compared, printed, pickled and written to a file by the code
+  it always was. A quantum system answers for its controls:
+  `qs.tuning(q)`, `qs.control(a, d)` and `qs.interaction(a, d)` give what
+  the system declares, else what its calibration gives, and the answers
+  read without compiling: `tuning.frequency_at`, `anharmonicity_at` and
+  `amplitude_for`, `interaction.at((a, d), {d: amplitude})` and
+  `control.at(amplitude)` give frequencies, anharmonicities and the
+  exchange of each pair of levels at an operating point. A `FluxTuning`
+  or an `ExchangeControl` may declare the `response` of the wiring that
+  carries its amplitude, an `ExponentialSettling`, a `HighPass` or a
+  sequence of them; a program's samples stay as written. Each component
+  names its `source`. `transmon_surface17` declares nothing and answers
+  with the `FluxTuning` of each qudit's calibrated circuit and a
+  `ChargeCoupling` of its g_c for each coupling, made through the tunings
+  the system answers with and given in the order asked; they are made
+  when first asked for, so building the system, its `physical_qudits`,
+  its fingerprint, its pickles and its system file are what they were.
+  What a calibration gives is answered by value (the system's own
+  calibration; for a variant made with `replace`, that of the system it
+  was made from; for a system built from qudits, a shipped one that
+  builds them): a qudit changed in any value has none unless the system
+  declares one. A calibration this package does not ship is compared
+  against the registered quantum system it is named after, with the
+  calibration applied; one named after no registered system answers by
+  label, for the qudits of the system that holds it. A problem with what
+  is declared is a `QuantumSystemDefinitionError` at its path
+  (`tunings[3].ec_hz`, `controls[(1, 2)]`). System files list what a
+  system declares under `tunings`, `controls` and `interactions`.
+  Nothing compiles, schedules, exports or simulates differently.
+- **Coupling lines of a controller.**
+  `controller.with_coupling_lines([...])` gives a controller the outputs
+  that play a baseband waveform on a control of the
+  quantum system, each a `cudaq_pulse.controller.CouplingLine` named by the
+  set of qudits it acts on, in any order: `CouplingLine(0)` is the line of
+  qudit 0's own tuning and `CouplingLine((1, 2))` that of the control of
+  the coupling of qudits 1 and 2. `amplitude_per_volt` converts volts at
+  the output to the amplitude at the device, `max_volts` is the most the
+  output plays, and `delay_ns` is the line's delay. A quantum system
+  refuses a line that reaches a qudit with no tuning, a pair with no
+  control of its own (for a pair whose interaction is made through its
+  qudits, naming the lines that reach them), three or more qudits, or what
+  another line already reaches, naming the line and the fix. The result
+  is a `Controller`, of a class made from `Controller` that holds the
+  lines (`controller.coupling_lines`); `Controller(...)` itself takes no
+  such argument, and a controller without lines builds, prints, pickles
+  and exports as before. System files keep the lines, and `as_dict()` of
+  a controller that has lines lists them under `coupling_lines`, so the
+  `limits` of `export_to_controller()` for such a controller have that
+  key; an export for a controller without lines is unchanged.
+  A controller checks its lines where it is built (each a `CouplingLine`,
+  no two on the same qudits); they are a set, kept in the order of their
+  qudits.
 - **Post-selection.** `SimulationResult.postselect(keep)` is the result
   over the branches the test `keep` accepts (a function of a `Branch`, as
   `lambda b: b.answers("herald")[-1]`): their state, normalized, their

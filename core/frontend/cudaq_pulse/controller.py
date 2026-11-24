@@ -93,6 +93,7 @@ if TYPE_CHECKING:
     from ._controller_cost import ProcessorUsage as ProcessorUsage
     from ._controller_cost import UsageReport as UsageReport
     from ._controller_cost import usage as usage
+    from ._coupling_lines import CouplingLine as CouplingLine
     from ._device import QuantumSystem
     from ._op_classes import ExpressionTerm as ExpressionTerm
     from ._op_classes import OpClass as OpClass
@@ -111,6 +112,7 @@ __all__ = [
     "FORMAT",
     "ControllerLimitError",
     "ControllerUsage",
+    "CouplingLine",
     "DriveLine",
     "Event",
     "ExpressionTerm",
@@ -3458,6 +3460,7 @@ class ControllerNames(Protocol):
     UsageReport: type[UsageReport]
     WaveformMemoryScope: type[WaveformMemoryScope]
     if TYPE_CHECKING:
+        CouplingLine: type[CouplingLine]
         DriveLine: type[DriveLine]
         ReadoutLine: type[ReadoutLine]
         UpdateBus: type[UpdateBus]
@@ -3527,6 +3530,7 @@ class _Loaded(str):
 # The names _Loaded imports from elsewhere than _controller_cost: building
 # an enum costs more than the rest of an export.
 _ELSEWHERE = {
+    "CouplingLine": "cudaq_pulse._coupling_lines",
     "DriveLine": "cudaq_pulse._system",
     "ReadoutLine": "cudaq_pulse._system",
     "UpdateBus": "cudaq_pulse._system",
@@ -3568,6 +3572,7 @@ class _ControllerModule(types.ModuleType):
         OpClass: Any
         OpCounts: Any
         OpCycles: Any
+        CouplingLine: Any
         DriveLine: Any
         ReadoutLine: Any
         UpdateBus: Any
@@ -3584,6 +3589,7 @@ class _ControllerModule(types.ModuleType):
     OpClass = _Loaded("OpClass")
     OpCounts = _Loaded("OpCounts")
     OpCycles = _Loaded("OpCycles")
+    CouplingLine = _Loaded("CouplingLine")
     DriveLine = _Loaded("DriveLine")
     ReadoutLine = _Loaded("ReadoutLine")
     UpdateBus = _Loaded("UpdateBus")
