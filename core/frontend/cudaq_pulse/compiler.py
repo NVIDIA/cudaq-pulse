@@ -479,7 +479,9 @@ def _unlisted_link() -> classical.Link:
 class ScheduledEvent:
     """One timed operation of a compiled kernel.
 
-    ``line`` numbers the kernel's drive and readout lines in allocation order.
+    ``line`` numbers the kernel's drive, readout and coupling lines in
+    allocation order. An event on a coupling line is a ``"drive"`` or a
+    ``"wait"`` whose ``qudit`` is the lowest of the qudits the line acts on.
     ``start_cycles`` and ``duration_cycles`` are ``None`` until the kernel is
     scheduled (a kernel with float parameters is scheduled when it is called
     with their values). ``start`` and ``end`` are the scheduled times in
@@ -1119,6 +1121,22 @@ class ScheduledKernel:
         module = self._module if self.scheduled else self._concrete()
         with self._lock:
             boundaries = module.segment_boundaries()
+        segments = [Segment(0, "start", -1, 0, 0, 0)]
+        after: list[int | None] = [None]
+        for k, (kind, line, start, lowest, highest, before) in enumerate(boundaries, start=1):
+            most = segments[before].max_shift_cycles
+            extra = None if most is None or highest < 0 else most + highest - lowest
+            segments.append(Segment(k, kind, line, start + lowest, 0, extra))
+            after.append(before)
+        return segments, after
+
+    # ``_segments()`` for an export, which refuses a program that holds a
+    # coupling line: the same statements, on the native call that refuses,
+    # so that an export runs no statement more.
+    def _exported_segments(self) -> tuple[list[Segment], list[int | None]]:
+        module = self._module if self.scheduled else self._concrete()
+        with self._lock:
+            boundaries = module.exported_segment_boundaries()
         segments = [Segment(0, "start", -1, 0, 0, 0)]
         after: list[int | None] = [None]
         for k, (kind, line, start, lowest, highest, before) in enumerate(boundaries, start=1):

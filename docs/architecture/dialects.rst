@@ -97,12 +97,17 @@ qudit a call binds at run time, it may be on any of them and moves on every
 one's grid.
 
 - Types: ``!pulse.qudit``, ``!pulse.drive_line``, ``!pulse.readout_line``,
-  ``!pulse.tone``, ``!pulse.waveform``, ``!pulse.measurement``,
-  ``!pulse.duration``, ``!pulse.timepoint``, ``!pulse.iq_data``.
+  ``!pulse.coupling_line``, ``!pulse.tone``, ``!pulse.waveform``,
+  ``!pulse.measurement``, ``!pulse.duration``, ``!pulse.timepoint``,
+  ``!pulse.iq_data``.
 - Lines: ``pulse.qudit_alloc``, ``pulse.get_drive_line``,
-  ``pulse.get_readout_line``.
-- Playing and timing: ``pulse.drive``, ``pulse.readout``, ``pulse.wait``,
-  ``pulse.sync``, ``pulse.schedule_block``.
+  ``pulse.get_readout_line``, ``pulse.get_coupling_line`` (the line of a
+  control of one or several qudits). A module that holds a coupling line
+  says so with the unit attribute ``pulse.coupling_lines``; the passes ask
+  that once and look for a coupling line's ops only then.
+- Playing and timing: ``pulse.drive``, ``pulse.drive_baseband`` (a
+  waveform on a coupling line, with no tone), ``pulse.readout``,
+  ``pulse.wait``, ``pulse.sync``, ``pulse.schedule_block``.
 - Frames: ``pulse.shift_phase``, ``pulse.set_phase``,
   ``pulse.shift_frequency``, ``pulse.set_frequency``.
 - Waveforms: ``pulse.square``, ``pulse.gaussian``, ``pulse.drag``,

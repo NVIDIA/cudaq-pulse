@@ -414,8 +414,9 @@ def _export(
     *part* (a controller's index and clock, the functions it calls or takes
     answers of, and whether it takes part in each scheduled event), only
     that controller's part, in its cycles. *program* is the program's
-    ``_segments()`` and its calls (``_program``), when the caller has them."""
-    segments, after = lowered._segments() if program is None else program[0]
+    ``_exported_segments()`` and its calls (``_program``), when the caller
+    has them."""
+    segments, after = lowered._exported_segments() if program is None else program[0]
     starts = [e.start_cycles for e in segments]
     takes = None
     if with_events:
@@ -487,7 +488,7 @@ def _program(lowered: Any) -> tuple[Any, Sequence[Any]]:
     """What ``_export`` reads of the whole program, whichever part it
     exports: its segments with the segment each follows (``_segments``), and
     its calls. ``_export`` only reads them."""
-    return lowered._segments(), _calls(lowered)
+    return lowered._exported_segments(), _calls(lowered)
 
 
 def _calls(lowered: Any) -> Sequence[Any]:

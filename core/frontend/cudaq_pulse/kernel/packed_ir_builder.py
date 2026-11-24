@@ -84,6 +84,10 @@ _SELECT = 41
 _MAX_CYCLES = 42
 # [site number, kind] of the op just written: idle replacement's trace only.
 _SITE = 43
+# A coupling line (count, result, qudits...) and a drive on one, which has
+# no tone (line, waveform, result, start, duration).
+_ALLOC_COUPLING = 44
+_DRIVE_COUPLING = 45
 _LATENCY_MODE = {"bounded": 0, "timeout": 1, "blocking": 2}
 # "and" and "or" take two i1 values only (compare_bits).
 _COMPARE = {"==": 0, "!=": 1, "<": 2, "<=": 3, ">": 4, ">=": 5, "and": 6, "or": 7}

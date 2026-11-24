@@ -64,6 +64,43 @@ int64_t CustomSamplesOp::getDurationCycles() {
   return count;
 }
 
+/// Whether the module `op` is in says that it holds a coupling line.
+static bool saysCouplingLines(Operation *op) {
+  auto module = op->getParentOfType<ModuleOp>();
+  return module && module->hasAttr("pulse.coupling_lines");
+}
+
+static const char *const kSayCouplingLines =
+    "is in a module that does not say it holds a coupling line; give the "
+    "module the unit attribute pulse.coupling_lines";
+
+LogicalResult GetCouplingLineOp::verify() {
+  if (!saysCouplingLines(getOperation()))
+    return emitOpError(kSayCouplingLines);
+  auto qudits = getQudits();
+  if (qudits.empty())
+    return emitOpError("needs at least one qudit: the qudits whose control "
+                       "the line reaches");
+  for (unsigned i = 1, count = qudits.size(); i < count; ++i)
+    for (unsigned j = 0; j < i; ++j) {
+      Value a = qudits[i], b = qudits[j];
+      auto first = a.getDefiningOp<QuditAllocOp>();
+      auto second = b.getDefiningOp<QuditAllocOp>();
+      if (a == b || (first && second && first.getQudit() == second.getQudit()))
+        return emitOpError("names a qudit twice: a coupling line reaches each "
+                           "of its qudits once");
+    }
+  return success();
+}
+
+LogicalResult DriveBasebandOp::verify() {
+  // The passes look for the ops of a coupling line only in a module that
+  // says it holds one.
+  if (!saysCouplingLines(getOperation()))
+    return emitOpError(kSayCouplingLines);
+  return success();
+}
+
 LogicalResult WaitOp::verify() {
   auto lowest = (*this)->getAttrOfType<IntegerAttr>("pulse.min_cycles");
   auto highest = (*this)->getAttrOfType<IntegerAttr>("pulse.max_cycles");

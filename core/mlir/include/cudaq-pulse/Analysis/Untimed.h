@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include "cudaq-pulse/Analysis/Variant.h"
+
 #include "llvm/Support/Compiler.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -14,6 +16,7 @@
 #include "mlir/IR/Operation.h"
 
 namespace pulse {
+PULSE_VARIANT_OPEN
 
 /// Whether the schedule passes cannot time `op`. They time the ops of the
 /// pulse and classical dialects, go into the bodies of `scf.for` and
@@ -58,4 +61,5 @@ inline mlir::InFlightDiagnostic emitUntimed(mlir::Operation *op) {
             "place before scheduling";
 }
 
+PULSE_VARIANT_CLOSE
 } // namespace pulse

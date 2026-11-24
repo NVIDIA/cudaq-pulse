@@ -14,6 +14,7 @@ llvm_update_compile_flags(CudaqPulseBroadcastLines)
 add_mlir_dialect_library(CudaqPulsePulseTransforms
   PulseVerify.cpp
   PulseCallCheck.cpp
+  PulseVerifyCoupled.cpp
   PulseProgramLimits.cpp
   Canonicalize.cpp
   VirtualZ.cpp
@@ -21,8 +22,10 @@ add_mlir_dialect_library(CudaqPulsePulseTransforms
   Rewrite.cpp
   ScheduleAlap.cpp
   PulseExpandCalls.cpp
+  ScheduleAlapCoupled.cpp
   ClassicalCheck.cpp
   FrameChanges.cpp
+  FrameChangesCoupled.cpp
   LowerSelects.cpp
 
   DEPENDS

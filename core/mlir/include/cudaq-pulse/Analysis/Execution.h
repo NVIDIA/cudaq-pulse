@@ -15,6 +15,8 @@
 
 #pragma once
 
+#include "cudaq-pulse/Analysis/Variant.h"
+
 #include "cudaq-pulse/Analysis/Affine.h"
 #include "cudaq-pulse/Analysis/LineTrace.h"
 #include "cudaq-pulse/Analysis/Timing.h"
@@ -32,6 +34,7 @@
 #include <vector>
 
 namespace pulse {
+PULSE_VARIANT_OPEN
 
 /// A tone's rotating frame. `phase` is the frame phase at `timeNs`, the end
 /// of its latest drive or the place of a later frame change; from there a
@@ -422,4 +425,5 @@ private:
   bool stopped = false;
 };
 
+PULSE_VARIANT_CLOSE
 } // namespace pulse
