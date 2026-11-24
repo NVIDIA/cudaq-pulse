@@ -23,7 +23,6 @@ if TYPE_CHECKING:
 
 __all__ = ["IdleWindow", "IdleWindows"]
 
-# The letter number_sites() returns for each kind of numbered op.
 # The kind of each numbered op, as the packed buffer's site record gives it.
 _SITE_KINDS = {"d": 0, "r": 1, "w": 2, "s": 3, "f": 4}
 
@@ -222,9 +221,9 @@ class Sites:
         return sited
 
     def finish(self) -> None:
-        """After the trace: each window planned was written (the module was
-        built with each op's number, from the packed buffer's site records,
-        which also check each op's kind)."""
+        """After the filled program's trace: each tile planned was written.
+        (The module was built with each op's number from the packed
+        buffer's site records, which also check each op's kind.)"""
         plan = self.plan
         if plan is not None and len(self.done) != plan.tiles:
             raise InternalError(
@@ -1396,11 +1395,18 @@ def _last_round(listed: list[Gap], index: int, log: list[Site]) -> int | str:
     return place
 
 
-# Why a window is left unfilled under rcp or alap_rcp when filling it, and
-# only it, would move another operation: those policies give each drive lane
-# one time it is free from, so a pulse written into one line's idle time can
-# take a lane another line's pulse used (until the scheduler fills such gaps).
+# Why a window is left unfilled under rcp or alap_rcp: those policies give
+# each drive lane one time it is free from, so a pulse written into one
+# line's idle time can take a lane another line's pulse used (until the
+# scheduler fills such gaps). LANES: its fill, tried with those kept before
+# it, moved or stretched the kernel's operations. UNTRIED: it was not tried
+# (past the windows tried one at a time, or there only because another
+# window was left unfilled).
 LANES = "left alone: its fill would move another operation under this schedule policy's drive lanes"
+UNTRIED = (
+    "left alone: under this schedule policy each window's fill is tried with the "
+    "others kept, and this one was not tried"
+)
 
 
 def plan(
@@ -1411,13 +1417,17 @@ def plan(
     chosen: frozenset[int] | None,
     forward: bool,
     pads: bool = False,
-    lanes: frozenset[tuple[int, int, int]] = frozenset(),
+    allowed: frozenset[tuple[int, int]] | None = None,
+    refused: frozenset[tuple[int, int]] = frozenset(),
+    earlier: dict[tuple[int, int], str] | None = None,
 ) -> tuple[Plan, IdleWindows]:
     """What to write for *rule* into the gaps *found*, and the windows with
     what is done in each; *forward* says whether the schedule places
-    operations as soon as possible. The windows in *lanes* (qudit, start,
-    end) are left alone: their fills would move another operation under
-    the rcp policies' lane accounting."""
+    operations as soon as possible. With *allowed* (windows as (qudit, end)),
+    only those windows are filled: the others are left alone, those in
+    *refused* for the rcp policies' lane accounting (``LANES``), those in
+    *earlier* (the reasons a plan without *allowed* gave the windows it did
+    not fill) for that reason, any other as not tried (``UNTRIED``)."""
     planned = Plan(pads)
     name = "a wait" if pads else f"{rule.fill.__name__}()"
     rows = []
@@ -1434,9 +1444,13 @@ def plan(
             parts = [part for part in gap.idle() if part[1] - part[0] >= threshold]
             reasons = {part: kept(gap, part, rule, log, forward) for part in parts}
             fills = {part for part in parts if reasons[part] is None}
-            for part in [part for part in fills if (qudit, *part) in lanes]:
-                reasons[part] = LANES
-                fills.discard(part)
+            held = False
+            if allowed is not None:
+                for part in [part for part in fills if (qudit, part[1]) not in allowed]:
+                    key = (qudit, part[1])
+                    reasons[part] = LANES if key in refused else (earlier or {}).get(key, UNTRIED)
+                    fills.discard(part)
+                    held = True
             if fills and gap.varies and not _steady(gap, fills, forward):
                 reasons.update(dict.fromkeys(fills, "left alone: its rounds differ"))
                 fills = set()
@@ -1449,7 +1463,7 @@ def plan(
                 else:
                     taken[last] = gap.end - gap.start  # type: ignore[index]
                     rounds += listed[last].rounds  # type: ignore[index]
-            if gap.varies and not fills and index not in taken:
+            if gap.varies and not fills and index not in taken and not held:
                 rows += _apart(gap, rule, log, threshold, forward)
                 continue
             if fills or (index in taken and gap.end > gap.start):

@@ -216,7 +216,7 @@ and the window's length in clock cycles:
 .. code-block:: text
 
    qudit  start  end  cycles  rounds  before                           result
-       0     80  480     400       1  sync() at line 18 of syndrome()  filled by echo()
+       0     80  480     400       1  sync() at line 16 of syndrome()  filled by echo()
 
 The data qudit's line now holds a wait from cycle 80 to 240, the echo from
 240 to 320 and a wait to 480; every operation of ``syndrome`` starts where

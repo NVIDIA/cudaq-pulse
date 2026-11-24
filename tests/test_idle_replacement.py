@@ -479,6 +479,41 @@ def test_the_gap_before_a_branch_is_a_window_and_one_that_ends_in_an_arm_is_not(
     assert window.result == "left alone: in or next to an arm of a branch"
 
 
+@pulse.kernel
+def lanes_and_rounds(a, b, c, d, e, f, g, n: int):
+    # many()'s lane-bound windows in each round, beside f's uneven rounds.
+    lines = [get_drive_line(q) for q in (a, b, c, d)]
+    de = get_drive_line(e)
+    re = get_readout_line(e)
+    df = get_drive_line(f)
+    dg = get_drive_line(g)
+    for _ in range(n):
+        drive(df, square(40, 0.1))
+        drive(dg, square(400, 0.1))
+        sync(df, dg)
+        for k, line in enumerate(lines):
+            drive(line, square(40 + 20 * k, 0.1))
+        drive(de, square(40, 0.1))
+        drive(df, square(40, 0.1))
+        drive(dg, square(440, 0.2))
+        sync(*lines, de, re, df, dg)
+        readout(re, square(600, 0.05))
+        sync(*lines, de, re, df, dg)
+
+
+@pytest.mark.parametrize("schedule", ["rcp", "alap_rcp"])
+def test_windows_left_alone_for_lanes_keep_the_reasons_of_the_others(schedule):
+    # A window the lane fallback never had to try (it was not to be filled
+    # anyway) says why, as it would without the fallback, not UNTRIED.
+    from cudaq_pulse._idle_windows import LANES, UNTRIED
+
+    program = _filled(lanes_and_rounds, *Q[0:7], 6, fill=pair, schedule=schedule)
+    results = [w.result for w in program.idle_windows]
+    assert LANES in results
+    assert UNTRIED not in results
+    assert "left alone: there is less room for it after the loop's last round" in results
+
+
 def test_a_window_after_the_kernel_changes_the_tones_frequency_is_left_alone():
     (window,) = _windows(detuned, Q[0], Q[1])
     assert (window.start, window.end) == (40, 600)
@@ -792,13 +827,13 @@ def test_fills_that_need_more_drive_lanes_than_there_are_are_left_alone(schedule
     # Under rcp and alap_rcp a fill's pulses take drive lanes like any
     # pulse: a window whose fill would move an operation of the kernel is
     # left unfilled and says why, and the program compiles (decision 280).
-    from cudaq_pulse._idle_windows import LANES
+    from cudaq_pulse._idle_windows import LANES, UNTRIED
 
     program = _filled(many, Q[0], Q[1], Q[2], Q[3], Q[4], fill=pair, schedule=schedule)
     plain = pulse.compile(many, schedule=schedule).lower(Q[0], Q[1], Q[2], Q[3], Q[4])
     results = [w.result for w in program.idle_windows]
     assert LANES in results
-    assert all(w.filled or w.result == LANES for w in program.idle_windows)
+    assert all(w.filled or w.result in (LANES, UNTRIED) for w in program.idle_windows)
     assert program.duration == plain.duration
     host = _events(plain)
     assert [event for event in _events(program) if event in host] == host
@@ -1578,3 +1613,78 @@ def test_a_compilation_without_a_rule_does_not_load_the_module(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip().splitlines()[-1] == "False"
+
+
+def test_a_pinned_kernel_with_replaced_windows_answers_as_the_compiled_kernel():
+    # Pinned to a quantum system, as a compiled kernel is: a view of the
+    # program needs what the compiled kernel's needs, and says the same.
+    qs = pulse.quantum_system("transmon_surface17")
+    compiled = pulse.compile(two_lines, quantum_system=qs, schedule="asap")
+    filled = compiled.replace_idle(pulse.IdleReplacement(pi, threshold=100))
+    with pytest.raises(TypeError) as plain_error:
+        compiled.mlir()
+    with pytest.raises(TypeError) as filled_error:
+        filled.mlir()
+    assert str(filled_error.value) == str(plain_error.value)
+    program = filled.lower(qs.qudits[0], qs.qudits[1])
+    assert program.idle_windows is not None
+
+
+_FILL_AMPLITUDE = [0.2]
+
+
+@pulse.kernel
+def drifting(qudit, window):
+    # A fill of constant length whose amplitude is drawn at trace time.
+    import random
+
+    drive(get_drive_line(qudit), square(40, 0.1 + 0.0 * random.random()))
+
+
+def test_a_fill_whose_trace_can_differ_is_refused():
+    rule = pulse.IdleReplacement(drifting, threshold=100)
+    with pytest.raises(pulse.UnsupportedError, match=r"drifting\(\) calls a function"):
+        pulse.compile(host).replace_idle(rule).lower(Q[0], Q[1])
+
+
+@pulse.kernel
+def reads_a_global(qudit, window):
+    drive(get_drive_line(qudit), square(40, _FILL_AMPLITUDE[0]))
+
+
+def test_a_program_left_unfilled_is_kept_only_while_the_fills_reads_hold():
+    # One drive lane: every window is left alone for lanes. That depends on
+    # the fill, so a change to what the fill reads compiles again.
+    from cudaq_pulse.controller import DriveLine, ReadoutLine
+
+    from tests._handles import ladder_target
+
+    box = pulse.Controller(
+        drive_lines=[DriveLine(q) for q in range(4)],
+        readout_lines=[ReadoutLine(q) for q in range(4)],
+    )
+    qpu = ladder_target(
+        4, control_system=pulse.ControlSystem(controllers=[box], max_concurrent_drives=1)
+    )
+    q = qpu.qudits
+    rule = pulse.IdleReplacement(reads_a_global, threshold=100, leading=True)
+    filled = pulse.compile(two_lines, schedule="alap_rcp").replace_idle(rule)
+    first = filled.lower(q[0], q[1])
+    assert not any(w.filled for w in first.idle_windows)
+    assert filled.lower(q[0], q[1]) is first
+    _FILL_AMPLITUDE[0] = 0.3
+    try:
+        assert filled.lower(q[0], q[1]) is not first
+    finally:
+        _FILL_AMPLITUDE[0] = 0.2
+
+
+def test_an_int_subclass_is_a_threshold_in_cycles():
+    import enum
+
+    class Cycles(enum.IntEnum):
+        HUNDRED = 100
+
+    plain = _windows(host, Q[0], Q[1], threshold=100)
+    assert _windows(host, Q[0], Q[1], threshold=Cycles.HUNDRED) == plain
+    assert _windows(host, Q[0], Q[1], threshold=Cycles.HUNDRED + 0) == plain

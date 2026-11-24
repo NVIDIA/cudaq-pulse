@@ -553,7 +553,13 @@ public:
               std::this_thread::get_id() != owner_)
             return mlir::failure();
           llvm::raw_string_ostream os(messages_);
-          os << "\n  " << diagnostic.getLocation() << ": " << diagnostic;
+          // An op numbered for idle replacement reads as one with no
+          // location, as the same op compiled without the rule does.
+          mlir::Location where = diagnostic.getLocation();
+          if (auto site = mlir::dyn_cast<mlir::FileLineColLoc>(where);
+              site && site.getFilename().getValue() == "pulse.site")
+            where = mlir::UnknownLoc::get(where.getContext());
+          os << "\n  " << where << ": " << diagnostic;
           for (mlir::Diagnostic &note : diagnostic.getNotes())
             os << "\n    note: " << note;
           return mlir::success();
@@ -3496,13 +3502,7 @@ public:
   // (a written wait is not merged, a written drive not fused with one of
   // the kernel's).
 
-  static bool isSiteOp(mlir::Operation *op) {
-    return mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp,
-                     pulse::SyncOp, pulse::ShiftPhaseOp, pulse::SetPhaseOp,
-                     pulse::ShiftFrequencyOp, pulse::SetFrequencyOp>(op);
-  }
-
-  /// The number number_sites() gave `op`, if any.
+  /// The site number a packed site record gave `op`, if any.
   static std::optional<int64_t> siteOf(mlir::Operation *op) {
     auto loc = mlir::dyn_cast<mlir::FileLineColLoc>(op->getLoc());
     if (!loc || loc.getFilename().getValue() != "pulse.site")
@@ -3511,46 +3511,8 @@ public:
     return loc.getColumn() ? -line - 1 : line;
   }
 
-  /// Number the drives, readouts, waits, syncs and frame changes of a module
-  /// just built, in program order: the k-th gets `sites[k]`, at least -2**31
-  /// and below 2**31. Returns one letter per op for its kind (d, r, w, s for
-  /// a drive, readout, wait and sync, f for a frame change), which the
-  /// caller holds against its own record of what it traced.
-  std::string number_sites(const std::vector<int64_t> &sites) {
-    std::lock_guard<std::recursive_mutex> guard(*lock_);
-    std::string kinds;
-    kinds.reserve(sites.size());
-    size_t next = 0;
-    module_->walk([&](mlir::Operation *op) {
-      if (!isSiteOp(op))
-        return;
-      if (next < sites.size()) {
-        int64_t site = sites[next];
-        if (site < INT32_MIN || site > INT32_MAX)
-          throw std::invalid_argument("number_sites: a site is out of range");
-        op->setLoc(mlir::FileLineColLoc::get(
-            ctx_.get(), "pulse.site",
-            static_cast<unsigned>(site < 0 ? -site - 1 : site),
-            site < 0 ? 1 : 0));
-        if (site < 0)
-          op->setAttr("pulse.written", mlir::UnitAttr::get(ctx_.get()));
-      }
-      ++next;
-      kinds.push_back(mlir::isa<pulse::DriveOp>(op)     ? 'd'
-                      : mlir::isa<pulse::ReadoutOp>(op) ? 'r'
-                      : mlir::isa<pulse::WaitOp>(op)    ? 'w'
-                      : mlir::isa<pulse::SyncOp>(op)    ? 's'
-                                                        : 'f');
-    });
-    if (next != sites.size())
-      throw std::invalid_argument(
-          "number_sites: " + std::to_string(sites.size()) + " numbers for " +
-          std::to_string(next) + " ops");
-    return kinds;
-  }
-
-  /// Remove the numbers number_sites() gave, from the module and from its
-  /// source before scheduling.
+  /// Remove the site numbers the packed site records gave, from the module and
+  /// from its source before scheduling.
   void strip_sites() {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
     mlir::Location unknown = mlir::UnknownLoc::get(ctx_.get());
@@ -7715,9 +7677,8 @@ public:
       case kOpSite: {
         // [site number, kind: 0 drive, 1 readout, 2 wait, 3 sync, 4 frame
         // change] of the op just built, written by idle replacement's trace
-        // only: the op's location is pulse.site:<number>, as number_sites()
-        // gives it, and an op written into an idle window (a negative
-        // number) is marked pulse.written.
+        // only: the op's location is pulse.site:<number>, and an op written
+        // into an idle window (a negative number) is marked pulse.written.
         requirePayload(2);
         mlir::Block *block = builder_->getInsertionBlock();
         auto at = builder_->getInsertionPoint();
@@ -8152,11 +8113,8 @@ NB_MODULE(_cudaq_pulse_native, m) {
       .def("event_tree", &PulseModule::event_tree, nb::arg("limit"),
            "events(), or past `limit` events the ops once each with the "
            "loops they repeat in")
-      .def("number_sites", &PulseModule::number_sites, nb::arg("sites"),
-           "Number the traced ops of a module just built; returns their "
-           "kinds, one letter each")
       .def("strip_sites", &PulseModule::strip_sites,
-           "Remove the numbers number_sites() gave")
+           "Remove the site numbers the packed site records gave")
       .def("site_tree", &PulseModule::site_tree,
            "The lines and the scheduled ops with their numbers, times and "
            "the loops and branches they lie in")
