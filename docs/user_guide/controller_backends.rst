@@ -254,6 +254,32 @@ vocabulary of terms, whatever operations the compiler computes it with:
     A term over the expressions in ``of``, computed in the type ``t`` of
     its operands, ``"int"``, ``"float"`` or ``"bool"``. A ``const`` in a
     float term is that float, so ``{"const": 3}`` there is 3.0.
+``{"term": n}``
+    Term ``n`` of the expression's ``terms``, where that term is used.
+
+An expression that is a term may have ``"terms": [...]`` beside its
+``op``, ``type`` and ``of``: terms written once there and used by their
+place in the list, the first being term 0. A term is in ``terms`` when
+the expression uses it more than once, or when the expression would
+otherwise nest more than 65 terms deep; every other term is written where
+it is used. A term of ``terms`` uses only terms before it, so computing
+the list in order computes each term once. For ``t = x * 0.001`` (``x``
+result 0 of answer event 1), ``t = t + t`` and a phase shift of ``t + t``:
+
+.. code-block:: json
+
+   {"terms": [
+      {"op": "mul", "type": "float", "of": [{"answer": 1, "result": 0}, {"const": 0.001}]},
+      {"op": "add", "type": "float", "of": [{"term": 0}, {"term": 0}]}],
+    "op": "add", "type": "float", "of": [{"term": 1}, {"term": 1}]}
+
+``terms`` is only at the root of an expression and belongs to all of it;
+code that makes an expression an operand of a new term moves the list to
+the new root. No expression nests more than 65 terms deep, however many
+terms the program computes it with, which is the deepest an expression
+was written before there were ``terms``; and an expression has no
+``terms`` unless it uses a term more than once or is deeper than that: an
+export that held no such expression is written as before.
 
 ``cudaq_pulse.controller.ExpressionTerm`` names every term. A value
 computed any other way is an ``UnsupportedError`` when the program is

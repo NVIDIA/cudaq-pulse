@@ -346,9 +346,20 @@ inline std::optional<double> boundNumber(mlir::Value value) {
   return computedNumber(value, bound);
 }
 
-/// `value` as an affine function of the entry function's arguments, if it
-/// is a constant, an argument, or arithmetic on them that stays affine.
-inline std::optional<Affine> affineNumber(mlir::Value value) {
+/// The float arithmetic affineNumber() follows to its operands, else null.
+inline mlir::Operation *affineArithmetic(mlir::Value value) {
+  if (constantAttribute(value) || boundAnswer(value))
+    return nullptr;
+  mlir::Operation *op = value.getDefiningOp();
+  if (op &&
+      mlir::isa<mlir::arith::NegFOp, mlir::arith::AddFOp, mlir::arith::SubFOp,
+                mlir::arith::MulFOp, mlir::arith::DivFOp>(op))
+    return op;
+  return nullptr;
+}
+
+/// affineNumber() of a value that is not arithmetic on others.
+inline std::optional<Affine> affineLeaf(mlir::Value value) {
   if (mlir::Attribute attribute = constantAttribute(value)) {
     if (auto number = mlir::dyn_cast<mlir::FloatAttr>(attribute))
       return Affine(number.getValueAsDouble());
@@ -364,33 +375,67 @@ inline std::optional<Affine> affineNumber(mlir::Value value) {
         mlir::isa_and_nonnull<mlir::func::FuncOp>(owner->getParentOp()) &&
         argument.getType().isF64())
       return Affine::argument(argument.getArgNumber());
-    return std::nullopt;
   }
-  mlir::Operation *op = value.getDefiningOp();
-  if (!op)
-    return std::nullopt;
-  auto operand = [&](unsigned index) {
-    return affineNumber(op->getOperand(index));
+  return std::nullopt;
+}
+
+/// The affine functions found for the values that are arithmetic on others.
+using AffineNumbers = llvm::DenseMap<mlir::Value, std::optional<Affine>>;
+
+/// `value` as an affine function of the entry function's arguments, if it
+/// is a constant, an argument, or arithmetic on them that stays affine.
+/// Each operation is computed once, in `numbers`, however many use it and
+/// however deep it is.
+inline std::optional<Affine> affineNumber(mlir::Value value,
+                                          AffineNumbers &numbers) {
+  if (!affineArithmetic(value))
+    return affineLeaf(value);
+  auto known = [&](mlir::Value operand) -> std::optional<Affine> {
+    if (auto found = numbers.find(operand); found != numbers.end())
+      return found->second;
+    return affineLeaf(operand);
   };
-  if (mlir::isa<mlir::arith::NegFOp>(op)) {
-    auto x = operand(0);
-    return x ? std::optional(-*x) : std::nullopt;
+  llvm::SmallVector<mlir::Value, 16> todo{value};
+  while (!todo.empty()) {
+    mlir::Value next = todo.back();
+    if (numbers.count(next)) {
+      todo.pop_back();
+      continue;
+    }
+    mlir::Operation *op = affineArithmetic(next);
+    bool ready = true;
+    for (mlir::Value operand : op->getOperands())
+      if (affineArithmetic(operand) && !numbers.count(operand)) {
+        todo.push_back(operand);
+        ready = false;
+      }
+    if (!ready)
+      continue;
+    todo.pop_back();
+    std::optional<Affine> out, lhs = known(op->getOperand(0));
+    if (mlir::isa<mlir::arith::NegFOp>(op)) {
+      if (lhs)
+        out = -*lhs;
+    } else if (auto rhs = known(op->getOperand(1)); lhs && rhs) {
+      if (mlir::isa<mlir::arith::AddFOp>(op))
+        out = *lhs + *rhs;
+      else if (mlir::isa<mlir::arith::SubFOp>(op))
+        out = *lhs - *rhs;
+      else if (mlir::isa<mlir::arith::MulFOp>(op))
+        out = lhs->times(*rhs);
+      else if (rhs->isConstant())
+        out = *lhs / rhs->constant;
+    }
+    numbers[next] = std::move(out);
   }
-  if (!mlir::isa<mlir::arith::AddFOp, mlir::arith::SubFOp, mlir::arith::MulFOp,
-                 mlir::arith::DivFOp>(op))
-    return std::nullopt;
-  auto lhs = operand(0), rhs = operand(1);
-  if (!lhs || !rhs)
-    return std::nullopt;
-  if (mlir::isa<mlir::arith::AddFOp>(op))
-    return *lhs + *rhs;
-  if (mlir::isa<mlir::arith::SubFOp>(op))
-    return *lhs - *rhs;
-  if (mlir::isa<mlir::arith::MulFOp>(op))
-    return lhs->times(*rhs);
-  if (!rhs->isConstant())
-    return std::nullopt;
-  return *lhs / rhs->constant;
+  return numbers.find(value)->second;
+}
+
+inline std::optional<Affine> affineNumber(mlir::Value value) {
+  if (!affineArithmetic(value))
+    return affineLeaf(value);
+  AffineNumbers numbers;
+  return affineNumber(value, numbers);
 }
 
 } // namespace pulse

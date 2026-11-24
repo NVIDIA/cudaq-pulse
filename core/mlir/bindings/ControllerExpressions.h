@@ -24,22 +24,29 @@ struct ControllerExpressions {
 
   /// A number computed from constants alone, else NaN.
   static double numberOf(mlir::Value value) {
+    pulse::AffineNumbers computed;
+    return numberOf(value, computed);
+  }
+
+  /// numberOf(), with what the arithmetic it follows computes in `computed`.
+  static double numberOf(mlir::Value value, pulse::AffineNumbers &computed) {
     if (auto constant = pulse::constantNumber(value))
       return *constant;
-    if (auto affine = pulse::affineNumber(value);
+    if (auto affine = pulse::affineNumber(value, computed);
         affine && affine->isConstant())
       return affine->evaluate({});
     return kUnknown;
   }
 
-  /// numberOf(), once per value: the walk asks again at every execution
-  /// and at every node of an expression.
+  /// numberOf(), once per value and per operation it follows: the walk
+  /// asks again at every execution and at every node of an expression.
   double number(mlir::Value value) {
     auto [found, inserted] = numbers.try_emplace(value);
     if (inserted)
-      found->second = numberOf(value);
+      found->second = numberOf(value, affines);
     return found->second;
   }
+  pulse::AffineNumbers affines;
   llvm::DenseMap<mlir::Value, double> numbers;
 
   // The record of the latest execution of each readout and classical wait,
@@ -114,20 +121,25 @@ struct ControllerExpressions {
     // Whether several expressions may have this one in their `of`: a walk
     // that changes expressions, or compares them, enters it once.
     bool tabled = false;
+    // Whether no term of this expression is used twice or is many terms
+    // deep: the export writes it in place, whole.
+    bool plain = false;
     std::vector<int32_t> of;
   };
   std::vector<Expression> expressions;
 
-  // The expression of each value with several uses, while one expression is
-  // made: the value's operation is a term once however many terms use it.
-  // `depth` is where it was made and `reach` the deepest place below it.
-  struct Made {
-    int32_t index;
-    int depth, reach;
-  };
-  llvm::DenseMap<mlir::Value, Made> made;
-  int reach = 0;
-  static constexpr int kDeepest = 64;
+  // While one expression is made, the expression of each value with several
+  // uses, so that the value's operation is a term once however many terms
+  // use it, and of each value made on its own (see expression()).
+  llvm::DenseMap<mlir::Value, int32_t> made;
+  // In one attempt: the values `made` got, those of them made whole (over
+  // no operand not yet made), and the operands not yet made.
+  std::vector<mlir::Value> entered, whole, missing;
+  // How many terms deep an expression is made by calls of its terms.
+  static constexpr int kInline = 48;
+  // How many terms deep the text of an expression nests at most: a term
+  // that deep is named. It is the deepest an expression was ever written.
+  static constexpr int kNested = 65;
 
   int32_t add(Expression expression) {
     expressions.push_back(std::move(expression));
@@ -216,15 +228,59 @@ struct ControllerExpressions {
 
   /// How `value` is computed at run time: a constant, a result of a readout
   /// or answer record, or a term of the export's vocabulary over such
-  /// expressions (see term()).
-  int32_t expression(mlir::Value value, int depth = 0) {
+  /// expressions (see term()), however many terms deep. The terms are made
+  /// by calls kInline deep; an operand deeper is made on its own first, and
+  /// the term that asked for it again.
+  int32_t expression(mlir::Value value) {
     // The table is of one expression: the records its leaves refer to are
     // the latest when it is made.
-    if (depth == 0) {
-      if (!made.empty())
-        made.clear();
-      reach = 0;
+    if (!made.empty())
+      made.clear();
+    entered.clear();
+    whole.clear();
+    missing.clear();
+    size_t mark = expressions.size();
+    int32_t index = make(value, 0);
+    if (missing.empty()) {
+      if (made.empty())
+        expressions[index].plain = true;
+      return index;
     }
+    std::vector<mlir::Value> todo{value};
+    for (;;) {
+      // What the attempt made is not kept: it is over operands not made.
+      // What it made whole is made on its own next, and kept, so that no
+      // later attempt makes it again.
+      expressions.resize(mark);
+      for (mlir::Value attempted : entered)
+        made.erase(attempted);
+      todo.insert(todo.end(), missing.begin(), missing.end());
+      todo.insert(todo.end(), whole.begin(), whole.end());
+      for (;;) {
+        mlir::Value next = todo.back();
+        if (todo.size() > 1 && made.count(next)) {
+          todo.pop_back();
+          continue;
+        }
+        entered.clear();
+        whole.clear();
+        missing.clear();
+        mark = expressions.size();
+        index = make(next, 0);
+        if (!missing.empty())
+          break;
+        if (todo.size() == 1)
+          return index;
+        // The term that asked may be made more than once.
+        expressions[index].tabled = true;
+        made[next] = index;
+        todo.pop_back();
+      }
+    }
+  }
+
+  /// expression(), `depth` calls of terms deep.
+  int32_t make(mlir::Value value, int depth) {
     double number = this->number(value);
     if (!std::isnan(number)) {
       if (value.getType().isInteger(1))
@@ -245,34 +301,26 @@ struct ControllerExpressions {
                  static_cast<int64_t>(
                      mlir::cast<mlir::OpResult>(value).getResultNumber()));
     }
-    if (depth > reach)
-      reach = depth;
-    if (depth > kDeepest)
-      return add(Expression::Unknown, 0.0, 0, 0,
-                 "an expression more than 64 operations deep");
     if (def->getNumRegions() != 0 || def->getNumResults() != 1)
       return add(Expression::Unknown, 0.0, 0, 0, def->getName().getStringRef());
-    if (value.hasOneUse())
-      return term(def, depth);
-    // Made before: the same expression here when it was made at this depth,
-    // or when nothing in it was or would here be past the deepest place.
-    if (auto found = made.find(value); found != made.end()) {
-      const Made &before = found->second;
-      int here = depth + (before.reach - before.depth);
-      if (depth == before.depth ||
-          (before.reach <= kDeepest && here <= kDeepest)) {
-        if (here > reach)
-          reach = here;
-        return before.index;
+    bool several = !value.hasOneUse();
+    if (several || depth >= kInline) {
+      if (auto found = made.find(value); found != made.end())
+        return found->second;
+      if (depth >= kInline) {
+        missing.push_back(value);
+        return add(Expression::Unknown, 0.0, 0, 0, "an operand not yet made");
       }
     }
-    int outer = reach;
-    reach = depth;
+    size_t missed = missing.size();
     int32_t index = term(def, depth);
-    expressions[index].tabled = true;
-    made[value] = {index, depth, reach};
-    if (outer > reach)
-      reach = outer;
+    if (several) {
+      expressions[index].tabled = true;
+      made[value] = index;
+      entered.push_back(value);
+      if (missing.size() == missed)
+        whole.push_back(value);
+    }
     return index;
   }
 
@@ -297,7 +345,7 @@ struct ControllerExpressions {
   /// expressions; forms that compute the same value give the same term.
   int32_t term(mlir::Operation *def, int depth) {
     namespace arith = mlir::arith;
-    auto of = [&](mlir::Value value) { return expression(value, depth + 1); };
+    auto of = [&](mlir::Value value) { return make(value, depth + 1); };
     auto unknown = [&] {
       return add(Expression::Unknown, 0.0, 0, 0, def->getName().getStringRef());
     };
@@ -438,9 +486,9 @@ struct ControllerExpressions {
     // With a constant: a and true is a, a or false is a, and the others
     // the constant.
     if (double c = number(y); !std::isnan(c))
-      return (c != 0.0) == both ? expression(x, depth + 1)
+      return (c != 0.0) == both ? make(x, depth + 1)
                                 : constant(c != 0.0, T::Bool);
-    int32_t a = expression(x, depth + 1), b = expression(y, depth + 1);
+    int32_t a = make(x, depth + 1), b = make(y, depth + 1);
     if (both)
       return op(Expression::Select, T::Bool, {a, b, constant(0.0, T::Bool)});
     return op(Expression::Select, T::Bool, {a, constant(1.0, T::Bool), b});
@@ -470,8 +518,8 @@ struct ControllerExpressions {
         break;
       }
     }
-    int32_t lhs = expression(x, depth + 1);
-    return op(term, type, {lhs, expression(y, depth + 1)});
+    int32_t lhs = make(x, depth + 1);
+    return op(term, type, {lhs, make(y, depth + 1)});
   }
 
   /// Makes comparison `e` its negation where that is a comparison too, and
@@ -514,7 +562,7 @@ struct ControllerExpressions {
       std::swap(x, y);
       std::swap(first, second);
     }
-    int32_t lhs = expression(x, depth + 1);
+    int32_t lhs = make(x, depth + 1);
     if (!std::isnan(second)) {
       if ((second != 0.0) == equal)
         return lhs;
@@ -534,7 +582,7 @@ struct ControllerExpressions {
                 {lhs, constant(1.0, Expression::Bool)});
     }
     return op(equal ? Expression::Eq : Expression::Ne, Expression::Bool,
-              {lhs, expression(y, depth + 1)});
+              {lhs, make(y, depth + 1)});
   }
 
   /// `select` as the max or min of the values its condition compares,
@@ -578,9 +626,9 @@ struct ControllerExpressions {
         std::swap(a, b);
     } else if (then != a || other != b)
       return -1;
-    int32_t first = expression(a, depth + 1);
+    int32_t first = make(a, depth + 1);
     return op(greater ? Expression::Max : Expression::Min, type,
-              {first, expression(b, depth + 1)});
+              {first, make(b, depth + 1)});
   }
 
   /// Whether expression `y` is `x` one iteration on: records [a, b) moved
@@ -593,34 +641,120 @@ struct ControllerExpressions {
   /// [low, high) `shift` later, the rest the same.
   bool sameExpression(int32_t x, int32_t y, int64_t low, int64_t high,
                       int64_t shift) const {
-    Alike alike;
-    return sameExpression(x, y, low, high, shift, alike);
+    // The pairs still to compare, and those of terms others use that were
+    // entered.
+    llvm::SmallVector<std::pair<int32_t, int32_t>, 16> todo{{x, y}};
+    llvm::SmallDenseSet<std::pair<int32_t, int32_t>, 4> entered;
+    while (!todo.empty()) {
+      auto pair = todo.pop_back_val();
+      const Expression &p = expressions[pair.first],
+                       &q = expressions[pair.second];
+      if (p.tabled && !entered.insert(pair).second)
+        continue;
+      if (p.kind != q.kind || p.term != q.term || p.name != q.name ||
+          p.type != q.type || p.result != q.result ||
+          p.of.size() != q.of.size() || !same(p.number, q.number))
+        return false;
+      if (p.kind == Expression::Readout || p.kind == Expression::Answer) {
+        int64_t moved =
+            p.event >= low && p.event < high ? p.event + shift : p.event;
+        if (q.event != moved)
+          return false;
+      }
+      for (size_t i = 0; i < p.of.size(); ++i)
+        todo.emplace_back(p.of[i], q.of[i]);
+    }
+    return true;
   }
 
-  // The pairs of terms others use that were found the same.
-  using Alike = llvm::SmallDenseSet<std::pair<int32_t, int32_t>, 4>;
-
-  bool sameExpression(int32_t x, int32_t y, int64_t low, int64_t high,
-                      int64_t shift, Alike &alike) const {
-    const Expression &p = expressions[x], &q = expressions[y];
-    if (p.tabled && alike.count({x, y}))
-      return true;
-    if (p.kind != q.kind || p.term != q.term || p.name != q.name ||
-        p.type != q.type || p.result != q.result ||
-        p.of.size() != q.of.size() || !same(p.number, q.number))
-      return false;
-    if (p.kind == Expression::Readout || p.kind == Expression::Answer) {
-      int64_t moved =
-          p.event >= low && p.event < high ? p.event + shift : p.event;
-      if (q.event != moved)
-        return false;
+  /// The terms of expression `root` the export names, in the order they
+  /// are made, which is after the terms they are over: each term that more
+  /// than one term of the expression uses, and each kNested terms deep in
+  /// what is written in place, so that no text nests deeper.
+  void namedTerms(int32_t root, llvm::SmallVectorImpl<int32_t> &named) const {
+    if (expressions[root].plain)
+      return;
+    llvm::SmallVector<int32_t, 32> todo{root}, reached;
+    llvm::SmallDenseMap<int32_t, unsigned, 8> uses;
+    while (!todo.empty()) {
+      int32_t index = todo.pop_back_val();
+      const Expression &e = expressions[index];
+      if (e.kind != Expression::Op)
+        continue;
+      if (e.tabled && ++uses[index] > 1)
+        continue;
+      reached.push_back(index);
+      todo.append(e.of.begin(), e.of.end());
     }
-    for (size_t i = 0; i < p.of.size(); ++i)
-      if (!sameExpression(p.of[i], q.of[i], low, high, shift, alike))
-        return false;
-    if (p.tabled)
-      alike.insert({x, y});
-    return true;
+    // A term's operands are made before it.
+    llvm::sort(reached);
+    llvm::SmallDenseMap<int32_t, int, 32> deep;
+    for (int32_t index : reached) {
+      const Expression &e = expressions[index];
+      int depth = 0;
+      for (int32_t operand : e.of)
+        if (auto found = deep.find(operand); found != deep.end())
+          depth = std::max(depth, found->second);
+      ++depth;
+      bool name = index != root &&
+                  ((e.tabled && uses.lookup(index) > 1) || depth >= kNested);
+      if (name)
+        named.push_back(index);
+      deep[index] = name ? 0 : depth;
+    }
+  }
+
+  /// Expression `root` as the export gives it, without a call per term:
+  /// `leaf(index)` writes what is no term, `reference(n)` a use of named
+  /// term n, and `node(e, of, table)` term `e` over the written operands
+  /// `of`, the root with the `table` of the named terms when there are any.
+  template <typename Leaf, typename Reference, typename Node, typename List,
+            typename Set>
+  nb::object written(int32_t root, Leaf leaf, Reference reference, Node node,
+                     List list, Set set) const {
+    if (expressions[root].kind != Expression::Op)
+      return leaf(root);
+    llvm::SmallVector<int32_t, 8> named;
+    namedTerms(root, named);
+    llvm::SmallDenseMap<int32_t, int, 8> names;
+    for (size_t n = 0; n < named.size(); ++n)
+      names[named[n]] = static_cast<int>(n);
+    struct Frame {
+      int32_t index;
+      nb::list of;
+      size_t next = 0;
+    };
+    auto tree = [&](int32_t top, nb::handle table) -> nb::object {
+      std::vector<Frame> open;
+      open.push_back({top, list(expressions[top].of.size())});
+      for (;;) {
+        Frame &frame = open.back();
+        const Expression &e = expressions[frame.index];
+        if (frame.next < e.of.size()) {
+          int32_t operand = e.of[frame.next];
+          if (expressions[operand].kind != Expression::Op)
+            set(frame.of, frame.next++, leaf(operand));
+          else if (auto found = names.find(operand); found != names.end())
+            set(frame.of, frame.next++, reference(found->second));
+          else
+            open.push_back({operand, list(expressions[operand].of.size())});
+          continue;
+        }
+        nb::object out =
+            node(e, frame.of, open.size() == 1 ? table : nb::handle());
+        open.pop_back();
+        if (open.empty())
+          return out;
+        Frame &parent = open.back();
+        set(parent.of, parent.next++, std::move(out));
+      }
+    };
+    if (named.empty())
+      return tree(root, nb::handle());
+    nb::list table = list(named.size());
+    for (size_t n = 0; n < named.size(); ++n)
+      set(table, n, tree(named[n], nb::handle()));
+    return tree(root, table);
   }
 
   /// Whether `e` is whether a readout is set: ne(readout, 0).

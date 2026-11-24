@@ -2426,6 +2426,7 @@ private:
              *runtime = intern("runtime"), *samples = intern("samples"),
              *shape = intern("shape"), *start = intern("start_cycles"),
              *test = intern("test"), *timeout = intern("timeout_ns"),
+             *term = intern("term"), *table = intern("terms"),
              *tone = intern("tone"), *tones = intern("tones"),
              *trips = intern("trips"), *type = intern("type"),
              *unknown = intern("unknown"), *value = intern("value"),
@@ -2854,27 +2855,51 @@ private:
   LLVM_ATTRIBUTE_NOINLINE nb::object
   expression(int32_t index, const std::vector<int64_t> &readouts,
              const std::vector<int64_t> &answers) {
-    const Expression &e = walk.expressions[index];
-    if (e.kind != Expression::Op) {
-      nb::object out = expression(index);
+    return write(index, [&](int32_t at) {
+      const Expression &e = walk.expressions[at];
+      nb::object out = leaf(at);
       if (e.kind == Expression::Readout)
         put(out, key.readout, integer(readouts[e.event]));
       else if (e.kind == Expression::Answer)
         put(out, key.answer, integer(answers[e.event]));
       return out;
-    }
-    nb::dict out;
-    put(out, key.op, key.terms[e.term]);
-    put(out, key.type, key.types[e.type]);
-    nb::list of = list(e.of.size());
-    for (size_t i = 0; i < e.of.size(); ++i)
-      set(of, i, expression(e.of[i], readouts, answers));
-    put(out, key.of, of);
-    return out;
+    });
+  }
+
+  /// Expression `index` over what `leaf` writes of what is no term: a term
+  /// in place where one term uses it, else in the `terms` of the
+  /// expression, by its place there where it is used (see namedTerms).
+  template <typename Leaf>
+  nb::object write(int32_t index, Leaf leaf) {
+    return walk.written(
+        index, leaf,
+        [&](int n) {
+          nb::dict out;
+          put(out, key.term, integer(n));
+          return nb::object(out);
+        },
+        [&](const Expression &e, nb::handle of, nb::handle table) {
+          nb::dict out;
+          if (table.is_valid())
+            put(out, key.table, table);
+          put(out, key.op, key.terms[e.term]);
+          put(out, key.type, key.types[e.type]);
+          put(out, key.of, of);
+          return nb::object(out);
+        },
+        [](size_t size) { return list(size); },
+        [](nb::handle to, size_t at, nb::object value) {
+          set(to, at, std::move(value));
+        });
   }
 
   /// Expression `index` as the export gives it.
   nb::object expression(int32_t index) {
+    return write(index, [&](int32_t at) { return leaf(at); });
+  }
+
+  /// What is no term, as the export gives it.
+  nb::object leaf(int32_t index) {
     const Expression &e = walk.expressions[index];
     if (e.kind == Expression::Number)
       return textNumber(e.number);
@@ -2900,14 +2925,8 @@ private:
       put(out, key.answer, integer(e.event));
       put(out, key.result, integer(e.result));
       break;
-    default: {
-      put(out, key.op, key.terms[e.term]);
-      put(out, key.type, key.types[e.type]);
-      nb::list of = list(e.of.size());
-      for (size_t i = 0; i < e.of.size(); ++i)
-        set(of, i, expression(e.of[i]));
-      put(out, key.of, of);
-    }
+    default:
+      break;
     }
     return out;
   }

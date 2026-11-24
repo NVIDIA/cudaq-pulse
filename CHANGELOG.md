@@ -210,6 +210,25 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 
 ### Changed
 
+- **A run-time expression of the controller export names a term that
+  several terms use, and no expression is too deep to export.** A value the
+  program computes at run time from a term it uses twice, forty times over,
+  was written with every use written out (2^40 copies), so its export and
+  its check did not finish; and a value more than 65 operations deep was
+  refused. An expression may now have `"terms": [...]` beside its `op`,
+  `type` and `of`, and `{"term": n}` where term `n` is used. A term is
+  named there when the expression uses it more than once, or when the
+  text would otherwise nest more than 65 terms deep, so an expression of
+  any size exports, in text that grows with its operations and never
+  nests deeper than it could before. `evaluate_expression` computes a named term once.
+  An expression that shares no term and is not that deep is written as
+  before, in format /1 and /2 alike, and both formats keep their names; a
+  reader that does not know `{"term": n}` fails on it, as on any leaf it
+  does not know. A backend that evaluates through `evaluate_expression`
+  needs no change; one that walks `of` itself must follow `{"term": n}`
+  into `terms`. The `id` of a format /2 waveform whose parameter is such
+  an expression changes with its text.
+
 - **Controllers in the printed MLIR carry what they were given.** In
   `pulse.control_system`, each `#pulse.controller` of a system of several
   controllers gives the controller's own facts, in its own cycles, where it
@@ -418,10 +437,9 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   calls, however long the chain; and a condition that several parts of
   another use, also through `^`, `==` and `!=`, is computed once in the
   program, where it was computed once per use. A value that shares nothing
-  compiles to the same program and reads the same in errors. Not
-  covered yet: an amplitude, phase or frequency, or a value from an answer,
-  that doubles a term many times is still written out in the controller
-  export, which grows with its terms.
+  compiles to the same program and reads the same in errors. The
+  controller export and the check write such a value with each term once
+  too (see Changed).
 - **A time in a runtime `list[float]` argument is refused, as for a `float`
   parameter.** `[100 * pulse.ns]` was taken as its nanoseconds and used as
   that many clock cycles, so a scan of waits written with units played half
