@@ -416,12 +416,37 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 
 ### Fixed
 
+- **A value computed from a term it uses several times, or through
+  thousands of operations, compiles.** `tau = tau + tau` written a few dozen
+  times did not finish tracing: forty such lines are forty operations, but
+  written out they are 2^40 terms, and the tracer walked the value as
+  written out. A wait length or an amplitude summed in a loop of 200 rounds
+  failed with a `SyntaxError` from inside the compiler, one of 1,100 rounds
+  with a `RecursionError`. Every walk of a value now visits an operation
+  once and without recursion, and an error names a shared term once:
+  `the wait length t2 + t2 with t1 = tau * 2.0, t2 = t1 + t1`. The same
+  holds for conditions built with `&` and `|` from answers of classical
+  calls, however long the chain; and a condition that several parts of
+  another use, also through `^`, `==` and `!=`, is computed once in the
+  program, where it was computed once per use. A value that shares nothing
+  compiles to the same program and reads the same in errors. Not
+  covered yet: an amplitude, phase or frequency, or a value from an answer,
+  that doubles a term many times is still written out in the controller
+  export, which grows with its terms.
 - **A time in a runtime `list[float]` argument is refused, as for a `float`
   parameter.** `[100 * pulse.ns]` was taken as its nanoseconds and used as
   that many clock cycles, so a scan of waits written with units played half
   of each wait on a 2 GHz clock, with no error. It is now an
   `InvalidTypeError` that names the element, and so is an element that is
   not a number, which said only that the argument was a list.
+- **A loop that hands each classical call's answer to the next call now
+  compiles.** With a wait whose length is an answer in it
+  (`tau = f.submit(tau).result()` then `wait(line, tau, bounds=...)`), the
+  time to schedule doubled with every round, so a loop of some thirty rounds
+  did not finish. To find a wait's length the scheduler went back from the
+  answer through the call to every call before it, by two ways each. It now
+  follows arithmetic only, and computes a term that others share once. The
+  schedules are the same.
 - **A kernel with many measurement-conditioned `if`s no longer takes memory
   and time that grow with the square of their number to trace.** Each `if`
   kept its own copy of the whole kernel's instructions, so a kernel of n
