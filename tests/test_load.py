@@ -618,3 +618,158 @@ def test_a_reserved_dispatch_key_is_refused(system):
     )
     with pytest.raises(pulse.CompilationError, match="0x7ed8be82.*rename it"):
         pulse.load(reserved, entry="main", qudits=qudits, control_system=_links())
+
+
+# ── A loaded module is untrusted input ───────────────────────────────────────
+
+LEAF = f"""
+  func.func private @leaf(%d: !pulse.drive_line, %t: !pulse.tone) -> ({T}) {TIMED} {{
+    %n = arith.constant 8 : i64
+    %amp = arith.constant 0.5 : f64
+    %zero = arith.constant 0.0 : f64
+    %w = pulse.square %n, %amp, %zero : i64, f64, f64 -> !pulse.waveform
+    %d1, %t1 = pulse.drive %d, %w, %t <{{duration_cycles = 8 : i64, start_cycles = 0 : i64}}>
+        : !pulse.drive_line, !pulse.waveform, !pulse.tone -> {T}
+    return %d1, %t1 : {T}
+  }}
+"""
+SHOT = f"""
+  func.func @shot(%q: !pulse.qudit) {TIMED} {{
+    %d, %t = pulse.get_drive_line %q : (!pulse.qudit) -> ({T})
+    %d1, %t1 = func.call @f0(%d, %t) {{pulse.start_cycles = 0 : i64}} : ({T}) -> ({T})
+    return
+  }}
+"""
+
+
+def _chain(levels, calls):
+    """@shot calls @f0; each @f{k} calls @f{k+1} *calls* times, one after
+    the other; the last calls @leaf."""
+    parts = ["module {", LEAF]
+    for level in range(levels):
+        callee = f"f{level + 1}" if level + 1 < levels else "leaf"
+        length = 8 * calls ** (levels - level - 1)
+        body, line, tone = [], "%d", "%t"
+        for i in range(calls):
+            body.append(
+                f"    %d{i}, %t{i} = func.call @{callee}({line}, {tone}) "
+                f"{{pulse.start_cycles = {i * length} : i64}} : ({T}) -> ({T})"
+            )
+            line, tone = f"%d{i}", f"%t{i}"
+        parts.append(
+            f"  func.func private @f{level}(%d: !pulse.drive_line, %t: !pulse.tone) -> ({T}) "
+            f"{TIMED} {{\n" + "\n".join(body) + f"\n    return {line}, {tone} : {T}\n  }}"
+        )
+    parts += [SHOT, "}"]
+    return "\n".join(parts)
+
+
+def test_a_chain_of_calls_loads(system):
+    program = pulse.load(_chain(3, 2), entry="shot", qudits=system.qudits[:1])
+    assert [(start, duration) for _, _, start, duration in events(program)] == [
+        (8 * i, 8) for i in range(8)
+    ]
+
+
+def test_calls_that_would_write_too_much_are_refused_before_any_is_written(system):
+    # Each function calls the next twice: 2**21 leaves, written by none.
+    with pytest.raises(pulse.CompilationError, match="write more than 1048576 operations"):
+        pulse.load(_chain(21, 2), entry="shot", qudits=system.qudits[:1])
+
+
+def test_calls_nested_too_deep_are_refused(system):
+    with pytest.raises(pulse.CompilationError, match="nest deeper than 256"):
+        pulse.load(_chain(300, 1), entry="shot", qudits=system.qudits[:1])
+    assert pulse.load(_chain(200, 1), entry="shot", qudits=system.qudits[:1]).schedule
+
+
+def test_text_nested_too_deep_is_refused_before_it_is_parsed(system):
+    deep = MODULE.replace(
+        "module {", "module attributes {made.by = " + "[" * 300 + "]" * 300 + "} {", 1
+    )
+    assert deep != MODULE
+    with pytest.raises(pulse.CompilationError, match="nests brackets deeper than 256"):
+        pulse.load(deep, entry="round", qudits=system.qudits[:2])
+    shallow = MODULE.replace("module {", "module attributes {made.by = [[[1]]]} {", 1)
+    assert pulse.load(shallow, entry="round", qudits=system.qudits[:2]).schedule
+
+
+def test_a_module_inside_the_module_is_refused(system):
+    inner = MODULE.strip()
+    nested = "module {\n" + inner.replace("module {", "module @inner {", 1) + "\n}\n"
+    with pytest.raises(pulse.CompilationError, match="holds another module"):
+        pulse.load(nested, entry="round", qudits=system.qudits[:2])
+
+
+def test_the_entry_is_a_function(system):
+    machine = _links()
+    _, text = _as_written(system, machine)
+    name = re.search(r"classical\.callable @(\w+)", text).group(1)
+    with pytest.raises(pulse.CompilationError, match=f"{name} is not a function"):
+        pulse.load(text, entry=name, qudits=system.qudits[:2], control_system=machine)
+
+
+def test_what_a_loaded_function_may_not_hold(system):
+    qudits = system.qudits[:2]
+    far = re.sub(r"start_cycles =\s+32 :\s+i64", f"start_cycles = {2**60} : i64", MODULE)
+    assert far != MODULE
+    with pytest.raises(pulse.CompilationError, match="outside 0 to 2\\^50 cycles"):
+        pulse.load(far, entry="round", qudits=qudits)
+    by_value = MODULE.replace(
+        "    %n = arith.constant 16 : i64",
+        "    %fn = func.constant @other : (!pulse.qudit) -> ()\n    %n = arith.constant 16 : i64",
+    )
+    assert by_value != MODULE
+    with pytest.raises(pulse.CompilationError, match="takes a function as a value"):
+        pulse.load(by_value, entry="round", qudits=qudits)
+    selects = _chain(1, 1).replace(
+        f"func.func private @leaf(%d: !pulse.drive_line, %t: !pulse.tone) -> ({T}) attributes {{",
+        "func.func private @leaf(%d: !pulse.drive_line, %t: !pulse.tone) -> "
+        f"({T}) attributes {{pulse.selected_values = 1 : i64, ",
+    )
+    assert "pulse.selected_values" in selects
+    with pytest.raises(pulse.CompilationError, match="leaf selects values at run time"):
+        pulse.load(selects, entry="shot", qudits=system.qudits[:1])
+
+
+def test_attributes_on_results_and_arguments_are_dropped(system):
+    text = MODULE.replace("-> i1 attributes", "-> (i1 {made.note = 1 : i64}) attributes").replace(
+        "@round(%a: !pulse.qudit,", "@round(%a: !pulse.qudit {made.note = 2 : i64},"
+    )
+    assert text.count("made.note") == 2
+    program = pulse.load(text, entry="round", qudits=system.qudits[:2])
+    assert "made." not in program.mlir()
+    assert len(events(program)) == 3
+
+
+def test_a_classical_function_named_main_is_refused(system):
+    machine = _links()
+    _, text = _as_written(system, machine)
+    name = re.search(r"classical\.callable @(\w+)", text).group(1)
+    key = re.search(r"dispatch_key = (\d+) : i64", text).group(0)
+    # Under another name the function keeps its key, which it then states.
+    clash = (
+        text.replace(f"@{name}", "@main")
+        .replace("func.func @main(", "func.func @entry(")
+        .replace(key, key + ", dispatch_key_override")
+    )
+    with pytest.raises(pulse.CompilationError, match="classical function named main"):
+        pulse.load(
+            clash,
+            entry="entry",
+            qudits=[system.qudits[0], system.qudits[2]],
+            control_system=machine,
+        )
+
+
+def test_a_link_no_classical_function_travels_on_is_refused(system):
+    machine = _links()
+    _, text = _as_written(system, machine)
+    other = text.replace(
+        "classical.get_link {device = 0 : i64}", "classical.get_link {device = 7 : i64}"
+    )
+    assert other != text
+    with pytest.raises(pulse.CompilationError, match="gets link 7, which none"):
+        pulse.load(
+            other, entry="main", qudits=[system.qudits[0], system.qudits[2]], control_system=machine
+        )
