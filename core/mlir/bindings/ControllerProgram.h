@@ -723,21 +723,17 @@ struct ControllerWalk : ControllerExpressions {
   void shiftKnown(const ControllerRecord &r, Shift shift) {
     if (r.known < 0)
       return;
-    auto move = [&](int32_t index, auto &self) -> void {
-      Expression &e = expressions[index];
-      if (e.kind == Expression::Readout || e.kind == Expression::Answer)
-        shift(e.event);
-      for (int32_t child : e.of)
-        self(child, self);
+    auto move = [&](int32_t root) {
+      eachRecord(root, [&](Expression &e) { shift(e.event); });
     };
     Known &k = known[r.known];
     for (auto &[node, operand, expr] : k.waveform)
-      move(expr, move);
+      move(expr);
     if (k.length >= 0)
-      move(k.length, move);
+      move(k.length);
     if (k.operands)
       for (int32_t expr : *k.operands)
-        move(expr, move);
+        move(expr);
   }
 
   /// The expression of a branch condition computed from `readouts` and
@@ -747,16 +743,10 @@ struct ControllerWalk : ControllerExpressions {
       mlir::Value condition, const std::vector<int64_t> &readouts,
       const std::vector<int64_t> &answers) {
     int32_t root = expression(condition);
-    auto place = [&](int32_t index, auto &self) -> void {
-      Expression &e = expressions[index];
-      if (e.kind == Expression::Readout || e.kind == Expression::Answer) {
-        const auto &list = e.kind == Expression::Readout ? readouts : answers;
-        e.event = llvm::find(list, e.event) - list.begin();
-      }
-      for (int32_t child : e.of)
-        self(child, self);
-    };
-    place(root, place);
+    eachRecord(root, [&](Expression &e) {
+      const auto &list = e.kind == Expression::Readout ? readouts : answers;
+      e.event = llvm::find(list, e.event) - list.begin();
+    });
     return root;
   }
 

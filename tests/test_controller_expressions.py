@@ -361,6 +361,58 @@ _CONDITIONS = {
         "%k = pulse.outcome %m : !pulse.measurement -> i64; "
         "%l = arith.muli %k, %n : i64; %cond = arith.cmpi slt, %l, %three : i64"
     ),
+    # Terms that several others use.
+    "a comparison and its negation": (
+        "%le = arith.cmpi sle, %n, %three : i64; %not = arith.xori %le, %true : i1; "
+        "%q = arith.cmpf ogt, %x, %tenth : f64; %a = arith.andi %le, %q : i1; "
+        "%b = arith.ori %not, %q : i1; %cond = arith.xori %a, %b : i1"
+    ),
+    "a negation and its comparison": (
+        "%le = arith.cmpi sle, %n, %three : i64; %not = arith.xori %le, %true : i1; "
+        "%q = arith.cmpf ogt, %x, %tenth : f64; %b = arith.ori %not, %q : i1; "
+        "%a = arith.andi %le, %q : i1; %cond = arith.xori %b, %a : i1"
+    ),
+    "a comparison negated twice": (
+        "%le = arith.cmpi sle, %n, %three : i64; %not = arith.xori %le, %true : i1; "
+        "%e = arith.cmpi eq, %le, %false : i1; %q = arith.cmpf ogt, %x, %tenth : f64; "
+        "%a = arith.andi %not, %q : i1; %cond = arith.ori %a, %e : i1"
+    ),
+    "a negation used twice": (
+        "%le = arith.cmpi sle, %n, %three : i64; %not = arith.xori %le, %true : i1; "
+        "%q = arith.cmpf ogt, %x, %tenth : f64; %a = arith.andi %not, %q : i1; "
+        "%b = arith.ori %not, %le : i1; %cond = arith.xori %a, %b : i1"
+    ),
+    "a float comparison and its negation": (
+        "%le = arith.cmpf ole, %x, %tenth : f64; %not = arith.xori %le, %true : i1; "
+        "%p = arith.cmpi sgt, %n, %three : i64; %a = arith.andi %le, %p : i1; "
+        "%cond = arith.ori %a, %not : i1"
+    ),
+    "a level squared": (
+        "%k = pulse.outcome %m : !pulse.measurement -> i64; %l = arith.muli %k, %k : i64; "
+        "%j = arith.addi %l, %n : i64; %cond = arith.cmpi sgt, %j, %three : i64"
+    ),
+    "a readout set and not": (
+        "%s = pulse.is_set %m : !pulse.measurement -> i1; %p = arith.cmpi sgt, %n, %three : i64; "
+        "%a = arith.andi %s, %p : i1; %b = arith.xori %s, %true : i1; %cond = arith.ori %a, %b : i1"
+    ),
+    "a choice doubled": (
+        "%big = arith.cmpf ogt, %x, %tenth : f64; %z = arith.select %big, %n, %two : i64; "
+        "%y = arith.addi %z, %z : i64; %w = arith.muli %y, %z : i64; "
+        "%cond = arith.cmpi sge, %w, %three : i64"
+    ),
+    "a max and its comparison": (
+        "%c = arith.cmpi sgt, %n, %three : i64; %mx = arith.select %c, %n, %three : i64; "
+        "%e = arith.cmpi sge, %mx, %two : i64; %cond = arith.andi %c, %e : i1"
+    ),
+    "a sum of its sums": (
+        "%a = arith.muli %n, %three : i64; %b = arith.addi %a, %a : i64; "
+        "%c = arith.addi %b, %a : i64; %d = arith.subi %c, %b : i64; "
+        "%cond = arith.cmpi sge, %d, %three : i64"
+    ),
+    "an answer squared": (
+        "%f = arith.mulf %x, %x : f64; %g = arith.addf %f, %f : f64; "
+        "%cond = arith.cmpf ogt, %g, %tenth : f64"
+    ),
 }
 _BRANCH_INPUTS = [
     (x, n, level) for x in (0.05, 0.1, 0.25, math.nan) for n in (2, 3, 4, 6) for level in (0, 1)
