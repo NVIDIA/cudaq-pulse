@@ -479,6 +479,41 @@ def test_the_gap_before_a_branch_is_a_window_and_one_that_ends_in_an_arm_is_not(
     assert window.result == "left alone: in or next to an arm of a branch"
 
 
+@pulse.kernel
+def lanes_and_rounds(a, b, c, d, e, f, g, n: int):
+    # many()'s lane-bound windows in each round, beside f's uneven rounds.
+    lines = [get_drive_line(q) for q in (a, b, c, d)]
+    de = get_drive_line(e)
+    re = get_readout_line(e)
+    df = get_drive_line(f)
+    dg = get_drive_line(g)
+    for _ in range(n):
+        drive(df, square(40, 0.1))
+        drive(dg, square(400, 0.1))
+        sync(df, dg)
+        for k, line in enumerate(lines):
+            drive(line, square(40 + 20 * k, 0.1))
+        drive(de, square(40, 0.1))
+        drive(df, square(40, 0.1))
+        drive(dg, square(440, 0.2))
+        sync(*lines, de, re, df, dg)
+        readout(re, square(600, 0.05))
+        sync(*lines, de, re, df, dg)
+
+
+@pytest.mark.parametrize("schedule", ["rcp", "alap_rcp"])
+def test_windows_left_alone_for_lanes_keep_the_reasons_of_the_others(schedule):
+    # A window the lane fallback never had to try (it was not to be filled
+    # anyway) says why, as it would without the fallback, not UNTRIED.
+    from cudaq_pulse._idle_windows import LANES, UNTRIED
+
+    program = _filled(lanes_and_rounds, *Q[0:7], 6, fill=pair, schedule=schedule)
+    results = [w.result for w in program.idle_windows]
+    assert LANES in results
+    assert UNTRIED not in results
+    assert "left alone: there is less room for it after the loop's last round" in results
+
+
 def test_a_window_after_the_kernel_changes_the_tones_frequency_is_left_alone():
     (window,) = _windows(detuned, Q[0], Q[1])
     assert (window.start, window.end) == (40, 600)
@@ -792,13 +827,13 @@ def test_fills_that_need_more_drive_lanes_than_there_are_are_left_alone(schedule
     # Under rcp and alap_rcp a fill's pulses take drive lanes like any
     # pulse: a window whose fill would move an operation of the kernel is
     # left unfilled and says why, and the program compiles (decision 280).
-    from cudaq_pulse._idle_windows import LANES
+    from cudaq_pulse._idle_windows import LANES, UNTRIED
 
     program = _filled(many, Q[0], Q[1], Q[2], Q[3], Q[4], fill=pair, schedule=schedule)
     plain = pulse.compile(many, schedule=schedule).lower(Q[0], Q[1], Q[2], Q[3], Q[4])
     results = [w.result for w in program.idle_windows]
     assert LANES in results
-    assert all(w.filled or w.result == LANES for w in program.idle_windows)
+    assert all(w.filled or w.result in (LANES, UNTRIED) for w in program.idle_windows)
     assert program.duration == plain.duration
     host = _events(plain)
     assert [event for event in _events(program) if event in host] == host
@@ -1294,6 +1329,302 @@ def test_a_gap_through_a_loop_of_too_many_readouts_to_list_is_left_alone(schedul
     )
 
 
+@pulse.kernel
+def synced_every_round(a, b, n: int):
+    da = get_drive_line(a)
+    rb = get_readout_line(b)
+    drive(da, square(40, 0.1))
+    for _ in range(n):
+        sync(da, rb)
+        readout(rb, square(400, 0.05))
+        sync(da, rb)
+    drive(da, square(40, 0.1))
+
+
+@pytest.mark.parametrize("schedule", _POLICIES)
+@pytest.mark.parametrize("n", [1, 2, 4, 30])
+def test_a_window_bounded_by_syncs_in_a_loop_is_filled_in_every_round(schedule, n):
+    # a's line has no op in the loop, only syncs with b's readout line:
+    # each round's stretch between them is a window of every round, as
+    # between ops, and the loop stays rolled.
+    program = _filled(synced_every_round, Q[0], Q[1], n, fill=pair, schedule=schedule)
+    plain = pulse.compile(synced_every_round, schedule=schedule).lower(Q[0], Q[1], n)
+    assert all(w.filled for w in program.idle_windows)
+    assert sum(w.rounds for w in program.idle_windows) == n
+    assert program.duration == plain.duration
+    lines, before = _executions(plain)
+    _, after = _executions(program)
+    host = set(before)
+    assert [e for e in after if e in host] == before
+    written = [e for e in after if e not in host]
+    assert all(lines[line] == ("drive", 0) for _, line, *_ in written)
+    fills = sorted(e for e in written if e[0] == "drive")
+    readouts = sorted(
+        (start, end) for kind, line, _, start, end in before if lines[line] == ("readout", 1)
+    )
+    assert len(readouts) == n
+    rounds = [
+        [(f[3] - start, f[4] - start) for f in fills if start <= f[3] and f[4] <= end]
+        for start, end in readouts
+    ]
+    assert len(fills) == 2 * n
+    # Every round, rolled or not, as the single round of an unrolled loop.
+    one = _filled(synced_every_round, Q[0], Q[1], 1, fill=pair, schedule=schedule)
+    _, once = _executions(one)
+    first = min(e[3] for e in once if lines[e[1]] == ("readout", 1))
+    alone = sorted((e[3] - first, e[4] - first) for e in once if e[0] == "drive" and e[3] >= first)
+    alone = [span for span in alone if span[1] <= 400]
+    assert len(alone) == 2
+    assert rounds == [alone] * n
+    if n == 30:
+        # Rolled: as many ops for thirty rounds as for four.
+        four = _filled(synced_every_round, Q[0], Q[1], 4, fill=pair, schedule=schedule)
+        assert program.metrics.op_count == four.metrics.op_count
+
+
+def _kept_in_place(plain, program):
+    """The executions *program* adds to *plain*'s, which keeps its own in
+    order and its length; all of them on the drive line of qudit 0."""
+    assert program.duration == plain.duration
+    lines, before = _executions(plain)
+    _, after = _executions(program)
+    host = set(before)
+    assert [e for e in after if e in host] == before
+    written = [e for e in after if e not in host]
+    assert all(lines[line] == ("drive", 0) for _, line, *_ in written)
+    return lines, before, sorted(e for e in written if e[0] == "drive")
+
+
+@pulse.kernel
+def synced_to_the_end(a, b, n: int):
+    da = get_drive_line(a)
+    rb = get_readout_line(b)
+    drive(da, square(40, 0.1))
+    for _ in range(n):
+        sync(da, rb)
+        readout(rb, square(400, 0.05))
+        sync(da, rb)
+
+
+@pytest.mark.parametrize("n", [1, 4, 30])
+def test_windows_bounded_by_syncs_after_the_qudits_last_operation_are_trailing(n):
+    program = _filled(synced_to_the_end, Q[0], Q[1], n, fill=pair)
+    assert program.idle_windows
+    assert {w.result for w in program.idle_windows} == {
+        "left alone: after the qudit's last operation (trailing=True fills it)"
+    }
+    program = _filled(synced_to_the_end, Q[0], Q[1], n, fill=pair, trailing=True)
+    assert all(w.filled for w in program.idle_windows)
+    plain = pulse.compile(synced_to_the_end).lower(Q[0], Q[1], n)
+    _kept_in_place(plain, program)
+
+
+@pulse.kernel
+def synced_with_a_gap_between_rounds(a, b, n: int):
+    da = get_drive_line(a)
+    rb = get_readout_line(b)
+    drive(da, square(40, 0.1))
+    for _ in range(n):
+        sync(da, rb)
+        readout(rb, square(400, 0.05))
+        sync(da, rb)
+        readout(rb, square(200, 0.05))
+    sync(da, rb)
+    drive(da, square(40, 0.1))
+
+
+@pytest.mark.parametrize("schedule", _POLICIES)
+@pytest.mark.parametrize("n", [2, 4, 30])
+def test_a_window_from_a_sync_into_the_next_round_is_filled_and_once_after_the_loop(schedule, n):
+    # From the second sync of a round to the first of the next, a idles
+    # through b's short readout: across the end of an iteration, written
+    # at the end of the body and once more after the loop, before the sync
+    # that ends it there.
+    program = _filled(synced_with_a_gap_between_rounds, Q[0], Q[1], n, fill=pair, schedule=schedule)
+    plain = pulse.compile(synced_with_a_gap_between_rounds, schedule=schedule).lower(Q[0], Q[1], n)
+    lines, before, fills = _kept_in_place(plain, program)
+    windows = [(w.cycles, w.rounds, w.filled) for w in program.idle_windows]
+    if schedule == "alap_rcp":
+        from cudaq_pulse._idle_windows import LANES
+
+        assert all(w.filled or w.result == LANES for w in program.idle_windows)
+    else:
+        assert windows == [(400, n, True), (200, n, True)]
+        readouts = [(a, b) for kind, line, _, a, b in before if lines[line] == ("readout", 1)]
+        assert len(readouts) == 2 * n
+        for start, end in readouts:
+            assert len([f for f in fills if start <= f[3] and f[4] <= end]) == 2
+
+
+@pytest.mark.parametrize("schedule", ["asap", "alap"])
+def test_a_window_from_a_sync_into_the_next_round_without_room_after_the_loop_says_so(schedule):
+    @pulse.kernel
+    def no_room(a, b, n: int):
+        da = get_drive_line(a)
+        rb = get_readout_line(b)
+        drive(da, square(40, 0.1))
+        for _ in range(n):
+            sync(da, rb)
+            readout(rb, square(400, 0.05))
+            sync(da, rb)
+            readout(rb, square(200, 0.05))
+        drive(da, square(40, 0.1))
+
+    program = _filled(no_room, Q[0], Q[1], 4, fill=pair, schedule=schedule)
+    plain = pulse.compile(no_room, schedule=schedule).lower(Q[0], Q[1], 4)
+    _kept_in_place(plain, program)
+    results = {(w.cycles, w.rounds): w.result for w in program.idle_windows}
+    assert results[(400, 4)] == "filled by pair()"
+    assert results[(200, 3)] == "left alone: there is less room for it after the loop's last round"
+
+
+@pulse.kernel
+def a_loop_then_synced_rounds(a, b, n: int):
+    da = get_drive_line(a)
+    rb = get_readout_line(b)
+    for _ in range(n):
+        readout(rb, square(400, 0.05))
+    drive(da, square(40, 0.1))
+    for _ in range(n):
+        sync(da, rb)
+        readout(rb, square(300, 0.05))
+        sync(da, rb)
+    drive(da, square(40, 0.1))
+
+
+@pytest.mark.parametrize("schedule", _POLICIES)
+@pytest.mark.parametrize("n", [3, 30])
+def test_syncs_in_a_loop_after_another_loop_of_their_lines_keep_the_program(schedule, n):
+    program = _filled(a_loop_then_synced_rounds, Q[0], Q[1], n, fill=pair, schedule=schedule)
+    plain = pulse.compile(a_loop_then_synced_rounds, schedule=schedule).lower(Q[0], Q[1], n)
+    _kept_in_place(plain, program)
+    assert any(w.filled and w.rounds == n for w in program.idle_windows)
+
+
+@pulse.kernel
+def read_out_beside_synced_rounds(a, b, n: int):
+    da = get_drive_line(a)
+    ra = get_readout_line(a)
+    rb = get_readout_line(b)
+    drive(da, square(40, 0.1))
+    wait(ra, 1000)
+    readout(ra, square(400, 0.05))  # during the third and fourth rounds
+    for _ in range(n):
+        sync(da, rb)
+        readout(rb, square(400, 0.05))
+        sync(da, rb)
+    drive(da, square(40, 0.1))
+
+
+@pulse.kernel
+def read_out_before_trailing_rounds(a, b, n: int):
+    da = get_drive_line(a)
+    ra = get_readout_line(a)
+    rb = get_readout_line(b)
+    drive(da, square(40, 0.1))
+    wait(ra, 150)
+    readout(ra, square(80, 0.05))  # during the first round
+    for _ in range(n):
+        sync(da, rb)
+        readout(rb, square(100, 0.05))
+        sync(da, rb)
+        readout(rb, square(100, 0.05))
+
+
+@pulse.kernel
+def read_out_then_synced_rounds(a, b, n: int):
+    da = get_drive_line(a)
+    ra = get_readout_line(a)
+    rb = get_readout_line(b)
+    drive(da, square(40, 0.1))
+    readout(ra, square(400, 0.05))
+    sync(da, ra)  # the readout ends before the loop
+    wait(da, 100)
+    for _ in range(n):
+        sync(da, rb)
+        readout(rb, square(400, 0.05))
+        sync(da, rb)
+    drive(da, square(40, 0.1))
+
+
+@pytest.mark.parametrize("schedule", _POLICIES)
+@pytest.mark.parametrize("n", [4, 30])
+def test_a_readout_of_the_qudit_before_a_loop_of_syncs_leaves_its_rounds_filled(schedule, n):
+    program = _filled(read_out_then_synced_rounds, Q[0], Q[1], n, fill=pair, schedule=schedule)
+    plain = pulse.compile(read_out_then_synced_rounds, schedule=schedule).lower(Q[0], Q[1], n)
+    _kept_in_place(plain, program)
+    assert [(w.cycles, w.rounds, w.filled) for w in program.idle_windows if w.rounds == n] == [
+        (400, n, True)
+    ]
+
+
+@pytest.mark.parametrize("schedule", _POLICIES)
+@pytest.mark.parametrize("kernel", [read_out_beside_synced_rounds, read_out_before_trailing_rounds])
+def test_syncs_in_a_loop_while_the_qudit_is_read_out_outside_it_cut_no_window(schedule, kernel):
+    # A window of every round there would be laid over the readout in its
+    # first round only, and one before the readout is not after the qudit's
+    # last operation in every round: the windows are left alone.
+    program = _filled(kernel, Q[0], Q[1], 4, fill=pi, schedule=schedule, threshold=60)
+    plain = pulse.compile(kernel, schedule=schedule).lower(Q[0], Q[1], 4)
+    assert program.mlir() == plain.mlir()
+    assert program.idle_windows
+    assert not any(w.filled for w in program.idle_windows)
+
+
+@pulse.kernel
+def own_op_after_the_window(a, b, n: int):
+    da = get_drive_line(a)
+    db = get_drive_line(b)
+    drive(da, square(40, 0.1))
+    for _ in range(n):
+        sync(da, db)
+        drive(db, square(1000, 0.1))  # a idles here in every round
+        sync(da, db)
+        drive(da, square(4, 0.1))  # and plays after it
+
+
+@pulse.kernel
+def one(qudit, window):
+    drive(get_drive_line(qudit), gaussian(40, 0.2, 10))
+
+
+@pytest.mark.parametrize("schedule", _POLICIES)
+@pytest.mark.parametrize("align", ["center", "start"])
+@pytest.mark.parametrize("n", [1, 2, 3, 12])
+def test_the_windows_report_the_fills_the_program_plays(schedule, align, n):
+    # a's line has an op of its own in the loop, after the window: the
+    # syncs before it cut no gap, and each window says what the program
+    # does there, in every round.
+    program = _filled(
+        own_op_after_the_window, Q[0], Q[1], n, fill=one, schedule=schedule, align=align
+    )
+    plain = pulse.compile(own_op_after_the_window, schedule=schedule).lower(Q[0], Q[1], n)
+    _, before = _executions(plain)
+    lines, after = _executions(program)
+    host = set(before)
+    fills = [e for e in after if e not in host and e[0] == "drive" and lines[e[1]] == ("drive", 0)]
+    reported = sum(w.rounds for w in program.idle_windows if w.qudit == 0 and w.filled)
+    assert len(fills) == reported
+    if n == 1:
+        assert reported == 1
+
+
+def test_a_fill_that_runs_other_than_its_windows_report_is_an_internal_error(monkeypatch):
+    # The check behind the test above: each written fill runs as many
+    # times as the windows it fills report, whatever the kernel.
+    from cudaq_pulse._errors import InternalError
+    from cudaq_pulse._idle_windows import Plan
+
+    add = Plan.add
+
+    def under(self, where, site, qudit, items, scope, runs=0):
+        add(self, where, site, qudit, items, scope, runs and runs + 1)
+
+    monkeypatch.setattr(Plan, "add", under)
+    with pytest.raises(InternalError, match="runs 1 times where the windows it fills report 2"):
+        _filled(rounds, Q[0], Q[1], 1)
+
+
 @pytest.mark.parametrize("schedule", ["asap", "alap"])
 @pytest.mark.parametrize("n", [3, 9, 12])
 def test_no_fill_plays_while_readouts_of_other_rounds_run(schedule, n):
@@ -1578,3 +1909,78 @@ def test_a_compilation_without_a_rule_does_not_load_the_module(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip().splitlines()[-1] == "False"
+
+
+def test_a_pinned_kernel_with_replaced_windows_answers_as_the_compiled_kernel():
+    # Pinned to a quantum system, as a compiled kernel is: a view of the
+    # program needs what the compiled kernel's needs, and says the same.
+    qs = pulse.quantum_system("transmon_surface17")
+    compiled = pulse.compile(two_lines, quantum_system=qs, schedule="asap")
+    filled = compiled.replace_idle(pulse.IdleReplacement(pi, threshold=100))
+    with pytest.raises(TypeError) as plain_error:
+        compiled.mlir()
+    with pytest.raises(TypeError) as filled_error:
+        filled.mlir()
+    assert str(filled_error.value) == str(plain_error.value)
+    program = filled.lower(qs.qudits[0], qs.qudits[1])
+    assert program.idle_windows is not None
+
+
+_FILL_AMPLITUDE = [0.2]
+
+
+@pulse.kernel
+def drifting(qudit, window):
+    # A fill of constant length whose amplitude is drawn at trace time.
+    import random
+
+    drive(get_drive_line(qudit), square(40, 0.1 + 0.0 * random.random()))
+
+
+def test_a_fill_whose_trace_can_differ_is_refused():
+    rule = pulse.IdleReplacement(drifting, threshold=100)
+    with pytest.raises(pulse.UnsupportedError, match=r"drifting\(\) calls a function"):
+        pulse.compile(host).replace_idle(rule).lower(Q[0], Q[1])
+
+
+@pulse.kernel
+def reads_a_global(qudit, window):
+    drive(get_drive_line(qudit), square(40, _FILL_AMPLITUDE[0]))
+
+
+def test_a_program_left_unfilled_is_kept_only_while_the_fills_reads_hold():
+    # One drive lane: every window is left alone for lanes. That depends on
+    # the fill, so a change to what the fill reads compiles again.
+    from cudaq_pulse.controller import DriveLine, ReadoutLine
+
+    from tests._handles import ladder_target
+
+    box = pulse.Controller(
+        drive_lines=[DriveLine(q) for q in range(4)],
+        readout_lines=[ReadoutLine(q) for q in range(4)],
+    )
+    qpu = ladder_target(
+        4, control_system=pulse.ControlSystem(controllers=[box], max_concurrent_drives=1)
+    )
+    q = qpu.qudits
+    rule = pulse.IdleReplacement(reads_a_global, threshold=100, leading=True)
+    filled = pulse.compile(two_lines, schedule="alap_rcp").replace_idle(rule)
+    first = filled.lower(q[0], q[1])
+    assert not any(w.filled for w in first.idle_windows)
+    assert filled.lower(q[0], q[1]) is first
+    _FILL_AMPLITUDE[0] = 0.3
+    try:
+        assert filled.lower(q[0], q[1]) is not first
+    finally:
+        _FILL_AMPLITUDE[0] = 0.2
+
+
+def test_an_int_subclass_is_a_threshold_in_cycles():
+    import enum
+
+    class Cycles(enum.IntEnum):
+        HUNDRED = 100
+
+    plain = _windows(host, Q[0], Q[1], threshold=100)
+    assert _windows(host, Q[0], Q[1], threshold=Cycles.HUNDRED) == plain
+    assert _windows(host, Q[0], Q[1], threshold=Cycles.HUNDRED + 0) == plain

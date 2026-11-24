@@ -39,7 +39,8 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   `fill(qudit, window)` written into each idle window of its schedules: a
   stretch of at least the threshold in which a qudit's drive line has no
   operation, none of its tones plays and its own readout does not run, such
-  as a data qudit's wait through an ancilla readout. A fill shorter than its
+  as the time a data qudit spends idle while an ancilla is read out (a
+  kernel's own `wait()` is an operation, not a window). A fill shorter than its
   window is centred with waits (`align=`), a longer one is an error; windows
   in loops are filled in every round and the loop stays rolled. Every
   operation of the kernel keeps its start and the program its length under
