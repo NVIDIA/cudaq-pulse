@@ -153,11 +153,15 @@ static argument (leave its parameter unannotated).
 
 A coupling line first fetched inside a loop is fetched once per program as
 well, but that loop is unrolled; fetch the line before the loop to keep the
-loop rolled. A program that holds a coupling line is not exported yet:
-``export_to_controller`` and ``export_to_emulator`` raise
-``UnsupportedError``, and since a controller's limits are not checked on a
-coupling line yet, it compiles only without a control system, where it
-raises the same error with one. ``classical.emulation.emulate`` does not
+loop rolled. A program that holds a coupling line compiles and simulates
+without a control system only: a controller's limits on a coupling line
+and its export come with a later program format, not with the formats of
+``export_to_controller`` and ``export_to_emulator``. Until then both
+raise ``UnsupportedError``, and so does compiling the kernel for a quantum
+system that has a control system (where the limits are checked: for a
+kernel whose check runs at each call, at the call); the error says to
+simulate the program and to compile it for a quantum system with no
+control system. ``classical.emulation.emulate`` does not
 play a pulse on a coupling line yet either, and raises ``UnsupportedError``
 too; so does a program that holds
 a coupling line beside a classical call, a kernel with its own
