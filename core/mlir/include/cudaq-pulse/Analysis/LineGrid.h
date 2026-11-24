@@ -42,11 +42,25 @@ struct ClockAttributes {
   /// By qudit, the controller of its drive and readout line (-1: none), on
   /// several controllers.
   llvm::SmallVector<int64_t> driveOwner, readoutOwner;
+#if PULSE_COUPLED
+  /// By controller, its grid, when the lines are on several controllers'
+  /// grids: a coupling line names its controller on its acquisition.
+  llvm::SmallVector<int64_t> controllerGrid;
+  /// Whether some coupling line of the module has a delay.
+  bool couplingDelayed = false;
+#endif
 
   ClockAttributes() = default;
 
   explicit ClockAttributes(mlir::ModuleOp module)
       : system(module ? controlSystemOf(module) : ControlSystemAttr()) {
+#if PULSE_COUPLED
+    if (module)
+      module->walk([&](GetCouplingLineOp line) {
+        couplingDelayed |=
+            couplingFact(line.getOperation(), "delay_cycles", 0) != 0;
+      });
+#endif
     if (!system)
       return;
     llvm::ArrayRef<ControllerAttr> controllers = system.getControllers();
@@ -54,6 +68,11 @@ struct ClockAttributes {
       grid = std::lcm(grid, controller.getGridCycles());
     bool several = controllers.size() > 1;
     bool gridded = several && grid > 1;
+#if PULSE_COUPLED
+    if (gridded)
+      for (ControllerAttr controller : controllers)
+        controllerGrid.push_back(controller.getGridCycles());
+#endif
     for (LineAttr line : system.getLines()) {
       bool drive = line.getKind() == LineKind::Drive;
       int64_t controller = line.getController();
@@ -74,7 +93,13 @@ struct ClockAttributes {
   }
 
   /// Whether some line has a delay.
-  bool delayed() const { return !driveDelay.empty() || !readoutDelay.empty(); }
+  bool delayed() const {
+#if PULSE_COUPLED
+    if (couplingDelayed)
+      return true;
+#endif
+    return !driveDelay.empty() || !readoutDelay.empty();
+  }
 
 private:
   static void set(llvm::SmallVector<int64_t> &table, int64_t qudit,
@@ -94,7 +119,11 @@ public:
 
   explicit LineGrid(const ClockAttributes &attrs)
       : fallback(attrs.grid), common(attrs.grid), drive(attrs.driveGrid),
-        readout(attrs.readoutGrid) {}
+        readout(attrs.readoutGrid) {
+#if PULSE_COUPLED
+    controllers = attrs.controllerGrid;
+#endif
+  }
 
   /// Whether some line has a grid coarser than one program cycle.
   bool enabled() const { return common > 1; }
@@ -103,7 +132,13 @@ public:
   int64_t lcm() const { return common; }
 
   /// Whether lines have different grids, so `of` traces them.
-  bool perLine() const { return !drive.empty() || !readout.empty(); }
+  bool perLine() const {
+#if PULSE_COUPLED
+    if (!controllers.empty())
+      return true;
+#endif
+    return !drive.empty() || !readout.empty();
+  }
 
   /// The grid of the line `line` is a version of; `trace` must not outlive
   /// a change to the IR.
@@ -113,6 +148,16 @@ public:
     mlir::Operation *allocation = trace(line);
     if (!allocation)
       return fallback;
+#if PULSE_COUPLED
+    if (mlir::isa<GetCouplingLineOp>(allocation)) {
+      // The grid of the controller that drives it; of no known one, every
+      // controller's.
+      int64_t owner = couplingFact(allocation, "controller", -1);
+      return owner >= 0 && owner < static_cast<int64_t>(controllers.size())
+                 ? controllers[owner]
+                 : fallback;
+    }
+#endif
     int64_t qudit = quditOf(allocation);
     const llvm::SmallVector<int64_t> &grids =
         mlir::isa<GetDriveLineOp>(allocation) ? drive : readout;
@@ -136,6 +181,9 @@ private:
   int64_t fallback = 1;
   int64_t common = 1;
   llvm::SmallVector<int64_t> drive, readout;
+#if PULSE_COUPLED
+  llvm::SmallVector<int64_t> controllers;
+#endif
 };
 
 PULSE_VARIANT_CLOSE

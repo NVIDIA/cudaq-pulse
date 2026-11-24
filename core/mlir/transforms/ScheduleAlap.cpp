@@ -6473,11 +6473,16 @@ static bool playsElsewhere(mlir::Operation *op,
                            const pulse::ClockAttributes &clocks,
                            int64_t controller, pulse::AllocationTracer &trace) {
   if (controller < 0 ||
-      !mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(op))
+      !(mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(op) ||
+        (pulse::kCoupled && mlir::isa<pulse::DriveBasebandOp>(op))))
     return false;
   mlir::Operation *allocation = trace(op->getOperand(0));
   if (!allocation)
     return false;
+  if (pulse::kCoupled && mlir::isa<pulse::GetCouplingLineOp>(allocation)) {
+    int64_t owner = pulse::couplingFact(allocation, "controller", -1);
+    return owner >= 0 && owner != controller;
+  }
   int64_t qudit = pulse::quditOf(allocation);
   const llvm::SmallVector<int64_t> &owners =
       mlir::isa<pulse::GetDriveLineOp>(allocation) ? clocks.driveOwner
