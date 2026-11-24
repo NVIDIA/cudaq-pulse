@@ -126,7 +126,7 @@ def test_a_line_names_what_is_wrong(make, error, match):
 
 def test_a_controller_keeps_its_coupling_lines():
     lines = [CouplingLine(0, amplitude_per_volt=0.52), CouplingLine((1, 2))]
-    controller = pulse.Controller(coupling_lines=tuple(lines))
+    controller = pulse.Controller(coupling_lines=lines)
     assert controller.coupling_lines == tuple(lines)
     assert hash(controller) == hash(pulse.Controller(coupling_lines=tuple(lines)))
     assert controller == pickle.loads(pickle.dumps(controller))
@@ -177,7 +177,6 @@ def test_a_quantum_system_takes_the_lines_it_has_controls_for():
         CouplingLine(3, delay_ns=2.0),
     ]
     qs = _system([pulse.Controller(coupling_lines=lines)])
-    # Checked, and kept as a tuple, when the controller met the system.
     assert qs.control_system.controllers[0].coupling_lines == tuple(lines)
     assert pickle.loads(pickle.dumps(qs)).control_system == qs.control_system
     data = json.loads(json.dumps(qs.as_dict()))
@@ -260,23 +259,38 @@ def test_a_line_that_reaches_no_control_is_refused_at_its_path(line, message, fi
 
 
 @pytest.mark.parametrize(
-    ("given", "match"),
+    ("given", "error", "match"),
     [
-        ([0], "holds CouplingLines, as CouplingLine"),
-        (CouplingLine(0), "is a sequence of CouplingLine"),
+        ([0], pulse.InvalidTypeError, "holds CouplingLines, as CouplingLine"),
+        (CouplingLine(0), pulse.InvalidTypeError, "is a sequence of CouplingLine"),
+        (5, pulse.InvalidTypeError, "is a sequence of CouplingLine"),
         (
             [CouplingLine(3), CouplingLine([3])],
+            pulse.InvalidValueError,
             r"qudit 3's tuning is reached by two coupling lines, CouplingLine\(3\) and "
             r"CouplingLine\(3\)",
         ),
     ],
 )
-def test_a_controllers_lines_are_checked_when_they_are_first_used(given, match):
-    # Building a controller does nothing for its coupling lines; a control
-    # system or a quantum system that takes it checks them.
-    controller = pulse.Controller(coupling_lines=given)
-    with pytest.raises(pulse.PulseError, match=match):
-        _system([controller])
+def test_a_controllers_lines_are_checked_where_it_is_built(given, error, match):
+    with pytest.raises(error, match=match):
+        pulse.Controller(coupling_lines=given)
+    line = CouplingLine(0)
+    with pytest.raises(pulse.InvalidValueError, match="reached by two coupling lines"):
+        pulse.Controller(coupling_lines=[line, line])
+
+
+def test_controllers_compare_by_their_lines_however_they_are_given():
+    lines = [CouplingLine(0), CouplingLine((1, 2))]
+    as_list, as_tuple = (
+        pulse.Controller(coupling_lines=lines),
+        pulse.Controller(coupling_lines=tuple(lines)),
+    )
+    assert as_list == as_tuple and hash(as_list) == hash(as_tuple)
+    assert as_list.coupling_lines == tuple(lines)
+    assert pulse.Controller(coupling_lines=iter(lines)) == as_tuple
+    assert pulse.Controller(coupling_lines=[]) == pulse.Controller()
+    assert hash(pulse.Controller(coupling_lines=[])) == hash(pulse.Controller())
 
 
 def test_a_control_is_reached_from_one_controller():

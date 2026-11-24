@@ -9,14 +9,13 @@ amplitude at the device follows from the volts the output plays, the most
 volts it plays, and its delay. What the control does to its qudits (the
 tuning curve, the idle point, the exchange, the response of the wiring) is
 the quantum system's: a qudit's ``tuning``, a coupling's ``control``. Only
-a controller that is given coupling lines loads this, when it first meets a
-quantum system or a kernel fetches one of them."""
+a controller that is given coupling lines loads this."""
 
 from __future__ import annotations
 
 import math
 from collections.abc import Iterable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, ClassVar, NoReturn, cast
+from typing import TYPE_CHECKING, Any, ClassVar, NoReturn
 
 from ._errors import InvalidTypeError, InvalidValueError, Problem, _ranges
 
@@ -216,14 +215,11 @@ def _rebuilt(
     return CouplingLine(qudits, amplitude_per_volt=per_volt, max_volts=max_volts, delay_ns=delay_ns)
 
 
-def lines_of(controller: Controller) -> tuple[CouplingLine, ...]:
-    """The coupling lines *controller* was given, checked the first time
-    they are asked for and kept as a tuple: each a ``CouplingLine``, no two
-    acting on one set of qudits. Building a controller does not check them."""
+def keep_lines(controller: Controller) -> None:
+    """Checks the coupling lines *controller* is given, as it is built, and
+    keeps them as a tuple: each a ``CouplingLine``, no two acting on one set
+    of qudits."""
     given: Any = controller.coupling_lines
-    kept: tuple[CouplingLine, ...]
-    if controller.__dict__.get("_coupling_lines_checked") is given:
-        return cast("tuple[CouplingLine, ...]", given)
     if isinstance(given, (str, bytes, CouplingLine)) or not isinstance(given, Iterable):
         raise InvalidTypeError(
             f"Controller.coupling_lines is a sequence of CouplingLine, got {given!r}"
@@ -243,8 +239,6 @@ def lines_of(controller: Controller) -> tuple[CouplingLine, ...]:
                 f"{line!r}; a control is reached by one coupling line"
             )
     object.__setattr__(controller, "coupling_lines", kept)
-    object.__setattr__(controller, "_coupling_lines_checked", kept)
-    return kept
 
 
 def list_lines(data: list[dict[str, Any]], controllers: Sequence[Controller]) -> None:
@@ -252,7 +246,7 @@ def list_lines(data: list[dict[str, Any]], controllers: Sequence[Controller]) ->
     of those of *controllers* that have some."""
     for entry, controller in zip(data, controllers, strict=True):
         if controller.coupling_lines:
-            entry["coupling_lines"] = [line._data() for line in lines_of(controller)]
+            entry["coupling_lines"] = [line._data() for line in controller.coupling_lines]
 
 
 def line_from(reader: _Reader, data: Any, path: str) -> CouplingLine | None:
@@ -281,7 +275,7 @@ def reaching(system: ControlSystem, qudit: int) -> list[CouplingLine]:
         line
         for controller in system.controllers
         if controller.coupling_lines
-        for line in lines_of(controller)
+        for line in controller.coupling_lines
         if qudit in line.qudits
     ]
 
@@ -292,30 +286,16 @@ def wiring_problems(
     """The coupling lines of *system* that reach what *target*, the quantum
     system, does not have (a qudit it lacks, a qudit with no tuning, qudits
     with no control of their own), or what a line of another controller
-    reaches; a controller's lines that are not coupling lines too. They
-    are found when a control system meets its quantum system: building a
-    controller or a control system does nothing for them. *calibration*,
-    the quantum system's, gives the tunings it derives; ``False`` leaves the
-    check to the quantum system that is built next."""
+    reaches. They are found when a control system meets its quantum
+    system. *calibration*, the quantum system's, gives the tunings and
+    interactions that are not declared; ``False`` leaves the check to the
+    quantum system that is built next."""
     problems: list[Problem] = []
     if calibration is False:
         return problems
     first: dict[tuple[int, ...], str] = {}
     for index, controller in enumerate(system.controllers):
-        if not controller.coupling_lines:
-            continue
-        try:
-            kept = lines_of(controller)
-        except (TypeError, ValueError) as error:
-            problems.append(
-                Problem(
-                    str(error),
-                    path=f"control_system.controllers[{index}].coupling_lines",
-                    value=controller.coupling_lines,
-                )
-            )
-            continue
-        for position, line in enumerate(kept):
+        for position, line in enumerate(controller.coupling_lines):
             where = f"controllers[{index}].coupling_lines[{position}]"
             path = f"control_system.{where}"
             seen = first.setdefault(line.qudits, where)

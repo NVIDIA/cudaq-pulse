@@ -719,7 +719,8 @@ coupled or whose coupling has no control of its own (a pair whose
 tunings, and the error names the lines that reach them), three or more
 qudits, or what another line already reaches, is a
 ``QuantumSystemDefinitionError`` naming the line and the fix. Building a
-controller alone checks nothing of its coupling lines. In a system file a
+controller checks its coupling lines themselves: each a ``CouplingLine``,
+no two acting on the same qudits. In a system file a
 coupling line is ``{"qudits": [1, 2], "amplitude_per_volt": 0.31}``.
 
 Shared lines

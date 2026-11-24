@@ -426,11 +426,6 @@ def test_what_scheduling_does_not_do_yet_is_refused():
     message = _raises(pulse.compile(tuned, quantum_system=QS, control_system=plain), A)
     assert "no coupling line of the control system acts on exactly qudit 0" in message
     assert "coupling_lines=[CouplingLine(0)]" in message
-    # A controller's lines that are not coupling lines are named, not read.
-    with pytest.raises(pulse.InvalidTypeError, match="holds CouplingLines"):
-        pulse.compile(
-            tuned, quantum_system=QS, control_system=pulse.Controller(coupling_lines=[5])
-        ).lower(A)
     delayed = pulse.Controller(coupling_lines=[CouplingLine(0, delay_ns=2.0)])
     with pytest.raises(pulse.UnsupportedError, match=r"the delay of CouplingLine\(0, delay_ns"):
         pulse.compile(tuned, quantum_system=QS, control_system=delayed).lower(A)

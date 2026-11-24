@@ -100,10 +100,8 @@ def _require_scheduled(b: Any) -> None:
             "coupling lines are not scheduled on a control system of several controllers "
             "yet; compile the kernel for one controller"
         )
-    from .._coupling_lines import lines_of
-
     for controller in controllers:
-        for line in lines_of(controller) if controller.coupling_lines else ():
+        for line in controller.coupling_lines:
             if line.delay_ns:
                 raise UnsupportedError(
                     f"the delay of {line!r} is not applied when a program is scheduled yet; "
@@ -119,7 +117,7 @@ def _require_declared(b: Any, reached: list[int | None]) -> None:
     target = getattr(getattr(b, "line_tones", None), "__self__", None)
     if target is None or any(q is None or q < 0 for q in reached):
         return
-    from .._coupling_lines import _and, lines_of, reach_problem
+    from .._coupling_lines import _and, reach_problem
 
     acts_on = tuple(sorted(q for q in reached if q is not None))
     # The control system the kernel is compiled for, else the quantum system's.
@@ -133,12 +131,7 @@ def _require_declared(b: Any, reached: list[int | None]) -> None:
         system = target.control_system
         controllers = None if system is None else system.controllers
     if controllers is not None:
-        declared = [
-            line
-            for controller in controllers
-            if controller.coupling_lines
-            for line in lines_of(controller)
-        ]
+        declared = [line for controller in controllers for line in controller.coupling_lines]
         if not any(line.qudits == acts_on for line in declared):
             near = [repr(line) for line in declared if not set(acts_on).isdisjoint(line.qudits)]
             many = len(acts_on) > 1

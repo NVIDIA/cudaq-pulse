@@ -179,6 +179,8 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   another line already reaches, naming the line and the fix. System files
   keep the lines; a controller's exported limits do not list them, and a
   controller without them builds, prints, pickles and exports as before.
+  A controller checks its lines where it is built (each a `CouplingLine`,
+  no two on the same qudits).
 - **Post-selection.** `SimulationResult.postselect(keep)` is the result
   over the branches the test `keep` accepts (a function of a `Branch`, as
   `lambda b: b.answers("herald")[-1]`): their state, normalized, their

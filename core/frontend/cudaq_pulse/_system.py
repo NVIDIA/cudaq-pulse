@@ -817,8 +817,7 @@ class Controller:
     outputs that play a baseband waveform on a control of the quantum
     system, each named by the set of qudits it acts on: ``CouplingLine(0)``
     is the line of qudit 0's own tuning and ``CouplingLine((1, 2))`` that of
-    the control of the coupling of qudits 1 and 2. They are checked when the
-    controller meets a quantum system.
+    the control of the coupling of qudits 1 and 2.
     ``update_buses``: the groups of its lines whose updates share one bus
     (``UpdateBus``), which carries one update at a time; updates on one bus
     must start ``cycles_per_update`` apart, else the program is a violation
@@ -874,9 +873,7 @@ class Controller:
     model: str | None = None
     version: str | None = None
     processors: Sequence[Processor] = ()
-    # Checked when the controller meets a quantum system or a kernel fetches
-    # a coupling line (_coupling_lines.lines_of): building a controller does
-    # nothing for them, and one without them prints as before.
+    # A controller without them prints as before they existed.
     coupling_lines: Sequence[CouplingLine] = field(default=(), repr=False)
     # The fields as_dict lists for every controller.
     if TYPE_CHECKING:
@@ -885,6 +882,10 @@ class Controller:
         _listed_fields = _ListedFields()
 
     def __post_init__(self) -> None:
+        if self.coupling_lines != ():
+            from ._coupling_lines import keep_lines
+
+            keep_lines(self)
         for name in ("persistent_frames", "blocks_on_calls", "space_updates"):
             if not isinstance(getattr(self, name), bool):
                 raise InvalidValueError(
@@ -1042,21 +1043,12 @@ class Controller:
         object.__setattr__(self, "processors", tuple(processors))
 
     def __hash__(self) -> int:
-        try:
-            return hash(
-                tuple(
-                    tuple(sorted(value.items())) if isinstance(value, Mapping) else value
-                    for value in (getattr(self, f.name) for f in fields(self))
-                )
+        return hash(
+            tuple(
+                tuple(sorted(value.items())) if isinstance(value, Mapping) else value
+                for value in (getattr(self, f.name) for f in fields(self))
             )
-        except TypeError:
-            # Coupling lines given as a list: checked and kept as a tuple now.
-            from ._coupling_lines import lines_of
-
-            if isinstance(self.coupling_lines, tuple):
-                raise
-            lines_of(self)
-            return hash(self)
+        )
 
     def __reduce__(self) -> tuple[Any, ...]:
         from ._pickling import frozen_reduce
