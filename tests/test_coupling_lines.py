@@ -306,6 +306,8 @@ def test_controllers_compare_by_their_lines_however_they_are_given():
     backwards = pulse.Controller(coupling_lines=lines[::-1])
     assert backwards == as_tuple and hash(backwards) == hash(as_tuple)
     assert backwards.coupling_lines == tuple(lines)
+    assert pickle.dumps(backwards) == pickle.dumps(as_tuple)
+    assert pickle.loads(pickle.dumps(backwards)) == as_tuple
     assert pulse.Controller(coupling_lines=set(lines)) == as_tuple
     assert pulse.Controller(coupling_lines=np.array([])) == pulse.Controller()
     assert pulse.Controller(coupling_lines=[]) == pulse.Controller()

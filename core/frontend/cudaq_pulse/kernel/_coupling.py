@@ -133,14 +133,16 @@ def _watch_drives(emitter: Any) -> None:
     if isinstance(emitter, _DrivesCouplingLines):
         return
     _watch(emitter)
+    from ._emitter import PulseIREmitter as Tracer
+
     builder = emitter.b
     frame: Any = sys._getframe(1)
     while frame is not None:
         owner = frame.f_locals.get("self")
+        # Only a tracer of this trace: nothing else on the stack is read.
         if (
-            owner is not None
-            and getattr(owner, "b", None) is builder
-            and hasattr(owner, "_emit_pulse_call")
+            isinstance(owner, Tracer)
+            and owner.b is builder
             and not isinstance(owner, _DrivesCouplingLines)
         ):
             _watch(owner)

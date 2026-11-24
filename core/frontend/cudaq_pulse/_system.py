@@ -1064,6 +1064,9 @@ class Controller:
         if not self.coupling_lines:
             # A controller without coupling lines pickles as before they existed.
             del reduced[1][1]["coupling_lines"]
+        else:
+            # As a plain tuple, whatever order the lines were given in.
+            reduced[1][1]["coupling_lines"] = tuple(self.coupling_lines)
         return reduced
 
     def as_dict(self) -> dict[str, Any]:

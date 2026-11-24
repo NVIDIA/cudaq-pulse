@@ -186,8 +186,9 @@ def interaction_of(
 ) -> CouplingInteraction | None:
     """The interaction of *coupling* of *description*: declared, else, for a
     coupling with no control, the charge coupling made through the tunings
-    the system answers with for its two qudits (declared or derived), with
-    the g_c of the calibration that gives the qudits; else None. With
+    the system answers with for its two qudits (declared or derived, each
+    a ``FluxTuning``), with the g_c of the calibration that gives the
+    qudits; else None. With
     *first*, the index of one of its qudits, as that qudit and then the
     other see it (its tunings in that order)."""
     declared = coupling.interaction
