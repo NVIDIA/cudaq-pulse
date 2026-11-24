@@ -200,7 +200,18 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   imaginary part is a `CompilationError`, at the kernel's line where the
   kernel says so and from `pulse-verify` otherwise. A tone on it,
   `line.tone`, a frame op, a readout or a calibrated pulse on it are
-  errors that say so. A program that holds a coupling line compiles and
+  errors that say so. `lowered.lines` lists a compiled kernel's lines in
+  the order `ScheduledEvent.line` numbers them, each a
+  `cudaq_pulse.compiler.Line`: its `index`, `role` (`"drive"`,
+  `"readout"`, `"coupling"`) and `qudits`, the `controller` that plays it
+  with the `output_qudits` its output reaches (every qudit of a shared
+  `DriveLine([0, 1], ...)`) and its `delay_ns` (`None` without a control
+  system; the repr leaves out what is `None`), and for a
+  coupling line the `component` it reaches (the tuning or control the
+  quantum system answers with) and the `amplitude_per_volt` and
+  `max_volts` its `CouplingLine` declares. The table is made when it is
+  asked for; a program whose lines are never asked for does nothing for
+  it. A program that holds a coupling line compiles and
   simulates without a control system only: a controller's limits on a
   coupling line and its export come with a later program format, and
   until then compiling for a control system, `export_to_controller` and
