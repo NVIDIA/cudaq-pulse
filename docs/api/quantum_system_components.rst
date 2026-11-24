@@ -78,9 +78,11 @@ compiling anything:
 
    qs = pulse.quantum_system("transmon_surface17")
    d4, x2 = qs.qudit("D4"), qs.qudit("X2")
-   qs.tuning(d4).frequency_at(-0.3)                        # Hz, 0.3 flux quanta off idle
-   qs.tuning(d4).amplitude_for(5.276e9)                    # -0.3015
-   point = qs.interaction(x2, d4).at((x2, d4), {d4: -0.3015})   # X2 idles
+   tuning, pair = qs.tuning(d4), qs.interaction(x2, d4)
+   assert tuning is not None and pair is not None   # None where the system says nothing
+   tuning.frequency_at(-0.3)                               # Hz, 0.3 flux quanta off idle
+   tuning.amplitude_for(5.276e9)                           # -0.3015
+   point = pair.at((x2, d4), {d4: -0.3015})                # X2 idles
    print(point.frequencies_hz, point.exchange_hz, point.exchanges_hz[(1, 1), (2, 0)])
 
 Each component records where its values come from in ``source``: on the

@@ -5667,8 +5667,14 @@ private:
   static constexpr size_t kMaxPrograms = 64;
 
   ProgramTemplate lowerOperatorProgram() {
-    if (saysCouplingLines()) [[unlikely]]
-      refuseSimulatedCouplingLines(*module_);
+    // The conversion maps no pulse on a coupling line itself: it lowers
+    // one for whoever asked with pulse.simulate_coupling_lines.
+    if (saysCouplingLines()) [[unlikely]] {
+      auto asked = (*module_)->getAttrOfType<mlir::BoolAttr>(
+          "pulse.simulate_coupling_lines");
+      if (!asked || !asked.getValue())
+        refuseSimulatedCouplingLines(*module_);
+    }
     auto lowered = mlir::OwningOpRef<mlir::ModuleOp>(module_->clone());
     mlir::PassManager pm(ctx_.get());
     pm.addPass(pulse::createPulseToQOpPass());

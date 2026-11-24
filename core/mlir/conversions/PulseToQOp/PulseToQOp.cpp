@@ -56,12 +56,25 @@
 #include "cudaq-pulse/Analysis/LineGrid.h"
 #include "cudaq-pulse/Runtime/WaveformCallback.h"
 
+// The walk that reports the pulses on a coupling line, as pulse::coupled::
+// (see Variant.h): run only for a module that holds one.
+#undef PULSE_COUPLED
+#define PULSE_COUPLED 2
+#include "cudaq-pulse/Analysis/Execution.h"
+#include "cudaq-pulse/Analysis/LineTrace.h"
+#include "cudaq-pulse/Analysis/Timing.h"
+#undef PULSE_COUPLED
+#define PULSE_COUPLED 0
+#include "cudaq-pulse/Analysis/Variant.h"
+
 #include <algorithm>
 #include <cmath>
 #include <complex>
 #include <functional>
 #include <limits>
 #include <optional>
+#include <type_traits>
+#include <variant>
 
 using namespace mlir;
 
@@ -607,6 +620,18 @@ pulseTrain(ArrayRef<pulse::Occurrence> occurrences,
   return train;
 }
 
+/// The callback kind of a pulse on a coupling line as this pass writes it:
+/// custom samples (kind 7) that are the pulse's amplitude, in the unit of
+/// the control the line reaches, not yet a coefficient. After the header
+/// come what the term is (0: the qudit's frequency shift on its number
+/// operator, 1: half its anharmonicity shift on n (n - 1), 2: the change of
+/// the pair's exchange), its sign, the number of the line's qudits and
+/// their indices, then the samples, one per program cycle. The quantum
+/// system's tuning or control maps them (runtime/_coupled.py); no
+/// evaluator knows the kind, so a term nobody mapped fails where it is
+/// evaluated.
+constexpr int32_t kMappedSamples = 7 | 0x400;
+
 struct PulseToQOpPass
     : public PassWrapper<PulseToQOpPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PulseToQOpPass)
@@ -624,15 +649,32 @@ struct PulseToQOpPass
 
   void runOnOperation() override {
     auto module = getOperation();
-    // Asked once of the module (Variant.h): the operator program has no
-    // term for a coupling line yet, and would leave its pulses out.
+    // Asked once of the module (Variant.h). What a pulse on a coupling
+    // line does is the quantum system's to say (its tunings and controls),
+    // which this pass does not hold: it writes the pulse's samples as a
+    // term for whoever asked with `pulse.simulate_coupling_lines` to map
+    // (see kMappedSamples), and refuses a module nobody asked that of.
     if (module->hasAttr(pulse::kCouplingLinesAttr)) [[unlikely]]
       if (pulse::holdsCouplingLine(module)) {
-        module.emitError("this program holds a coupling line; a program with "
-                         "a coupling line is not simulated or emulated yet");
-        pulse::lastRefusal = pulse::Refusal::NotSimulated;
-        return signalPassFailure();
+        auto asked =
+            module->getAttrOfType<BoolAttr>("pulse.simulate_coupling_lines");
+        if (!asked || !asked.getValue()) {
+          module.emitError("this program holds a coupling line; a program with "
+                           "a coupling line is not simulated or emulated yet");
+          pulse::lastRefusal = pulse::Refusal::NotSimulated;
+          return signalPassFailure();
+        }
+        return lower<true>(module);
       }
+    lower<false>(module);
+  }
+
+  /// The lowering of `module`. `Coupled` is the lowering of a module that
+  /// holds a coupling line: the same code, with the walk that reports the
+  /// pulses on coupling lines and their terms compiled in. A module
+  /// without one runs the other, which has neither.
+  template <bool Coupled>
+  void lower(ModuleOp module) {
     OpBuilder b(module.getContext());
 
     func::FuncOp mainFunc;
@@ -809,6 +851,33 @@ struct PulseToQOpPass
       walker.errorOp->emitError(walker.error);
       return signalPassFailure();
     }
+    // The pulses on coupling lines of this path, from the walk that reports
+    // them; they count for where the program ends.
+    std::conditional_t<Coupled, SmallVector<pulse::coupled::Occurrence>,
+                       std::monostate>
+        couplingPulses;
+    if constexpr (Coupled) {
+      pulse::coupled::Path taken;
+      for (const auto &[key, outcome] : path)
+        taken[{key.readout, key.iteration}] = outcome;
+      pulse::coupled::ExecutionWalker second(clockGHz, taken);
+      second.onTimed = [&](const pulse::coupled::Occurrence &occurrence) {
+        endCycles = std::max(endCycles, occurrence.startCycles +
+                                            occurrence.durationCycles);
+      };
+      second.onCouplingDrive = [&](const pulse::coupled::Occurrence &o) {
+        double startNs = o.startCycles / clockGHz;
+        double endNs = (o.startCycles + o.durationCycles) / clockGHz;
+        if ((windowEnd && startNs >= *windowEnd) ||
+            (windowStart && endNs <= *windowStart))
+          return;
+        couplingPulses.push_back(o);
+      };
+      if (!second.run(mainFunc)) {
+        second.errorOp->emitError(second.error);
+        return signalPassFailure();
+      }
+    }
     // A branch on a measurement without an outcome is skipped: that is only
     // right if the measurement completes no earlier than the window ends.
     for (const auto &key : walker.undecided) {
@@ -960,6 +1029,95 @@ struct PulseToQOpPass
           allProducts.push_back(
               ops.product({{static_cast<int64_t>(index), "anharmonic"}},
                           0.5 * alpha * 2.0 * M_PI * 1.0e-9));
+
+    // Each pulse on a coupling line as terms whose callback holds the
+    // pulse's amplitude at every cycle, unmapped.
+    if constexpr (Coupled) {
+      pulse::coupled::AllocationTracer lines;
+      int index = 0;
+      for (const pulse::coupled::Occurrence &o : couplingPulses) {
+        Operation *allocation = lines(o.op->getOperand(0));
+        if (!allocation || !isa<pulse::GetCouplingLineOp>(allocation)) {
+          o.op->emitError("the coupling line of this pulse is not known");
+          return signalPassFailure();
+        }
+        auto qudits = pulse::coupled::couplingQudits(allocation);
+        if (llvm::is_contained(qudits, -1) || qudits.size() > 2) {
+          o.op->emitError(
+              "a pulse on the coupling line of a qudit that is not bound, or "
+              "of three or more qudits, is not simulated");
+          return signalPassFailure();
+        }
+        const double startNs = o.startCycles / clockGHz;
+        const double durationNs = o.durationCycles / clockGHz;
+        SmallVector<double> samples;
+        for (int64_t k = 0; k < o.durationCycles; ++k) {
+          auto value = envelopeAt(o.op->getOperand(1), (k + 0.5) / clockGHz,
+                                  durationNs, clockGHz);
+          if (!value) {
+            o.op->emitError(
+                "the waveform of a pulse on a coupling line is simulated "
+                "from its values: give the kernel's float arguments");
+            return signalPassFailure();
+          }
+          samples.push_back(value->real());
+        }
+        // (what, sign, the line's qudits) and then the samples.
+        auto unmapped = [&](double what, double sign, double phase,
+                            int32_t quadrature, double detuning) {
+          WaveformCallbackData callback{
+              kMappedSamples,
+              {startNs, durationNs, 0.0, 0.0, 0.0, 0.0, 0.0, phase,
+               static_cast<double>(quadrature), detuning}};
+          callback.parameters.push_back(what);
+          callback.parameters.push_back(sign);
+          callback.parameters.push_back(static_cast<double>(qudits.size()));
+          for (int64_t qudit : qudits)
+            callback.parameters.push_back(static_cast<double>(qudit));
+          for (double sample : samples)
+            callback.parameters.push_back(sample);
+          return callback;
+        };
+        const std::string name = "coupling_drive_" + std::to_string(index++);
+        if (qudits.size() == 1) {
+          int64_t q = qudits[0];
+          if (!ops.simulated(q))
+            continue;
+          allProducts.push_back(ops.timed({{q, "number"}}, name + "_f",
+                                          unmapped(0.0, 1.0, 0.0, 0, 0.0)));
+          if (ops.levelsOf(q) > 2)
+            allProducts.push_back(ops.timed({{q, "anharmonic"}}, name + "_a",
+                                            unmapped(1.0, 1.0, 0.0, 0, 0.0)));
+          continue;
+        }
+        int64_t a = qudits[0], c = qudits[1];
+        if (!ops.simulated(a) || !ops.simulated(c))
+          continue;
+        if (!quditFreqHz.count(a) || !quditFreqHz.count(c)) {
+          o.op->emitError("a pulse on a coupling line reaches a qudit the "
+                          "simulated system gives no frequency for");
+          return signalPassFailure();
+        }
+        // The change of the exchange turns with the qudits' frames, as the
+        // static exchange does (see `exchange` above).
+        const double detuning =
+            (quditFreqHz[a] - quditFreqHz[c]) * 2.0 * M_PI * 1.0e-9;
+        const std::pair<int64_t, StringRef> terms[][2] = {
+            {{a, "spin_x"}, {c, "spin_x"}},
+            {{a, "spin_y"}, {c, "spin_y"}},
+            {{a, "spin_y"}, {c, "spin_x"}},
+            {{a, "spin_x"}, {c, "spin_y"}}};
+        const double signs[] = {1.0, 1.0, 1.0, -1.0};
+        for (auto [term, factors] : llvm::enumerate(terms)) {
+          if (detuning == 0.0 && term >= 2)
+            break;
+          allProducts.push_back(
+              ops.timed(factors, name + "_" + std::to_string(term),
+                        unmapped(2.0, signs[term], detuning * startNs,
+                                 static_cast<int32_t>(term / 2), detuning)));
+        }
+      }
+    }
 
     // 2. Time-dependent drive terms
     int driveIdx = 0;
