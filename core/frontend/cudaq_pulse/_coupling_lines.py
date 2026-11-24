@@ -240,9 +240,21 @@ def keep_lines(controller: Controller) -> None:
             )
     # The lines of a controller are a set: kept in the order of their
     # qudits, so that controllers given the same lines in any order are equal.
-    object.__setattr__(
-        controller, "coupling_lines", tuple(sorted(kept, key=lambda line: line.qudits))
-    )
+    order = sorted(range(len(kept)), key=lambda position: kept[position].qudits)
+    lines: tuple[CouplingLine, ...] = tuple(kept[position] for position in order)
+    if order != list(range(len(kept))):
+        # Where each was given, for a problem's path.
+        lines = _Reordered(lines)
+        lines.given = tuple(order)
+    object.__setattr__(controller, "coupling_lines", lines)
+
+
+class _Reordered(tuple[CouplingLine, ...]):
+    """A controller's coupling lines that were given in another order: the
+    tuple it keeps, with the position each line was given at (``given``),
+    which a problem with a line names."""
+
+    given: tuple[int, ...]
 
 
 def list_lines(data: list[dict[str, Any]], controllers: Sequence[Controller]) -> None:
@@ -328,7 +340,10 @@ def wiring_problems(
         return problems
     first: dict[tuple[int, ...], str] = {}
     for index, controller in enumerate(system.controllers):
+        given = getattr(controller.coupling_lines, "given", None)
         for position, line in enumerate(controller.coupling_lines):
+            if given is not None:
+                position = given[position]
             where = f"controllers[{index}].coupling_lines[{position}]"
             path = f"control_system.{where}"
             seen = first.setdefault(line.qudits, where)

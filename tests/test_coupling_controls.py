@@ -586,6 +586,9 @@ def test_the_answers_take_handles_of_the_system_or_indices(shipped):
     with pytest.raises(pulse.InvalidTypeError, match="takes qudit handles"):
         shipped.tuning(True)
     assert shipped.tuning(shipped.qudits[0]) is shipped.tuning(shipped.qudits[0].index)
+    assert shipped.tuning(np.int64(D4)) is shipped.tuning(D4)
+    # Asking does not read the calibration's values to find what it kept.
+    assert shipped.interaction(np.int64(X2), D4) is shipped.interaction(X2, D4)
 
 
 def test_a_calibration_without_circuits_gives_no_tunings_and_pickles_as_it_was(shipped):
@@ -602,5 +605,7 @@ def test_a_calibration_without_circuits_gives_no_tunings_and_pickles_as_it_was(s
     custom = type(cal)(json.loads(json.dumps(cal._data)), name="custom")
     held = pulse.quantum_system("transmon_surface17", calibration=custom)
     before_custom = pickle.dumps(custom)
+    # Each calibration answers for itself, however equal their values.
+    assert held.tuning(D4).source.startswith("custom calibration, qudits.D4:")
     assert held.tuning(D4) == shipped.tuning(D4).replace(source=held.tuning(D4).source)
     assert pickle.dumps(custom) == before_custom and pickle.dumps(bare) == before

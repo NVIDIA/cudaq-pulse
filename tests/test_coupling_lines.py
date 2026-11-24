@@ -368,3 +368,25 @@ def test_a_system_files_coupling_lines_are_reported_at_their_own_path(lines, pat
         pulse.QuantumSystem.from_dict(data)
     found = {p.path: p.message for p in raised.value.problems}
     assert path in found and match in found[path], found
+
+
+def test_a_problem_names_the_line_where_it_was_given():
+    # Kept in the order of their qudits; a problem's path is where the line
+    # was given.
+    always_on = CouplingLine((4, 5))
+    with pytest.raises(pulse.QuantumSystemDefinitionError) as raised:
+        _system([pulse.Controller(coupling_lines=[always_on, CouplingLine(0)])])
+    (problem,) = raised.value.problems
+    assert problem.path == "control_system.controllers[0].coupling_lines[0]"
+    assert problem.value == always_on
+    qs = _system([pulse.Controller(coupling_lines=[CouplingLine((1, 2)), CouplingLine(0)])])
+    data = json.loads(json.dumps(qs.as_dict()))
+    data["control_system"]["controllers"][0]["coupling_lines"] = [
+        {"qudits": [4, 5]},
+        {"qudits": [0]},
+    ]
+    with pytest.raises(pulse.QuantumSystemDefinitionError) as raised:
+        pulse.QuantumSystem.from_dict(data)
+    assert [p.path for p in raised.value.problems] == [
+        "control_system.controllers[0].coupling_lines[0]"
+    ]

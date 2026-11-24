@@ -5,14 +5,17 @@ and ``drive`` on the line it gives.
 
 A coupling line reaches a control of the quantum system, one qudit's own
 tuning or the control of several qudits, and plays a real waveform at
-baseband: it has no tone. The tracer hands both calls over from where it
-already handles a call that is not (line, waveform, tone), so a kernel
+baseband: it has no tone. The tracer hands ``get_coupling_line`` over from
+where it already handles a call it has no emitter for; from the first
+coupling line on, the tracers of the trace are of a class that sends a
+``drive`` on a coupling line here (``_DrivesCouplingLines``). A kernel
 without coupling lines runs nothing of this, and the module loads with the
 first kernel that fetches one."""
 
 from __future__ import annotations
 
 import struct
+import sys
 from typing import TYPE_CHECKING, Any
 
 from .._errors import CompilationError, UnsupportedError
@@ -81,6 +84,7 @@ def get_coupling_line(emitter: PulseIREmitter, call_args: list[Any]) -> tuple[An
     lines = emitter._lines
     key = ("_".join(str(q.vid) for q in qudits), _FETCH)
     held = lines.held.get(key)
+    _watch_drives(emitter)
     if held is not None:
         lines.share(held)
         return (held.cells[0].value,)
@@ -89,7 +93,6 @@ def get_coupling_line(emitter: PulseIREmitter, call_args: list[Any]) -> tuple[An
     # Counted as an acquisition and not listed among those a rolled loop
     # lifts out: a loop whose body first fetches a coupling line is unrolled.
     emitter._acquired[0] += 1
-    _take_plays(emitter)
     results: tuple[IRValue, ...]
     if isinstance(b, PackedIRBuilder):
         results = (_packed_line(b, qudits, indices),)
@@ -99,7 +102,7 @@ def get_coupling_line(emitter: PulseIREmitter, call_args: list[Any]) -> tuple[An
     return results
 
 
-class _TakesPlays:
+class _DrivesCouplingLines:
     """A tracer that has fetched a coupling line: its pulse calls come here
     first. A ``drive`` or ``readout`` whose line is a coupling line is this
     module's (it takes no tone, and no calibrated pulse yet); every other
@@ -116,22 +119,42 @@ class _TakesPlays:
 
 
 # The class of a tracer that has fetched a coupling line, by the class it had.
-_TAKING: dict[type, type] = {}
+_WATCHING: dict[type, type] = {}
 
 
-def _take_plays(emitter: Any) -> None:
+def _watch_drives(emitter: Any) -> None:
     """From the first coupling line of a trace on, the tracer is of a class
-    that looks at its pulse calls first (``_TakesPlays``). A trace without
-    coupling lines keeps the tracer's class."""
-    cls = emitter.__class__
-    if issubclass(cls, _TakesPlays):
+    that looks at its pulse calls first (``_DrivesCouplingLines``), and so
+    are the tracers of the kernels and helpers it is called from, which
+    the line may go back to: they are the tracers of this trace on the call
+    stack, since a helper is traced inside its caller. A tracer made later
+    takes its maker's class. A trace without coupling lines keeps the
+    tracer's class."""
+    if isinstance(emitter, _DrivesCouplingLines):
         return
-    taking = _TAKING.get(cls)
-    if taking is None:
-        taking = _TAKING[cls] = type(
-            f"Coupled{cls.__name__}", (_TakesPlays, cls), {"__slots__": ()}
+    _watch(emitter)
+    builder = emitter.b
+    frame: Any = sys._getframe(1)
+    while frame is not None:
+        owner = frame.f_locals.get("self")
+        if (
+            owner is not None
+            and getattr(owner, "b", None) is builder
+            and hasattr(owner, "_emit_pulse_call")
+            and not isinstance(owner, _DrivesCouplingLines)
+        ):
+            _watch(owner)
+        frame = frame.f_back
+
+
+def _watch(emitter: Any) -> None:
+    cls = emitter.__class__
+    watching = _WATCHING.get(cls)
+    if watching is None:
+        watching = _WATCHING[cls] = type(
+            f"Coupled{cls.__name__}", (_DrivesCouplingLines, cls), {"__slots__": ()}
         )
-    emitter.__class__ = taking
+    emitter.__class__ = watching
 
 
 def _require_scheduled(b: Any) -> None:
@@ -247,6 +270,10 @@ def drive(emitter: PulseIREmitter, fname: str, call_args: list[Any]) -> tuple[An
     """``drive(line, waveform)`` on a coupling line: the waveform itself, at
     baseband, with no tone."""
     line = call_args[0]
+    if len(call_args) < 2:
+        from ._emit_errors import play_arity_error
+
+        raise play_arity_error(fname, len(call_args))
     if fname != "drive":
         raise CompilationError(
             f"{fname}() takes a readout line, got a coupling line; a coupling line plays "

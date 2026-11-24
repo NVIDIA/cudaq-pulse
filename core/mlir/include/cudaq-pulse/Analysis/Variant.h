@@ -21,6 +21,8 @@
 // a source includes a header once for each (the headers that allow it have
 // a guard per variant).
 
+// Include after the Pulse dialect type headers.
+
 #include "mlir/IR/BuiltinOps.h"
 
 #ifndef PULSE_COUPLED
@@ -57,11 +59,28 @@ inline bool saysCouplingLines(mlir::Operation *op) {
   return module && module->hasAttr(kCouplingLinesAttr);
 }
 
+/// Whether `module` holds a coupling line. The attribute says that one was
+/// made; a walk, made only for a module with the attribute, says whether it
+/// is still there (a line fetched and never used is dropped as unused): an
+/// op that gives one.
+inline bool holdsCouplingLine(mlir::ModuleOp module) {
+  if (!module->hasAttr(kCouplingLinesAttr)) [[likely]]
+    return false;
+  return module
+      ->walk([](mlir::Operation *op) {
+        for (mlir::Type type : op->getResultTypes())
+          if (mlir::isa<CouplingLineType>(type))
+            return mlir::WalkResult::interrupt();
+        return mlir::WalkResult::advance();
+      })
+      .wasInterrupted();
+}
+
 /// What a pass refused of the kernel, for the caller that reports the
 /// pass's failure: a code, so that it need not read the diagnostics' text.
 /// The pass sets it where it emits the error; the caller takes it and sets
 /// it back when it reports a failure.
-enum class Refusal { None, ComplexWaveform };
+enum class Refusal { None, ComplexWaveform, NotSimulated };
 inline thread_local Refusal lastRefusal = Refusal::None;
 
 } // namespace pulse

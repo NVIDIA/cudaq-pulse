@@ -12,6 +12,7 @@ add_mlir_dialect_library(CudaqPulsePulseTransforms
   ScheduleAlapCoupled.cpp
   ClassicalCheck.cpp
   FrameChanges.cpp
+  FrameChangesCoupled.cpp
   LowerSelects.cpp
 
   DEPENDS

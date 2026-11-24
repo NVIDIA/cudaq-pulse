@@ -253,22 +253,7 @@ struct KernelRefused : std::runtime_error {
   using std::runtime_error::runtime_error;
 };
 
-/// Whether `module` holds a coupling line. The attribute says that one was
-/// made; a walk, made only for a module with the attribute, says whether it
-/// is still there (a line fetched and never used is dropped as unused): an
-/// op that gives one.
-inline bool holdsCouplingLine(mlir::ModuleOp module) {
-  if (!module->hasAttr(kCouplingLinesAttr)) [[likely]]
-    return false;
-  return module
-      ->walk([](mlir::Operation *op) {
-        for (mlir::Type type : op->getResultTypes())
-          if (mlir::isa<pulse::CouplingLineType>(type))
-            return mlir::WalkResult::interrupt();
-        return mlir::WalkResult::advance();
-      })
-      .wasInterrupted();
-}
+using pulse::holdsCouplingLine;
 
 /// Refuse a program that holds a coupling line where a controller's program
 /// is walked, for an export or a check of a controller's limits.
@@ -296,7 +281,7 @@ struct PlainEvents {
   static bool acquires(mlir::Operation *op) {
     return mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op);
   }
-  static bool plays(mlir::Operation &op) {
+  static bool isPulse(mlir::Operation &op) {
     return mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(op);
   }
   static std::string kind(mlir::Operation &op) {
@@ -320,7 +305,7 @@ struct CoupledEvents {
     return mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp,
                      pulse::GetCouplingLineOp>(op);
   }
-  static bool plays(mlir::Operation &op) {
+  static bool isPulse(mlir::Operation &op) {
     return mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp,
                      pulse::DriveBasebandOp>(op);
   }
@@ -411,8 +396,8 @@ enteringArm(mlir::Value value, mlir::Block *arm,
 /// What a line or tone value is a version of: its line (a line's own tone
 /// stands for its line), or, for a tone that is a frame of its own, the
 /// pulse.tone that made the frame. Null when neither is found.
-inline mlir::Operation *lineOrFrame(pulse::AllocationTracer &trace,
-                                    mlir::Value value) {
+template <typename Tracer>
+inline mlir::Operation *lineOrFrame(Tracer &trace, mlir::Value value) {
   if (mlir::Operation *line = trace(value))
     return line;
   while (mlir::Value before = pulse::linearPredecessor(value))
@@ -562,11 +547,12 @@ inline bool changedIn(mlir::Value entered, mlir::Block *arm) {
 /// it) or made alike, only played, and not changed by the other arm
 /// (`entered` is the version of it the if began with). A frame an op
 /// changed on the other path is another tone.
+template <typename Tracer = pulse::AllocationTracer>
 inline bool differentLines(mlir::Value then, mlir::Block *thenArm,
                            mlir::Value entered, mlir::Value other,
                            mlir::Block *elseArm,
                            llvm::function_ref<bool(mlir::Operation *)> kept) {
-  pulse::AllocationTracer trace;
+  Tracer trace;
   mlir::Operation *a = lineOrFrame(trace, then);
   mlir::Operation *b = lineOrFrame(trace, other);
   if (!a || !b || a == b)
@@ -697,9 +683,15 @@ public:
   [[noreturn]] void fail(const std::string &what) const {
     // What a pass refused of the kernel, by the code it left, is the
     // kernel's to fix.
-    if (std::exchange(pulse::lastRefusal, pulse::Refusal::None) !=
-        pulse::Refusal::None)
+    switch (std::exchange(pulse::lastRefusal, pulse::Refusal::None)) {
+    case pulse::Refusal::None:
+      break;
+    case pulse::Refusal::ComplexWaveform:
       throw KernelRefused(what + messages_);
+    case pulse::Refusal::NotSimulated:
+      throw Unsupported("this program holds a coupling line; a program with a "
+                        "coupling line is not simulated or emulated yet");
+    }
     throw std::runtime_error(what + messages_);
   }
 
@@ -3504,7 +3496,7 @@ public:
     const AttrNames &names = ContextStore::names(ctx_.get(), ownNames);
     std::function<void(mlir::Block &)> collect = [&](mlir::Block &block) {
       for (mlir::Operation &op : block) {
-        if (Variant::plays(op)) {
+        if (Variant::isPulse(op)) {
           requireExportedMode(&op);
           mlir::Operation *allocation = trace(op.getOperand(0));
           int64_t line = allocation ? lineIndex.lookup(allocation) : -1;
@@ -3555,7 +3547,7 @@ public:
   template <typename Variant>
   LLVM_ATTRIBUTE_ALWAYS_INLINE nb::object eventTreeOf(int64_t limit) {
     auto timed = [](mlir::Operation &op) {
-      return Variant::plays(op) ||
+      return Variant::isPulse(op) ||
              mlir::isa<classical::SubmitOp, classical::WaitOp>(op);
     };
     auto add = [](uint64_t a, uint64_t b) {
@@ -3609,7 +3601,7 @@ public:
     std::function<void(mlir::Block &, nb::list &)> build =
         [&](mlir::Block &block, nb::list &out) {
           for (mlir::Operation &op : block) {
-            if (Variant::plays(op)) {
+            if (Variant::isPulse(op)) {
               mlir::Operation *allocation = trace(op.getOperand(0));
               int64_t line = allocation ? lineIndex.lookup(allocation) : -1;
               int64_t qubit = allocation ? Variant::qudit(allocation) : -1;
@@ -6403,6 +6395,10 @@ public:
       const std::optional<nb::ndarray<const double, nb::ndim<1>, nb::c_contig>>
           &readout_freqs) {
     std::lock_guard<std::mutex> guard(lock_);
+    // The tracer that knows this variant's lines.
+    using LineTracer =
+        std::conditional_t<Coupled, pulse::coupled::AllocationTracer,
+                           pulse::AllocationTracer>;
 
     const int64_t *d = stream.data();
     const size_t len = stream.shape(0);
@@ -6970,9 +6966,9 @@ public:
                       mlir::isa<pulse::CouplingLineType>(then.getType()))) {
             mlir::Value a = enteringArm(then, region.body.get(), entered);
             mlir::Value b = enteringArm(other, region.elseBody.get(), entered);
-            if (a != b && differentLines(then, region.body.get(), a, other,
-                                         region.elseBody.get(), kept))
-                [[unlikely]] {
+            if (a != b && differentLines<LineTracer>(
+                              then, region.body.get(), a, other,
+                              region.elseBody.get(), kept)) [[unlikely]] {
               MixedResult from{cur, i,
                                mlir::isa<pulse::ToneType>(then.getType())};
               drop(i);

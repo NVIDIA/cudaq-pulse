@@ -602,26 +602,38 @@ class QuantumSystem:
         from .quantum_systems.components import interaction_of
 
         return interaction_of(
-            self._description, self.calibration, self._pair(a, b), self._index(a, "interaction")
+            self._description,
+            self.calibration,
+            self._pair(a, b, "interaction"),
+            self._index(a, "interaction"),
         )
 
     def _index(self, qudit: Qudit | int, asked: str) -> int:
         """The index of *qudit*, a handle of this system or an index."""
         if isinstance(qudit, Qudit):
             if qudit.quantum_system is not self and qudit.quantum_system != self:
+                other = qudit.quantum_system.name
                 raise QuantumSystemMismatchError(
-                    f"{qudit!r} is a qudit of {qudit.quantum_system.name!r}, not of {self.name!r}"
+                    f"{qudit!r} is a qudit of "
+                    + (
+                        f"another quantum system named {other!r}"
+                        if other == self.name
+                        else f"{other!r}, not of {self.name!r}"
+                    )
+                    + "; pass a handle of this quantum system, or the qudit's index"
                 )
             return qudit.index
-        if qudit.__class__ is not int:
+        import numbers
+
+        if isinstance(qudit, bool) or not isinstance(qudit, numbers.Integral):
             raise InvalidTypeError(
                 f"QuantumSystem.{asked} takes qudit handles, as qs.qudits[i], or their "
                 f"indices; got {qudit!r}"
             )
-        return qudit
+        return int(qudit)
 
-    def _pair(self, a: Qudit | int, b: Qudit | int) -> Coupling:
-        return self._description.coupling(self._index(a, "control"), self._index(b, "control"))
+    def _pair(self, a: Qudit | int, b: Qudit | int, asked: str = "control") -> Coupling:
+        return self._description.coupling(self._index(a, asked), self._index(b, asked))
 
     def _line_calibration(
         self, index: int, readout: bool, gate: Any, transition: Any

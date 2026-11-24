@@ -60,10 +60,13 @@ def _shipped() -> list[tuple[Calibration, _Description]]:
 
 
 # What was made of each calibration, kept apart from the calibration (its
-# pickle and its values are what they were): its tuning values, the tuning
-# of each label, and the interaction last made for each pair of labels.
-_MADE: weakref.WeakKeyDictionary[Calibration, _Made] = weakref.WeakKeyDictionary()
+# pickle and its values are what they were) and by the calibration itself,
+# not by its value (which would read all of it): its tuning values, the
+# tuning of each label, and the interactions made for each pair of labels.
+_MADE: dict[int, _Made] = {}
 _MADE_LOCK = threading.Lock()
+# The interactions kept per calibration before they are made again.
+_INTERACTIONS_KEPT = 1024
 
 
 class _Made:
@@ -78,9 +81,12 @@ class _Made:
 
 def _made(calibration: Calibration) -> _Made:
     """What is kept of *calibration*; called under ``_MADE_LOCK``."""
-    made = _MADE.get(calibration)
+    key = id(calibration)
+    made = _MADE.get(key)
     if made is None:
-        made = _MADE[calibration] = _Made(calibration)
+        made = _MADE[key] = _Made(calibration)
+        # Forgotten with the calibration, whose id another may then take.
+        weakref.finalize(calibration, _MADE.pop, key, None)
     return made
 
 
@@ -129,6 +135,9 @@ def _derived_interaction(
         kept = made.interactions.get(key)
         if kept is None:
             from .tuning import ChargeCoupling
+
+            if len(made.interactions) >= _INTERACTIONS_KEPT:
+                made.interactions.clear()
 
             kept = made.interactions[key] = ChargeCoupling(
                 charge_coupling_hz=g_c,
@@ -200,5 +209,10 @@ def interaction_of(
     through_a = tuning_of(description, calibration, a.index)
     through_b = tuning_of(description, calibration, b.index)
     if through_a is None or through_b is None:
+        return None
+    from .tuning import FluxTuning
+
+    # A charge coupling is read through transmon circuits.
+    if not (isinstance(through_a, FluxTuning) and isinstance(through_b, FluxTuning)):
         return None
     return _derived_interaction(source, (a.label, b.label), (through_a, through_b))

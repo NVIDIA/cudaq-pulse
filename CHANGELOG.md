@@ -157,9 +157,10 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   for a `FluxTuning`), signed. `wait` and `sync` take the line, and every
   schedule (`asap`, `alap`, `rcp`, `alap_rcp`) treats it as a line of its
   own, in rolled loops and measurement-conditioned branches too. The line
-  must exist (the line of a qudit a call binds needs a control system,
-  which checks it when the qudit is bound): the quantum system declares the control of exactly those
-  qudits (a qudit's `tuning`, a coupling's `control`), and a control
+  must exist (the line of a qudit that a call binds, a parameter
+  annotated `Qudit`, is refused in a kernel with no control system, where
+  nothing checks it when the qudit is bound): the quantum system declares
+  the control of exactly those qudits (a qudit's `tuning`, a coupling's `control`), and a control
   system, when one is given, has a `CouplingLine` that acts on exactly
   them; the error names what is missing and the lines that reach the
   qudits. In the IR
@@ -181,9 +182,9 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   calibrated gate of a coupling as one call, and, in the same program as
   a coupling line, a classical call, a kernel with its own `schedule=`
   (compile with `flatten_schedules=True`) and a value a measurement
-  selects at run time (each an `UnsupportedError` that says so). A
-  coupling line that is fetched and never used is dropped as any unused
-  line. Programs without coupling lines compile, schedule
+  selects at run time (each an `UnsupportedError` that says so, even
+  when the line is never used). Beside none of those, a coupling line that
+  is fetched and never used is dropped as any unused line. Programs without coupling lines compile, schedule
   and export as before.
 - **Coupling lines of a controller.** `Controller(coupling_lines=[...])`
   lists the outputs that play a baseband waveform on a control of the

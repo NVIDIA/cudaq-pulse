@@ -45,6 +45,15 @@ func.func @another_line_returned(%w : !pulse.waveform) {
 
 // -----
 
+// A pulse on a coupling line, too, is in a module that says so.
+func.func @pulse_in_a_module_that_does_not_say(%c : !pulse.coupling_line, %w : !pulse.waveform) {
+  // expected-error @+1 {{'pulse.drive_baseband' op is in a module that does not say it holds a coupling line; give the module the unit attribute pulse.coupling_lines}}
+  %c1 = pulse.drive_baseband %c, %w : !pulse.coupling_line, !pulse.waveform -> !pulse.coupling_line
+  return
+}
+
+// -----
+
 // The passes look for the ops of a coupling line only in a module that
 // says it holds one.
 func.func @module_that_does_not_say() {

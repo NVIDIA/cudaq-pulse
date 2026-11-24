@@ -7,7 +7,7 @@
 // RUN: cudaq-pulse-opt %s --split-input-file --pulse-verify --verify-diagnostics
 
 // The schedule passes refuse an op they cannot time. The ops of a coupling
-// line are ops they time: a drive with no tone, a wait and a sync on it
+// line are ops they time: a pulse on it, a wait and a sync on it
 // raise no diagnostic (coupling_line_schedule.mlir checks where they are
 // placed).
 

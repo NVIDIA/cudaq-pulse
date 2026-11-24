@@ -394,7 +394,11 @@ class Calibration:
         except (KeyError, TypeError):
             used, g_c = "", None
         circuits = []
-        for label, q in self._data.get("qudits", {}).items():
+        try:
+            entries = list(self._data["qudits"].items())
+        except (KeyError, TypeError, AttributeError):
+            entries = []
+        for label, q in entries:
             try:
                 if q.get("flux_quanta_capable"):
                     circuits.append(

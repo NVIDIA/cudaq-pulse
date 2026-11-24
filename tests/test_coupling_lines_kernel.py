@@ -20,6 +20,7 @@ from cudaq_pulse.ops import (
     get_drive_line,
     get_readout_line,
     readout,
+    set_frequency,
     shift_phase,
     square,
     sync,
@@ -474,6 +475,25 @@ def test_what_the_passes_do_not_do_beside_a_coupling_line_is_refused():
     with pytest.raises(pulse.UnsupportedError) as raised:
         calls_scheduled.lower(A)
     assert "cannot hold a kernel with its own schedule (schedule=)" in str(raised.value)
+
+    @pulse.kernel
+    def chosen(a):
+        c = get_coupling_line(a)
+        if readout(get_readout_line(a), square(100, 0.05)):
+            amplitude = 0.1
+        else:
+            amplitude = 0.2
+        drive(c, square(40, amplitude))
+
+    with pytest.raises(pulse.UnsupportedError) as raised:
+        chosen.lower(A)
+    assert "cannot hold a value a measurement selects" in str(raised.value)
+    # The operator program has no term for a coupling line: its text forms
+    # are refused as the simulation is.
+    lowered = detune.lower(A, D, 0.31)
+    for form in ("qop", "cudm"):
+        with pytest.raises(pulse.UnsupportedError, match="not simulated or emulated yet"):
+            lowered.mlir(form)
     # Flattened, the called kernel's pulses are scheduled with the caller's.
     flat = pulse.compile(calls_scheduled, quantum_system=QS, flatten_schedules=True).lower(A)
     assert len(flat.schedule) == 2
@@ -538,6 +558,57 @@ def test_a_line_the_quantum_system_declares_no_control_for_is_refused():
     assert "qudit 0 has no tuning" in _raises(tuned, untuned.qudits[0])
 
 
+def test_two_coupling_lines_swapped_in_one_arm_are_refused():
+    @pulse.kernel
+    def swapped(a, d, e):
+        first, second = get_coupling_line(a, d), get_coupling_line(d, e)
+        if readout(get_readout_line(a), square(40, 0.05)):
+            first, second = second, first
+        drive(first, square(20, 0.1))
+
+    @pulse.kernel
+    def kept(a, d, e):
+        first, second = get_coupling_line(a, d), get_coupling_line(d, e)
+        if readout(get_readout_line(a), square(40, 0.05)):
+            drive(first, square(20, 0.1))
+        drive(first, square(20, 0.1))
+        wait(second, 4)
+
+    qs = pulse.quantum_system(
+        name="chain",
+        qudits={
+            i: PhysicalQudit(i, 5.0e9 + 1.0e8 * i, 50.0, 30.0, anharmonicity_hz=-3.0e8)
+            for i in range(3)
+        },
+        couplings=[
+            Coupling((0, 1), 4.0e6, control=_EXCHANGE),
+            Coupling((1, 2), 4.0e6, control=_EXCHANGE),
+        ],
+    )
+    q = qs.qudits
+    with pytest.raises(pulse.CompilationError, match="arms"):
+        swapped.lower(q[0], q[1], q[2])
+    assert len(kept.lower(q[0], q[1], q[2]).schedule) == 4
+
+
+def test_a_frame_change_after_a_sync_with_a_coupling_line_waits_for_it():
+    @pulse.kernel
+    def retuned(a, frequency: float):
+        d, c = get_drive_line(a), get_coupling_line(a)
+        drive(d, gaussian(40, 0.2, 10.0))
+        drive(c, square(200, 0.1))
+        sync(d, c)
+        set_frequency(d.tone, frequency)
+        wait(d, 100)
+        drive(d, gaussian(40, 0.2, 10.0))
+
+    text = retuned.lower(A, 5.01e9).mlir()
+    change = next(line for line in text.splitlines() if "pulse.set_frequency" in line)
+    # The tone is free when the synced lines are: at the end of the coupling
+    # line's pulse, not of the drive line's.
+    assert "start_cycles = 200" in change, change
+
+
 def test_a_run_time_qudits_line_needs_a_control_system():
     @pulse.kernel
     def bound(a: pulse.Qudit):
@@ -578,6 +649,33 @@ def test_a_helper_kernel_plays_on_the_line_it_is_given():
     assert "the calibrated gates of a coupling line are not available yet" in _raises(
         gives_a_gate, shipped.qudits[3]
     )
+
+    # A line fetched in a helper comes back to the kernel, which plays on it
+    # and is refused a calibrated pulse on it as anywhere.
+    def line_of(q):
+        return get_coupling_line(q)
+
+    @pulse.kernel
+    def fetched_below(a):
+        c = line_of(a)
+        drive(c, square(20, 0.1))
+        lines = tuple(get_coupling_line(q) for q in (a,))
+        drive(lines[0], square(20, -0.1))
+
+    @pulse.kernel
+    def gate_on_a_line_fetched_below(a):
+        drive(line_of(a), get_drive_line(a).get_calibration(pulse.gates.X))
+
+    assert [e[0] for e in _events(fetched_below.lower(A))] == ["drive", "drive"]
+    assert "the calibrated gates of a coupling line are not available yet" in _raises(
+        gate_on_a_line_fetched_below, shipped.qudits[3]
+    )
+
+    @pulse.kernel
+    def no_waveform(a):
+        drive(get_coupling_line(a))
+
+    assert "drive() takes a line and a waveform" in _raises(no_waveform, A)
 
 
 def test_systems_that_differ_in_tunings_share_no_specialization():

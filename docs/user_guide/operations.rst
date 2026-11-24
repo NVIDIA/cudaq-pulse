@@ -127,9 +127,10 @@ is made through its qudits has no line of its own, and the error names
 the qudits' lines. With a control system, one of its ``CouplingLine``\ s
 must act on exactly those qudits, and the error names the lines that reach
 them. The line of a qudit that a call binds (a parameter annotated
-``Qudit``) is checked when the qudit is bound, by the control system's
-check of the call; in a kernel with no control system it is a
-``CompilationError``: pass the qudit as a static argument there.
+``Qudit``) can only be checked when the qudit is bound, which is the
+control system's check of each call; a kernel with no control system has
+none, so the line is a ``CompilationError`` there: pass the qudit as a
+static argument (leave its parameter unannotated).
 
 A coupling line first fetched inside a loop is fetched once per program as
 well, but that loop is unrolled; fetch the line before the loop to keep the
@@ -142,9 +143,9 @@ raises the same error with one. ``simulate`` and
 either, and raise ``UnsupportedError`` too; so does a program that holds
 a coupling line beside a classical call, a kernel with its own
 ``schedule=`` (compile with ``flatten_schedules=True``) or a value a
-measurement selects while the program runs. A coupling line that is
-fetched and never used is dropped, as any unused line: the program
-exports and simulates. The calibrated two-qudit gate of a
+measurement selects while the program runs, even when the line is never
+used. Beside none of those, a coupling line that is fetched and never
+used is dropped, as any unused line: the program exports and simulates. The calibrated two-qudit gate of a
 coupling, played as one call, comes with a later release.
 
 Phase and Frequency Control
