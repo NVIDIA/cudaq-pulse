@@ -45,12 +45,17 @@ inline bool isClassicalType(mlir::Type type) {
 /// read for it (`couplingQudits` gives its qudits).
 inline int64_t quditOf(mlir::Operation *acquisition) {
   if (auto alloc = acquisition->getOperand(0).getDefiningOp<QuditAllocOp>())
+#if PULSE_COUPLED
     return kCoupled && mlir::isa<GetCouplingLineOp>(acquisition)
                ? -1
                : alloc.getQuditAttr().getInt();
+#else
+    return alloc.getQuditAttr().getInt();
+#endif
   return -1;
 }
 
+#if PULSE_COUPLED
 /// What the control system says of a coupling line, on its acquisition:
 /// `controller` (the index of the controller that drives it, among several)
 /// and `delay_cycles` (its calibrated delay in program cycles); `otherwise`
@@ -83,11 +88,16 @@ inline bool sameCouplingLine(mlir::Operation *a, mlir::Operation *b) {
       return false;
   return true;
 }
+#endif
 
 inline bool isLinearPulseType(mlir::Type type) {
   return mlir::isa<DriveLineType, ReadoutLineType, ToneType>(type) ||
+#if PULSE_COUPLED
          isClassicalType(type) ||
          (kCoupled && mlir::isa<CouplingLineType>(type));
+#else
+         isClassicalType(type);
+#endif
 }
 
 /// Whether `user` reads a line without consuming it, so the version it reads
@@ -135,7 +145,9 @@ inline mlir::Value linearPredecessor(mlir::Value value) {
   if (mlir::isa<SyncOp>(op))
     return op->getOperand(index);
   if (mlir::isa<GetDriveLineOp, GetReadoutLineOp>(op) ||
+#if PULSE_COUPLED
       (kCoupled && mlir::isa<GetCouplingLineOp>(op)) ||
+#endif
       op->getName().getStringRef() == "classical.get_link")
     return {};
   mlir::Type type = value.getType();
@@ -230,14 +242,19 @@ inline bool runsBefore(mlir::Operation *a, mlir::Operation *b) {
 /// earlier acquisition of it may also have run would make two versions of
 /// the same line, with two timelines.
 inline mlir::LogicalResult checkOneAcquisition(mlir::Operation *acquisition) {
+#if PULSE_COUPLED
   bool coupling = kCoupled && mlir::isa<GetCouplingLineOp>(acquisition);
+#endif
   for (mlir::Operation *first : acquisition->getOperand(0).getUsers()) {
     if (first == acquisition || first->getName() != acquisition->getName() ||
+#if PULSE_COUPLED
         (coupling && !sameCouplingLine(first, acquisition)) ||
+#endif
         !runsBefore(first, acquisition) ||
         mutuallyExclusive(first, acquisition))
       continue;
     mlir::InFlightDiagnostic diagnostic = acquisition->emitError();
+#if PULSE_COUPLED
     if (coupling)
       diagnostic << "this coupling line is already acquired; use the line "
                     "acquired first";
@@ -246,6 +263,11 @@ inline mlir::LogicalResult checkOneAcquisition(mlir::Operation *acquisition) {
                  << (mlir::isa<GetDriveLineOp>(acquisition) ? "drive"
                                                             : "readout")
                  << " line is already acquired; use the line acquired first";
+#else
+    diagnostic << "this qudit's "
+               << (mlir::isa<GetDriveLineOp>(acquisition) ? "drive" : "readout")
+               << " line is already acquired; use the line acquired first";
+#endif
     diagnostic.attachNote(first->getLoc()) << "acquired first here";
     return mlir::failure();
   }
@@ -276,10 +298,12 @@ public:
           found = firstAcquisition(def);
           break;
         }
+#if PULSE_COUPLED
         if (kCoupled && mlir::isa<GetCouplingLineOp>(def)) {
           found = firstCouplingAcquisition(def);
           break;
         }
+#endif
         if (def->getName().getStringRef() == "classical.get_link") {
           found = def;
           break;
@@ -303,6 +327,7 @@ private:
     return first;
   }
 
+#if PULSE_COUPLED
   /// Of the acquisitions of the coupling line `acquisition` names, the
   /// first made.
   static mlir::Operation *
@@ -315,6 +340,7 @@ private:
     return first;
   }
 
+#endif
   llvm::DenseMap<mlir::Value, mlir::Operation *> memo;
 };
 
