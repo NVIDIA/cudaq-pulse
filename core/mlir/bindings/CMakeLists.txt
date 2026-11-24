@@ -59,6 +59,7 @@ nanobind_add_module(
   bindingsCoupled.cpp
   "${_build_stamp}"
   LengthInference.cpp
+  Lines.cpp
   ModuleLoader.cpp
 )
 

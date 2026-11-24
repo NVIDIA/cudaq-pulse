@@ -34,6 +34,10 @@ Compilation API
    :members:
    :undoc-members:
 
+.. autoclass:: cudaq_pulse.compiler.Line
+   :members:
+   :undoc-members:
+
 .. autoclass:: cudaq_pulse.compiler.CompileMetrics
    :members:
    :undoc-members:
