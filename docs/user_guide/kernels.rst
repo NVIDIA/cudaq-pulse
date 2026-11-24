@@ -257,14 +257,23 @@ rolled loop holds its body once.
 
 **Program length.** A program runs at most its controller's
 ``Controller(max_program_duration=...)``, a time or a number of ns,
-and at most 2**60 clock cycles without one. Building the module sums the
-program op after op, every iteration of its loops (the longer arm of an
-``if``), and a program longer than that is a ``CompilationError`` at the
-op or loop that passes it. A wait whose length a float sets counts at its
-lowest length; a call whose values make the program longer is a
-``ValueError`` when it binds them. A line's ``delay_ns`` counts too: a
-delay longer than 2**60 cycles, or one that takes the scheduled program
-past them, is a ``CompilationError``.
+and at most 2**60 clock cycles without one. The schedule decides: the
+program lasts to the end of its last operation on the controller's lines,
+so operations that play at the same time on different lines count once,
+and a scheduled program longer than the limit is a ``CompilationError``
+that gives its length. A wait whose length a float sets counts at the
+length each call gives it; a call whose values make the scheduled program
+longer is a ``ValueError`` when it binds them.
+
+Building the module also sums the program op after op, every iteration of
+its loops (the longer arm of an ``if``), to stop a kernel that no schedule
+can save before it is traced to its end. The operations of one line follow
+each other, so a program on ``n`` lines that fits sums to at most ``n``
+times the limit: past that, and past 2**60 cycles without a limit, it is a
+``CompilationError`` at the op or loop that passes it (for a wait whose
+length a float sets, a ``ValueError`` at the call). A line's ``delay_ns``
+counts too: a delay longer than 2**60 cycles, or one that takes the
+scheduled program past them, is a ``CompilationError``.
 
 **For loops over Python values** known when the kernel is traced: lists,
 tuples, dictionaries, ``enumerate()``, ``zip()``, ``reversed()``, a qubit

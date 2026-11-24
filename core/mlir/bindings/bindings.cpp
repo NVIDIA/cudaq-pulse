@@ -3557,8 +3557,9 @@ public:
   }
 
   /// For waits whose length floats set: (cycles op after op with each at its
-  /// lowest length, the most the program may last, 1 if that is the
-  /// controller's longest program, how often each such wait runs), and when
+  /// lowest length, the most the program may last op after op, the
+  /// controller's longest program if one sets that (else 0), how often each
+  /// such wait runs), and when
   /// such a wait is in an if, the loops and ifs around them (`excess` in
   /// the decoder).
   nb::tuple program_length() const {
@@ -5085,10 +5086,20 @@ public:
     result.loops_ = loops_;
     result.runTime_ = runTime_;
     result.keepSource();
-    runSchedule(*result.module_, true, schedule, maxDrives, maxReadouts,
-                readoutLatency, switchPenalty,
-                "specialize: pass pipeline failed", specialized_.frameChanges,
-                verifyEverything());
+    try {
+      runSchedule(*result.module_, true, schedule, maxDrives, maxReadouts,
+                  readoutLatency, switchPenalty,
+                  "specialize: pass pipeline failed", specialized_.frameChanges,
+                  verifyEverything());
+    } catch (const std::runtime_error &) {
+      // The call's values take the schedule past a controller's longest
+      // program: the check says so on the function, and the values are
+      // what is wrong.
+      if (std::optional<std::string> past =
+              pulse::pastProgramLimit(result.module_->getOperation()))
+        throw std::invalid_argument(*past);
+      throw;
+    }
     // Verified, or trusted as the verified module it is rescheduled from.
     result.verified();
     return result;
@@ -5834,8 +5845,9 @@ private:
   // event_tree() is its events().
   bool loops_ = true;
   /// For a module with waits whose length floats set: what it lasts op after
-  /// op with each at its lowest length, the most it may last, whether that
-  /// is the controller's, and how often each such wait runs.
+  /// op with each at its lowest length, the most it may last so, the
+  /// controller's longest program if one sets that (else 0), and how often
+  /// each such wait runs.
   struct Length {
     int64_t cycles = 0, most = 0, controller = 0;
     std::vector<int64_t> repeats, excess;
@@ -6428,9 +6440,16 @@ public:
     size_t cur = 0;
     // What the program lasts played op after op, in cycles, which no
     // schedule of it exceeds: a loop's body times its trip count, the longer
-    // arm of an if. Past `maxCycles` (the controller's longest program, else
-    // 2**60) it is an error at the record that crosses it.
-    int64_t maxCycles = int64_t(1) << 60;
+    // arm of an if. Past 2**60 it is an error at the record that crosses it.
+    // Under a controller's longest program (`maxCycles`), the schedule
+    // decides, and this sum only stops a program no schedule can save: the
+    // operations of one line follow each other, so a program of n lines
+    // that fits lasts at most n times `maxCycles` op after op. The record
+    // of the limit gives that product (`stopCycles`), and past it the sum
+    // is an error at the record that crosses it.
+    const int64_t backstop = int64_t(1) << 60;
+    int64_t maxCycles = backstop;
+    int64_t stopCycles = backstop;
     bool controllerLimit = false;
     bool loops = false;
     int64_t serialCycles = 0;
@@ -6457,7 +6476,7 @@ public:
                       : regions.back().elseBody ? regions.back().elseCycles
                                                 : regions.back().cycles;
       std::optional<int64_t> sum = checkedAdd(into, cycles);
-      if (!sum || *sum > maxCycles) [[unlikely]]
+      if (!sum || *sum > stopCycles) [[unlikely]]
         tooLong(word);
       into = *sum;
     };
@@ -6561,7 +6580,7 @@ public:
         {
           std::optional<uint64_t> total =
               checkedMul(trips(region), static_cast<uint64_t>(region.cycles));
-          if (!total || *total > static_cast<uint64_t>(maxCycles)) [[unlikely]]
+          if (!total || *total > static_cast<uint64_t>(stopCycles)) [[unlikely]]
             tooLong(region.word);
           lengthen(static_cast<int64_t>(*total), region.word);
         }
@@ -7517,13 +7536,16 @@ public:
       }
 
       case kOpMaxCycles: {
-        // [the controller's longest program, in cycles]
-        requirePayload(1);
+        // [the controller's longest program, the most the program may last
+        // op after op; both in cycles]
+        requirePayload(2);
         if (p[0] < 1)
           throw std::invalid_argument(
               "packed: longest program must be positive");
         controllerLimit = p[0] < maxCycles;
         maxCycles = std::min(maxCycles, p[0]);
+        // [1]: the most the program may last op after op, at least [0].
+        stopCycles = std::clamp(p[1], maxCycles, backstop);
         break;
       }
 
@@ -7551,8 +7573,8 @@ public:
     result.runTime_ = runTime;
     result.loops_ = loops;
     if (!waitRepeats.empty())
-      result.length_ = {serialCycles, maxCycles, controllerLimit ? 1 : 0,
-                        std::move(waitRepeats),
+      result.length_ = {serialCycles, stopCycles,
+                        controllerLimit ? maxCycles : 0, std::move(waitRepeats),
                         waitInIf ? std::move(excess) : std::vector<int64_t>{}};
     return result;
   }

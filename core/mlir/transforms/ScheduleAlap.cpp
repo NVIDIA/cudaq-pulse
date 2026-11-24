@@ -6553,6 +6553,12 @@ checkProgramLimits(mlir::func::FuncOp function,
     nameLatency(diagnostic, latency);
     diagnostic << "; let its operations overlap, shorten them or raise "
                   "max_program_duration";
+    // The fact, for whoever ran the schedule: a call whose values made the
+    // program this long reports it as an error of those values.
+    function->setAttr(
+        pulse::kPastProgramLimitAttr,
+        mlir::StringAttr::get(function->getContext(),
+                              diagnostic.getUnderlyingDiagnostic()->str()));
     return mlir::failure();
   }
   return mlir::success();

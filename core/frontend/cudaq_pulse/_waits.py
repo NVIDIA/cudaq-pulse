@@ -119,10 +119,13 @@ class _WaitLength:
 class _WaitLengths:
     """The variable waits of a module, checked together on every call, and
     with them the program's length: (its cycles op after op with each wait
-    at its lowest length, the most it may last, 1 if that is the
-    controller's longest program, how often each wait with a lowest length
-    runs, and when one is in an if the loops and ifs around them), as
-    ``PulseModule.program_length()`` gives it."""
+    at its lowest length, the most it may last so, the controller's longest
+    program in cycles if one sets that (else 0), how often each wait with a
+    lowest length runs, and when one is in an if the loops and ifs around
+    them), as ``PulseModule.program_length()`` gives it. Under a
+    controller's longest program the most it may last op after op is that
+    length times the lines the program takes: past it no schedule fits, and
+    within it the schedule of each call is checked."""
 
     __slots__ = ("length", "ok", "waits")
 
@@ -234,7 +237,7 @@ class _WaitLengths:
                 if controller:
                     raise ValueError(
                         f"{kernel}(): with these wait lengths the program lasts more than "
-                        f"{most} cycles, the longest program of the controller "
+                        f"{controller} cycles, the longest program of the controller "
                         "(Controller.max_program_duration)"
                     )
                 raise ValueError(

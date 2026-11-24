@@ -79,6 +79,23 @@ inline bool blocksOnCalls(mlir::Operation *module) {
          });
 }
 
+/// On a function whose schedule lasts longer than a controller's longest
+/// program (Controller.max_program_duration): the error that says so, which
+/// the check that fails leaves for whoever ran the schedule.
+inline constexpr llvm::StringLiteral kPastProgramLimitAttr =
+    "pulse.past_program_limit";
+
+/// That error, if a function of `module` carries one.
+inline std::optional<std::string> pastProgramLimit(mlir::Operation *module) {
+  for (mlir::Region &region : module->getRegions())
+    for (mlir::Block &block : region)
+      for (mlir::Operation &op : block)
+        if (auto error =
+                op.getAttrOfType<mlir::StringAttr>(kPastProgramLimitAttr))
+          return error.getValue().str();
+  return std::nullopt;
+}
+
 /// The longest a program of `module` may be, in cycles, if it is bounded.
 inline std::optional<int64_t> programBudget(mlir::Operation *module) {
   ControlSystemAttr system = controlSystemOf(module);

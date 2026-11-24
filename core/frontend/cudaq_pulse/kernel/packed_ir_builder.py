@@ -486,9 +486,21 @@ class PackedIRBuilder:
         self._ensure(0)
 
     def limit_cycles(self, cycles: int) -> None:
-        """Make a program longer than *cycles* (the controller's longest
-        program) an error when the module is built."""
-        self._record(_MAX_CYCLES, [cycles])
+        """Make a program that sums, op after op, to more than *cycles* (the
+        controller's longest program) times the lines it takes an error when
+        the module is built: no schedule of it fits, since the operations of
+        one line follow each other. Within that the schedule decides. Only a
+        builder given a limit counts its lines, when its buffer is taken."""
+        at = self._cur + 2
+        self._record(_MAX_CYCLES, [cycles, cycles])
+        get_buffer = self.get_buffer
+
+        def with_stop() -> Any:
+            lines = max(1, len(self._line_qudit))
+            self._buf[at] = min(cycles * lines, 1 << 60)
+            return get_buffer()
+
+        self.get_buffer = with_stop  # type: ignore[method-assign]
 
     def _w(self, val: int) -> None:
         self._buf[self._cur] = val

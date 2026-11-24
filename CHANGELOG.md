@@ -396,6 +396,17 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   module-level values as before. The quick example of the README and of
   Getting Started now reads the qubit out and runs by calling the kernel,
   which returns the outcome of one simulated shot.
+- **`Controller.max_program_duration` is checked on the schedule.** The
+  limit was also held against the sum of the program's operations op after
+  op, so three 400-cycle drives on three lines at the same time were
+  refused under a limit of 1000 cycles though the program ends at cycle
+  400. The scheduled length now decides, for a compiled kernel and for
+  each call of one whose waits floats set. The sum is kept as an early
+  stop for a kernel no schedule can save: it is an error once it passes
+  the limit times the number of lines the program has taken, which a
+  program that fits cannot. A program on one line is checked as before. A
+  call whose values take the schedule past the limit is still a
+  `ValueError`; its message now gives the scheduled length.
 
 ### Fixed
 

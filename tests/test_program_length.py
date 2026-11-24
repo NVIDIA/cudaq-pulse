@@ -226,7 +226,13 @@ def test_a_call_checks_twenty_thousand_waits_of_one_float(shape):
         checked.check([k + 0.49])
         with pytest.raises(ValueError, match=r"Controller\.max_program_duration"):
             checked.check([k + 0.5])
-    assert compiled.lower(Q[0], k + 0.49) is not None
+    # The kernel takes two lines, so op after op it may last twice the
+    # longest program; its schedule may not, and decides.
+    assert waits.length[1:3] == (4_000_000, 2_000_000)
+    fits = (2_000_000 - cycles) // _MANY
+    assert compiled.lower(Q[0], fits + 0.49) is not None
+    with pytest.raises(ValueError, match=r"lasts \d+ cycles, more than controllers\[0\]'s"):
+        compiled.lower(Q[0], fits + 1.0)
     with pytest.raises(ValueError, match=r"Controller\.max_program_duration"):
         compiled.lower(Q[0], k + 0.5)
     # One length for the waits of one float, and one test of their bounds.
@@ -306,3 +312,107 @@ def test_each_controllers_longest_program_bounds_the_lines_it_plays():
         "of 100 ns (200 cycles); let its operations overlap, shorten them or raise "
         "max_program_duration"
     )
+
+
+def _together(lines, cycles):
+    @pulse.kernel
+    def together(a, b, c):
+        for q in (a, b, c)[:lines]:
+            drive(get_drive_line(q), square(cycles, 0.1))
+
+    return together
+
+
+def test_operations_that_play_together_count_once():
+    # 500 ns on the 2 GHz clock of Q's quantum system: 1000 cycles.
+    machine = ControlSystem(controllers=[Controller(max_program_duration=500)])
+    lowered = pulse.compile(_together(3, 400), control_system=machine).lower(Q[0], Q[1], Q[2])
+    assert max(e.start_cycles + e.duration_cycles for e in lowered.schedule) == 400
+    # Each line alone may last as long as the program.
+    assert pulse.compile(_together(3, 1000), control_system=machine).lower(Q[0], Q[1], Q[2])
+
+    @pulse.kernel
+    def in_two_parts(a, b, c):
+        lines = [get_drive_line(q) for q in (a, b, c)]
+        for line in lines:
+            drive(line, square(600, 0.1))
+        sync(*lines)
+        drive(lines[0], square(404, 0.1))
+
+    # Op after op it sums to 2204 cycles, which three lines may; scheduled
+    # it lasts 1004, which the controller does not run.
+    with pytest.raises(CompilationError) as caught:
+        pulse.compile(in_two_parts, control_system=machine).lower(Q[0], Q[1], Q[2])
+    assert str(caught.value) == (
+        "kernel 'in_two_parts' lasts 1004 cycles, more than controllers[0]'s "
+        "max_program_duration of 500 ns (1000 cycles); let its operations overlap, shorten "
+        "them or raise max_program_duration"
+    )
+
+
+def test_one_line_is_checked_as_it_is_built():
+    machine = ControlSystem(controllers=[Controller(max_program_duration=500)])
+    assert pulse.compile(_together(1, 1000), control_system=machine).lower(Q[0], Q[1], Q[2])
+    with pytest.raises(CompilationError, match="the program lasts more than 1000 cycles"):
+        pulse.compile(_together(1, 1004), control_system=machine).lower(Q[0], Q[1], Q[2])
+
+
+def test_the_sum_stops_a_kernel_no_schedule_can_save():
+    @pulse.kernel
+    def runaway(a, b):
+        d = get_drive_line(a)
+        e = get_drive_line(b)
+        for _ in range(10**15):
+            drive(d, square(100, 0.1))
+            drive(e, square(100, 0.1))
+
+    machine = ControlSystem(controllers=[Controller(max_program_duration=10**6)])
+    with pytest.raises(CompilationError, match="the program lasts more than 2000000 cycles"):
+        pulse.compile(runaway, control_system=machine).lower(Q[0], Q[1])
+
+    @pulse.kernel
+    def in_turn(a, b, trips: int):
+        d = get_drive_line(a)
+        e = get_drive_line(b)
+        for _ in range(trips):
+            drive(d, square(100, 0.1))
+            sync(d, e)
+            drive(e, square(100, 0.1))
+            sync(d, e)
+
+    # Two lines that take turns: 10,000 trips sum to the longest program
+    # and last it; one more trip is past it as scheduled, and twice as many
+    # and one are past what any schedule of two lines lasts.
+    compiled = pulse.compile(in_turn, control_system=machine, unroll_threshold=0)
+    assert compiled.lower(Q[0], Q[1], 10_000) is not None
+    with pytest.raises(CompilationError, match="lasts 2000200 cycles, more than controllers"):
+        compiled.lower(Q[0], Q[1], 10_001)
+    with pytest.raises(CompilationError, match="the program lasts more than 2000000 cycles"):
+        compiled.lower(Q[0], Q[1], 20_001)
+
+
+def test_lines_taken_in_a_called_kernel_count():
+    @pulse.kernel
+    def one(q):
+        drive(get_drive_line(q), square(900, 0.1))
+
+    @pulse.kernel
+    def all_three(a, b, c):
+        one(a)
+        one(b)
+        one(c)
+
+    # 2700 cycles op after op on three lines, 900 as scheduled, under 1000.
+    machine = ControlSystem(controllers=[Controller(max_program_duration=500)])
+    lowered = pulse.compile(all_three, control_system=machine).lower(Q[0], Q[1], Q[2])
+    assert max(e.start_cycles + e.duration_cycles for e in lowered.schedule) == 900
+
+
+def test_without_a_limit_no_line_is_counted():
+    # Only a builder given a limit wraps its buffer to count its lines.
+    from cudaq_pulse.kernel.packed_ir_builder import PackedIRBuilder
+
+    builder = PackedIRBuilder()
+    assert "get_buffer" not in vars(builder)
+    builder.limit_cycles(1000)
+    assert "get_buffer" in vars(builder)

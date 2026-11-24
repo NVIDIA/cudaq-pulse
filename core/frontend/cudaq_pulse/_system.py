@@ -762,14 +762,17 @@ class Controller:
     program grows past the limit, and the error names the loop that
     unrolled it. Exports list it among the limits only when it is set.
     ``max_program_duration``: the longest program the controller runs, a
-    time or a number of ns (``None``: no limit); the compiler sums the
-    program op after op, every iteration of its loops, and a program longer
-    than that is a compile error at the op or loop that passes it (a wait
-    whose length floats set, at the call). The scheduled program, to the
-    end of its last operation on the controller's lines (line delays and
-    the waits for feedback, lines and links included), is checked against
-    it too, on one controller or several. Without it, a program may last
-    up to 2**60 cycles. Exports list it only when it is set.
+    time or a number of ns (``None``: no limit). The scheduled program,
+    to the end of its last operation on the controller's lines (line delays
+    and the waits for feedback, lines and links included), is checked
+    against it, on one controller or several, so operations that play
+    together on different lines count once; a longer one is a compile error
+    giving its length (with a wait whose length floats set, an error at the
+    call). While a kernel is traced the compiler also sums it op after op,
+    every iteration of its loops, and stops at the op or loop where the sum
+    passes the limit times the lines the program has taken: no schedule of
+    it fits then. Without the limit, a program may last up to 2**60 cycles.
+    Exports list it only when it is set.
     ``max_fine_delay_ns``: the longest delay, below one grid step, each line
     can add to its output (0: none), a time or a number of ns; it plays the
     part of a line's calibrated delay (``DriveLine``, ``ReadoutLine``) that
