@@ -346,14 +346,16 @@ def build_guard(
     fn: types.FunctionType,
     *,
     impure: bool = False,
+    inlined_helpers: Collection[types.FunctionType] = (),
     dict_items: Mapping[tuple[int, Any], tuple[dict[Any, Any], Any, Any]] | None = None,
     dict_whole: Collection[int] = (),
 ) -> Guard:
     """The guard for *fn*, from the values its reads have right now.
 
     *impure* marks a trace that evaluated a host call whose result may change
-    between calls (``random.random()``); its guard never holds. *dict_items*
-    are the dict items the trace read, ``(id(dict), key) -> (dict, key,
+    between calls (``random.random()``); its guard never holds. *inlined_helpers*
+    includes functions the trace resolved indirectly. *dict_items* are
+    the dict items the trace read, ``(id(dict), key) -> (dict, key,
     value)``, and *dict_whole* the ids of the dicts it iterated or tested
     with ``in``; without *dict_items* every dict is compared whole.
     """
@@ -365,7 +367,7 @@ def build_guard(
     # unbound at trace time.
     lines: list[list[Any]] = []
     slots: dict[tuple[Any, ...], int] = {}
-    visited: set[int] = set()
+    visited: set[types.FunctionType] = set()
     # Values some read uses other than by an immediate subscript.
     escaped: set[int] = set()
     # Registers a later step reads an attribute or item of.
@@ -387,9 +389,9 @@ def build_guard(
         return register
 
     def walk(func: types.FunctionType, depth: int) -> None:
-        if id(func.__code__) in visited or depth > _MAX_HELPER_DEPTH:
+        if func in visited or depth > _MAX_HELPER_DEPTH:
             return
-        visited.add(id(func.__code__))
+        visited.add(func)
         fn_globals = func.__globals__
         freevars = func.__code__.co_freevars
         cells = func.__closure__ or ()
@@ -437,6 +439,8 @@ def build_guard(
             walk(inner, depth + 1)
 
     walk(fn, 0)
+    for helper in inlined_helpers:
+        walk(helper, 0)
     items: dict[int, list[tuple[Any, Any]]] = {}
     if dict_items:
         for container, index, value in dict_items.values():

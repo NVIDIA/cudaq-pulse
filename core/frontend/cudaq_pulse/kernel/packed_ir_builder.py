@@ -14,6 +14,7 @@ import struct
 import sys
 from array import array
 from collections.abc import Callable, Generator
+from types import FunctionType
 from typing import Any
 
 from ..classical import _LIST_NAME, _RESERVED_KEYS, _unsized_names
@@ -433,6 +434,8 @@ class PackedIRBuilder:
         self._n_readouts = 0
         # Set by the emitter when the trace evaluated an impure host call.
         self.impure = False
+        # Inlined helpers, in trace order, for the cache guard.
+        self.inlined_helpers: dict[FunctionType, None] = {}
         # For the guard, kept by the emitter: the dict items the trace read,
         # (id(dict), key) -> (dict, key, value), and the ids of the dicts it
         # iterated or tested with `in`, whose every item matters.

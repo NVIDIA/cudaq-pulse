@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import dataclasses
+import functools
 import json
 import os
 import random
@@ -291,6 +292,50 @@ def test_a_method_of_a_global_is_cached_until_the_global_changes():
     finally:
         PULSES = previous
     assert calls_a_method.cache_info().compiled == 2
+
+
+def _play(d, duration):
+    drive(d, square(duration, AMPLITUDE))
+
+
+class _Gates:
+    def method(self, d):
+        drive(d, square(16, AMPLITUDE))
+
+    @classmethod
+    def class_method(cls, d):
+        drive(d, square(16, AMPLITUDE))
+
+
+@pytest.mark.parametrize("route", ["method", "classmethod", "partial", "dict", "list"])
+def test_cache_tracks_globals_of_indirect_helpers(route, monkeypatch):
+    gates = _Gates()
+    partial = functools.partial(_play, duration=16)
+    table = {"x": _play}
+    sequence = [_play]
+
+    @pulse.kernel
+    def k(q):
+        d = get_drive_line(q)
+        if route == "method":
+            gates.method(d)
+        elif route == "classmethod":
+            _Gates.class_method(d)
+        elif route == "partial":
+            partial(d)
+        elif route == "dict":
+            table["x"](d, 16)
+        else:
+            sequence[0](d, 16)
+
+    q = _device().qudits[0]
+    first = k.lower(q)
+    assert "1.000000e-01" in first.mlir()
+    for _ in range(3):
+        assert k.lower(q) is first
+    monkeypatch.setitem(globals(), "AMPLITUDE", 0.2)
+    assert "2.000000e-01" in k.lower(q).mlir()
+    assert k.cache_info().compiled == 2
 
 
 def test_a_changed_closure_cell_is_seen_on_the_next_call():

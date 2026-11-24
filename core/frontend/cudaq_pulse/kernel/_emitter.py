@@ -4076,6 +4076,9 @@ class PulseIREmitter:
             helper.locals.update(bound)
         else:
             helper.locals.update(zip(params, call_args, strict=False))
+        inlined_helpers = getattr(self.b, "inlined_helpers", None)
+        if inlined_helpers is not None:
+            inlined_helpers[fn] = None
         result = helper.run(code)
         if self._lines.shared:
             self._refresh_lines()
