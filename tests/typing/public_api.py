@@ -22,6 +22,7 @@ from cudaq_pulse.compiler import CompileMetrics, ScheduledEvent
 from cudaq_pulse.controller import (
     ControllerModule,
     ControllerNames,
+    CouplingLine,
     DriveLine,
     ExpressionTerm,
     WaveformMemoryScope,
@@ -41,6 +42,14 @@ from cudaq_pulse.quantum_systems import (
     VirtualZ,
 )
 from cudaq_pulse.quantum_systems.transmon import CZ_LAYERS
+from cudaq_pulse.quantum_systems.tuning import (
+    ChargeCoupling,
+    CouplingControl,
+    CouplingInteraction,
+    ExchangeControl,
+    FluxTuning,
+    Tuning,
+)
 
 wave = pulse.ops.gaussian(40, 0.1, 10.0)
 assert_type(wave, Waveform)
@@ -235,6 +244,20 @@ assert_type(feedline.qudits, tuple[int, ...])
 assert_type(feedline.max_concurrent_tones, int)
 assert_type(pulse.controller.DriveLine(range(4)).qudits, tuple[int, ...])
 pulse.controller.ReadoutLine([0, 1], 12.0, 2)  # type: ignore[call-arg]
+tuned = pulse.Controller().with_coupling_lines(
+    [
+        pulse.controller.CouplingLine(0, amplitude_per_volt=0.52),
+        pulse.controller.CouplingLine((1, 2), delay_ns=2.0),
+        pulse.controller.CouplingLine([3, 4, 5], max_volts=1.0),
+    ]
+)
+assert_type(tuned, pulse.Controller)
+assert_type(tuned.coupling_lines, tuple[CouplingLine, ...])
+pulse.Controller(coupling_lines=[])  # type: ignore[call-arg]
+assert_type(pulse.controller.CouplingLine(0).qudits, tuple[int, ...])
+assert_type(pulse.controller.CouplingLine(0).amplitude_per_volt, float | None)
+assert_type(pulse.controller.CouplingLine(0).max_volts, float | None)
+pulse.controller.CouplingLine(0, 0.52)  # type: ignore[call-arg]
 pulse.ControlSystem(line_delays_ns={("drive", 0): 1.5})  # type: ignore[call-arg]
 pulse.Link(fixed_ns=100 * pulse.ns, feedback_ns=20.0, per_controller=True)
 assert_type(box.supports_capability(pulse.Capability.BRANCH), bool)
@@ -337,3 +360,18 @@ assert_type(CZ_LAYERS, tuple[tuple[tuple[int, int], ...], ...])
 assert_type(pair.coupling_map, list[tuple[int, ...]])
 assert_type(pair.coupling(pair.qudits[0], pair.qudits[1]), Coupling)
 pulse.quantum_system(name="pair", architecture="transmon")  # type: ignore[call-arg]
+flux = FluxTuning(ec_hz=1.65e8, ej_max_hz=2.6e10, asymmetry=0.47, idle_flux=0.5)
+declaring = pulse.quantum_system(
+    "transmon_lattice:3",
+    tunings={0: flux, 1: flux},
+    controls={(1, 2): ExchangeControl(unit="volt", amplitudes=(0.0, 1.0), exchange_hz=(1e6, 2e6))},
+    interactions={(0, 1): ChargeCoupling(charge_coupling_hz=3e6)},
+)
+assert_type(declaring, pulse.QuantumSystem)
+assert_type(declaring.tuning(0), Tuning | None)
+assert_type(declaring.control(declaring.qudits[1], 2), CouplingControl | None)
+assert_type(declaring.interaction(0, 1), CouplingInteraction | None)
+assert_type(declaring.replace(tunings={0: flux}), pulse.QuantumSystem)
+assert_type(flux.frequency_at(0.1), Any)
+pulse.quantum_system("transmon_lattice:3", tuning={0: flux})  # type: ignore[call-arg]
+pulse.quantum_system("transmon_lattice:3", tunings=[flux])  # type: ignore[arg-type]
