@@ -275,11 +275,14 @@ result 0 of answer event 1), ``t = t + t`` and a phase shift of ``t + t``:
 
 ``terms`` is only at the root of an expression and belongs to all of it;
 code that makes an expression an operand of a new term moves the list to
-the new root. No expression nests more than 65 terms deep, however many
-terms the program computes it with, which is the deepest an expression
-was written before there were ``terms``; and an expression has no
-``terms`` unless it uses a term more than once or is deeper than that: an
-export that held no such expression is written as before.
+the new root. The compiler writes no expression that nests more than 65
+terms deep, however many terms the program computes it with, which is the
+deepest it wrote one before there were ``terms``; the length of a wait on
+a controller with a clock of its own is up to three terms more (its
+bounds, and the conversion to the controller's cycles), as before. An
+expression has no ``terms`` unless it uses a term more than once or is
+deeper than that: an export that held no such expression is written as
+before.
 
 ``cudaq_pulse.controller.ExpressionTerm`` names every term. A value
 computed any other way is an ``UnsupportedError`` when the program is

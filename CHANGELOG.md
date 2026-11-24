@@ -220,7 +220,8 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   named there when the expression uses it more than once, or when the
   text would otherwise nest more than 65 terms deep, so an expression of
   any size exports, in text that grows with its operations and never
-  nests deeper than it could before. `evaluate_expression` computes a named term once.
+  nests deeper than it could before (65 terms, and up to three more for a
+  length converted to a controller's own cycles). `evaluate_expression` computes a named term once.
   An expression that shares no term and is not that deep is written as
   before, in format /1 and /2 alike, and both formats keep their names; a
   reader that does not know `{"term": n}` fails on it, as on any leaf it

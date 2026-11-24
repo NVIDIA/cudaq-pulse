@@ -438,6 +438,22 @@ def test_a_controller_clock_converts_a_length_that_names_terms():
         assert evaluate_expression(expression, answers={answer: [0.0, n]}) == cycles
 
 
+def test_a_length_on_a_controller_clock_nests_three_terms_more_at_most():
+    machine = ControlSystem(controllers=[Controller(clock_ghz=2.0, cycles_per_timestep=4)])
+    deepest = 0
+    for depth in (10, *range(56, 68), 300):
+        body = ["t = n * 2", *["t = t + 1"] * depth, "wait(d, t, bounds=(8, 4000))"]
+        lowered = pulse.compile(_kernel(body), control_system=machine).lower(Q[0])
+        plain = _value(pulse.compile(_kernel(body)).lower(Q[0]).export_to_controller())
+        expression = _value(lowered.export_to_controller())
+        assert expression["op"] == "controller_cycles"
+        assert _nesting(plain) <= _NESTED
+        # Its bounds and the conversion are terms over the length.
+        assert _nesting(plain) <= _nesting(expression) <= _nesting(plain) + 3
+        deepest = max(deepest, _nesting(expression))
+    assert deepest == _NESTED + 3
+
+
 def test_a_named_term_is_computed_once_and_only_from_earlier_terms():
     zero = {"op": "div", "type": "int", "of": [{"const": 1}, {"const": 0}]}
     twice = _add("int", {"term": 0}, {"term": 0})
@@ -449,7 +465,6 @@ def test_a_named_term_is_computed_once_and_only_from_earlier_terms():
         == 21
     )
     for terms, use in (
-        ([], {"term": 0}),
         ([seven], {"term": 1}),
         ([seven], {"term": -1}),
         ([seven], {"term": True}),
@@ -459,9 +474,8 @@ def test_a_named_term_is_computed_once_and_only_from_earlier_terms():
         ([seven, _add("int", {"term": 2}, {"const": 1}), seven], {"term": 1}),
     ):
         for of in ([use, {"const": 1}], [{"term": 0}, use]):
-            if terms:
-                with pytest.raises(InvalidValueError, match="not an earlier term"):
-                    evaluate_expression({"terms": terms, **_add("int", *of)})
+            with pytest.raises(InvalidValueError, match="not an earlier term"):
+                evaluate_expression({"terms": terms, **_add("int", *of)})
     # A later term is no operand of an earlier one, computed already or not.
     later = [_add("int", {"term": 1}, {"const": 1}), seven]
     for of in ([{"term": 1}, {"term": 0}], [{"term": 0}, {"term": 1}]):
