@@ -332,6 +332,20 @@ class IdledKernel(CompiledKernel):  # type: ignore[type-arg]
         self._dispatch = kernel._dispatcher_type(_IdleKernel(kernel), options, None)  # type: ignore[arg-type]
         self._dispatch.pin = compiled.quantum_system
 
+    def _view(self) -> Any:
+        # As CompiledKernel builds at once: a pinned kernel without static
+        # parameters is built when mlir(), schedule or metrics first look.
+        kernel = self.kernel
+        dispatch = self._dispatch
+        if (
+            dispatch.general is None
+            and self.quantum_system is not None
+            and not kernel._split[0]
+            and not kernel._relocatable
+        ):
+            dispatch.general = dispatch.lookup((None,) * len(kernel._names)).lowered
+        return super()._view()
+
     def __reduce__(self) -> tuple[Any, ...]:
         return (IdledKernel, (self._compiled, self._rule))
 
@@ -339,9 +353,24 @@ class IdledKernel(CompiledKernel):  # type: ignore[type-arg]
         return f"{self._compiled!r}.replace_idle({self._rule!r})"
 
 
+# The most windows the rcp fallback tries one at a time (one compilation each).
+_TRIALS = 64
+
+
+class _EmptyFillError(Exception):
+    """The fill wrote nothing in the windows *windows* ((qudit, cycles)):
+    they are planned again as left alone."""
+
+    def __init__(self, windows: frozenset[tuple[int, int]]) -> None:
+        super().__init__()
+        self.windows = windows
+
+
 class _LaneGapError(Exception):
-    """Under rcp or alap_rcp, the fills moved an operation of the kernel:
-    the policy's drive lanes, not the fills, decide where pulses go."""
+    """Under rcp or alap_rcp, the program with the fills failed a timing
+    check (an operation of the kernel moved, a fill moved, or the program
+    lengthened): the policy's drive lanes, not the fills, decide where
+    pulses go, so the windows tried are left alone (decision 280)."""
 
 
 def _float_wait(kernel: Kernel[...], entry: _Entry) -> CompilationError | None:
@@ -376,11 +405,11 @@ def _float_wait(kernel: Kernel[...], entry: _Entry) -> CompilationError | None:
 
 def _cycles(threshold: int | Time, clock_ghz: float) -> int:
     """*threshold* in clock cycles: the fewest that last at least a time."""
-    if threshold.__class__ is int:
-        return threshold
+    if isinstance(threshold, int):
+        return int(threshold)
     from ._units import in_cycles
 
-    numerator, denominator = in_cycles(threshold, clock_ghz)  # type: ignore[arg-type]
+    numerator, denominator = in_cycles(threshold, clock_ghz)
     return -(-numerator // denominator)
 
 
@@ -458,27 +487,48 @@ def specialize(
         windows = report(found, rule, sites.log, threshold, chosen, forward)
     else:
         planned, windows = plan(found, rule, sites.log, threshold, chosen, forward, _PADS)
+        # The windows the fill writes nothing in, found by filling them.
+        nothing: frozenset[tuple[int, int]] = frozenset()
         if planned.tiles and base.guard.impure:
             raise UnsupportedError(
                 f"idle replacement: {kernel.__name__}() calls a function whose result can "
                 "differ each time the kernel is traced (such as random.random()), and "
                 "replacing its idle windows traces it twice"
             )
-        if planned.tiles:
+        while planned.tiles:
             try:
                 return _filled(
                     kernel, values, target, options, planned, windows, lines, items, sites, lowered
                 )
             except _LaneGapError:
-                pass
+                break
+            except _EmptyFillError as empty:
+                nothing |= empty.windows
+                planned, windows = plan(
+                    found, rule, sites.log, threshold, chosen, forward, _PADS, nothing=nothing
+                )
+        if planned.tiles:
             # Under rcp or alap_rcp: each window's fill kept if, with those
             # kept before it, no operation of the kernel moves; the others
             # are left alone and say why.
-            ready = [(w.qudit, w.start, w.end) for w in windows if w.filled]
-            kept: list[tuple[int, int, int]] = []
-            for window in ready:
-                trial = frozenset(w for w in ready if w != window and w not in kept)
-                attempt, _ = plan(found, rule, sites.log, threshold, chosen, forward, _PADS, trial)
+            ready = [(w.qudit, w.end) for w in windows if w.filled]
+            earlier = {(w.qudit, w.end): w.result for w in windows if not w.filled}
+            kept: list[tuple[int, int]] = []
+            left: list[tuple[int, int]] = []
+            # One compilation each; past _TRIALS windows, the rest are not tried.
+            for window in ready[:_TRIALS]:
+                allowed = frozenset((*kept, window))
+                attempt, _ = plan(
+                    found,
+                    rule,
+                    sites.log,
+                    threshold,
+                    chosen,
+                    forward,
+                    _PADS,
+                    allowed,
+                    nothing=nothing,
+                )
                 try:
                     _filled(
                         kernel,
@@ -493,20 +543,78 @@ def specialize(
                         lowered,
                     )
                 except _LaneGapError:
+                    left.append(window)
+                    continue
+                except _EmptyFillError as empty:
+                    # At a length the full plan did not trace: left alone,
+                    # and planned so from here on.
+                    nothing |= empty.windows
                     continue
                 kept.append(window)
-            lanes = frozenset(w for w in ready if w not in kept)
             planned, windows = plan(
-                found, rule, sites.log, threshold, chosen, forward, _PADS, lanes
+                found,
+                rule,
+                sites.log,
+                threshold,
+                chosen,
+                forward,
+                _PADS,
+                frozenset(kept),
+                frozenset(left),
+                earlier,
+                nothing,
             )
-            if planned.tiles:
-                return _filled(
-                    kernel, values, target, options, planned, windows, lines, items, sites, lowered
-                )
+            while planned.tiles:
+                try:
+                    return _filled(
+                        kernel,
+                        values,
+                        target,
+                        options,
+                        planned,
+                        windows,
+                        lines,
+                        items,
+                        sites,
+                        lowered,
+                    )
+                except _EmptyFillError as empty:
+                    nothing |= empty.windows
+                    planned, windows = plan(
+                        found,
+                        rule,
+                        sites.log,
+                        threshold,
+                        chosen,
+                        forward,
+                        _PADS,
+                        frozenset(kept),
+                        frozenset(left),
+                        earlier,
+                        nothing,
+                    )
+                    continue
+                except _LaneGapError:
+                    # The kept fills together still move an operation: none.
+                    planned, windows = plan(
+                        found,
+                        rule,
+                        sites.log,
+                        threshold,
+                        chosen,
+                        forward,
+                        _PADS,
+                        frozenset(),
+                        frozenset(ready[:_TRIALS]),
+                        earlier,
+                        nothing,
+                    )
     # Nothing is replaced: the program is the one compiled without the rule.
     module.strip_sites()
     lowered.options = options.without_rule()
     lowered.metrics.idle_windows = windows  # type: ignore[attr-defined]
+    if rule.fill is not None:
+        _guard_fill(base, rule)
     return base
 
 
@@ -530,14 +638,17 @@ def _filled(
     it, checked against *plain*, the program without: *lines* and *items*
     are what was read of that one, *sites* its trace's record."""
     from ._idle_windows import Sites, prove
-    from .kernel._guard import Guard, build_guard
 
     rule = options.idle_replacement
     assert rule is not None and rule.fill is not None
     from .controller import ControllerLimitError
 
     try:
-        entry = kernel._specialize(values, target, options.traced(Sites(planned, rule)))
+        filling = Sites(planned, rule)
+        entry = kernel._specialize(values, target, options.traced(filling))
+        filling.finish()
+        if filling.nothing:
+            raise _EmptyFillError(frozenset(filling.nothing))
     except ControllerLimitError as error:
         # The program without the fills fits: the fills' pulses do not, as
         # they count against the control system like any pulse. The error
@@ -553,10 +664,24 @@ def _filled(
         )
         error.fix = fix
         raise
+    if entry.guard.impure:
+        raise UnsupportedError(
+            f"idle replacement: {rule.fill.__name__}() calls a function whose result can "
+            "differ each time it is traced (such as random.random()), and replacing "
+            f"the idle windows of {kernel.__name__}() traces it twice"
+        )
     lowered = entry.lowered
     module = lowered._module
     try:
-        prove(lines, items, module, sites.log, kernel.__name__, options.schedule in ("asap", "rcp"))
+        prove(
+            lines,
+            items,
+            module,
+            sites.log,
+            kernel.__name__,
+            options.schedule in ("asap", "rcp"),
+            None if planned.pads else planned.runs,
+        )
     except CompilationError as error:
         if error.code == "timing" and options.schedule in ("rcp", "alap_rcp"):
             # Not an error (decision 280): specialize() leaves the windows
@@ -564,6 +689,8 @@ def _filled(
             raise _LaneGapError() from None
         raise
     if lowered.duration != plain.duration:
+        if options.schedule in ("rcp", "alap_rcp"):
+            raise _LaneGapError()
         raise CompilationError(
             f"idle replacement: with the idle windows of {kernel.__name__}() filled, the "
             f"program lasts {lowered.duration} instead of {plain.duration}",
@@ -572,9 +699,17 @@ def _filled(
     module.strip_sites()
     lowered.options = options.without_rule()
     lowered.metrics.idle_windows = windows  # type: ignore[attr-defined]
-    # The program is valid while the kernel's reads and the fill's hold.
+    _guard_fill(entry, rule)
+    return entry
+
+
+def _guard_fill(entry: Any, rule: IdleReplacement) -> None:
+    """Keep *entry* while the kernel's reads and the fill's hold: what was
+    filled, or left alone, depends on both."""
+    from .kernel._guard import Guard, build_guard
+
+    assert rule.fill is not None
     host, fill = entry.guard, build_guard(rule.fill.__pulse_kernel_fn__)
     entry.guard = Guard(
         lambda: host.check() and fill.check(), host.reads + fill.reads, host.impure, (), 0
     )
-    return entry

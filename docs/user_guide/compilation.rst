@@ -216,7 +216,7 @@ and the window's length in clock cycles:
 .. code-block:: text
 
    qudit  start  end  cycles  rounds  before                           result
-       0     80  480     400       1  sync() at line 18 of syndrome()  filled by echo()
+       0     80  480     400       1  sync() at line 16 of syndrome()  filled by echo()
 
 The data qudit's line now holds a wait from cycle 80 to 240, the echo from
 240 to 320 and a wait to 480; every operation of ``syndrome`` starts where
@@ -233,11 +233,20 @@ ends at the next operation on the line or at the qudit's tone, where a
 A ``wait`` the kernel writes is an operation and is kept: only the gaps the
 schedule made are windows. The idle before a qudit's first operation and
 after its last is left alone unless the rule says ``leading=True`` or
-``trailing=True``, and ``qudits=[...]`` keeps the rule to some qudits.
+``trailing=True``, and ``qudits=[...]`` keeps the rule to some qudits. A
+window in the body of a loop where the qudit has a drive or wait of its own
+on its drive line is written once for every round, with the qudit's
+operation before and after it in other rounds: it is neither leading nor
+trailing, even when the first round's comes before the qudit's first
+operation (as ``"alap"`` makes it when the qudit's operation ends the
+round). In a loop the qudit sits out, its windows are leading or trailing
+as the stretch around the loop is.
 
 **The fill.** ``fill(qudit, window)`` is traced at each window as a kernel
 called there, so it reads the qudit's calibrations and may compute its
-spacing from ``window``. A fill shorter than its window is completed with
+spacing from ``window``. A window that the fill plays no pulse in (it
+writes nothing, or only waits) is left alone, and its ``result`` says so.
+A fill shorter than its window is completed with
 waits: centred by default, or at the window's start or end with
 ``align="start"`` or ``align="end"``. A fill longer than its window is a
 ``CompilationError`` that gives both lengths; shorten the fill or raise the
@@ -247,7 +256,13 @@ add up to zero; a readout, a ``sync``, a change of frequency, another line
 or a classical call in a fill is a ``CompilationError``.
 
 **Loops.** A window in a loop is written once, in the loop's body, and the
-loop stays rolled: a thousand rounds compile as nine do. A window that runs
+loop stays rolled: a thousand rounds compile as nine do. A ``sync`` of the
+qudit's line in a loop ends a window in every round alike, so the stretch
+between two syncs, or between a sync and the qudit's operation, is a window
+of every round; a sync in a branch, one whose shift per round is not the
+same in every round (as for a loop inside a loop of more rounds), or one in
+a loop during which the qudit is read out or its tone plays from outside
+the loop, does not, and the window is left alone with the reason. A window that runs
 from a qudit's last operation of one round to its first of the next is
 written at the end of the body and filled in every round, the last
 included, if the qudit idles as long after the loop. Rounds that differ
@@ -269,7 +284,9 @@ The two schedules are then compared: every drive, readout, wait and
 ``sync`` of the kernel has the start, length and loop periods it had, the
 program is as long, and no pulse of a fill plays while its qudit is read
 out or its tone plays from another line; if not, compiling fails and names
-the operation. A phase shift of the kernel in front of a window is folded,
+the operation. What the report says is what the program plays: compiling
+checks that every fill plays a pulse and runs as many times as the rounds
+of the windows it fills. A phase shift of the kernel in front of a window is folded,
 as the passes fold it, into the pulse after it, which may be the fill's:
 the fill plays in the shifted frame. Each gap is
 written to the cycle, so one fill gives one program under every schedule
@@ -285,6 +302,18 @@ replacement and the way out (``qudits=``, a fill with fewer pulses).
 none of this. A program with filled windows pickles as the program it is,
 with the options it was compiled with; ``compiled.replace_idle(rule)``
 pickles as the compiled kernel and the rule.
+
+Limits of this version:
+
+- Under ``"rcp"`` and ``"alap_rcp"``, at most 64 windows are tried, each
+  with the ones kept before it; the others are left alone as not tried.
+- In rolled loops, a window can be left alone where its rounds differ (more
+  or less idle, or something else on the qudit, in some rounds), or where
+  the qudit idles less after the loop's last round than in the others.
+- A fill's phase shifts must add up to zero; shifts that add up to a whole
+  turn (2π) are refused too.
+- A window ends at every ``sync`` of the qudit's line, whether or not the
+  sync moves the line.
 
 Not supported yet, each refused with a message: kernels whose qudits or
 lists each call binds (parameters annotated ``Qudit``, ``Register`` or
