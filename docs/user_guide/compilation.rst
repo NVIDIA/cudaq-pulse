@@ -282,6 +282,89 @@ quantum system gives the coupling of two of them, ``qs.coupling(a, b)``.
    set a wait length is both. A loop that compiles each round can tell which
    path each round took, and reading it does no work.
 
+Loading a scheduled function
+----------------------------
+
+A program does not have to start as a kernel. ``pulse.load`` takes a module of
+the Pulse dialect that another compiler wrote, as assembly or bytecode, and
+returns what ``kernel.lower(...)`` returns: a ``ScheduledKernel``, with its
+``schedule``, ``timeline()`` and ``export_to_controller()``, that the
+backends take.
+
+.. code-block:: python
+
+   from pathlib import Path
+
+   import cudaq_pulse as pulse
+
+   system = pulse.quantum_system("transmon_surface17")
+   text = Path("round.mlir").read_text()
+   program = pulse.load(text, entry="round", qudits=[system.qudits[2], system.qudits[0]])
+   program.export_to_controller()
+
+The function named by ``entry`` takes one ``!pulse.qudit`` per qudit it plays
+on, gets its lines from them and is scheduled: every timed operation has its
+``start_cycles`` and ``duration_cycles``, in cycles of the quantum system's
+clock. ``qudits`` gives the qudit of each argument, in order, and the lines
+get that system's frequencies.
+
+``load`` keeps the schedule as written and does not schedule again. It does
+check it: on its qudits and control system the function is verified as every
+scheduled program is, and checked against what the controllers can play. A
+module that states its clock must state the quantum system's. Attributes
+another compiler put on the function or its operations are dropped. The
+function plays on the qudits it takes and allocates none. A control system
+with line delays, or a controller with ``max_instructions`` or
+``max_program_duration``, is refused: ``load`` does not apply or check those
+yet.
+
+A module given to ``load`` is another compiler's and is treated as untrusted
+input. Nested modules are refused; the entry and the functions it calls are
+those of the module's own symbol table; what its calls would write in place
+is counted first and refused above 2\ :sup:`20` operations; calls nest at most
+256 deep; regions nest at most 256 deep counting the module's and the
+function's own, which leaves 254 branches or loops nested in a function;
+starts, durations and periods are counts of 0 to 2\ :sup:`50` cycles; and the
+module ``load`` writes is verified before anything reads it. The text or
+bytecode itself is parsed by MLIR as it is given, and the depth of that parse
+is not bounded: input nested tens of thousands of levels deep can exhaust the
+stack and end the process. Do not load a module from a source you would not
+run code from. The same holds for unpickling a compiled program.
+
+A loaded function may hold loops, branches on measurements and calls of
+classical functions (:doc:`classical_calls`). The classical functions are the
+module's ``classical.callable`` declarations: their types, latency, link and
+dispatch key are enough to export the program. The links are the control
+system's: the module names each link its calls travel on (``name`` in its
+``classical.links``), and ``links=`` gives the control system's name for a
+link the module names otherwise, or only numbers
+(``links={"host": "nvqlink"}``, ``links={0: "nvqlink"}``). A link the control
+system does not have is refused. An answer taken before the latency and the
+link allow is refused, and so is a submission given less time than the link
+takes. The dispatch keys are the control system's too, as for ``compile``: a
+key a controller fixes for a function replaces the module's, and a reserved
+key or two functions on one link and key are refused. ``classical=`` gives functions declared with
+``pulse.classical`` for the module's, by name. Each must take and give what
+the module states, with its latency mode and submit policy, and its latency
+and implementation replace the module's:
+
+.. code-block:: python
+
+   @pulse.classical(max_latency_ns=400, link="host")
+   def decide(bits: pulse.Bits) -> pulse.Length[pulse.Bits, 1]:
+       return pulse.Bits([bits[0]])
+
+   qudits = [system.qudits[0], system.qudits[2]]
+   program = pulse.load(text, entry="main", qudits=qudits, classical=[decide])
+
+A call of another function of the module states when it starts, as
+``pulse.start_cycles`` on the ``func.call`` (with ``pulse.length_cycles``,
+which the callee must fit in, and ``pulse.period_cycles`` inside a loop), and
+is written in place: the callee's operations, each that much later. The
+callee takes and returns the lines and tones it plays on, is scheduled, and
+holds no loop. This spelling is provisional and will follow the dialect's
+timed call.
+
 Threads
 -------
 

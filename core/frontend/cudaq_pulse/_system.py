@@ -2949,12 +2949,12 @@ def _plain(value: Any) -> Any:
     return value
 
 
-def _component_kinds() -> dict[str, dict[str, type[Any]]]:
+def _component_kinds() -> dict[str, Mapping[str, type[Any]]]:
     """The modality components of a qudit a system file holds, by the member
     they set and the kind it writes."""
-    from .quantum_systems.base import DispersiveReadout, MicrowaveDrive
+    from .quantum_systems.base import _DRIVE_KINDS, DispersiveReadout
 
-    return {"drive": {"microwave": MicrowaveDrive}, "readout": {"dispersive": DispersiveReadout}}
+    return {"drive": _DRIVE_KINDS, "readout": {"dispersive": DispersiveReadout}}
 
 
 def _component_data(member: str, component: Any) -> dict[str, Any] | None:

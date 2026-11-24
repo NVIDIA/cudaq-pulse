@@ -58,6 +58,7 @@ nanobind_add_module(
   bindings.cpp
   "${_build_stamp}"
   LengthInference.cpp
+  ModuleLoader.cpp
 )
 
 target_link_libraries(_cudaq_pulse_native PRIVATE

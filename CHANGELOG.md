@@ -207,6 +207,32 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   the simulator models of each, and one error correction cycle. Its
   numbers, tables and figures are written from the system by a script, and
   a test fails when the page and the system differ.
+- **A drive of no stated modality.** `Drive(amplitude_scale_rad_per_ns=...)`
+  states the Rabi rate of a pulse of amplitude 1 for a qudit whose drive is
+  not a microwave one, or whose modality the system leaves unsaid: the
+  field moved from `MicrowaveDrive` to its base, `Drive`, which can now be
+  given as a qudit's `drive`. The simulator and the derived calibrations
+  read it as they read a `MicrowaveDrive`'s, which keeps working unchanged,
+  and a system file holds it as `{"kind": "drive", ...}`. A subclass of
+  `Drive` the simulator has no model for is refused, as before; one with
+  fields of its own now states them in `_fields`.
+- **Loading a scheduled function.** `pulse.load(module, entry=..., qudits=...)`
+  turns a scheduled function of a Pulse-dialect module that another compiler
+  wrote (assembly or bytecode) into a `ScheduledKernel`, as `kernel.lower(...)`
+  returns. The schedule is kept as written, verified on its qudits and
+  control system and checked against what the controllers can play (a
+  control system with line delays or program limits is refused for now);
+  `qudits` gives the qudit of each argument and the lines
+  get that quantum system's frequencies. A loaded function may hold loops,
+  branches and calls of classical functions: these are read from the module's
+  `classical.callable` declarations, travel on the control system's links
+  (found by the name the module gives them, or by `links=`), take the
+  control system's dispatch keys as for `compile`, and are checked against
+  their latencies, and `classical=` gives declared
+  functions for them, whose types must agree and whose latency and
+  implementation replace the module's. A call of another function of the
+  module that states its start (`pulse.start_cycles`, provisional) is written
+  in place.
 
 ### Changed
 
@@ -407,6 +433,12 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   program that fits cannot. A program on one line is checked as before. A
   call whose values take the schedule past the limit is still a
   `ValueError`; its message now gives the scheduled length.
+- **`viz.save_schedule` takes a path-like path and names its keywords.**
+  `path` may be a `pathlib.Path` as well as a string, and the function takes
+  `figsize` and `title`, the two keywords of `plot_schedule`, where it passed
+  `**kwargs` on to it. Calls that worked still work; a type checker now
+  accepts a `Path` and rejects another keyword, such as `dpi=300`, which
+  type-checked and then raised `TypeError` inside `plot_schedule`.
 
 ### Fixed
 

@@ -86,6 +86,7 @@
 #include "cudaq-pulse/Dialect/Classical/ClassicalOps.h.inc"
 
 #include "LengthInference.h"
+#include "ModuleLoader.h"
 #include "cudaq-pulse/Analysis/ClassicalTiming.h"
 #include "cudaq-pulse/Analysis/Execution.h"
 #include "cudaq-pulse/Analysis/LineGrid.h"
@@ -7602,6 +7603,37 @@ public:
     return result;
   }
 
+  /// What load() reads from another compiler's module and the module it
+  /// writes from it (ModuleLoader.h), on this builder's context. The
+  /// arguments go on as Python gives them: what reads them is built apart
+  /// from the code that compiles a kernel.
+  static nb::object loaded(PyObject *made) {
+    if (!made)
+      throw nb::python_error();
+    return nb::steal(made);
+  }
+  nb::object load_callables(nb::handle module) {
+    return loaded(cudaq_pulse::loader::callables(ctx_.get(), module.ptr()));
+  }
+  nb::object load_link_names(nb::handle module) {
+    return loaded(cudaq_pulse::loader::linkNames(ctx_.get(), module.ptr()));
+  }
+  nb::object load_submissions(nb::handle module) {
+    return loaded(cudaq_pulse::loader::submissions(ctx_.get(), module.ptr()));
+  }
+  PulseModule load_function(nb::handle module, nb::handle entry,
+                            double clock_ghz, int64_t qudits,
+                            nb::handle latencies, nb::handle keys,
+                            nb::handle devices) {
+    Py_ssize_t size =
+        PyBytes_Check(module.ptr()) ? PyBytes_Size(module.ptr()) : 0;
+    SharedContextPool::charge(ctx_.get(), static_cast<int64_t>(size / 8));
+    return PulseModule(ctx_,
+                       cudaq_pulse::loader::function(
+                           ctx_.get(), module.ptr(), entry.ptr(), clock_ghz,
+                           qudits, latencies.ptr(), keys.ptr(), devices.ptr()));
+  }
+
 private:
   std::shared_ptr<mlir::MLIRContext> ctx_;
   std::unique_ptr<mlir::OpBuilder> builder_;
@@ -8173,7 +8205,23 @@ NB_MODULE(_cudaq_pulse_native, m) {
           },
           "Read a PulseModule from what PulseModule.serialize returned",
           nb::arg("module"), nb::arg("source"), nb::arg("run_time"),
-          nb::arg("rewrites"));
+          nb::arg("rewrites"))
+      .def("load_link_names", &PulseModuleBuilder::load_link_names,
+           "The names a module (assembly or bytecode) gives its links, by id",
+           nb::arg("module"))
+      .def("load_submissions", &PulseModuleBuilder::load_submissions,
+           "Every submission of a module (assembly or bytecode): its function, "
+           "the cycles its schedule gives it and the cycles its link takes",
+           nb::arg("module"))
+      .def("load_callables", &PulseModuleBuilder::load_callables,
+           "The classical functions a module (assembly or bytecode) declares",
+           nb::arg("module"))
+      .def("load_function", &PulseModuleBuilder::load_function,
+           "The scheduled function `entry` of a module (assembly or bytecode) "
+           "as a module whose main takes the function's qudits as slots",
+           nb::arg("module"), nb::arg("entry"), nb::arg("clock_ghz"),
+           nb::arg("qudits"), nb::arg("latencies"), nb::arg("keys"),
+           nb::arg("devices"));
 
   m.def(
       "build_stamp", [] { return std::string(cudaqPulseBuildStamp); },

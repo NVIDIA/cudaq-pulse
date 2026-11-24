@@ -131,11 +131,34 @@ class Readout(_Component):
 
 
 class Drive(_Component):
-    """How a qudit is driven: the base of the drive modalities, such as
-    ``MicrowaveDrive``. Simulation picks a drive's model by its type, and
-    refuses a type it has no model for."""
+    """How a qudit is driven: a drive of no stated modality, and the base of
+    the drive modalities, such as ``MicrowaveDrive``.
+
+    ``amplitude_scale_rad_per_ns`` is the Rabi rate in rad/ns of a pulse of
+    amplitude 1, whatever carries the drive. The simulator turns a pulse's
+    amplitude into a Rabi rate by it; without it, by the scale that makes
+    the qudit's ``X`` calibration a pi rotation, if that gives an amplitude;
+    else 1.0. Simulation picks a drive's model by its type: it drives a
+    ``Drive`` and a ``MicrowaveDrive`` so, and refuses another subclass, which
+    it has no model for. A subclass with fields of its own states them all
+    in ``_fields``.
+    """
 
     __slots__ = ()
+    _fields = ("amplitude_scale_rad_per_ns",)
+
+    def __init__(self, *, amplitude_scale_rad_per_ns: float | None = None) -> None:
+        object.__setattr__(self, "_values", (amplitude_scale_rad_per_ns,))
+
+    if TYPE_CHECKING:
+
+        @property
+        def amplitude_scale_rad_per_ns(self) -> float | None:
+            """The Rabi rate in rad/ns of a pulse of amplitude 1."""
+            ...
+
+    else:
+        (amplitude_scale_rad_per_ns,) = map(_Field, range(1))
 
 
 class DispersiveReadout(Readout):
@@ -252,27 +275,12 @@ class DispersiveReadout(Readout):
 class MicrowaveDrive(Drive):
     """A microwave drive: the physics of the qudit's drive.
 
-    The simulator turns a pulse's amplitude into a Rabi rate in rad/ns by
-    ``amplitude_scale_rad_per_ns``; without it, by the scale that makes the
-    qudit's ``X`` calibration a pi rotation, if that gives an amplitude;
-    else 1.0. The tuned pulses are the qudit's calibrations (``get_calibration``).
+    Its one field is ``Drive``'s ``amplitude_scale_rad_per_ns``, the Rabi
+    rate in rad/ns of a pulse of amplitude 1. The tuned pulses are the
+    qudit's calibrations (``get_calibration``).
     """
 
     __slots__ = ()
-    _fields = ("amplitude_scale_rad_per_ns",)
-
-    def __init__(self, *, amplitude_scale_rad_per_ns: float | None = None) -> None:
-        object.__setattr__(self, "_values", (amplitude_scale_rad_per_ns,))
-
-    if TYPE_CHECKING:
-
-        @property
-        def amplitude_scale_rad_per_ns(self) -> float | None:
-            """The Rabi rate in rad/ns of a pulse of amplitude 1."""
-            ...
-
-    else:
-        (amplitude_scale_rad_per_ns,) = map(_Field, range(1))
 
 
 class DragPulse(_Component):
@@ -693,10 +701,18 @@ def _qudit_calibration(qudit: PhysicalQudit, gate: Any, transition: Any) -> Any:
     )
 
 
+# The drives whose first field is their Rabi rate per unit amplitude.
+_SCALED_DRIVES = (MicrowaveDrive, Drive)
+# The kind a system file writes for each drive it holds.
+_DRIVE_KINDS: Mapping[str, type[Drive]] = MappingProxyType(
+    {"microwave": MicrowaveDrive, "drive": Drive}
+)
+
+
 def _drive_scale(qudit: PhysicalQudit) -> float:
     """The Rabi rate in rad/ns of amplitude 1 on *qudit*'s drive, if it gives one, else 1.0."""
     drive = qudit.drive
-    if drive.__class__ is MicrowaveDrive:
+    if drive.__class__ in _SCALED_DRIVES:
         explicit = drive._values[0]
         if explicit is not None:
             return float(explicit)
@@ -1245,22 +1261,22 @@ class _Description:
     def drive_amplitude_scale(self, qudit_index: int) -> float:
         """Return the conversion from pulse amplitude to radians/ns.
 
-        A ``MicrowaveDrive`` may give ``amplitude_scale_rad_per_ns``
-        explicitly; else, if the qudit's ``X`` calibration gives an
-        amplitude, the scale that makes that pulse a pi rotation, from its
-        truncated-Gaussian area. A qudit with neither, or no drive, uses
-        1.0: pulse amplitudes are already angular rates in rad/ns. Another
-        drive modality is ``UnsupportedError``.
+        A ``Drive`` or a ``MicrowaveDrive`` may give
+        ``amplitude_scale_rad_per_ns`` explicitly; else, if the qudit's ``X``
+        calibration gives an amplitude, the scale that makes that pulse a pi
+        rotation, from its truncated-Gaussian area. A qudit with neither, or
+        no drive, uses 1.0: pulse amplitudes are already angular rates in
+        rad/ns. Another subclass of ``Drive`` is ``UnsupportedError``.
         """
         if qudit_index not in self.qudits:
             raise NotFoundError(f"qudit {qudit_index} is not in quantum system {self.name!r}")
         drive = self.qudits[qudit_index].drive
         if drive is None:
             return 1.0
-        if not isinstance(drive, MicrowaveDrive):
+        if not isinstance(drive, MicrowaveDrive) and drive.__class__ is not Drive:
             raise UnsupportedError(
                 f"no drive model for {type(drive).__name__} (qudit {qudit_index}); the "
-                "simulator models a MicrowaveDrive"
+                "simulator models a Drive and a MicrowaveDrive"
             )
         explicit = drive.amplitude_scale_rad_per_ns
         if explicit is not None:
