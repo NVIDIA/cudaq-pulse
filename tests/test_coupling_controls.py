@@ -901,6 +901,32 @@ def test_a_custom_calibration_is_compared_against_the_registered_system_it_names
     assert other.interaction(X2, D4) is not None
 
 
+def test_a_calibration_named_after_a_system_registered_later_is_compared_against_it(shipped):
+    from cudaq_pulse.quantum_systems import _registry
+
+    changed = shipped.physical_qudits[D4].replace(t1_us=40.0)
+    cal = _circuits_changed("later17")
+    held = pulse.quantum_system(
+        name="held",
+        qudits={**shipped.physical_qudits, D4: changed},
+        couplings=shipped.couplings,
+        calibration=cal,
+    )
+    # No system of that name: by label, so the changed qudit has a tuning.
+    assert held.tuning(D4) is not None
+    asked = held.replace(layout=[D4, X2])
+    assert asked.tuning(D4) is not None
+    _registry.register_quantum_system("later17", lambda arg: transmon_surface17(calibration=None))
+    try:
+        # Registered now: compared against it, and the changed qudit is not its qudit.
+        assert held.tuning(D4) is None and held.tuning(X2) is not None
+        # So is a variant, asked before or not.
+        assert asked.tuning(D4) is None and held.replace(layout=[X2, D4]).tuning(D4) is None
+    finally:
+        _registry._factories.pop("later17", None)
+    assert held.tuning(D4) is not None
+
+
 def test_variants_of_equal_values_keep_their_own_answers_through_a_pickle(shipped):
     custom = pulse.quantum_system("transmon_surface17", calibration=_circuits_changed())
     a = shipped.replace(layout=[D4, X2])
@@ -938,6 +964,6 @@ def test_a_long_chain_of_variants_answers_from_the_system_they_were_made_from(sh
     # and holds none of the others.
     assert vars(variant)["_made_from"] is shipped
     assert variant.tuning(D4) is shipped.tuning(D4)
-    assert isinstance(vars(variant)["_made_from"], list)
+    assert type(vars(variant)["_made_from"]).__name__ == "_Carried"
     again = shipped.replace(layout=[D4, X2]).replace(layout=[X2, D4])
     assert again.qudits[0].index == X2
