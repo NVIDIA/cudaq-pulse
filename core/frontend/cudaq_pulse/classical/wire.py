@@ -497,6 +497,11 @@ def _call_data(call: Any) -> dict[str, Any]:
     per-controller link. An emulator serves the compiled name:
     ``"function"`` names it, as the manifest's ``"name"`` does, and the
     manifest gives its dispatch key."""
+    # The fields with a default are read from the instance's dict: as the
+    # class has an attribute of each name, reading one as an attribute is
+    # never specialized, and each such read looks the name up in CPython's
+    # type cache, whose slot depends on where the name's string sits.
+    fields = call.__dict__
     data = {
         "function": call.compiled_name,
         "link": call.link,
@@ -508,11 +513,12 @@ def _call_data(call: Any) -> dict[str, Any]:
         "first_use_cycles": call.first_use_cycles,
         "deadline_cycles": call.deadline_cycles,
         "segment": call.segment,
-        "link_name": call.link_name,
-        "exposed_cycles": call.exposed_cycles,
+        "link_name": fields["link_name"],
+        "exposed_cycles": fields["exposed_cycles"],
     }
-    if call.controller is not None:
-        data["controller"] = call.controller
+    controller = fields["controller"]
+    if controller is not None:
+        data["controller"] = controller
     return data
 
 
