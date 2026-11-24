@@ -14,6 +14,7 @@ first kernel that fetches one."""
 
 from __future__ import annotations
 
+import math
 import struct
 import sys
 from typing import TYPE_CHECKING, Any
@@ -107,16 +108,22 @@ def get_coupling_line(emitter: PulseIREmitter, call_args: list[Any]) -> tuple[An
     if held is not None:
         lines.share(held)
         return (held.cells[0].value,)
-    _require_scheduled(b)
-    _require_declared(b, [indices.get(q.vid) for q in qudits])
+    reached = [indices.get(q.vid) for q in qudits]
+    _require_declared(b, reached)
+    owner, delay = _scheduled_on(b, reached)
     # Counted as an acquisition and not listed among those a rolled loop
     # lifts out: a loop whose body first fetches a coupling line is unrolled.
     emitter._acquired[0] += 1
     results: tuple[IRValue, ...]
     if isinstance(b, PackedIRBuilder):
-        results = (_packed_line(b, qudits, indices),)
+        results = (_packed_line(b, qudits, indices, owner, delay),)
     else:
-        results = b.emit("pulse.get_coupling_line", tuple(qudits), (_LINE,), {})
+        said: dict[str, Any] = {}
+        if owner >= 0:
+            said["controller"] = owner
+        if delay:
+            said["delay_cycles"] = delay
+        results = b.emit("pulse.get_coupling_line", tuple(qudits), (_LINE,), said)
     lines.add(key, results)
     return results
 
@@ -178,29 +185,85 @@ def _watch(emitter: Any) -> None:
     emitter.__class__ = watching
 
 
-def _require_scheduled(b: Any) -> None:
-    """Refuses what the scheduler does not do for a coupling line yet: its
-    controller among several, and its delay."""
+def _scheduled_on(b: Any, reached: list[int | None]) -> tuple[int, int]:
+    """What the control system says of the coupling line of *reached* (the
+    qudits' indices) to the scheduler: the index of the controller that
+    drives it among several (-1 with one controller, or where no control
+    system is given) and its delay in program cycles, whole timesteps of
+    that controller as a drive line's are (``_clocks.line_delays``)."""
     machine: Any = getattr(b, "machine", None)
     system = getattr(machine, "_system", None)
-    if system is not None:
-        controllers = system.controllers
-    elif getattr(machine, "controller", None) is not None:
+    # One controller of a system is compiled for as the only one, as the
+    # program's clock plan is made (compiler._clocked_builder).
+    if getattr(machine, "controller", None) is not None:
         controllers = (machine.controller,)
+    elif system is not None:
+        controllers = system.controllers
     else:
-        return
-    if len(controllers) > 1:
-        raise UnsupportedError(
-            "coupling lines are not scheduled on a control system of several controllers "
-            "yet; compile the kernel for one controller"
-        )
-    for controller in controllers:
+        return (-1, 0)
+    several = len(controllers) > 1
+    if any(q is None or q < 0 for q in reached):
+        # A qudit a call binds: which line it is, is known when it is bound.
+        if several or any(line.delay_ns for c in controllers for line in c.coupling_lines):
+            raise UnsupportedError(
+                "the coupling line of a qudit that a call binds (a parameter annotated Qudit) "
+                "is not scheduled on a control system of several controllers, or one whose "
+                "coupling lines have a delay, yet; pass the qudit as a static argument"
+            )
+        return (-1, 0)
+    acts_on = tuple(sorted(q for q in reached if q is not None))
+    for index, controller in enumerate(controllers):
         for line in controller.coupling_lines:
-            if line.delay_ns:
-                raise UnsupportedError(
-                    f"the delay of {line!r} is not applied when a program is scheduled yet; "
-                    "declare the coupling line without delay_ns"
-                )
+            if line.qudits == acts_on:
+                delay = _delay_cycles(b, line, controller, index) if line.delay_ns else 0
+                return (index if several else -1, delay)
+    return (-1, 0)
+
+
+def _delay_cycles(b: Any, line: Any, controller: Any, index: int) -> int:
+    """The delay of *line*, a coupling line of *controller* (the *index*-th
+    of the program's), in program cycles."""
+    from .._errors import InvalidValueError
+
+    plan = getattr(getattr(b, "line_grid", None), "__self__", None)
+    program_ghz = float(b.clock_ghz)
+    clock = None
+    if plan is not None:
+        clocks = plan.controllers
+        clock = clocks[index if index < len(clocks) else 0]
+    grid = 1 if clock is None else clock.grid
+    own_ghz = program_ghz if clock is None else clock.clock_ghz
+    ns = line.delay_ns
+    step_ns = grid / program_ghz
+    steps = ns / step_ns
+    fine_max = controller.max_fine_delay_ns
+    whole = math.floor(steps + 1e-9) if fine_max > 0 else round(steps)
+    rest = ns - whole * step_ns
+    if abs(rest) < 1e-9:
+        rest = 0.0
+    if fine_max > 0 and rest > fine_max + 1e-9:
+        raise InvalidValueError(
+            f"{line!r} is delayed {ns:g} ns (its delay_ns), {rest:g} ns past a whole number "
+            f"of its {step_ns:g} ns timesteps, and the controller adds at most {fine_max:g} ns "
+            f"of fine delay; raise its max_fine_delay_ns to {rest:g}, or calibrate the delay "
+            f"to {whole * step_ns:g} or {(whole + 1) * step_ns:g} ns"
+        )
+    if fine_max == 0 and abs(rest) * own_ghz > controller.alignment_tolerance_cycles + 1e-9:
+        low = math.floor(steps + 1e-9) * step_ns
+        raise InvalidValueError(
+            f"{line!r} is delayed {ns:g} ns (its delay_ns), {abs(rest):g} ns "
+            f"({abs(rest) * own_ghz:g} of its controller's cycles) from a whole number of its "
+            f"{step_ns:g} ns timesteps, and the controller has no fine delay; give it "
+            f"max_fine_delay_ns, raise its alignment_tolerance_cycles to "
+            f"{abs(rest) * own_ghz:g}, or calibrate the delay to {low:g} or "
+            f"{low + step_ns:g} ns"
+        )
+    if abs(whole * grid) > 2**60:
+        raise InvalidValueError(
+            f"{line!r} is delayed {ns:g} ns (its delay_ns), more than a program lasts: at "
+            f"most 2**60 cycles, {2**60 / program_ghz:.3g} ns"
+        )
+    return int(whole * grid)
 
 
 def _require_declared(b: Any, reached: list[int | None]) -> None:
@@ -269,16 +332,22 @@ def _require_declared(b: Any, reached: list[int | None]) -> None:
         )
 
 
-def _packed_line(b: Any, qudits: list[IRValue], indices: dict[int, int]) -> IRValue:
+def _packed_line(
+    b: Any, qudits: list[IRValue], indices: dict[int, int], owner: int = -1, delay: int = 0
+) -> IRValue:
     """The packed record of a coupling line: its result takes one value id
     and each further qudit one more, unused, so that the builder's table
     of the qudits that lines are on lists every qudit of the line and
-    forgets them with the line when a traced loop body is undone."""
+    forgets them with the line when a traced loop body is undone. With what
+    the control system says of the line (*owner*, the controller that drives
+    it among several; *delay*, in program cycles), the record ends in the
+    two; without, it is the record it was."""
     count = len(qudits)
-    if count + 2 >= _MAX_PAYLOAD:
+    said = owner >= 0 or delay != 0
+    if count + (4 if said else 2) >= _MAX_PAYLOAD:
         raise CompilationError(
             f"get_coupling_line() of {count} qudits: a coupling line reaches at most "
-            f"{_MAX_PAYLOAD - 3}",
+            f"{_MAX_PAYLOAD - (5 if said else 3)}",
             code="limit_exceeded",
         )
     vid = b._next_id
@@ -287,7 +356,10 @@ def _packed_line(b: Any, qudits: list[IRValue], indices: dict[int, int]) -> IRVa
     reached = [indices.get(q.vid, 0) for q in qudits]
     for place, qudit in enumerate(reached):
         b._line_qudit[vid + place] = qudit
-    b._put((_header(_ALLOC_COUPLING, count + 2), count, vid, *reached))
+    if said:
+        b._put((_header(_ALLOC_COUPLING, count + 4), count, vid, *reached, owner, delay))
+    else:
+        b._put((_header(_ALLOC_COUPLING, count + 2), count, vid, *reached))
     return IRValue(vid, _LINE)
 
 
