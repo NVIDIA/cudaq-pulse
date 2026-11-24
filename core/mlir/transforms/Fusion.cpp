@@ -151,6 +151,9 @@ struct FuseAdjacentSquareDrives
       if (auto a = firstDrive->getAttr(name))
         fusedDrive->setAttr(name, a);
     fusedDrive->setAttr("fused", rewriter.getUnitAttr());
+    // Two drives written into an idle window make a written drive.
+    if (firstDrive->hasAttr("pulse.written"))
+      fusedDrive->setAttr("pulse.written", rewriter.getUnitAttr());
 
     rewriter.replaceOp(secondDrive, fusedDrive->getResults());
     rewriter.replaceOp(firstDrive, fusedDrive->getResults());

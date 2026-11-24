@@ -78,7 +78,7 @@ func.func @keep_written_drive_apart() {
 
 // CHECK-LABEL: func.func @fuse_written_drives
 // CHECK: arith.constant 100
-// CHECK: fused
+// CHECK: pulse.drive {{.*}}fused{{.*}}pulse.written
 func.func @fuse_written_drives() {
   %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
   %d, %t = pulse.get_drive_line %q : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
