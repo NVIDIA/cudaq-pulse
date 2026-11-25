@@ -41,11 +41,9 @@
 #include "cudaq-pulse/Analysis/ClassicalTiming.h"
 #include "cudaq-pulse/Analysis/Controllers.h"
 #include "cudaq-pulse/Analysis/Durations.h"
-#include "cudaq-pulse/Analysis/LineDelay.h"
 #include "cudaq-pulse/Analysis/LineGrid.h"
 #include "cudaq-pulse/Analysis/LineTrace.h"
 #include "cudaq-pulse/Analysis/Timing.h"
-#include "cudaq-pulse/Transforms/Passes.h"
 #include "cudaq-pulse/Transforms/Passes.h"
 
 #include <optional>
@@ -264,8 +262,8 @@ static int64_t timelinesOf(mlir::func::FuncOp function) {
   int64_t count = 0;
   function.walk([&](mlir::Operation *op) {
     if (op->hasAttr(classical::kTimelineAttr))
-      count = std::max(count,
-                       classical::intAttr(op, classical::kTimelineAttr) + 1);
+      count =
+          std::max(count, classical::intAttr(op, classical::kTimelineAttr) + 1);
   });
   return count;
 }

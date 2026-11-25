@@ -498,21 +498,22 @@ class PackedIRBuilder:
 
         earlier = vars(self).get("get_buffer")
         if earlier is not None:
-            earlier.lowest = min(earlier.lowest, cycles)
+            earlier.lowest[0] = min(earlier.lowest[0], cycles)
             return
         # The record holds the most the program may sum to, which is known
         # when the buffer is taken.
         at = self._cur + 1
         self._record(_MAX_CYCLES, [cycles])
         # The builder holds the function and the function must not hold the
-        # builder: a builder under a limit is freed as any other is.
+        # builder, nor do the functions here hold each other in a ring: a
+        # builder under a limit is freed as any other is.
         held = weakref.ref(self)
+        lowest = [cycles]
 
         def stop() -> int:
             builder = held()
             assert builder is not None
-            lines = max(1, len(builder._line_qudit))
-            return min(with_stop.lowest * lines, 1 << 60)  # type: ignore[attr-defined]
+            return min(lowest[0] * max(1, len(builder._line_qudit)), 1 << 60)
 
         def with_stop() -> Any:
             builder = held()
@@ -525,11 +526,10 @@ class PackedIRBuilder:
             # program; the controller's is the limit.
             return message.replace(
                 f"more than {stop()} cycles, the longest program",
-                f"more than {with_stop.lowest} cycles, "  # type: ignore[attr-defined]
-                "the longest program",
+                f"more than {lowest[0]} cycles, the longest program",
             )
 
-        with_stop.lowest = cycles  # type: ignore[attr-defined]
+        with_stop.lowest = lowest  # type: ignore[attr-defined]
         with_stop.restated = restated  # type: ignore[attr-defined]
         self.get_buffer = with_stop  # type: ignore[method-assign]
 

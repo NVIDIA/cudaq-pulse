@@ -440,10 +440,12 @@ def test_without_a_limit_no_line_is_counted(monkeypatch):
     limit_cycles(builder, 1000)
     assert "get_buffer" in vars(builder) and len(builder.get_buffer()) == 2
     gone = weakref.ref(builder)
+    wrap = weakref.ref(vars(builder)["get_buffer"])
     gc.disable()
     try:
         del builder
-        assert gone() is None
+        # Nor do the wrap's functions hold each other.
+        assert gone() is None and wrap() is None
     finally:
         gc.enable()
 
