@@ -1434,7 +1434,9 @@ def build(
         flatten_schedules=options.flatten_schedules,
     )
     builder.unroll_threshold = options.unroll_threshold
-    builder.line_tones = target._line_tones
+    # A coupled system's tones are a Mapping that works higher ones out when
+    # read; the emitter only calls .get on it.
+    builder.line_tones = target._line_tones  # type: ignore[assignment]
     builder.machine = machine
     builder.locate_structural = frozenset(parameters)
     plain = machine._plain

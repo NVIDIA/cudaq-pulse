@@ -45,6 +45,7 @@ from .quantum_systems.base import (
     _FRAMES,
     _TRANSMON,
     _Description,
+    _DressedTones,
     dressed_frequencies,
 )
 from .quantum_systems.models import SimulationModel
@@ -493,7 +494,7 @@ class QuantumSystem:
     # drive line, only the default of a readout line.
     def _line_tones(
         self, index: int, readout: bool
-    ) -> tuple[tuple[int, int], dict[tuple[int, int], float]]:
+    ) -> tuple[tuple[int, int], Mapping[tuple[int, int], float]]:
         target = self._description
         model = target.model if isinstance(target.model, SimulationModel) else SimulationModel()
         default = model.default_transition
@@ -505,17 +506,19 @@ class QuantumSystem:
             return default, {default: self._frequency_tables(index + 1)[2][index]}
         return default, model.transitions_hz(qudit, model.levels_of(index))
 
-    # ``_line_tones`` of a system whose couplings dress its qudits: a
-    # drive line's 0-1 tone at the qudit's dressed frequency.
+    # ``_line_tones`` of a system whose couplings dress its qudits: each tone
+    # of a drive line at the difference of the qudit's dressed levels, the
+    # 0-1 one its dressed frequency, a higher one worked out when a program
+    # first plays it (quantum_systems.base._DressedTones).
     def _dressed_line_tones(
         self, index: int, readout: bool
-    ) -> tuple[tuple[int, int], dict[tuple[int, int], float]]:
+    ) -> tuple[tuple[int, int], Mapping[tuple[int, int], float]]:
         default, tones = QuantumSystem._line_tones(self, index, readout)
         # The tone table: made first in a variant (__getattr__ finishes it).
-        frequencies = self.frequencies
-        if self._dressed is not None and not readout and index >= 0 and (0, 1) in tones:
-            tones[0, 1] = frequencies[index]
-        return default, tones
+        self.frequencies  # noqa: B018
+        if self._dressed is None or readout or index < 0:
+            return default, tones
+        return default, _DressedTones(self._description, index, tones)
 
     # The 0-1 frequency of carriers 0 to *count* - 1 (or more), and the
     # tone of each one's readout line (its readout's ``frequency_hz``, else

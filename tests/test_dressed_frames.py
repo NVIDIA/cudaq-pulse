@@ -7,6 +7,7 @@ which the Hamiltonian keeps bare."""
 from __future__ import annotations
 
 import math
+import warnings
 
 import cudaq_pulse as pulse
 import numpy as np
@@ -243,7 +244,9 @@ def test_a_simulated_pair_near_resonance_is_dressed_exactly(detuning_hz):
         couplings=[coupling((0, 1), 5e6), coupling((0, 2), 5e6), coupling((1, 3), 5e6)],
     )
     description = system._description
-    given = layout_frequencies(description, (0, 1))
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        given = layout_frequencies(description, (0, 1))
     within = {k: given.get(k, description.qudits[k].frequency_hz) for k in (0, 1)}
     dressed = dressed_frequencies(description)
     # The pair has the whole system's spectrum of them (near resonance which
@@ -252,11 +255,17 @@ def test_a_simulated_pair_near_resonance_is_dressed_exactly(detuning_hz):
     want = sorted(dressed[k] for k in (0, 1))
     if want[1] - want[0] >= 2 * 5e6:
         assert got == pytest.approx(want, abs=0.01)
+        assert caught == []
     else:
         # ...unless the dropped neighbours narrow the pair's splitting below
         # twice its coupling, which no frequencies of the pair alone give:
         # then the closest, the splitting at its least.
         least = (2 * 5e6 - (want[1] - want[0])) / 2
+        (warned,) = caught
+        assert issubclass(warned.category, pulse.PulseWarning)
+        assert str(warned.message).startswith(
+            "simulate: qudits 0, 1 are so near resonance that, simulated without qudits 2, 3,"
+        )
         assert max(abs(g - w) for g, w in zip(got, want, strict=True)) == pytest.approx(
             least, rel=0.02
         )
@@ -283,3 +292,79 @@ def test_a_simulated_pair_at_resonance_still_gets_the_closest(eps_hz):
     got = sorted(_single_excitation(within, [((0, 1), 5e6)]).values())
     want = sorted(dressed_frequencies(description)[k] for k in (0, 1))
     assert max(abs(g - w) for g, w in zip(got, want, strict=True)) < 50e3
+
+
+def _pair_alone():
+    full = pulse.quantum_system("transmon_surface17")._description
+    d, z = full.qudits[4], full.qudits[14]
+    (pair,) = [c for c in full.couplings if set(c.qudits) == {4, 14}]
+    return pulse.quantum_system(name="pair", qudits={4: d, 14: z}, couplings=[pair]), d, z, pair
+
+
+def test_the_dressed_1_2_tone_is_the_exact_two_excitation_energy():
+    # D5 beside Z2 alone, diagonalised in full at 6 levels each: its dressed
+    # 1-2 transition is E(2, 0) - E(1, 0).
+    alone, d, z, pair = _pair_alone()
+    levels = 6
+    a = np.diag(np.sqrt(np.arange(1, levels)), 1)
+    eye = np.eye(levels)
+
+    def duffing(p):
+        n = np.arange(levels)
+        return np.diag(n * p.frequency_hz + n * (n - 1) / 2 * p.anharmonicity_hz)
+
+    h = np.kron(duffing(d), eye) + np.kron(eye, duffing(z))
+    h += pair.strength_hz * (np.kron(a.T, a) + np.kron(a, a.T))
+    values, vectors = np.linalg.eigh(h)
+
+    def energy(i, j):
+        bare = np.zeros(levels * levels)
+        bare[i * levels + j] = 1.0
+        return values[np.argmax((vectors.T @ bare) ** 2)]
+
+    _, tones = alone._line_tones(alone.qudits[0].index, False)
+    assert tones[1, 2] == pytest.approx(energy(2, 0) - energy(1, 0), abs=0.01)
+    assert tones[0, 1] == pytest.approx(energy(1, 0) - energy(0, 0), abs=0.01)
+    assert tones[0, 2] == pytest.approx(energy(2, 0) - energy(0, 0), abs=0.01)
+
+
+def test_a_simulated_part_keeps_its_dropped_neighbours_share_of_the_1_2_tone():
+    from cudaq_pulse.quantum_systems.base import (
+        _level,
+        dressed_level_energy,
+        layout_anharmonicities,
+    )
+
+    qs = pulse.quantum_system("transmon_surface17")
+    description = qs._description
+    kept = (4, 14)
+    # Nothing to correct until a program reads a higher tone of D5.
+    assert layout_anharmonicities(description, kept) == {}
+    _, tones = qs._line_tones(4, False)
+    tones[1, 2]
+    alphas = layout_anharmonicities(description, kept)
+    assert set(alphas) == {4}
+    moved = layout_frequencies(description, kept)
+    f = {q: moved.get(q, description.qudits[q].frequency_hz) for q in kept}
+    alpha = {q: alphas.get(q, description.qudits[q].anharmonicity_hz) for q in kept}
+    energies = {q: [0.0, f[q], 2 * f[q] + alpha[q]] for q in kept}
+    pairs = [(q, s) for q, s in _exchange_pairs(description) if set(q) <= set(kept)]
+    assert _level(energies, pairs, 4, 2)[0] == pytest.approx(
+        dressed_level_energy(description, 4, 2), abs=0.01
+    )
+
+
+def test_a_0_1_program_on_a_coupled_system_loads_no_numpy(tmp_path):
+    import subprocess
+    import sys
+
+    script = tmp_path / "probe.py"
+    script.write_text(
+        "import sys, cudaq_pulse as p\n"
+        "qs = p.quantum_system('transmon_surface17')\n"
+        "_, tones = qs._line_tones(4, False)\n"
+        "tones[0, 1]\n"
+        "print('numpy' in sys.modules)\n"
+    )
+    out = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, check=True)
+    assert out.stdout.strip() == "False"

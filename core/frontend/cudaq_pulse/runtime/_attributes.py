@@ -11,7 +11,7 @@ from operator import attrgetter
 from typing import Any
 
 from .._errors import InvalidValueError
-from ..quantum_systems.base import _unmeasured, layout_frequencies
+from ..quantum_systems.base import _unmeasured, layout_anharmonicities, layout_frequencies
 
 _QUDITS = attrgetter("qudits")
 
@@ -64,6 +64,11 @@ def _level_attributes(
                 model.energies_hz(qudit, d)
                 continue
             alphas[q] = float(qudit.anharmonicity_hz)
+        if target.couplings:
+            # A qudit whose higher tone a program plays, simulated without a
+            # neighbour, keeps that neighbour's share of its 1-2 transition.
+            for q, alpha in layout_anharmonicities(target, qudits).items():
+                alphas[q] = alpha
         fields.append(f"anharmonicity_hz = {_f64_list(alphas)}")
     return dims, ", ".join(fields)
 

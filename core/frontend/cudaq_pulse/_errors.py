@@ -348,6 +348,11 @@ class _CoarseStepWarning(PulseWarning, RuntimeWarning):
     """A simulation's ``dt_ns`` is too coarse for the frequencies it holds."""
 
 
+class _DressedLayoutWarning(PulseWarning, RuntimeWarning):
+    """A simulation of some of a coupled system's qudits cannot give them the
+    dressed frequencies they have on the whole system."""
+
+
 # *value*, a count such as ``shots_count``, as an int of at least 1; otherwise
 # the error saying what it got.
 def _positive_int(name: str, value: Any) -> int:
