@@ -52,6 +52,7 @@ bool verifyModule(mlir::ModuleOp module);
 } // namespace coupled
 } // namespace pulse
 #endif
+
 namespace pulse {
 /// Whether `module` holds a pulse.call (PulseCallCheck.cpp).
 bool moduleHasCalls(mlir::ModuleOp module);
@@ -824,6 +825,42 @@ LLVM_ATTRIBUTE_ALWAYS_INLINE static bool verifyModule(mlir::ModuleOp module) {
 }
 
 #if PULSE_COUPLED == 0
+/// In a module that holds a coupling line and a pulse.call: an error at
+/// each op of a coupling line in a function that a call runs, and whether
+/// there was one. A coupling line does not cross a call (the call's own
+/// check says so), and the check of a module with calls does not time a
+/// pulse on one inside a callee, so a callee holds none yet. A caller's own
+/// coupling lines, beside its calls, are checked once the calls are
+/// written out, as any.
+LLVM_ATTRIBUTE_NOINLINE __attribute__((cold)) static bool
+refuseCouplingLinesInCallees(mlir::ModuleOp module) {
+  llvm::SmallPtrSet<mlir::Operation *, 4> callees;
+  mlir::SymbolTableCollection symbols;
+  module.walk([&](mlir::Operation *op) {
+    if (op->getName().getStringRef() != "pulse.call")
+      return;
+    auto callee = op->getAttrOfType<mlir::FlatSymbolRefAttr>("callee");
+    if (!callee)
+      return;
+    if (auto function =
+            symbols.lookupNearestSymbolFrom<mlir::func::FuncOp>(op, callee))
+      callees.insert(function);
+  });
+  bool refused = false;
+  module.walk([&](mlir::Operation *op) {
+    if (!mlir::isa<pulse::GetCouplingLineOp, pulse::DriveBasebandOp>(op))
+      return;
+    auto function = op->getParentOfType<mlir::func::FuncOp>();
+    if (!function || !callees.contains(function))
+      return;
+    op->emitError("a function that a pulse.call runs cannot fetch a coupling "
+                  "line or play on one yet; write its ops in the caller, "
+                  "beside the call");
+    refused = true;
+  });
+  return refused;
+}
+
 struct PulseVerifyPass
     : public mlir::PassWrapper<PulseVerifyPass,
                                mlir::OperationPass<mlir::ModuleOp>> {
@@ -839,7 +876,9 @@ struct PulseVerifyPass
     auto module = getOperation();
     // A module with pulse.call is checked as it is written out.
     if (pulse::moduleHasCalls(module)) [[unlikely]] {
-      if (mlir::failed(pulse::checkCalls(module)))
+      if ((pulse::saysCouplingLines(module) &&
+           refuseCouplingLinesInCallees(module)) ||
+          mlir::failed(pulse::checkCalls(module)))
         signalPassFailure();
       return;
     }
