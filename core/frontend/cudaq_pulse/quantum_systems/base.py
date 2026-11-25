@@ -1398,7 +1398,9 @@ def dressed_level_energy(description: Any, qudit: int, level: int) -> float:
     *description* included, every other qudit in its ground level: the
     eigenvalue of the *level*-excitation sector of the qudits its couplings
     join to it whose state holds most of that bare state. Level 1 is its
-    dressed 0-1 frequency. Kept per description."""
+    dressed 0-1 frequency; a higher level is worked out among the qudits
+    within _HOPS couplings of it. Every tone of its line is the difference
+    of two of these. Kept per description."""
     if level == 0:
         return 0.0
     dressed = dressed_frequencies(description)
@@ -1410,9 +1412,9 @@ def dressed_level_energy(description: Any, qudit: int, level: int) -> float:
     return _group_level(description, qudit, level)
 
 
-# *qudit*'s dressed level *level* (from 1) among the qudits within _HOPS
-# couplings of it: a higher tone is the difference of two of these, so that
-# both come from the same group.
+# *qudit*'s dressed level *level* (from 2) among the qudits within _HOPS
+# couplings of it; *qudit* itself has *level* + 1 levels whatever its model
+# keeps, as a simulation may keep more.
 def _group_level(description: Any, qudit: int, level: int) -> float:
     known = _LEVELS.setdefault(description, {})
     found = known.get((qudit, level))
@@ -1421,7 +1423,10 @@ def _group_level(description: Any, qudit: int, level: int) -> float:
         group = _group_of(description, qudit, pairs)
         model = description.model
         energies = {
-            q: model.energies_hz(description.qudits[q], min(level, model.levels_of(q) - 1) + 1)
+            q: model.energies_hz(
+                description.qudits[q],
+                level + 1 if q == qudit else min(level, model.levels_of(q) - 1) + 1,
+            )
             for q in group
         }
         within = [(q, s) for q, s in pairs if set(q) <= set(group)]
@@ -1447,13 +1452,9 @@ class _DressedTones(Mapping[tuple[int, int], float]):
             if transition not in self._bare:
                 raise KeyError(transition)
             lower, upper = transition
-            if upper < 2:
-                made = dressed_level_energy(self._description, self._qudit, upper)
-            else:
-                # Both levels among the same qudits (_group_level).
-                made = _group_level(self._description, self._qudit, upper) - (
-                    _group_level(self._description, self._qudit, lower) if lower else 0.0
-                )
+            made = dressed_level_energy(
+                self._description, self._qudit, upper
+            ) - dressed_level_energy(self._description, self._qudit, lower)
             self._made[transition] = made
         return made
 
@@ -1512,14 +1513,8 @@ def layout_anharmonicities(
             q: [0.0, frequencies[q], 2 * frequencies[q] + alphas[q]][: simulated[q]] for q in kept
         }
 
-    # Level 2 at the whole system's level 1 plus the 1-2 tone a program
-    # plays, so that the simulated 1-2 transition is that tone.
-    dressed = dressed_frequencies(description)
-    assert dressed is not None
-    targets = {
-        q: dressed[q] + _group_level(description, q, 2) - _group_level(description, q, 1)
-        for q in marked
-    }
+    # Level 2 where the 0-2 and 1-2 tones a program drives put it.
+    targets = {q: dressed_level_energy(description, q, 2) for q in marked}
     for _ in range(30):
         miss, rows = [], []
         for q in marked:

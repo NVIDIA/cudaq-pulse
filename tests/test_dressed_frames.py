@@ -294,11 +294,11 @@ def test_a_simulated_pair_at_resonance_still_gets_the_closest(eps_hz):
     assert max(abs(g - w) for g, w in zip(got, want, strict=True)) < 50e3
 
 
-def _pair_alone():
+def _pair_alone(name="pair"):
     full = pulse.quantum_system("transmon_surface17")._description
     d, z = full.qudits[4], full.qudits[14]
     (pair,) = [c for c in full.couplings if set(c.qudits) == {4, 14}]
-    return pulse.quantum_system(name="pair", qudits={4: d, 14: z}, couplings=[pair]), d, z, pair
+    return pulse.quantum_system(name=name, qudits={4: d, 14: z}, couplings=[pair]), d, z, pair
 
 
 def test_the_dressed_1_2_tone_is_the_exact_two_excitation_energy():
@@ -329,11 +329,7 @@ def test_the_dressed_1_2_tone_is_the_exact_two_excitation_energy():
 
 
 def test_a_simulated_part_keeps_its_dropped_neighbours_share_of_the_1_2_tone():
-    from cudaq_pulse.quantum_systems.base import (
-        _group_level,
-        _level,
-        layout_anharmonicities,
-    )
+    from cudaq_pulse.quantum_systems.base import _level, layout_anharmonicities
 
     qs = pulse.quantum_system("transmon_surface17")
     description = qs._description
@@ -353,9 +349,6 @@ def test_a_simulated_part_keeps_its_dropped_neighbours_share_of_the_1_2_tone():
         _, tones = qs._line_tones(q, False)
         simulated = _level(energies, pairs, q, 2)[0] - _level(energies, pairs, q, 1)[0]
         assert simulated == pytest.approx(tones[1, 2], abs=0.01)
-        assert tones[1, 2] == pytest.approx(
-            _group_level(description, q, 2) - _group_level(description, q, 1), abs=1e-6
-        )
 
 
 def test_a_0_1_program_on_a_coupled_system_loads_no_numpy(tmp_path):
@@ -377,8 +370,9 @@ def test_a_0_1_program_on_a_coupled_system_loads_no_numpy(tmp_path):
 def test_asking_whether_a_tone_exists_works_nothing_out():
     from cudaq_pulse.quantum_systems.base import _LEVELS
 
-    # A system of its own, so that no earlier test has worked out its levels.
-    alone, _, _, _ = _pair_alone()
+    # A system of its own (descriptions are equal by value, so a name no
+    # other test uses), so that no earlier test has worked out its levels.
+    alone, _, _, _ = _pair_alone("asked")
     qudit = alone.qudits[0].index
     _, tones = alone._line_tones(qudit, False)
     assert (1, 2) in tones and (5, 6) not in tones
@@ -412,3 +406,42 @@ def test_a_kept_qudit_two_couplings_from_a_dropped_one_is_corrected():
     assert _level(energies, pairs, 0, 2)[0] == pytest.approx(
         dressed_level_energy(description, 0, 2), abs=0.01
     )
+
+
+def _crowded_chain():
+    # Five qudits near resonance, one coupling apart: qudit 0's level 1
+    # among the qudits within three couplings is MHz from the whole chain's.
+    base = pulse.quantum_system("transmon_surface17")._description
+    q = {
+        i: base.qudits[4].replace(index=i, frequency_hz=hz, anharmonicity_hz=-200e6)
+        for i, hz in enumerate((5.0e9, 5.08e9, 5.0e9, 5.08e9, 5.0e9))
+    }
+    coupling = pulse.quantum_systems.Coupling
+    return pulse.quantum_system(
+        name="crowded", qudits=q, couplings=[coupling((i, i + 1), 30e6) for i in range(4)]
+    )
+
+
+def test_the_0_2_tone_near_resonance_is_the_whole_chains_level_2():
+    from cudaq_pulse.quantum_systems.base import _level
+
+    chain = _crowded_chain()
+    description = chain._description
+    f = {q: description.qudits[q].frequency_hz for q in range(5)}
+    energies = {q: [0.0, f[q], 2 * f[q] - 200e6] for q in range(5)}
+    pairs = _exchange_pairs(description)
+    for q in range(5):
+        _, tones = chain._line_tones(q, False)
+        # Within the share of the qudits beyond three couplings.
+        assert tones[0, 2] == pytest.approx(_level(energies, pairs, q, 2)[0], abs=50e3)
+        assert tones[0, 2] == pytest.approx(tones[0, 1] + tones[1, 2], abs=1e-3)
+
+
+def test_a_part_simulated_at_two_levels_is_not_corrected():
+    from cudaq_pulse.quantum_systems.base import layout_anharmonicities
+
+    description = pulse.quantum_system("transmon_surface17")._description
+    assert set(layout_anharmonicities(description, (4, 14), (2, 3))) == {14}
+    assert set(layout_anharmonicities(description, (14, 4), (2, 3))) == {4}
+    assert not layout_anharmonicities(description, (4, 14), (2, 2))
+    assert set(layout_anharmonicities(description, (4, 14), (3, 3))) == {4, 14}
