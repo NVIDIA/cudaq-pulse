@@ -330,8 +330,8 @@ def test_the_dressed_1_2_tone_is_the_exact_two_excitation_energy():
 
 def test_a_simulated_part_keeps_its_dropped_neighbours_share_of_the_1_2_tone():
     from cudaq_pulse.quantum_systems.base import (
+        _group_level,
         _level,
-        dressed_level_energy,
         layout_anharmonicities,
     )
 
@@ -348,9 +348,14 @@ def test_a_simulated_part_keeps_its_dropped_neighbours_share_of_the_1_2_tone():
     alpha = {q: alphas.get(q, description.qudits[q].anharmonicity_hz) for q in kept}
     energies = {q: [0.0, f[q], 2 * f[q] + alpha[q]] for q in kept}
     pairs = [(q, s) for q, s in _exchange_pairs(description) if set(q) <= set(kept)]
-    assert _level(energies, pairs, 4, 2)[0] == pytest.approx(
-        dressed_level_energy(description, 4, 2), abs=0.01
-    )
+    # Each kept qudit's simulated 1-2 transition is the tone a program plays.
+    for q in kept:
+        _, tones = qs._line_tones(q, False)
+        simulated = _level(energies, pairs, q, 2)[0] - _level(energies, pairs, q, 1)[0]
+        assert simulated == pytest.approx(tones[1, 2], abs=0.01)
+        assert tones[1, 2] == pytest.approx(
+            _group_level(description, q, 2) - _group_level(description, q, 1), abs=1e-6
+        )
 
 
 def test_a_0_1_program_on_a_coupled_system_loads_no_numpy(tmp_path):
@@ -372,10 +377,12 @@ def test_a_0_1_program_on_a_coupled_system_loads_no_numpy(tmp_path):
 def test_asking_whether_a_tone_exists_works_nothing_out():
     from cudaq_pulse.quantum_systems.base import _LEVELS
 
-    qs = pulse.quantum_system("transmon_surface17")
-    _, tones = qs._line_tones(6, False)
+    # A system of its own, so that no earlier test has worked out its levels.
+    alone, _, _, _ = _pair_alone()
+    qudit = alone.qudits[0].index
+    _, tones = alone._line_tones(qudit, False)
     assert (1, 2) in tones and (5, 6) not in tones
-    assert (6, 2) not in _LEVELS.get(qs._description, {})
+    assert not any(key[0] == qudit for key in _LEVELS.get(alone._description, {}))
 
 
 def test_a_kept_qudit_two_couplings_from_a_dropped_one_is_corrected():

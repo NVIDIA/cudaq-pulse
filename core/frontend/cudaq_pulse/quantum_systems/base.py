@@ -1309,9 +1309,10 @@ def layout_frequencies(description: Any, qudits: Sequence[int]) -> Mapping[int, 
 
 
 # A dressed level above the first is worked out among the qudits within
-# this many couplings of its qudit: each coupling further moves it by
-# about (g / detuning)^2 of the last, far below a hertz on these systems,
-# and the whole coupled group of a large chip would not fit in memory.
+# this many couplings of its qudit, as the whole coupled group of a large
+# chip would not fit in memory: each coupling further moves it by about
+# (g / detuning)^2 of the last, under a millihertz on transmon_surface17,
+# a few hertz where neighbours are within ten couplings of resonance.
 _HOPS = 3
 
 
@@ -1319,9 +1320,10 @@ _HOPS = 3
 # in Hz from the ground state; and the anharmonicities simulate gives a kept
 # part (layout_anharmonicities), by description and set of qudits.
 _LEVELS: weakref.WeakKeyDictionary[Any, dict[tuple[int, int], float]] = weakref.WeakKeyDictionary()
-_ANHARMONICITIES: weakref.WeakKeyDictionary[Any, dict[tuple[int, ...], Mapping[int, float]]] = (
-    weakref.WeakKeyDictionary()
-)
+# Per description: (kept qudits, their simulated levels) -> anharmonicities.
+_ANHARMONICITIES: weakref.WeakKeyDictionary[
+    Any, dict[tuple[tuple[int, ...], tuple[int, ...]], Mapping[int, float]]
+] = weakref.WeakKeyDictionary()
 
 
 # The qudits the couplings *pairs* join to *qudit*, it among them.
@@ -1405,6 +1407,13 @@ def dressed_level_energy(description: Any, qudit: int, level: int) -> float:
         return float(model.energies_hz(description.qudits[qudit], level + 1)[level])
     if level == 1:
         return dressed[qudit]
+    return _group_level(description, qudit, level)
+
+
+# *qudit*'s dressed level *level* (from 1) among the qudits within _HOPS
+# couplings of it: a higher tone is the difference of two of these, so that
+# both come from the same group.
+def _group_level(description: Any, qudit: int, level: int) -> float:
     known = _LEVELS.setdefault(description, {})
     found = known.get((qudit, level))
     if found is None:
@@ -1438,9 +1447,13 @@ class _DressedTones(Mapping[tuple[int, int], float]):
             if transition not in self._bare:
                 raise KeyError(transition)
             lower, upper = transition
-            made = dressed_level_energy(
-                self._description, self._qudit, upper
-            ) - dressed_level_energy(self._description, self._qudit, lower)
+            if upper < 2:
+                made = dressed_level_energy(self._description, self._qudit, upper)
+            else:
+                # Both levels among the same qudits (_group_level).
+                made = _group_level(self._description, self._qudit, upper) - (
+                    _group_level(self._description, self._qudit, lower) if lower else 0.0
+                )
             self._made[transition] = made
         return made
 
@@ -1455,7 +1468,9 @@ class _DressedTones(Mapping[tuple[int, int], float]):
         return len(self._bare)
 
 
-def layout_anharmonicities(description: Any, qudits: Sequence[int]) -> Mapping[int, float]:
+def layout_anharmonicities(
+    description: Any, qudits: Sequence[int], levels: Sequence[int] | None = None
+) -> Mapping[int, float]:
     """For a simulation of the qudits *qudits* of *description* alone, at
     least three levels each: the anharmonicity in Hz to give each kept qudit
     whose group reaches a qudit left out, so that its dressed level 2, with
@@ -1465,17 +1480,25 @@ def layout_anharmonicities(description: Any, qudits: Sequence[int]) -> Mapping[i
     if dressed_frequencies(description) is None:
         return _NOTHING_MOVED
     kept = sorted(set(qudits))
+    # Each kept qudit's simulated levels (*levels*, in the order of *qudits*).
+    count = dict(zip(qudits, levels, strict=True)) if levels is not None else {}
+    shape = tuple(min(count.get(q, 3), 3) for q in kept)
     known = _ANHARMONICITIES.setdefault(description, {})
-    found = known.get(tuple(kept))
+    found = known.get((tuple(kept), shape))
     if found is not None:
         return found
     pairs = _exchange_pairs(description)
     inside = set(kept)
     # A kept qudit whose group reaches a dropped qudit: its level 2 has
     # that qudit's share.
-    marked = [q for q in kept if not inside.issuperset(_group_of(description, q, pairs))]
+    simulated = dict(zip(kept, shape, strict=True))
+    marked = [
+        q
+        for q in kept
+        if simulated[q] > 2 and not inside.issuperset(_group_of(description, q, pairs))
+    ]
     if not marked:
-        known[tuple(kept)] = _NOTHING_MOVED
+        known[tuple(kept), shape] = _NOTHING_MOVED
         return _NOTHING_MOVED
     within = [(q, s) for q, s in pairs if inside.issuperset(q)]
     frequencies = {
@@ -1485,9 +1508,18 @@ def layout_anharmonicities(description: Any, qudits: Sequence[int]) -> Mapping[i
     alphas = {q: float(description.qudits[q].anharmonicity_hz or 0.0) for q in kept}
 
     def energies() -> dict[int, list[float]]:
-        return {q: [0.0, frequencies[q], 2 * frequencies[q] + alphas[q]] for q in kept}
+        return {
+            q: [0.0, frequencies[q], 2 * frequencies[q] + alphas[q]][: simulated[q]] for q in kept
+        }
 
-    targets = {q: dressed_level_energy(description, q, 2) for q in marked}
+    # Level 2 at the whole system's level 1 plus the 1-2 tone a program
+    # plays, so that the simulated 1-2 transition is that tone.
+    dressed = dressed_frequencies(description)
+    assert dressed is not None
+    targets = {
+        q: dressed[q] + _group_level(description, q, 2) - _group_level(description, q, 1)
+        for q in marked
+    }
     for _ in range(30):
         miss, rows = [], []
         for q in marked:
@@ -1505,7 +1537,7 @@ def layout_anharmonicities(description: Any, qudits: Sequence[int]) -> Mapping[i
         for r, d in zip(marked, _solve(rows, miss), strict=True):
             alphas[r] += d
     found = MappingProxyType({q: alphas[q] for q in marked})
-    known[tuple(kept)] = found
+    known[tuple(kept), shape] = found
     return found
 
 
@@ -1529,7 +1561,7 @@ def _warn_layout(
         - set(kept)
     )
     if not near:
-        near = sorted({q for pair, _ in pairs for q in pair} - set(kept))
+        near = sorted({b if a in kept else a for (a, b), _ in pairs if (a in kept) != (b in kept)})
 
     def listed(qudits: list[int]) -> str:
         return ("qudit " if len(qudits) == 1 else "qudits ") + ", ".join(map(str, qudits))
@@ -1538,10 +1570,10 @@ def _warn_layout(
     warnings.warn(
         f"simulate: {listed(missing)} {'is' if one else 'are'} so near resonance that, "
         f"simulated without {listed(near)}, no frequencies give {'it' if one else 'them'} "
-        f"the dressed frequencies {'it has' if one else 'they have'} on the whole quantum "
-        f"system: {'it is' if one else 'they are'} simulated up to "
-        f"{max(abs(m) for m in miss) / 1e3:.3g} kHz from them. Simulate {listed(near)} too "
-        "to have them exactly.",
+        f"the dressed {'frequency it has' if one else 'frequencies they have'} on the whole "
+        f"quantum system: {'it is' if one else 'they are'} simulated up to "
+        f"{max(abs(m) for m in miss) / 1e3:.3g} kHz from {'it' if one else 'them'}. Simulate "
+        f"{listed(near)} too to have {'it' if one else 'them'} exactly.",
         _DressedLayoutWarning,
         # At the program's call of simulate, not in the package.
         skip_file_prefixes=(os.path.dirname(os.path.dirname(__file__)) + os.sep,),

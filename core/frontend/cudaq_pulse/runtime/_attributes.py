@@ -67,7 +67,7 @@ def _level_attributes(
         if target.couplings:
             # A qudit simulated without a qudit its couplings reach keeps that
             # qudit's share of its 1-2 transition.
-            for q, alpha in layout_anharmonicities(target, qudits).items():
+            for q, alpha in layout_anharmonicities(target, qudits, dims).items():
                 alphas[q] = alpha
         fields.append(f"anharmonicity_hz = {_f64_list(alphas)}")
     return dims, ", ".join(fields)
