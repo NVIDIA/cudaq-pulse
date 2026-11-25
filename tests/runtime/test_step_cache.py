@@ -224,6 +224,11 @@ def test_a_step_by_qudit_levels_is_resolved_like_one_for_all(steps):
 
 
 def test_kept_steps_hold_no_target_and_go_with_it(steps):
+    # The steps kept before this test are dropped: a cache that is full is
+    # emptied when it keeps a step, which between the two simulations below
+    # would leave the second's alone. How full it is here depends on the
+    # tests run before and on when their systems were collected.
+    simulate_module._STEPS.clear()
     target, simulated = _target(), _target(alpha_hz=-400.0e6)
     lowered = on(target, _flip, Q[0])
     pulse.simulate(lowered, levels=5)
