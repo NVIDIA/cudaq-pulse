@@ -31,10 +31,13 @@ from . import _bytecode_normalize as bc
 
 if TYPE_CHECKING:
     import threading
-    from collections.abc import Callable, Collection, Mapping
+    from collections.abc import Callable, Collection
     from typing import Any
 
     _Read = tuple[str, str, tuple[str, ...], bool]
+    _TraceReads = dict[
+        tuple[int, Any] | types.FunctionType, tuple[dict[Any, Any], Any, Any] | types.FunctionType
+    ]
     # Bound by _load (below).
     _generated: Callable[[tuple[tuple[Any, ...], ...]], Callable[[], bool]]
     _CODE: dict[str, Callable[..., Callable[[], bool]]]
@@ -346,18 +349,17 @@ def build_guard(
     fn: types.FunctionType,
     *,
     impure: bool = False,
-    inlined_helpers: Collection[types.FunctionType] = (),
-    dict_items: Mapping[tuple[int, Any], tuple[dict[Any, Any], Any, Any]] | None = None,
+    dict_items: _TraceReads | None = None,
     dict_whole: Collection[int] = (),
 ) -> Guard:
     """The guard for *fn*, from the values its reads have right now.
 
     *impure* marks a trace that evaluated a host call whose result may change
-    between calls (``random.random()``); its guard never holds. *inlined_helpers*
-    includes functions the trace resolved indirectly. *dict_items* are
-    the dict items the trace read, ``(id(dict), key) -> (dict, key,
-    value)``, and *dict_whole* the ids of the dicts it iterated or tested
-    with ``in``; without *dict_items* every dict is compared whole.
+    between calls (``random.random()``); its guard never holds. *dict_items*
+    records dict item reads as ``(id(dict), key) -> (dict, key, value)`` and
+    indirect helpers as ``function -> function``. *dict_whole* is the set of
+    ids of dicts the trace iterated or tested with ``in``; without
+    *dict_items* every dict is compared whole.
     """
     if impure:
         return Guard(_always_false, 0, True, (), 0)
@@ -367,7 +369,7 @@ def build_guard(
     # unbound at trace time.
     lines: list[list[Any]] = []
     slots: dict[tuple[Any, ...], int] = {}
-    visited: set[types.FunctionType] = set()
+    visited: set[int] = set()
     # Values some read uses other than by an immediate subscript.
     escaped: set[int] = set()
     # Registers a later step reads an attribute or item of.
@@ -389,9 +391,9 @@ def build_guard(
         return register
 
     def walk(func: types.FunctionType, depth: int) -> None:
-        if func in visited or depth > _MAX_HELPER_DEPTH:
+        if id(func.__code__) in visited or depth > _MAX_HELPER_DEPTH:
             return
-        visited.add(func)
+        visited.add(id(func.__code__))
         fn_globals = func.__globals__
         freevars = func.__code__.co_freevars
         cells = func.__closure__ or ()
@@ -439,12 +441,17 @@ def build_guard(
             walk(inner, depth + 1)
 
     walk(fn, 0)
-    for helper in inlined_helpers:
-        walk(helper, 0)
     items: dict[int, list[tuple[Any, Any]]] = {}
     if dict_items:
-        for container, index, value in dict_items.values():
-            items.setdefault(id(container), []).append((index, value))
+        for record in dict_items.values():
+            if isinstance(record, types.FunctionType):
+                # Closures sharing a code object can hold different cells.
+                visited.discard(id(record.__code__))
+                walk(record, 0)
+            else:
+                container, index, value = record
+                items.setdefault(id(container), []).append((index, value))
+                follow(value, 0)
     plan: list[tuple[Any, ...]] = []
     # The globals of the step that tests unbound names, while it is the last.
     unbound_in: dict[str, Any] | None = None

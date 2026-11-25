@@ -1807,8 +1807,10 @@ class PulseIREmitter:
     # The slots' types, for type checkers: annotations in the class body
     # would cost every process's first trace.
     if TYPE_CHECKING:
+        from ._guard import _TraceReads
+
         _can_roll: bool
-        _dict_items: dict[tuple[int, Any], tuple[dict[Any, Any], Any, Any]] | None
+        _dict_items: _TraceReads | None
         _slots: dict[int, tuple[list[Any], int, IRValue]]
         _durations: dict[int, int]
         _mutated: dict[int, tuple[Any, Any]] | None
@@ -1848,8 +1850,8 @@ class PulseIREmitter:
             self._lines = caller._lines
             self._unroll = caller._unroll
             return
-        # The builder's record of the dict items the trace read, for the
-        # guard (``_guard.py``); None for a builder that keeps none.
+        # The guard's log of dict item reads and resolved Python helpers;
+        # None for a builder that does not keep it.
         self._dict_items = getattr(builder, "dict_items", None)
         self._can_roll = getattr(builder, "supports_regions", False)
         self._unroll = resolve_unroll_threshold(getattr(builder, "unroll_threshold", None))
@@ -3664,6 +3666,10 @@ class PulseIREmitter:
         if isinstance(callable_val, types.FunctionType) and (
             _takes_ir(call_args, kwargs) or _uses_pulse_ops(callable_val)
         ):
+            # A plain function can come from a subscript or another helper's
+            # return value, not just a name the guard can resolve statically.
+            if self._dict_items is not None:
+                self._dict_items.setdefault(callable_val, callable_val)
             self._inline_helper(callable_val, call_args, kwargs)
             return
         # A method of a helper object is inlined the same way, with its object
@@ -3676,7 +3682,10 @@ class PulseIREmitter:
                 or _uses_pulse_ops(callable_val.__func__, owner=callable_val.__self__)
             )
         ):
-            self._inline_helper(callable_val.__func__, [callable_val.__self__, *call_args], kwargs)
+            fn = callable_val.__func__
+            if self._dict_items is not None:
+                self._dict_items.setdefault(fn, fn)
+            self._inline_helper(fn, [callable_val.__self__, *call_args], kwargs)
             return
         if (
             callable_val.__class__ is functools.partial
@@ -3684,7 +3693,10 @@ class PulseIREmitter:
             and _uses_pulse_ops(callable_val.func)
         ):
             merged = {**callable_val.keywords, **(kwargs or {})}
-            self._inline_helper(callable_val.func, [*callable_val.args, *call_args], merged or None)
+            fn = callable_val.func
+            if self._dict_items is not None:
+                self._dict_items.setdefault(fn, fn)
+            self._inline_helper(fn, [*callable_val.args, *call_args], merged or None)
             return
 
         if callable_val.__class__ is _GenExpr:
@@ -3701,6 +3713,8 @@ class PulseIREmitter:
                     or _uses_pulse_ops(call, owner=callable_val, strict=True)
                 )
             ):
+                if self._dict_items is not None:
+                    self._dict_items.setdefault(call, call)
                 self._inline_helper(call, [callable_val, *call_args], kwargs)
                 return
 
@@ -3826,7 +3840,10 @@ class PulseIREmitter:
             self._inline_helper(fn, call_args, kwargs)
             return True
         if fn.__class__ is types.MethodType and fn.__func__.__class__ is types.FunctionType:
-            self._inline_helper(fn.__func__, [fn.__self__, *call_args], kwargs)
+            method = fn.__func__
+            if self._dict_items is not None:
+                self._dict_items.setdefault(method, method)
+            self._inline_helper(method, [fn.__self__, *call_args], kwargs)
             return True
         if isinstance(fn, type):
             if fn not in (int, float, bool, complex):
@@ -4076,9 +4093,6 @@ class PulseIREmitter:
             helper.locals.update(bound)
         else:
             helper.locals.update(zip(params, call_args, strict=False))
-        inlined_helpers = getattr(self.b, "inlined_helpers", None)
-        if inlined_helpers is not None:
-            inlined_helpers[fn] = None
         result = helper.run(code)
         if self._lines.shared:
             self._refresh_lines()

@@ -837,7 +837,6 @@ class Kernel[**P]:
         guard = build_guard(
             fn,
             impure=builder.impure,
-            inlined_helpers=builder.inlined_helpers,
             dict_items=builder.dict_items,
             dict_whole=builder.dict_whole,
         )
