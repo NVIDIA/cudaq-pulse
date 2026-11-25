@@ -526,10 +526,19 @@ class QuantumSystem:
 
     @property
     def qudit_freq(self) -> Any:
+        """Read-only array; ``qudit_freq[q]`` gives qudit ``q``'s 0-1 transition
+        frequency in Hz.
+        """
         return self._frequency_arrays()[0]
 
     @property
     def transition_freq(self) -> Any:
+        """Read-only array of transition frequencies in Hz.
+
+        ``transition_freq[q, i, j]`` gives the transition between levels ``i`` and ``j`` of
+        qudit ``q``. Qudits use the user's numbering; entries beyond a qudit's last modeled
+        level are NaN.
+        """
         return self._frequency_arrays()[1]
 
     def qudit(self, label: str) -> Qudit:

@@ -13,6 +13,23 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 
 ### Added
 
+- **`pulse.call`, a placed call of a function scheduled on its own.** In MLIR,
+  `pulse.call @f(args) <{start_cycles = s, duration_cycles = d}>` runs `@f`
+  at one start time, every timed op of `@f` keeping its start relative to
+  the call's. Lines, tones, measurements and links cross as with
+  `pulse.schedule_block`, and `f64` and `i64` arguments are values at the
+  call. The callee records its length in `pulse.length_cycles`; a call lasts
+  at least that long, and a call that lasts longer holds every line the
+  callee plays on until its end. `pulse-verify` checks a module with placed
+  calls, as IR another compiler writes, by writing the calls out: no call
+  runs back into itself, a callee takes its lines and links as arguments and
+  returns each line, tone and link in the order it takes them, a recorded
+  length is where its last operation ends, and the written-out program
+  passes every check a flat program does (an error inside a call is
+  reported at the callee's operation). `pulse-expand-calls` writes placed
+  calls out. The schedule passes do not place calls yet and refuse them with
+  a message naming the callee; kernels with their own `schedule=` compile as
+  before.
 - **Challenges.** A `challenges/` folder with three starter problems, each with a
   statement, a scorer and reference solutions: find a pi pulse of half the
   calibrated length, measure a hidden qubit's T1 from shots, and find a

@@ -233,8 +233,9 @@ on two measures:
   on Linux x86-64. A case fails at more than 0.4% above its baseline. It
   also fails at more than 1% below, so that a speedup is recorded in the
   baseline instead of hiding a later regression. A failure says whether it
-  is a regression, a gain or layout only (below). Layout only that the
-  change itself caused passes (below).
+  is a regression, a gain or layout only (below). A failing row that is
+  layout only against its base is judged against the base instead, at its own
+  tolerance (below).
 - **Program sizes**: op count, packed program bytes and export bytes. Any
   change fails. These are the same on every platform, and
   `tests/test_perf_gate.py` checks them in the regular test suite too.
@@ -308,45 +309,61 @@ instructions says its kind, and the summary counts them by kind:
 
 - **regression**: above the limit;
 - **gain**: more than 1% below; take a new baseline to keep it;
-- **layout only**: the same Python work as the baseline's (the summary's
-  "Python work" column says `same`), or as the base's where the row was
-  compared with its base (below), and a change of at most 2% either way.
+- **layout only**: against its base built in the job, the same Python work
+  and the same calls of every function outside the layout classes (below);
+  without a base, the same Python work as the baseline's (the summary's
+  "Python work" column says `same`) and a change of at most 2% either way.
   The instructions moved below Python, most likely in the layout of the
   interpreter's caches and memory: for example, one new class at import
   renumbers the interpreter's type version tags and changes its method
-  cache's collisions. Judge it (compare the Callgrind dumps with the
-  baseline run's) before taking a new baseline.
+  cache's collisions.
 
 A regression or a gain lists each counter of Python work that changed, or,
 with the same work, says the change is in native code. Every kind fails. A
 baseline without Python work tells only regressions from gains.
 
 **Base comparison.** A count also moves with the code merged before a
-change, so the job compares a failure of at most 2% either way with the
-change's base (a pull request's base, or the previous tip of a push to
-main). If the change
-keeps the base's measured code, it touches only the package's Python
-sources and files the job never reads (tests, docs, examples, other
-workflows than `ci.yml`, the baselines; `pyproject.toml` and `uv.lock` only
-outside what the job builds), the gate checks out the base's
-`core/frontend` over the tree's and measures it on the same build. A row
-whose case ran the same Python work there, and whose count the change moved
-by at most 0.95% either way from the base's, passes as `layout`, with a
-notice. For a slower row the base's Python work is the one compared, not
-the baseline's: code merged after the baseline was taken can change a
-case's work. A gain needs the baseline's work as well, so that it is kept. Native code, build files, `ci.yml`, the gate and its cases are
-measured code. A change to native code or its build is compared with its
-base built in the same job, with the extension's symbols kept: a slower row
-whose case ran the same Python work there, moved by at most 0.95% from the
-base's, and called every named native function as many times as the base,
-except kinds whose calls follow addresses rather than the program
-(container probes, the interpreter, allocation, memory copies, unmapped
-code), passes as `layout`, and its notice lists every function whose calls
-differed. A change to `ci.yml`, the gate, its cases or the pins, or one git
-cannot compare, is judged by the limits. A gain that passes this way isn't
-kept, and hidden native work behind the same calls passes below 0.95% per
-change (up to 2% from the baseline). `python tools/perf-gate.py --help`
-(base comparison, native base comparison) has the details.
+change, and with where the change's build puts code and data, so the job
+judges a row that fails on instructions against the change's base (a row
+within the baseline's limits is not measured against it): a pull
+request's base, a branch's merge base with main for a run dispatched on
+it, or the previous tip of a push. If the change keeps the base's measured
+code (it touches only the package's Python sources and files the job never
+reads: tests, docs, examples, other workflows than `ci.yml`, the baselines;
+`pyproject.toml` and `uv.lock` only outside what the job builds), the gate
+checks out the base's `core/frontend` over the tree's and measures it on
+the same build. A change to native code or its build is compared with its
+base built in the same job, with the extension's symbols kept. A row is
+layout only when its case ran the same Python work on the base and called
+every named function as many times, except kinds whose calls follow the
+heap's shape rather than the code: libc's allocator and its internal steps
+(`_int_malloc`, `malloc_consolidate` and the like), C++'s `new` and
+`delete` and LLVM's buffers, libc's memory copies and compares, the probes
+of hash tables and ordered containers, the interpreter's own functions,
+and unattributed code. A layout-only row passes as `layout` when its count
+is at most 0.4% above the base's, and any lower count passes; a gain that
+passes this way isn't kept, and hidden native work behind the same calls
+passes below 0.4% above the base. Its notice counts the calls that
+differed by kind. A row with other differences is judged against the
+stored baseline, and its failure says why (other Python work, or the calls
+of its own code that differed). A change to `ci.yml`, the gate, its cases
+or the pins, a base that does not build, or one git cannot compare is
+judged against the stored baseline, which still guards `main` itself.
+`python tools/perf-gate.py --help` (base comparison, native base
+comparison) has the details.
+
+When a perf-gate row fails as "layout only", its Python work and its calls
+are the base's, and only how much each call cost moved. Read the reason:
+libc's allocator, string or copy routines, hash-table probes, or the
+interpreter's caches follow where data sits in memory, and an unrelated
+change can move them, by up to about 1%. Such a row is judged against its
+base, at its own tolerance (0.4% unless the case declares one). A row still
+over 0.4% above its base is the owner's to accept or not: its failure line
+says what to bring, the layout classes that carried the shift and the
+functions whose cost per call moved most (from the tree's and the base's
+dumps, kept in the `perf-gate-callgrind-dumps` artifact). Trace it to its
+cause before asking. Never re-baseline by hand to pass it (the baseline
+comes only from a CI run's artifact).
 
 Wall-clock times are informational only: shared runners are too noisy to
 block on. The test job still reports `tests/test_perf_guard.py`'s

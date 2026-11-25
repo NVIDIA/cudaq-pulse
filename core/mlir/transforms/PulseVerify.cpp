@@ -43,6 +43,13 @@
 #include <cmath>
 #include <iterator>
 
+namespace pulse {
+/// Whether `module` holds a pulse.call (PulseCallCheck.cpp).
+bool moduleHasCalls(mlir::ModuleOp module);
+/// pulse-verify's check of a module with placed calls (PulseCallCheck.cpp).
+mlir::LogicalResult checkCalls(mlir::ModuleOp module);
+} // namespace pulse
+
 namespace {
 
 static bool isTimedOp(mlir::Operation *op) {
@@ -475,6 +482,12 @@ struct PulseVerifyPass
 
   void runOnOperation() override {
     auto module = getOperation();
+    // A module with pulse.call is checked as it is written out.
+    if (pulse::moduleHasCalls(module)) [[unlikely]] {
+      if (mlir::failed(pulse::checkCalls(module)))
+        signalPassFailure();
+      return;
+    }
     bool hadError = false;
 
     // Check 1: Linearity -- lines must be consumed. The warning names the
