@@ -510,9 +510,9 @@ def test_every_submission_is_seen_by_the_check(system):
     assert [row[2] for row in rows] == [-1]
     with pytest.raises(pulse.CompilationError, match="no link time to check it against"):
         _check_submissions(rows)
-    _check_submissions([("decide", 100, 100)])
+    _check_submissions([("decide", 100, 100, [], False)])
     with pytest.raises(pulse.CompilationError, match="is given 99 cycle"):
-        _check_submissions([("decide", 100, 100), ("decide", 99, 100)])
+        _check_submissions([("decide", 100, 100, [], False), ("decide", 99, 100, [], False)])
 
 
 def test_a_given_bool_function_keeps_its_own_types(system):
@@ -645,6 +645,405 @@ def test_a_reserved_dispatch_key_is_refused(system):
     )
     with pytest.raises(pulse.CompilationError, match="0x7ed8be82.*rename it"):
         pulse.load(reserved, entry="main", qudits=qudits, control_system=_links())
+
+
+# ── CUDA-Q QEC's decoder messages ────────────────────────────────────────────
+
+
+def _decoder_rounds():
+    from tests.classical.fake_cudaq_qec import qec
+
+    enqueue = pulse.classical(qec.enqueue_syndromes, link="host")
+    corrections = pulse.classical(qec.get_corrections, link="host", max_latency_ns=1000)
+
+    @pulse.kernel
+    def decoded(a, c):
+        ra = get_readout_line(a)  # noqa: F821
+        rc = get_readout_line(c)  # noqa: F821
+        dc = get_drive_line(c)  # noqa: F821
+        for _ in range(4):
+            s0 = readout(ra, square(100, 0.05))  # noqa: F821
+            s1 = readout(rc, square(100, 0.05))  # noqa: F821
+            enqueue.submit(3, [s0, s1], 7)
+            sync(dc, ra, rc)  # noqa: F821
+        fix = corrections.submit(3, 1, True).result()
+        sync(dc, ra, rc)  # noqa: F821
+        if fix[0]:
+            drive(dc, square(16, 0.5))  # noqa: F821
+
+    return decoded, enqueue, corrections
+
+
+def test_a_modules_decoder_messages_are_read_as_cudaq_qecs(system):
+    machine = _links()
+    kernel, _, _ = _decoder_rounds()
+    native, text = _as_written(system, machine, kernel)
+    assert "@enqueue_syndromes__3_2" in text and "@get_corrections__3_1" in text
+    qudits = [system.qudits[0], system.qudits[2]]
+    loaded = pulse.load(text, entry="main", qudits=qudits, control_system=machine)
+    assert events(loaded) == events(native)
+    assert _calls(loaded) == _calls(native)
+    # Rounds that only submit: four submissions with no answer, then one
+    # answer, and the loop stays rolled.
+    calls = _calls(loaded)[0]
+    assert [c["function"] for c in calls] == ["enqueue_syndromes__3_2"] * 4 + [
+        "get_corrections__3_1"
+    ]
+    assert [c["taken_cycles"] for c in calls[:4]] == [None] * 4
+    assert loaded.mlir().count("scf.for") == 1
+    # They are the decoding server's messages: its keys, routed by the
+    # decoder id, and answered by the configured decoder.
+    assert [(fn.name, fn._dispatch_key, fn._key_route) for fn in loaded.classical] == [
+        (fn.name, fn._dispatch_key, fn._key_route) for fn in native.classical
+    ]
+    assert all(fn._key_route == 3 and fn.implementation is not None for fn in loaded.classical)
+
+
+def test_cudaq_qec_functions_given_for_a_modules_messages_give_their_latency(system):
+    from tests.classical.fake_cudaq_qec import qec
+
+    machine = _links()
+    kernel, enqueue, _ = _decoder_rounds()
+    native, text = _as_written(system, machine, kernel)
+    qudits = [system.qudits[0], system.qudits[2]]
+    same = pulse.classical(qec.get_corrections, link="host", max_latency_ns=1000)
+    loaded = pulse.load(
+        text, entry="main", qudits=qudits, control_system=machine, classical=[enqueue, same]
+    )
+    assert _calls(loaded) == _calls(native)
+    slow = pulse.classical(qec.get_corrections, link="host", max_latency_ns=5000)
+    with pytest.raises(pulse.CompilationError, match="get_corrections__3_1.*before it is due"):
+        pulse.load(text, entry="main", qudits=qudits, control_system=machine, classical=[slow])
+    other = pulse.classical(qec.reset_decoder, link="host")
+    with pytest.raises(pulse.InvalidValueError, match="no classical function named reset_decoder"):
+        pulse.load(text, entry="main", qudits=qudits, control_system=machine, classical=[other])
+
+
+def test_two_decoders_messages_share_the_servers_key(system):
+    machine = _links()
+    kernel, _, _ = _decoder_rounds()
+    _, text = _as_written(system, machine, kernel)
+    # A second decoder's version of the same message, declared and unused.
+    found = re.search(r"\n\s*classical\.callable @get_corrections__3_1 [^\n]*", text)
+    text = text.replace(found.group(0), found.group(0) + found.group(0).replace("__3_1", "__4_1"))
+    qudits = [system.qudits[0], system.qudits[2]]
+    loaded = pulse.load(text, entry="main", qudits=qudits, control_system=machine)
+    assert {fn.name: fn._key_route for fn in loaded.classical} == {
+        "enqueue_syndromes__3_2": 3,
+        "get_corrections__3_1": 3,
+        "get_corrections__4_1": 4,
+    }
+
+
+def _decoder_text(system):
+    machine = _links()
+    kernel, enqueue, corrections = _decoder_rounds()
+    _, text = _as_written(system, machine, kernel)
+    return machine, text, [system.qudits[0], system.qudits[2]], enqueue, corrections
+
+
+def _one_message(system, name):
+    """A module whose entry submits one decoder message, with every
+    argument a constant of its own, and waits for it where it answers."""
+    from cudaq_pulse.classical import _cudaqx
+
+    from tests.classical.fake_cudaq_qec import qec
+
+    machine = _links()
+    declared = pulse.classical(
+        getattr(qec, name), link="host", **({"max_latency_ns": 1000} if name[0] == "g" else {})
+    )
+    arguments = {
+        "enqueue_syndromes": "3, [s0, s1], 7",
+        "get_corrections": "3, 2, True",
+        "reset_decoder": "3",
+    }[name]
+    source = f"""
+@pulse.kernel
+def one(a, c):
+    ra = get_readout_line(a)
+    rc = get_readout_line(c)
+    s0 = readout(ra, square(100, 0.05))
+    s1 = readout(rc, square(100, 0.05))
+    sent = declared.submit({arguments})
+    sync(ra, rc)
+"""
+    scope = {"pulse": pulse, "declared": declared}
+    exec(source, scope)  # noqa: S102
+    _, text = _as_written(system, machine, scope["one"])
+    words = _cudaqx._WORDS[name]
+    version = re.search(rf"classical\.submit %\w+, @({name}__\w+)\(([^)]*)\)", text)
+    return machine, text, version.group(1), version.group(2).split(", ")[: len(words)], words
+
+
+def _with_constant(text, old, value):
+    """*text* with a new constant where one submission's operand *old* was."""
+    other = "%another"
+    line = re.search(r"(\n(\s*))(%\w+ = classical\.get_link)", text)
+    changed = text.replace(
+        line.group(0), f"{line.group(1)}{other} = arith.constant {value} : i64{line.group(0)}", 1
+    )
+    submit = re.search(r"classical\.submit %\w+, @\w+\(([^)]*)\)", changed)
+    operands = submit.group(1).split(", ")
+    assert operands.count(old) == 1
+    return changed.replace(
+        submit.group(0),
+        submit.group(0).replace(
+            submit.group(1), ", ".join(other if o == old else o for o in operands)
+        ),
+        1,
+    )
+
+
+RELEASED = ("enqueue_syndromes", "get_corrections", "reset_decoder")
+
+
+def test_every_decoder_message_states_what_its_submissions_send():
+    from cudaq_pulse.classical import _cudaqx
+
+    assert set(_cudaqx._WORDS) == set(_cudaqx._MESSAGES)
+    assert {m.name for m in _cudaqx._MESSAGES.values() if m.released} == set(RELEASED)
+    for words in _cudaqx._WORDS.values():
+        assert words[0] == ("decoder_id", "id")
+        assert all(rule in ("id", "length", None, 0) for _, rule in words)
+
+
+@pytest.mark.parametrize("name", RELEASED)
+def test_a_decoder_message_loads_as_compile_sends_it(system, name):
+    machine, text, version, operands, words = _one_message(system, name)
+    qudits = [system.qudits[0], system.qudits[2]]
+    loaded = pulse.load(text, entry="main", qudits=qudits, control_system=machine)
+    assert [fn.name for fn in loaded.classical] == [version]
+    # compile sends a constant wherever the message's description states one.
+    constants = dict(re.findall(r"(%\w+) = arith\.constant (-?\d+) : i64", text))
+    numbers = dict(zip(("id", "length"), map(int, version.split("__")[1].split("_")), strict=False))
+    for operand, (_, rule) in zip(operands, words, strict=True):
+        if rule is not None:
+            assert int(constants[operand]) == (numbers[rule] if isinstance(rule, str) else rule)
+
+
+def _every_word():
+    from cudaq_pulse.classical import _cudaqx
+
+    return [(name, at) for name in RELEASED for at in range(len(_cudaqx._WORDS[name]))]
+
+
+@pytest.mark.parametrize("name, at", _every_word())
+def test_every_word_of_a_decoder_message_is_held_to_its_description(system, name, at):
+
+    machine, text, version, operands, words = _one_message(system, name)
+    qudits = [system.qudits[0], system.qudits[2]]
+    what, rule = words[at]
+    changed = _with_constant(text, operands[at], 5)
+    if rule is None:
+        # The caller's value: any constant loads.
+        pulse.load(changed, entry="main", qudits=qudits, control_system=machine)
+        return
+    said = "its name states" if isinstance(rule, str) else f"{name} sends 0"
+    with pytest.raises(
+        pulse.CompilationError,
+        match=f"a submission to {version} sends the {what} 5, and {said}",
+    ):
+        pulse.load(changed, entry="main", qudits=qudits, control_system=machine)
+
+
+def test_a_word_of_a_decoder_message_is_a_constant_64_bit_integer(system):
+    machine, text, qudits, _, _ = _decoder_text(system)
+    sent = re.search(r"@get_corrections__3_1\((%\w+), [^)]*\) [^\n]*", text)
+    line = re.search(r"(\n(\s*))(%\w+ = classical\.get_link)", text)
+    # The decoder id as a sum the module computes: not a constant.
+    computed = text.replace(
+        line.group(0),
+        f"{line.group(1)}%three = arith.constant 3 : i64"
+        f"{line.group(1)}%sum = arith.addi %three, %three : i64{line.group(0)}",
+        1,
+    ).replace(sent.group(0), sent.group(0).replace(sent.group(1), "%sum", 1), 1)
+    with pytest.raises(
+        pulse.CompilationError,
+        match="get_corrections__3_1 sends the decoder_id as a value that is not a constant",
+    ):
+        pulse.load(computed, entry="main", qudits=qudits, control_system=machine)
+    # The decoder id as a 32-bit constant: the verifier takes any integer
+    # width for an i64 argument, and compile writes 64 bits.
+    assert ": (i64, i64, i64) ->" in sent.group(0)
+    narrow = text.replace(
+        line.group(0), f"{line.group(1)}%three = arith.constant 3 : i32{line.group(0)}", 1
+    ).replace(
+        sent.group(0),
+        sent.group(0)
+        .replace(sent.group(1), "%three", 1)
+        .replace(": (i64, i64, i64) ->", ": (i32, i64, i64) ->"),
+        1,
+    )
+    with pytest.raises(
+        pulse.CompilationError,
+        match="get_corrections__3_1 does not send the decoder_id as a 64-bit integer",
+    ):
+        pulse.load(narrow, entry="main", qudits=qudits, control_system=machine)
+
+
+def test_an_ordinary_function_is_not_given_for_a_decoder_message(system):
+    machine, text, qudits, _, _ = _decoder_text(system)
+
+    @pulse.classical(max_latency_ns=10, link="host")
+    def get_corrections__3_1(a: int, b: int, c: int) -> pulse.Length[pulse.Bits, 1]:
+        return pulse.Bits([False])
+
+    with pytest.raises(
+        pulse.InvalidValueError,
+        match="get_corrections__3_1 is CUDA-Q QEC's get_corrections; give pulse.classical",
+    ):
+        pulse.load(
+            text,
+            entry="main",
+            qudits=qudits,
+            control_system=machine,
+            classical=[get_corrections__3_1],
+        )
+
+
+def test_a_decoder_messages_name_is_never_an_ordinary_function(system):
+    machine, text, qudits, _, corrections = _decoder_text(system)
+    # With its own key: neither an ordinary function nor the message.
+    own = text.replace(f"dispatch_key = {0x882D5BA1} : i64", "dispatch_key = 77 : i64")
+    assert own != text
+    for given in ((), (corrections,)):
+        with pytest.raises(
+            pulse.CompilationError,
+            match="get_corrections__3_1 is named as CUDA-Q QEC's get_corrections and has the "
+            "dispatch key 0x4d; the message's is 0x882d5ba1",
+        ):
+            pulse.load(own, entry="main", qudits=qudits, control_system=machine, classical=given)
+    # A message that is in no release, whatever its key.
+    for key in (0x7ED8BE82, 77):
+        mapped = text.replace("enqueue_syndromes__3_2", "enqueue_syndromes_mapped__3_2").replace(
+            f"dispatch_key = {0x7ED8BE82} : i64", f"dispatch_key = {key} : i64"
+        )
+        with pytest.raises(pulse.CompilationError, match="is in no CUDA-Q QEC release"):
+            pulse.load(mapped, entry="main", qudits=qudits, control_system=machine)
+
+
+def test_names_that_are_not_a_versions_name_are_ordinary_functions(system):
+    machine, text, qudits, _, _ = _decoder_text(system)
+    # None of these is a name compile writes for a message: each is an
+    # ordinary function, refused here for the decoding server's key.
+    for name in (
+        "enqueue_syndromes__3_02",
+        "enqueue_syndromes__3",
+        "enqueue_syndromes__3_2_1",
+        "Enqueue_syndromes__3_2",
+        f"enqueue_syndromes__{2**63}_2",
+        "enqueue_syndromes__" + "9" * 5000 + "_2",
+    ):
+        renamed = text.replace("enqueue_syndromes__3_2", name)
+        with pytest.raises(pulse.CompilationError, match="rename it"):
+            pulse.load(renamed, entry="main", qudits=qudits, control_system=machine)
+    # A digit that is not ASCII (here ARABIC-INDIC DIGIT TWO, as a quoted
+    # symbol) is not the name compile writes.
+    renamed = text.replace("@enqueue_syndromes__3_2", '@"enqueue_syndromes__3_\\D9\\A2"')
+    assert renamed != text
+    with pytest.raises(pulse.CompilationError, match="rename it"):
+        pulse.load(renamed, entry="main", qudits=qudits, control_system=machine)
+
+
+def test_a_decoder_messages_answer_is_taken_from_its_submissions_own_future(system):
+    machine, text, qudits, _, _ = _decoder_text(system)
+    # The future goes through a branch before it is waited on.
+    found = re.search(
+        r"\n(\s*)(%\w+), (%\w+) = classical\.submit (%[\w#]+), @get_corrections__3_1\(([^)]*)\) "
+        r"(<\{[^\n]*)\n",
+        text,
+    )
+    pad, link, future, old_link, operands, rest = found.groups()
+    arm = f"classical.submit {old_link}, @get_corrections__3_1({operands}) {rest}"
+    kinds = "!classical.link, !classical.future"
+    through = (
+        f"\n{pad}%flag = arith.constant true"
+        f"\n{pad}{link}, {future} = scf.if %flag -> ({kinds}) {{"
+        f"\n{pad}  %l_a, %f_a = {arm}"
+        f"\n{pad}  scf.yield %l_a, %f_a : {kinds}"
+        f"\n{pad}}} else {{"
+        f"\n{pad}  %l_b, %f_b = {arm}"
+        f"\n{pad}  scf.yield %l_b, %f_b : {kinds}"
+        f"\n{pad}}}\n"
+    )
+    changed = text.replace(found.group(0), through, 1)
+    refusal = "the future of a submission to get_corrections__3_1 is yielded or passed on"
+    with pytest.raises(pulse.CompilationError, match=refusal):
+        pulse.load(changed, entry="main", qudits=qudits, control_system=machine)
+    # The same when the wait names an ordinary function of the module's.
+    callable_ = re.search(r"\n\s*classical\.callable @get_corrections__3_1 [^\n]*", changed)
+    mine = (
+        callable_.group(0)
+        .replace("@get_corrections__3_1", "@mine")
+        .replace(
+            f"dispatch_key = {0x882D5BA1} : i64, dispatch_key_override",
+            "dispatch_key = 2122968502 : i64",  # the hash of its name
+        )
+    )
+    assert "@mine" in mine and "dispatch_key = 2122968502" in mine
+    renamed = changed.replace(callable_.group(0), callable_.group(0) + mine, 1)
+    renamed = re.sub(
+        r"classical\.wait (%\w+), @get_corrections__3_1", r"classical.wait \1, @mine", renamed
+    )
+    assert "classical.wait" in renamed and renamed != changed
+    with pytest.raises(pulse.CompilationError, match=refusal):
+        pulse.load(renamed, entry="main", qudits=qudits, control_system=machine)
+    # The other direction: an ordinary function's submissions in the arms,
+    # and their answer taken under the message's name, or under its own.
+    # In a module that calls a decoder message no future is passed on.
+    ordinary = "the future of a submission to mine is yielded or passed on; in a module that calls"
+    for waited in (changed, renamed):
+        reverse = waited.replace(callable_.group(0), callable_.group(0) + mine, 1)
+        if "@mine" not in waited:
+            waited = reverse
+        arms = re.sub(
+            r"(= classical\.submit %[\w#]+, )@get_corrections__3_1\(", r"\1@mine(", waited
+        )
+        assert arms.count("classical.submit") == waited.count("classical.submit")
+        assert arms.count("@mine(") == 2 and "@enqueue_syndromes__3_2(" in arms
+        with pytest.raises(pulse.CompilationError, match=ordinary):
+            pulse.load(arms, entry="main", qudits=qudits, control_system=machine)
+
+
+def test_a_loaded_programs_decoder_messages_pickle(system):
+    import pickle
+
+    machine, text, qudits, enqueue, corrections = _decoder_text(system)
+    for given in ((), (enqueue, corrections)):
+        loaded = pulse.load(
+            text, entry="main", qudits=qudits, control_system=machine, classical=given
+        )
+        again = pickle.loads(pickle.dumps(loaded))
+        assert _calls(again) == _calls(loaded)
+        assert [(fn.name, fn.link, fn._dispatch_key, fn._key_route) for fn in again.classical] == [
+            (fn.name, fn.link, fn._dispatch_key, fn._key_route) for fn in loaded.classical
+        ]
+
+
+def test_a_decoder_message_with_other_types_is_refused(system):
+    machine = _links()
+    kernel, _, _ = _decoder_rounds()
+    _, text = _as_written(system, machine, kernel)
+    assert 'args = ["i64", "i64", "u8"]' in text
+    other = text.replace('args = ["i64", "i64", "u8"]', 'args = ["i64", "i64", "i64"]')
+    qudits = [system.qudits[0], system.qudits[2]]
+    with pytest.raises(
+        pulse.CompilationError,
+        match=r"^load: the module's get_corrections__3_1 is named as CUDA-Q QEC's "
+        r"get_corrections, which takes \(i64, i64, u8\)",
+    ):
+        pulse.load(other, entry="main", qudits=qudits, control_system=machine)
+
+
+def test_a_decoder_messages_key_under_another_name_is_refused(system):
+    machine = _links()
+    kernel, _, _ = _decoder_rounds()
+    _, text = _as_written(system, machine, kernel)
+    renamed = text.replace("get_corrections__3_1", "mine__3_1")
+    qudits = [system.qudits[0], system.qudits[2]]
+    with pytest.raises(pulse.CompilationError, match="mine__3_1 is dispatch key.*rename it"):
+        pulse.load(renamed, entry="main", qudits=qudits, control_system=machine)
 
 
 # ── A loaded module is untrusted input ───────────────────────────────────────

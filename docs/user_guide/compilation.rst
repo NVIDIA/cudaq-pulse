@@ -495,7 +495,22 @@ system does not have is refused. An answer taken before the latency and the
 link allow is refused, and so is a submission given less time than the link
 takes. The dispatch keys are the control system's too, as for ``compile``: a
 key a controller fixes for a function replaces the module's, and a reserved
-key or two functions on one link and key are refused. ``classical=`` gives functions declared with
+key or two functions on one link and key are refused. A function named as
+``compile`` names a version of one of CUDA-Q QEC's decoder messages
+(``enqueue_syndromes__3_2``: decoder 3, two measurements;
+``get_corrections__3_1``; ``reset_decoder__3``) is that message, as a kernel
+that calls ``pulse.classical(cudaq_qec.qec.get_corrections, ...)`` compiles
+it: it keeps the decoding server's key, and the configured decoder answers it
+in simulation. Such a name is never an ordinary function. The module is held
+to what ``compile`` writes for the message: its key and types, a message of
+a CUDA-Q QEC release, each submission sending the decoder id and the length
+its name states as constants (and the mapping 0 for ``enqueue_syndromes``),
+and, in a module that calls a decoder message, every answer taken
+from its submission's own future (a future yielded from a branch or a loop
+is refused there). A CUDA-Q QEC
+function given in ``classical=`` gives the latency of the module's versions
+of its message.
+``classical=`` gives functions declared with
 ``pulse.classical`` for the module's, by name. Each must take and give what
 the module states, with its latency mode and submit policy, and its latency
 and implementation replace the module's:

@@ -677,16 +677,87 @@ def violations(
         k = _timed_on(e, of)
         if k is not None:
             each[k].append(e)
-    for line, played in zip(sharing, each, strict=True):
-        at_once = _AtOnce(line)
-        at_once.sweep(
-            sorted(((e["start_cycles"], e["end_cycles"], e, 0) for e in played), key=_first)
-        )
-        message = at_once.message(lines)
-        if message is not None:
-            found.append(message)
+    slid: tuple[Sequence[Mapping[str, Any]], list[list[Mapping[str, Any]]]] | None = None
+    for k, (line, played) in enumerate(zip(sharing, each, strict=True)):
+        # What follows a wait whose length is computed at run time, or a
+        # wait for an answer, starts later in a run than it is placed:
+        # tones that do not all wait together are counted as they can slide.
+        if lowered.classical and _slides_apart(played):
+            if slid is None:
+                slid = _program_tones(shared, lowered)
+            found.extend(_sliding(lowered, line, slid[1][k], slid[0]))
+        else:
+            at_once = _AtOnce(line)
+            at_once.sweep(
+                sorted(((e["start_cycles"], e["end_cycles"], e, 0) for e in played), key=_first)
+            )
+            message = at_once.message(lines)
+            if message is not None:
+                found.append(message)
         found.extend(_per_line(lowered, line, system.controllers[line.owner], played, unresolved))
     return found
+
+
+def _slides_apart(played: Sequence[Mapping[str, Any]]) -> bool:
+    """Whether tones of *played* (those of one shared line) can slide
+    against one another: one is past the first segment, and they are not
+    all on handles that wait together."""
+    if not any(e["segment"] for e in played):
+        return False
+    from . import _slides
+
+    return not _slides.one_timeline(played)
+
+
+def _program_tones(
+    shared: Mapping[tuple[str, int], Physical], lowered: ScheduledKernel
+) -> tuple[Sequence[Mapping[str, Any]], list[list[Mapping[str, Any]]]]:
+    """The lines of a walk of every iteration in program cycles, in which
+    the segments' ranges are, and the tones of each shared line
+    (``_sharing``) in it: the events of ``violations`` may be in the cycles
+    of a controller's own clock."""
+    from .controller import _walk
+
+    lines, events, _, _, _ = _walk(lowered, values=False, waveforms=False)
+    sharing, of = _sharing(shared, lines)
+    each: list[list[Mapping[str, Any]]] = [[] for _ in sharing]
+    for e in events:
+        k = _timed_on(e, of)
+        if k is not None:
+            each[k].append(e)
+    return lines, each
+
+
+def _sliding(
+    lowered: ScheduledKernel,
+    line: Physical,
+    played: Sequence[Mapping[str, Any]],
+    lines: Sequence[Mapping[str, Any]],
+) -> list[str]:
+    """The tones *line* can play at once past its ``max_concurrent_tones``
+    in some run, when what follows each wait of a run-time length starts
+    as much later as the wait can be longer (``_slides``)."""
+    from . import _slides
+    from ._concurrency import _together
+
+    tones = sorted(((e["start_cycles"], e["end_cycles"], e) for e in played), key=_slides.by_start)
+
+    def together(active: list[Any]) -> int:
+        return _together(
+            [({(c["branch"], ()): c["arm"] for c in tone[2]["conditions"]}, 1) for tone in active]
+        )
+
+    branched = any(tone[2]["conditions"] for tone in tones)
+    found = _slides.over(lowered, tones, line.tones, lines, together if branched else None)
+    if found is None:
+        return []
+    beyond = f", and up to {found.most}" if found.most > found.at_first else ""
+    return [
+        f"{line.label} can play {found.at_first} tones at once from cycle {found.first}{beyond}: "
+        f"{found.cause}; it plays at most {line.tones} (max_concurrent_tones): sync the lines "
+        "after the wait, so that they wait together, give the wait bounds that keep them "
+        "apart, or raise its max_concurrent_tones"
+    ]
 
 
 def against(lowered: ScheduledKernel, controller: Controller) -> list[str]:
@@ -753,6 +824,15 @@ def summarized(
     budget = _loops._Budget()
     found: list[str] = []
     sharing, of = _sharing(shared, lines)
+    # Tones that can slide (see ``violations``) are counted from every copy.
+    if lowered.classical:
+        tones: dict[int, list[Mapping[str, Any]]] = {}
+        for e in events:
+            k = _timed_on(e, of)
+            if k is not None:
+                tones.setdefault(k, []).append(e)
+        if any(_slides_apart(played) for played in tones.values()):
+            return None
     split = _loops._split(tree, lambda i: _timed_on(events[i], of))
     for k, line in enumerate(sharing):
         nodes = split.get(k, [])

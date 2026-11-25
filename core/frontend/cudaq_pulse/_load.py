@@ -216,9 +216,9 @@ def load(
             bound.run_passes(["pulse-classical-check"])
         except (RuntimeError, ValueError) as error:
             raise CompilationError(str(error), code="timing") from None
-        _check_submissions(
-            cast("list[tuple[str, int, int]]", builder.load_submissions(bound.serialize()[0]))
-        )
+        submissions = cast("list[Any]", builder.load_submissions(bound.serialize()[0]))
+        _check_submissions(submissions)
+        _check_messages(submissions, stated)
     metrics = CompileMetrics(quantum_system=target.name)
     program = _lowered(
         bound,
@@ -295,7 +295,8 @@ def _target_keys(functions: Sequence[Any], machine: Any) -> list[tuple[int, int,
     """Per classical function of a loaded module, its link id, dispatch key
     and what fixes the key, by the rules ``compile`` applies: a controller
     that fixes the function's key gives it, a key reserved for decoder
-    messages is refused, and so are two functions on one link and key."""
+    messages is refused for any function but those messages, and so are
+    two functions on one link and key."""
     from ._errors import CompilationError
     from .classical import _RESERVED_KEYS
     from .compiler import _dispatch_tables
@@ -310,19 +311,22 @@ def _target_keys(functions: Sequence[Any], machine: Any) -> list[tuple[int, int,
     seen: dict[tuple[int, int], Any] = {}
     for function in functions:
         key, fixed_by = function._dispatch_key, None
+        # A decoder message's key is the decoding server's, and the versions
+        # of one message share it: the decoder id tells them apart.
+        own = function._key_route is None
         table = tables.get(function.link)
-        if table is not None:
+        if own and table is not None:
             key, fixed_by = _fixed_key(function, table)
-        if key in _RESERVED_KEYS:
+        if own and key in _RESERVED_KEYS:
             raise CompilationError(
                 f"{function.name} is dispatch key {key:#x}, which {_RESERVED_KEYS[key]} uses"
                 " for its decoder messages; rename it",
                 code="control_system",
             )
         other = seen.get((function.link, key))
-        if other is not None:
+        if other is not None and (own or other._key_route is None):
             raise CompilationError(_collision(other, function, key), code="control_system")
-        seen[function.link, key] = function
+        seen.setdefault((function.link, key), function)
         routes.append((function.link, key, fixed_by))
     return routes
 
@@ -331,7 +335,66 @@ def _first_line(error: BaseException) -> str:
     return str(error).splitlines()[0] if str(error) else type(error).__name__
 
 
-def _check_submissions(submissions: Sequence[tuple[str, int, int]]) -> None:
+def _check_messages(submissions: Sequence[Any], functions: Sequence[Any]) -> None:
+    """Hold every use of a decoder message to what ``compile`` sends for it.
+    ``compile`` names a message's version after the decoder id and the
+    length it sends, and a decoding server finds the decoder by the id on
+    the wire: a loaded module must agree with itself. Per message,
+    ``_cudaqx._WORDS`` says what each leading integer argument is: a number
+    of the name, a constant, or the caller's value. *submissions* gives each
+    submission's leading 64-bit integer arguments, None for one that is not
+    a constant, and whether its future goes anywhere but into a wait."""
+    from ._errors import CompilationError
+    from .classical import _cudaqx
+
+    routed = {fn.name for fn in functions if fn._key_route is not None}
+    if not routed:
+        return
+    for name, _, _, words, passed_on in submissions:
+        if passed_on:
+            # A wait on a submission's own future names the function it
+            # called, and the verifier holds it to that. A future yielded
+            # from a branch or a loop, or passed on, is taken by a wait that
+            # names whatever the module chose: a message's answer under
+            # another name, or another function's answer under a message's.
+            # So in a module with a decoder message every future goes
+            # straight into its wait.
+            raise CompilationError(
+                f"load: the future of a submission to {name} is yielded or passed on; "
+                "in a module that calls a decoder message every answer is taken from "
+                "its submission's own future",
+                code="wrong_argument",
+            )
+        if name not in routed:
+            continue
+        found = _cudaqx._message_version(name)
+        assert found is not None
+        message, numbers = found
+        stated = dict(zip(("id", "length"), numbers, strict=False))
+        for at, (what, rule) in enumerate(_cudaqx._WORDS[message.name]):
+            if at >= len(words):
+                raise CompilationError(
+                    f"load: a submission to {name} does not send the {what} as a 64-bit "
+                    f"integer, as {message.name} does",
+                    code="wrong_argument",
+                )
+            if rule is None:
+                continue
+            sent, needed = words[at], stated[rule] if isinstance(rule, str) else rule
+            if sent != needed:
+                raise CompilationError(
+                    f"load: a submission to {name} sends the {what} "
+                    + ("as a value that is not a constant" if sent is None else str(sent))
+                    + (
+                        f", and its name states {needed}"
+                        if isinstance(rule, str)
+                        else f", and {message.name} sends {needed}"
+                    ),
+                    code="wrong_argument",
+                )
+
+
+def _check_submissions(submissions: Sequence[Any]) -> None:
     """Refuse a submission scheduled for less time than this control
     system's link takes to send it. *submissions* is every submission of the
     module as the native loader walks them: the function, the cycles the
@@ -340,7 +403,7 @@ def _check_submissions(submissions: Sequence[tuple[str, int, int]]) -> None:
     checked."""
     from ._errors import CompilationError
 
-    for name, written, needed in submissions:
+    for name, written, needed, _, _ in submissions:
         if written < 0 or needed < 0:
             raise CompilationError(
                 f"load: a submission to {name} has no "
@@ -419,21 +482,33 @@ def _stated_function(
     if given is not None:
         given, version = given
         latency_ns = (given.min_latency_ns, given.nominal_latency_ns, given.max_latency_ns)
+    options: dict[str, Any] = {
+        "min_latency_ns": latency_ns[0],
+        "nominal_latency_ns": latency_ns[1],
+        "max_latency_ns": latency_ns[2],
+        "latency_mode": mode,
+        "timeout_ns": timeout_ns,
+        "submit": submit,
+        "deadline_ns": deadline_ns,
+        "reaction_deadline_ns": reaction_deadline_ns,
+        "link": link,
+    }
     try:
+        # A decoder message of CUDA-Q QEC: its key and its route by the
+        # decoder id are the message's, and the configured decoder answers
+        # it, as for a kernel that calls it. With a CUDA-Q QEC function given
+        # for it, its latency is that function's.
+        message = _decoder_message(name, key, args, results, options)
+        if message is not None:
+            return message
         function: Any = ClassicalFunction(
             None if given is None else given.implementation,
             name=name,
-            min_latency_ns=latency_ns[0],
-            nominal_latency_ns=latency_ns[1],
-            max_latency_ns=latency_ns[2],
-            latency_mode=mode,
-            timeout_ns=timeout_ns,
-            submit=submit,
-            deadline_ns=deadline_ns,
-            reaction_deadline_ns=reaction_deadline_ns,
-            link=link,
             _dispatch_key=key,
+            **options,
         )
+    except CompilationError:
+        raise
     except PulseError as error:
         raise CompilationError(
             f"load: the module's classical function {name}: {error}", code="wrong_argument"
@@ -451,6 +526,47 @@ def _stated_function(
     return function
 
 
+def _decoder_message(
+    name: str, key: int, args: Sequence[str], results: Sequence[str], options: dict[str, Any]
+) -> Any:
+    """The version of a CUDA-Q QEC decoder message that a module's function
+    *name* is, or None for a function that is not named as one. A function
+    is a decoder message if and only if it is named as ``compile`` names a
+    version; it must then be one: a message of a CUDA-Q QEC release, with
+    the message's dispatch key and types. A message's name is never an
+    ordinary function."""
+    from ._errors import CompilationError
+    from .classical import _cudaqx
+
+    found = _cudaqx._message_version(name)
+    if found is None:
+        return None
+    message, numbers = found
+    if not message.released:
+        raise CompilationError(
+            f"load: the module's {name} is named as CUDA-Q QEC's {message.name}, which is "
+            f"in no CUDA-Q QEC release; load takes {_cudaqx._RELEASED}",
+            code="wrong_argument",
+        )
+    if message.key != key:
+        raise CompilationError(
+            f"load: the module's {name} is named as CUDA-Q QEC's {message.name} and has "
+            f"the dispatch key {key:#x}; the message's is {message.key:#x}",
+            code="wrong_argument",
+        )
+    version = _cudaqx._Calls(message, options, None)._version(numbers)
+    takes = [value.descriptor for value in version.args]
+    gives = [value.descriptor for value in version.results]
+    if (takes, gives) != (list(args), list(results)):
+        raise CompilationError(
+            f"load: the module's {name} is named as CUDA-Q QEC's {message.name}, which "
+            f"takes ({', '.join(takes)}) and gives ({', '.join(gives)}); "
+            f"the module's takes ({', '.join(args)}) and gives ({', '.join(results)})",
+            code="wrong_argument",
+        )
+    return version
+
+
 def _given_functions(given: Sequence[Any], declared: Sequence[Any]) -> dict[str, tuple[Any, Any]]:
     """Per classical function the module declares, the function of
     ``load(classical=)`` given for it and its version of the module's
@@ -461,7 +577,7 @@ def _given_functions(given: Sequence[Any], declared: Sequence[Any]) -> dict[str,
     import re
 
     from ._errors import CompilationError, InvalidTypeError, InvalidValueError, PulseError
-    from .classical import ClassicalFunction, _resolve, _unsized_names
+    from .classical import ClassicalFunction, _cudaqx, _resolve, _unsized_names
 
     out: dict[str, tuple[Any, Any]] = {}
     for function in given:
@@ -470,8 +586,27 @@ def _given_functions(given: Sequence[Any], declared: Sequence[Any]) -> dict[str,
                 "load(classical=) takes classical functions (pulse.classical), "
                 f"got {type(function).__name__}"
             )
-        versions = re.compile(re.escape(function.name) + r"(__i?\d+)?")
-        rows = [row for row in declared if versions.fullmatch(row[0])]
+        calls: Any = function.implementation
+        if getattr(calls, "_route", None) is not None:
+            # A CUDA-Q QEC function: the module's versions of its message.
+            rows = [
+                row
+                for row in declared
+                if (found := _cudaqx._message_version(row[0])) is not None
+                and found[0].name == function.name
+            ]
+        else:
+            calls = None
+            versions = re.compile(re.escape(function.name) + r"(__i?\d+)?")
+            rows = [row for row in declared if versions.fullmatch(row[0])]
+            for row in rows:
+                found = _cudaqx._message_version(row[0])
+                if found is not None:
+                    raise InvalidValueError(
+                        f"load(classical=): the module's {row[0]} is CUDA-Q QEC's "
+                        f"{found[0].name}; give pulse.classical(cudaq_qec.qec."
+                        f"{found[0].name}, ...) for it, not {function.name}"
+                    )
         if not rows:
             raise InvalidValueError(
                 f"load(classical=): the module calls no classical function named {function.name}"
@@ -488,7 +623,11 @@ def _given_functions(given: Sequence[Any], declared: Sequence[Any]) -> dict[str,
             # A classical function has at most 8 arguments, so a row states at
             # most 8 lengths: at most C(8, 4) = 70 candidate versions.
             candidates: list[Any] = [function]
-            if function._shape is not None:
+            if calls is not None:
+                found = _cudaqx._message_version(row[0])
+                assert found is not None
+                candidates = [calls._version(found[1])]
+            elif function._shape is not None:
                 names = _unsized_names(function)
                 counts = [int(n) for spelled in row[3] for n in re.findall(r"[:\[](\d+)", spelled)]
                 candidates = []

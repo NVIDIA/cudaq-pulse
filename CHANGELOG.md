@@ -258,7 +258,9 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   control system's dispatch keys as for `compile`, and are checked against
   their latencies, and `classical=` gives declared
   functions for them, whose types must agree and whose latency and
-  implementation replace the module's. A call of another function of the
+  implementation replace the module's. CUDA-Q QEC's decoder messages in a
+  module (`enqueue_syndromes__3_2`, `get_corrections__3_1`) are read as a
+  kernel's calls of them are compiled. A call of another function of the
   module that states its start (`pulse.start_cycles`, provisional) is written
   in place.
 
@@ -481,6 +483,22 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 
 ### Fixed
 
+- **The limits on what plays at once hold for pulses after a wait of a
+  run-time length or a blocking wait for an answer.** `wait(line, answer,
+  bounds=(16, 4000))` is scheduled at 16 cycles, and what follows it on its
+  lines starts up to 3,984 cycles later in a run, while lines the wait does
+  not hold back keep their times. `max_concurrent_drives`,
+  `max_concurrent_readouts` and a shared line's `max_concurrent_tones`
+  compared the scheduled times only, so a drive after such a wait and a
+  drive on another line passed a limit of one though a run could play them
+  together. They now count pulses as they can slide, at compile and in
+  `controller.check()`: such a program is a `ControllerLimitError` that
+  names the first cycle the pulses can meet and the wait (`2 drives can
+  play at once from cycle 600: what follows the wait on d0 that ends at
+  cycle 117 (up to 3984 cycles later) ...`). Sync the lines after the wait,
+  or give it bounds that keep the pulses apart. A blocking wait counts as
+  such a wait without an upper end. A program without such a wait, and one
+  whose lines all wait together, is checked as before.
 - **A value computed from a term it uses several times, or through
   thousands of operations, compiles.** `tau = tau + tau` written a few dozen
   times did not finish tracing: forty such lines are forty operations, but

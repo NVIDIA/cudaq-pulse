@@ -41,6 +41,33 @@
 
 #include "ControllerExpressions.h"
 
+// Record kinds are compared byte by byte, not with std::strcmp: its cost
+// depends on where the two strings sit relative to a page end (its vector
+// path takes a slower way near one), so the same comparison cost more or
+// less as the library's strings moved. Both are kept out of line, so that
+// the inliner's choices elsewhere in this file stay as they were.
+
+/// Whether the record kind `kind` is the name `name`: a comparison of known
+/// length, which stops at the first byte that differs (at the latest at the
+/// end of `kind`, whose terminator differs from a byte of a longer name).
+template <size_t N>
+[[gnu::noinline]] bool isKind(const char *kind, const char (&name)[N]) {
+  for (size_t i = 0; i < N; ++i)
+    if (kind[i] != name[i])
+      return false;
+  return true;
+}
+
+/// Whether the record kinds `a` and `b` are the same.
+[[gnu::noinline]] inline bool sameKind(const char *a, const char *b) {
+  for (;; ++a, ++b) {
+    if (*a != *b)
+      return false;
+    if (!*a)
+      return true;
+  }
+}
+
 struct ControllerRecord {
   /// A branch, its arm, the readout and answer records its condition is
   /// computed from, its test, for the test "expression" the walk's
@@ -1554,7 +1581,7 @@ struct ControllerWalk : ControllerExpressions {
   /// `x` of the one before, starting at `a`, does, at any time.
   bool sameShape(const ControllerRecord &x, const ControllerRecord &y, size_t a,
                  size_t b) const {
-    return std::strcmp(x.kind, y.kind) == 0 && x.op == y.op &&
+    return sameKind(x.kind, y.kind) && x.op == y.op &&
            x.start.has_value() == y.start.has_value() && x.trips == y.trips &&
            x.first == y.first && x.size == y.size &&
            x.steps.size() == y.steps.size() &&
@@ -1954,9 +1981,8 @@ ownCycles(std::vector<ControllerRecord> &records, int64_t num, int64_t den,
   for (size_t index = 0; index < records.size(); ++index) {
     ControllerRecord &r = records[index];
     if (grid > 1 && r.start && r.duration &&
-        (std::strcmp(r.kind, "drive") == 0 ||
-         std::strcmp(r.kind, "readout") == 0 ||
-         std::strcmp(r.kind, "wait") == 0) &&
+        (isKind(r.kind, "drive") || isKind(r.kind, "readout") ||
+         isKind(r.kind, "wait")) &&
         (*r.start % grid || *r.duration % grid))
       offGrid.emplace_back(static_cast<int64_t>(index), *r.start, *r.duration);
     if (num == den)
@@ -2282,8 +2308,7 @@ checkControllerLimits(const std::vector<ControllerRecord> &records,
     for (size_t i : timed) {
       const ControllerRecord &r = records[i];
       auto detector = limits.detectors.find(r.qudit);
-      if (std::strcmp(r.kind, "readout") == 0 &&
-          detector != limits.detectors.end())
+      if (isKind(r.kind, "readout") && detector != limits.detectors.end())
         byDetector[detector->second].push_back(i);
     }
     for (auto &[detector, items] : byDetector)
@@ -2325,7 +2350,7 @@ checkControllerLimits(const std::vector<ControllerRecord> &records,
     }
   if (!limits.answerTimeouts)
     for (const ControllerRecord &r : records)
-      if (std::strcmp(r.kind, "answer") == 0 &&
+      if (isKind(r.kind, "answer") &&
           (r.mode == "timeout" || limits.timeoutFunctions.count(r.callee)))
         found.push_back(
             "the wait for " + r.callee + " at " +
@@ -2691,14 +2716,14 @@ private:
   nb::list range(size_t &at, size_t stop) {
     size_t count = 0;
     for (size_t i = at; i < stop; ++i, ++count)
-      if (std::strcmp(records[i].kind, "loop") == 0)
+      if (isKind(records[i].kind, "loop"))
         i += static_cast<size_t>(records[i].size);
     nb::list out = list(count);
     for (size_t k = 0; k < count; ++k) {
       size_t index = at++;
       const ControllerRecord &r = records[index];
       nb::dict event = common(r, index);
-      if (std::strcmp(r.kind, "loop") == 0) {
+      if (isKind(r.kind, "loop")) {
         put(event, key.trips, integer(r.trips));
         if (!compact || r.first)
           put(event, key.first, integer(r.first));
@@ -2717,17 +2742,17 @@ private:
   // The kind of an event in format /2, named for what the controller does
   // rather than for a modality.
   static const char *structuredKind(const char *kind) {
-    if (std::strcmp(kind, "drive") == 0)
+    if (isKind(kind, "drive"))
       return "play";
-    if (std::strcmp(kind, "submit") == 0)
+    if (isKind(kind, "submit"))
       return "call";
     return kind;
   }
 
   nb::dict common(const ControllerRecord &r, size_t index) {
     nb::dict event;
-    bool sync = std::strcmp(r.kind, "sync") == 0;
-    bool loop = std::strcmp(r.kind, "loop") == 0;
+    bool sync = isKind(r.kind, "sync");
+    bool loop = isKind(r.kind, "loop");
     bool call = (r.kind[0] == 's' && !sync) || r.kind[0] == 'a';
     if (!compact)
       put(event, key.index, integer(static_cast<int64_t>(index)));
@@ -2831,7 +2856,7 @@ private:
       put(event, key.op, text(r.update));
       put(event, key.value, expression(r.value));
       frame(r, event);
-    } else if (std::strcmp(r.kind, "sync") == 0) {
+    } else if (isKind(r.kind, "sync")) {
       put(event, key.lines, ints(r.joined));
     } else if (r.kind[0] == 's' || r.kind[0] == 'a') {
       put(event, key.link, integer(r.line));

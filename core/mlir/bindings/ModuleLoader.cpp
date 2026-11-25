@@ -13,6 +13,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Parser/Parser.h"
@@ -443,23 +444,45 @@ public:
     return out;
   }
 
+  using LoadedSubmission =
+      std::tuple<std::string, int64_t, int64_t,
+                 std::vector<std::optional<int64_t>>, bool>;
   /// Every submission of a module (assembly or bytecode): the function it
-  /// calls, the cycles its schedule gives it, and the cycles its link takes
-  /// to send it as the classical check wrote them on it (-1 when the check
-  /// wrote none).
-  std::vector<std::tuple<std::string, int64_t, int64_t>>
-  load_submissions(const std::string &text) {
+  /// calls, the cycles its schedule gives it, the cycles its link takes to
+  /// send it as the classical check wrote them on it (-1 when the check
+  /// wrote none), and its leading 64-bit integer arguments, each the
+  /// constant it is or nothing; and whether its future goes anywhere but
+  /// into a wait (it is yielded from a branch or a loop, or passed on), so
+  /// that the wait that takes its answer does not name it directly.
+  std::vector<LoadedSubmission> load_submissions(const std::string &text) {
     auto source = parseForeign(text, ctx_);
-    std::vector<std::tuple<std::string, int64_t, int64_t>> out;
+    std::vector<LoadedSubmission> out;
     source->walk([&](classical::SubmitOp submit) {
       auto needed =
           submit->getAttrOfType<mlir::IntegerAttr>("classical.submit_cycles");
-      out.emplace_back(submit.getCallee().str(),
-                       pulse::durationCycles(submit).value_or(-1),
-                       needed ? needed.getInt() : int64_t(-1));
+      std::vector<std::optional<int64_t>> words;
+      // Its first operand is the link; a message's words come next.
+      for (mlir::Value operand : submit->getOperands().drop_front()) {
+        if (!operand.getType().isInteger(64) || words.size() == kMostWords)
+          break;
+        llvm::APInt word;
+        words.push_back(mlir::matchPattern(operand, mlir::m_ConstantInt(&word))
+                            ? std::optional<int64_t>(word.getSExtValue())
+                            : std::nullopt);
+      }
+      out.emplace_back(
+          submit.getCallee().str(), pulse::durationCycles(submit).value_or(-1),
+          needed ? needed.getInt() : int64_t(-1), std::move(words),
+          !llvm::all_of(submit.getFuture().getUsers(),
+                        [](mlir::Operation *user) {
+                          return mlir::isa<classical::WaitOp>(user);
+                        }));
     });
     return out;
   }
+  /// The most leading integer arguments read per submission: a decoder
+  /// message has four.
+  static constexpr size_t kMostWords = 4;
 
   using LoadedCallable =
       std::tuple<std::string, int64_t, int64_t, std::vector<std::string>,
@@ -758,6 +781,13 @@ PyObject *optionalNumber(const std::optional<double> &value) {
   return Py_None;
 }
 
+PyObject *optionalInteger(const std::optional<int64_t> &value) {
+  if (value)
+    return PyLong_FromLongLong(*value);
+  Py_INCREF(Py_None);
+  return Py_None;
+}
+
 /// A new tuple of `items`, which it takes; null when any is null.
 PyObject *tupleOf(std::initializer_list<PyObject *> items) {
   Owned tuple(PyTuple_New(static_cast<Py_ssize_t>(items.size())));
@@ -825,7 +855,7 @@ PyObject *linkNames(mlir::MLIRContext *ctx, PyObject *module) {
 
 PyObject *submissions(mlir::MLIRContext *ctx, PyObject *module) {
   std::string text = bytesOf(module);
-  std::vector<std::tuple<std::string, int64_t, int64_t>> rows;
+  std::vector<Loader::LoadedSubmission> rows;
   {
     Released released;
     rows = Loader(ctx).load_submissions(text);
@@ -834,9 +864,19 @@ PyObject *submissions(mlir::MLIRContext *ctx, PyObject *module) {
   if (!list.object)
     return nullptr;
   for (size_t i = 0; i < rows.size(); ++i) {
-    const auto &[name, written, needed] = rows[i];
+    const auto &[name, written, needed, words, indirect] = rows[i];
+    Owned sent(PyList_New(static_cast<Py_ssize_t>(words.size())));
+    if (!sent.object)
+      return nullptr;
+    for (size_t at = 0; at < words.size(); ++at) {
+      PyObject *word = optionalInteger(words[at]);
+      if (!word)
+        return nullptr;
+      PyList_SetItem(sent.object, static_cast<Py_ssize_t>(at), word);
+    }
     PyObject *row = tupleOf({textObject(name), PyLong_FromLongLong(written),
-                             PyLong_FromLongLong(needed)});
+                             PyLong_FromLongLong(needed), sent.release(),
+                             PyBool_FromLong(indirect ? 1 : 0)});
     if (!row)
       return nullptr;
     PyList_SetItem(list.object, static_cast<Py_ssize_t>(i), row);

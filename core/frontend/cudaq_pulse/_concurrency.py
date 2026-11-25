@@ -69,6 +69,27 @@ def violations(lowered: ScheduledKernel) -> tuple[list[str], bool]:
     lines, events, _, _, _ = _walk(
         lowered, values=False, waveforms=False, summary=(repeats, periods)
     )
+    # What follows a wait whose length is computed at run time, or a wait
+    # for an answer, starts later in a run than it is placed, while lines
+    # the wait does not hold back keep their times: the pulses of such a
+    # program are counted as they can slide, unless their lines all wait
+    # together.
+    sliding = bool(lowered.classical) and _slides_apart(events, limits)
+    if repeats and sliding:
+        # Pulses that can slide are counted from every copy of a loop.
+        from . import _loops
+
+        copies = _loops.walked_copies(events, repeats, periods)
+        if copies > _loops._MAX_PLAYED:
+            raise UnsupportedError(
+                f"the controller check would count {copies} copies of rolled loops one by "
+                f"one, more than the {_loops._MAX_PLAYED} it plays: what follows a wait "
+                "whose length is computed at run time starts later in a run than it is "
+                "placed, and the control system limits what plays at once; sync the lines "
+                "that play after such a wait, or give the loops fewer iterations"
+            )
+        repeats = []
+        lines, events, _, _, _ = _walk(lowered, values=False, waveforms=False)
     # Each pulse of a kind with a limit: its start and end before its line's delay.
     timed: dict[int, tuple[int, int]] = {}
     for index, event in enumerate(events):
@@ -88,6 +109,9 @@ def violations(lowered: ScheduledKernel) -> tuple[list[str], bool]:
             if kind not in limits:
                 continue
             count = _AtOnce(limits[kind], events, timed)
+            if sliding:
+                found.extend(_sliding(lowered, count, kind, name, lines))
+                continue
             count.sweep(
                 sorted(
                     ((*timed[i], events[i], ()) for i in timed if events[i]["kind"] == kind),
@@ -114,6 +138,53 @@ def violations(lowered: ScheduledKernel) -> tuple[list[str], bool]:
 
 def _first(item: _Played) -> tuple[int, int]:
     return item[0], item[1]
+
+
+def _slides_apart(events: Sequence[Mapping[str, Any]], limits: Mapping[str, int]) -> bool:
+    """Whether pulses of a kind *limits* counts can slide against one
+    another: one is past the first segment, and they are not all on lines
+    that wait together."""
+    from . import _slides
+
+    for kind in limits:
+        counted = [e for e in events if e["kind"] == kind]
+        if any(e["segment"] for e in counted) and not _slides.one_timeline(counted):
+            return True
+    return False
+
+
+def _sliding(
+    lowered: ScheduledKernel,
+    count: _AtOnce,
+    kind: str,
+    name: str,
+    lines: Sequence[Mapping[str, Any]],
+) -> list[str]:
+    """The *kind*s of *count* that can play at once past its limit in some
+    run, when what follows each wait of a run-time length starts as much
+    later as the wait can be longer (``_slides``)."""
+    from . import _slides
+
+    events, timed = count.events, count.timed
+    played = sorted(
+        ((*timed[i], events[i]) for i in timed if events[i]["kind"] == kind),
+        key=_slides.by_start,
+    )
+
+    def together(active: list[Any]) -> int:
+        return _together([(count._arms(pulse[2]["conditions"], ()), 1) for pulse in active])
+
+    branched = any(pulse[2]["conditions"] for pulse in played)
+    found = _slides.over(lowered, played, count.limit, lines, together if branched else None)
+    if found is None:
+        return []
+    beyond = f", and up to {found.most}" if found.most > found.at_first else ""
+    return [
+        f"{found.at_first} {kind}s can play at once from cycle {found.first}{beyond}: "
+        f"{found.cause}; the control system plays at most {count.limit} ({name}): sync the "
+        "lines after the wait, so that they wait together, or give the wait bounds that keep "
+        "them apart"
+    ]
 
 
 def _second(item: tuple[int, int]) -> int:
