@@ -1020,10 +1020,17 @@ branches on whether a call's answer came in time and on the answer itself
 same for a function declared with ``latency_mode="timeout"``, and one
 with values known only at run time, compiled for the controller (by
 default the backend's control system's) and exported in each format the
-backend reads. Two more are wired from that controller: ``shared_line``
+backend reads. Four more are wired from that controller: ``shared_line``
 reads out both qudits at once on one readout line reaching both
 (``ReadoutLine([0, 1],
-max_concurrent_tones=2)`` in place of its readout lines), and
+max_concurrent_tones=2)`` in place of its readout lines),
+``shared_drive_line_two_tones`` drives both qudits at once with the same
+envelope on one drive line reaching both (``DriveLine([0, 1],
+max_concurrent_tones=2)`` in place of its drive lines, its readout lines as
+they are) and reads both out; its two tones are at the qudits' two
+frequencies. ``shared_drive_line_one_tone`` is the same program on a system
+of the corpus's own whose two qudits share a frequency, so that a backend
+whose line plays one tone for all its qudits can emit it. And
 ``several_controllers`` runs on two controllers made from it, one driving
 qudit 0 and reading out both qudits on such a line, the other driving qudit
 1, with a shared reference clock; each controller's part is emitted on its
@@ -1051,7 +1058,7 @@ corpus is as written.
    # ...
    # PASS unsupported_event
    # PASS newer_format
-   # backend 'text': 10 passed, 8 refused
+   # backend 'text': 12 passed, 8 refused
    print(report.ok)  # True
 
 A backend that accepted the unknown event would instead report ``FAIL

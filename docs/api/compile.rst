@@ -19,6 +19,13 @@ Compilation API
    :members:
    :undoc-members:
 
+.. autoclass:: cudaq_pulse.IdleReplacement
+
+.. autoclass:: cudaq_pulse.compiler.IdleWindow
+   :members:
+
+.. autoclass:: cudaq_pulse.compiler.IdleWindows
+
 .. autoclass:: cudaq_pulse.compiler.IRLevel
    :members:
    :undoc-members:

@@ -626,7 +626,7 @@ itself:
 .. code-block:: text
    :class: output
 
-   backend 'toy': 27 passed, 2 skipped
+   backend 'toy': 29 passed, 2 skipped
 
 The test programs cover:
 

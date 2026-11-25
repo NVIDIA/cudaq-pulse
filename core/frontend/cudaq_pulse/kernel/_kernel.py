@@ -54,6 +54,9 @@ from ..compiler import (
     with_line_delays,
 )
 from ._guard import Guard, build_guard
+
+if typing.TYPE_CHECKING:
+    from .._idle import IdleReplacement
 from ._schedule_blocks import root_schedule, validate_kernel_schedule, validate_max_duration
 from ._unroll import resolve_unroll_threshold
 from .ir_builder import (
@@ -1042,6 +1045,18 @@ class CompiledKernel[**P]:
     def cache_info(self) -> CacheInfo:
         d = self._dispatch
         return CacheInfo(len(d._entries), d.misses, d.evictions, None)
+
+    def replace_idle(self, rule: IdleReplacement) -> CompiledKernel[P]:
+        """This kernel, compiled as it is, with each idle window of its
+        programs replaced as *rule* (a ``pulse.IdleReplacement``) says: each
+        stretch of at least the rule's threshold in which a qudit idles gets
+        the rule's fill written in, and every operation of the kernel keeps
+        its start, which compiling checks. ``lower(...)`` of the result gives
+        programs whose ``idle_windows`` report each window and what was done
+        there; this one is unchanged."""
+        from .._idle import IdledKernel
+
+        return IdledKernel(self, rule)
 
     def __reduce__(self) -> tuple[Any, ...]:
         from .._pickling import rebuilt_compiled

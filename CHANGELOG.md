@@ -34,6 +34,23 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   starts a submission, and a seed that is not a whole number gets the usage
   line. `challenges/README.rst` says what a scorer reads and what it cannot
   check.
+- **Idle replacement.** `pulse.compile(k).replace_idle(pulse.IdleReplacement(fill,
+  threshold=100 * pulse.ns))` is the compiled kernel with the kernel
+  `fill(qudit, window)` written into each idle window of its schedules: a
+  stretch of at least the threshold in which a qudit's drive line has no
+  operation, none of its tones plays and its own readout does not run, such
+  as the time a data qudit spends idle while an ancilla is read out (a
+  kernel's own `wait()` is an operation, not a window). A fill shorter than its
+  window is centred with waits (`align=`), a longer one is an error; windows
+  in loops are filled in every round and the loop stays rolled. Every
+  operation of the kernel keeps its start and the program its length under
+  every schedule policy, which compiling checks; under `rcp` and `alap_rcp`
+  a window whose fill would move another operation for lack of a drive lane
+  is left unfilled. `ScheduledKernel.idle_windows` lists each window with
+  what was done there or why it was left alone, and
+  `IdleReplacement(None, threshold=...)` only lists them. In this version a
+  fill drives and waits on its own qudit's drive line. A kernel whose idle
+  windows are not replaced compiles exactly as before.
 - **Error codes.** Every `CompilationError` has a `code`, a
   `pulse.ErrorCode` (`unknown_name`, `wrong_argument`, `runtime_value`,
   `invalid_duration` and the others listed under Errors), so a program or
@@ -207,6 +224,17 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   the simulator models of each, and one error correction cycle. Its
   numbers, tables and figures are written from the system by a script, and
   a test fails when the page and the system differ.
+- **A shared drive line in the validation corpus.** `backends.validate` runs
+  two more programs: both qudits driven at once with the same envelope on
+  one drive line reaching both (`DriveLine([0, 1], max_concurrent_tones=2)`
+  in place of the controller's drive lines), then read out on the
+  controller's own readout lines. `shared_drive_line_two_tones` runs on the
+  corpus's system, whose qudits differ in frequency, so the line plays two
+  tones; `shared_drive_line_one_tone` runs on a system whose two qudits
+  share a frequency, so a backend whose line plays one tone for all its
+  qudits has a program it can emit. A backend with a drive line per qudit
+  refuses both, which counts as before. Every backend's report has two
+  more lines per format it reads.
 - **A drive of no stated modality.** `Drive(amplitude_scale_rad_per_ns=...)`
   states the Rabi rate of a pulse of amplitude 1 for a qudit whose drive is
   not a microwave one, or whose modality the system leaves unsaid: the

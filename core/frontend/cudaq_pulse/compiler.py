@@ -39,6 +39,8 @@ if TYPE_CHECKING:
     from . import _clocks
     from ._classical_report import ClassicalCall as ClassicalCall
     from ._device import QuantumSystem
+    from ._idle_windows import IdleWindow as IdleWindow
+    from ._idle_windows import IdleWindows as IdleWindows
     from ._programs import _Role
     from ._system import Controller, ControlSystem
     from ._waits import _WaitLengths
@@ -70,6 +72,20 @@ class _Module(ModuleType):
         from ._classical_report import ClassicalCall
 
         return ClassicalCall
+
+    # The types of ScheduledKernel.idle_windows, loaded with the first
+    # program whose idle windows are replaced.
+    @property
+    def IdleWindow(self) -> type[IdleWindow]:  # noqa: N802
+        from ._idle_windows import IdleWindow
+
+        return IdleWindow
+
+    @property
+    def IdleWindows(self) -> type[IdleWindows]:  # noqa: N802
+        from ._idle_windows import IdleWindows
+
+        return IdleWindows
 
 
 sys.modules[__name__].__class__ = _Module
@@ -545,6 +561,14 @@ class CompileOptions:
     # compilation with unit warnings has options of a subclass
     # (kernel/_unit_warnings.py).
     unit_warnings = False
+
+    def tracer(self, builder: Any, target: QuantumSystem) -> Any:
+        """The tracer of a compilation whose ``unit_warnings`` is set: the
+        one that warns of bare numbers, or (``_idle._SiteOptions``) the one
+        that also keeps idle replacement's record of the operations."""
+        from .kernel._unit_warnings import unit_checked
+
+        return unit_checked(builder, target)
 
     @staticmethod
     def make(
@@ -1104,6 +1128,14 @@ class ScheduledKernel:
         """
         return (_report or _load_report())(self)
 
+    @property
+    def idle_windows(self) -> IdleWindows | None:
+        """The idle windows of a program lowered by ``compiled.replace_idle(rule)``:
+        each stretch of at least the rule's threshold in which a qudit idles,
+        with what was done there (see ``IdleWindow``). ``None`` for a program
+        whose idle windows were not replaced."""
+        return getattr(self.metrics, "idle_windows", None)
+
     def export_to_emulator(self, *, controller: int | None = None) -> dict[str, Any]:
         """The program for a controller emulator: its schedule by segment, its
         calls and the manifest of its classical functions (see
@@ -1411,9 +1443,7 @@ def build(
     # One try for the trace and the module: a try statement costs a bytecode.
     try:
         if options.unit_warnings:
-            from .kernel._unit_warnings import unit_checked
-
-            checked = unit_checked(builder, target)
+            checked = options.tracer(builder, target)
             builder.returned = _trace_kernel_with_builder(fn, builder, trace_args, checked)
         else:
             builder.returned = _trace_kernel_with_builder(fn, builder, trace_args)
