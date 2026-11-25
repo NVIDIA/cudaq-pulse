@@ -1316,10 +1316,12 @@ _HOPS = 3
 
 
 # Dressed levels above the first: by description, (qudit, level) -> energy
-# in Hz from the ground state, and the qudits whose higher tones a program
-# has read (simulate then corrects their anharmonicity, layout_anharmonicities).
+# in Hz from the ground state; and the anharmonicities simulate gives a kept
+# part (layout_anharmonicities), by description and set of qudits.
 _LEVELS: weakref.WeakKeyDictionary[Any, dict[tuple[int, int], float]] = weakref.WeakKeyDictionary()
-_HIGHER_READ: weakref.WeakKeyDictionary[Any, set[int]] = weakref.WeakKeyDictionary()
+_ANHARMONICITIES: weakref.WeakKeyDictionary[Any, dict[tuple[int, ...], Mapping[int, float]]] = (
+    weakref.WeakKeyDictionary()
+)
 
 
 # The qudits the couplings *pairs* join to *qudit*, it among them.
@@ -1394,8 +1396,7 @@ def dressed_level_energy(description: Any, qudit: int, level: int) -> float:
     *description* included, every other qudit in its ground level: the
     eigenvalue of the *level*-excitation sector of the qudits its couplings
     join to it whose state holds most of that bare state. Level 1 is its
-    dressed 0-1 frequency. Kept per description; the first higher level a
-    program asks for marks the qudit for simulate (layout_anharmonicities)."""
+    dressed 0-1 frequency. Kept per description."""
     if level == 0:
         return 0.0
     dressed = dressed_frequencies(description)
@@ -1407,7 +1408,6 @@ def dressed_level_energy(description: Any, qudit: int, level: int) -> float:
     known = _LEVELS.setdefault(description, {})
     found = known.get((qudit, level))
     if found is None:
-        _HIGHER_READ.setdefault(description, set()).add(qudit)
         pairs = _exchange_pairs(description)
         group = _group_of(description, qudit, pairs)
         model = description.model
@@ -1458,21 +1458,24 @@ class _DressedTones(Mapping[tuple[int, int], float]):
 def layout_anharmonicities(description: Any, qudits: Sequence[int]) -> Mapping[int, float]:
     """For a simulation of the qudits *qudits* of *description* alone, at
     least three levels each: the anharmonicity in Hz to give each kept qudit
-    whose higher tone a program has read (dressed_level_energy), so that its
-    dressed level 2, with the kept couplings and layout_frequencies, is the
-    whole system's. Empty when no such qudit has a dropped neighbour."""
-    read = _HIGHER_READ.get(description)
-    if not read:
+    whose group reaches a qudit left out, so that its dressed level 2, with
+    the kept couplings and layout_frequencies, is the whole system's. Empty
+    when no kept qudit's group reaches one. Kept per description and set of
+    qudits."""
+    if dressed_frequencies(description) is None:
         return _NOTHING_MOVED
     kept = sorted(set(qudits))
+    known = _ANHARMONICITIES.setdefault(description, {})
+    found = known.get(tuple(kept))
+    if found is not None:
+        return found
     pairs = _exchange_pairs(description)
     inside = set(kept)
     # A kept qudit whose group reaches a dropped qudit: its level 2 has
     # that qudit's share.
-    marked = [
-        q for q in kept if q in read and not inside.issuperset(_group_of(description, q, pairs))
-    ]
+    marked = [q for q in kept if not inside.issuperset(_group_of(description, q, pairs))]
     if not marked:
+        known[tuple(kept)] = _NOTHING_MOVED
         return _NOTHING_MOVED
     within = [(q, s) for q, s in pairs if inside.issuperset(q)]
     frequencies = {
@@ -1501,7 +1504,9 @@ def layout_anharmonicities(description: Any, qudits: Sequence[int]) -> Mapping[i
             break
         for r, d in zip(marked, _solve(rows, miss), strict=True):
             alphas[r] += d
-    return MappingProxyType({q: alphas[q] for q in marked})
+    found = MappingProxyType({q: alphas[q] for q in marked})
+    known[tuple(kept)] = found
+    return found
 
 
 # Warn that the qudits *kept* of *description*, simulated alone, are

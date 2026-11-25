@@ -338,12 +338,11 @@ def test_a_simulated_part_keeps_its_dropped_neighbours_share_of_the_1_2_tone():
     qs = pulse.quantum_system("transmon_surface17")
     description = qs._description
     kept = (4, 14)
-    # Nothing to correct until a program reads a higher tone of D5.
-    assert layout_anharmonicities(description, kept) == {}
-    _, tones = qs._line_tones(4, False)
-    tones[1, 2]
+    # Every kept qudit whose group reaches a dropped one, whatever a program
+    # plays: D5 and Z2 both have neighbours left out.
     alphas = layout_anharmonicities(description, kept)
-    assert set(alphas) == {4}
+    assert set(alphas) == {4, 14}
+    assert layout_anharmonicities(description, kept) is alphas
     moved = layout_frequencies(description, kept)
     f = {q: moved.get(q, description.qudits[q].frequency_hz) for q in kept}
     alpha = {q: alphas.get(q, description.qudits[q].anharmonicity_hz) for q in kept}
@@ -395,8 +394,6 @@ def test_a_kept_qudit_two_couplings_from_a_dropped_one_is_corrected():
         name="chain", qudits=q, couplings=[coupling((0, 1), 30e6), coupling((1, 2), 30e6)]
     )
     description = chain._description
-    _, tones = chain._line_tones(0, False)
-    tones[1, 2]
     kept = (0, 1)
     alphas = layout_anharmonicities(description, kept)
     assert 0 in alphas
