@@ -88,6 +88,7 @@
 #include "cudaq-pulse/Dialect/Classical/ClassicalOps.h.inc"
 
 #include "BindingsCoupled.h"
+#include "CoupledSites.h"
 #include "LengthInference.h"
 #include "Lines.h"
 #include "ModuleLoader.h"
@@ -4015,6 +4016,9 @@ public:
   /// - ("if", nodes, nodes) for the two arms of a branch.
   nb::tuple site_tree() {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
+    // Asked once of the module (Variant.h, saysCouplingLines).
+    if (saysCouplingLines()) [[unlikely]]
+      return coupledSiteTree();
     llvm::DenseMap<mlir::Operation *, int64_t> lineIndex;
     nb::list lines;
     module_->walk([&](mlir::Operation *op) {
@@ -4097,6 +4101,15 @@ public:
     nb::list root;
     build(*module_->getBody(), root);
     return nb::make_tuple(lines, root);
+  }
+
+  /// site_tree() of a module that holds a coupling line: a walk of its
+  /// own, in a unit of its own (CoupledSites.cpp).
+  LLVM_ATTRIBUTE_NOINLINE __attribute__((cold)) nb::tuple coupledSiteTree() {
+    PyObject *tree = cudaq_pulse::coupledSiteTree(module_->getOperation());
+    if (!tree)
+      throw nb::python_error();
+    return nb::steal<nb::tuple>(tree);
   }
 
   /// (role, qudit): a runtime qudit's line has qudit -1.

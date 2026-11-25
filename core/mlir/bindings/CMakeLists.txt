@@ -61,6 +61,7 @@ nanobind_add_module(
   LengthInference.cpp
   Lines.cpp
   ModuleLoader.cpp
+  CoupledSites.cpp
 )
 
 target_link_libraries(_cudaq_pulse_native PRIVATE
