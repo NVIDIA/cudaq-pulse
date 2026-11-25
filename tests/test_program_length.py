@@ -503,24 +503,24 @@ def test_a_wait_set_by_an_answer_counts_at_its_highest_length(shape, options, st
     kernel = _answered(shape)
     free = pulse.compile(kernel, control_system=_answering(), **options).lower(Q[0], Q[1])
     scheduled = max(e.start_cycles + e.duration_cycles for e in free.schedule)
-    # Exactly what it can last compiles, and one cycle less does not: the
-    # schedule holds the wait at its lowest length, and the check adds what
-    # each execution of it can add.
+    # Exactly what it can last compiles, and one cycle less (half a ns on
+    # this 2 GHz clock) does not: the schedule holds the wait at its lowest
+    # length, and the check adds what each execution of it can add.
     longest = scheduled + stretch
     fits = pulse.compile(kernel, control_system=_answering(longest), **options)
     assert fits.lower(Q[0], Q[1]) is not None
     with pytest.raises(CompilationError) as caught:
-        pulse.compile(kernel, control_system=_answering(longest - 2), **options).lower(Q[0], Q[1])
+        pulse.compile(kernel, control_system=_answering(longest - 1), **options).lower(Q[0], Q[1])
     assert (
-        f"kernel 'answered' lasts up to {longest} cycles ({scheduled} as scheduled, its waits "
-        f"of run-time length add up to {stretch}), more than controllers[0]'s "
+        f"kernel 'answered' lasts up to {longest} cycles ({scheduled} as scheduled, the waits "
+        f"of run-time length that hold it back add up to {stretch}), more than controllers[0]'s "
         "max_program_duration"
     ) in str(caught.value)
 
 
 def test_a_wait_set_by_an_answer_is_in_no_arm_of_an_if():
-    # The stretch counts no arm against another: the schedule refuses such a
-    # wait inside one, with or without a limit.
+    # pulse-verify refuses such a wait inside an arm, with or without a
+    # limit, so the stretch counts no arm against another.
     @pulse.kernel
     def in_an_arm(a):
         d = get_drive_line(a)
@@ -534,8 +534,21 @@ def test_a_wait_set_by_an_answer_is_in_no_arm_of_an_if():
             drive(d, square(2000, 0.1))
 
     for cycles in (None, 100_000):
-        with pytest.raises(Exception, match="a variable wait cannot be inside one arm"):
+        with pytest.raises(RuntimeError, match="a variable wait cannot be inside one arm") as said:
             pulse.compile(in_an_arm, control_system=_answering(cycles)).lower(Q[0])
+        # The error of the pass itself, as without a limit.
+        assert type(said.value) is RuntimeError
+
+    # Without that pass (passes=()) the wait is scheduled, the arms one
+    # after the other, and counts as if its arm always ran: more than the
+    # program can last, never less.
+    free = pulse.compile(in_an_arm, control_system=_answering(), passes=()).lower(Q[0])
+    scheduled = max(e.start_cycles + e.duration_cycles for e in free.schedule)
+    assert scheduled == 201 + 4 + 2000
+    fits = pulse.compile(in_an_arm, control_system=_answering(scheduled + 896), passes=())
+    assert fits.lower(Q[0]) is not None
+    with pytest.raises(CompilationError, match=f"lasts up to {scheduled + 896} cycles"):
+        pulse.compile(in_an_arm, control_system=_answering(scheduled + 895), passes=()).lower(Q[0])
 
 
 def test_one_line_with_such_a_wait_is_refused_as_before():
@@ -551,4 +564,211 @@ def test_one_line_with_such_a_wait_is_refused_as_before():
     scheduled = max(e.start_cycles + e.duration_cycles for e in free.schedule)
     assert pulse.compile(one_line, control_system=_answering(scheduled + 896)).lower(Q[0])
     with pytest.raises(CompilationError, match="max_program_duration"):
-        pulse.compile(one_line, control_system=_answering(scheduled + 894)).lower(Q[0])
+        pulse.compile(one_line, control_system=_answering(scheduled + 895)).lower(Q[0])
+
+
+# ── Such a wait holds back the lines tied to it, and no other ──────────────
+
+
+def _apart(long, shape="plain"):
+    """Line e (b's drive line) plays one drive of *long* cycles that nothing
+    ties to the rest. On a's lines: a readout, a call on it, then a wait of
+    4 to 100 cycles set by the call's answer and a 100-cycle drive: once, or
+    six times in two rolled loops, one in the other."""
+
+    @pulse.kernel
+    def apart(a, b):
+        d = get_drive_line(a)
+        r = get_readout_line(a)
+        e = get_drive_line(b)
+        drive(e, square(long, 0.1))
+        m = readout(r, square(100, 0.05))
+        n = _how_long.submit([m]).result()
+        sync(d, r)
+        if shape == "plain":
+            wait(d, n, bounds=(4, 100))
+            drive(d, square(100, 0.1))
+        else:
+            for _ in range(2):
+                for _ in range(3):
+                    wait(d, n, bounds=(4, 100))
+                    drive(d, square(100, 0.1))
+
+    return apart
+
+
+def _end(lowered, qudit=None):
+    """The end of the last scheduled event, or of the last on *qudit*'s lines."""
+    events = [e for e in lowered.schedule if qudit is None or e.qudit == qudit]
+    return max(e.start_cycles + e.duration_cycles for e in events)
+
+
+def _limits(kernel, machine, longest, said, **options):
+    """*kernel* compiles on machine(longest) and, one cycle less, is the
+    error that has *said*."""
+    assert pulse.compile(kernel, control_system=machine(longest), **options).lower(Q[0], Q[1])
+    with pytest.raises(CompilationError) as caught:
+        pulse.compile(kernel, control_system=machine(longest - 1), **options).lower(Q[0], Q[1])
+    assert said in str(caught.value)
+
+
+def test_a_wait_set_by_an_answer_holds_back_only_the_lines_tied_to_it():
+    # Line e ends at 950 whatever the answer is, and a's lines at 305 as
+    # scheduled, 96 later at most: the program never lasts more than 950.
+    kernel = _apart(950)
+    free = pulse.compile(kernel, control_system=_answering()).lower(Q[0], Q[1])
+    assert (_end(free, 0), _end(free, 1)) == (305, 950)
+    assert pulse.compile(kernel, control_system=_answering(1000)).lower(Q[0], Q[1])
+    _limits(kernel, _answering, 950, "kernel 'apart' lasts 950 cycles, more than controllers[0]")
+    # With a shorter drive on e, a's lines last longest: with their wait.
+    _limits(
+        _apart(300),
+        _answering,
+        401,
+        "kernel 'apart' lasts up to 401 cycles (305 as scheduled, the waits of run-time length "
+        "that hold it back add up to 96), more than controllers[0]",
+    )
+
+
+def _two_controllers(limited):
+    """Controller 0 plays a's lines and controller 1 b's; the one *limited*
+    has the limit."""
+    from cudaq_pulse.classical import Link
+
+    def machine(cycles):
+        limits = [None, None]
+        limits[limited] = cycles / 2
+        controllers = [
+            Controller(drive_lines=[q], readout_lines=[q], max_program_duration=limits[q])
+            for q in (0, 1)
+        ]
+        return ControlSystem(controllers=controllers, links={"controller": Link()})
+
+    return machine
+
+
+def test_a_wait_on_another_controllers_line_adds_nothing_to_a_controller():
+    # The limit is controller 1's, which plays line e alone; the wait is on
+    # controller 0's line.
+    kernel = _apart(950)
+    assert pulse.compile(kernel, control_system=_two_controllers(1)(1000)).lower(Q[0], Q[1])
+    _limits(
+        kernel,
+        _two_controllers(1),
+        950,
+        "kernel 'apart' lasts 950 cycles, more than controllers[1]",
+    )
+    # Controller 0's lines last 305 as scheduled and the wait's 96 more.
+    _limits(
+        kernel,
+        _two_controllers(0),
+        401,
+        "kernel 'apart' lasts up to 401 cycles (305 as scheduled, the waits of run-time length "
+        "that hold it back add up to 96), more than controllers[0]",
+    )
+    # A controller counts the call too, whose answer is there at 201, before
+    # the wait: the wait adds nothing to a controller that is done by then.
+    _limits(
+        _apart(150),
+        _two_controllers(1),
+        201,
+        "kernel 'apart' lasts 201 cycles, more than controllers[1]",
+    )
+
+
+def test_such_waits_in_rolled_loops_count_once_for_each_time_they_run():
+    kernel = _apart(300, "loops")
+    options = {"unroll_threshold": 0}
+    free = pulse.compile(kernel, control_system=_answering(), **options).lower(Q[0], Q[1])
+    scheduled = _end(free, 0)
+    assert scheduled > 300
+    _limits(
+        kernel,
+        _answering,
+        scheduled + 6 * 96,
+        f"kernel 'apart' lasts up to {scheduled + 576} cycles ({scheduled} as scheduled, the "
+        "waits of run-time length that hold it back add up to 576), more than controllers[0]",
+        **options,
+    )
+    # Line e, were it the longest, would count without them.
+    _limits(
+        _apart(5000, "loops"),
+        _answering,
+        5000,
+        "kernel 'apart' lasts 5000 cycles, more than controllers[0]",
+        **options,
+    )
+
+
+@pulse.kernel
+def _two_waits(a, b):
+    # On each qudit's lines a readout, a call on it and a wait set by its
+    # answer, of 4 to 100 cycles for a and 4 to 300 for b, then a drive.
+    for q, highest, cycles in ((a, 100, 250), (b, 300, 100)):
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        m = readout(r, square(100, 0.05))
+        n = _how_long.submit([m]).result()
+        sync(d, r)
+        wait(d, n, bounds=(4, highest))
+        drive(d, square(cycles, 0.1))
+
+
+def _linked(**kwargs):
+    from cudaq_pulse.classical import Link
+
+    link = Link(**kwargs.pop("link", {}))
+
+    def machine(cycles=None):
+        limit = None if cycles is None else cycles / 2
+        controller = Controller(max_program_duration=limit, **kwargs)
+        return ControlSystem(controllers=[controller], links={"controller": link})
+
+    return machine
+
+
+def test_two_such_waits_that_nothing_ties_each_hold_back_their_own_lines():
+    machine = _linked()
+    free = pulse.compile(_two_waits, control_system=machine()).lower(Q[0], Q[1])
+    a, b = _end(free, 0), _end(free, 1)
+    # a's lines end last as scheduled, and b's can end last when it runs.
+    assert a > b and b + 296 > a + 96
+    _limits(
+        _two_waits,
+        machine,
+        b + 296,
+        f"kernel '_two_waits' lasts up to {b + 296} cycles ({b} as scheduled, the waits of "
+        "run-time length that hold it back add up to 296), more than controllers[0]",
+    )
+
+
+@pytest.mark.parametrize(
+    "tied", [{"link": {"slots": 1}}, {"blocks_on_calls": True}], ids=["one slot", "blocks on calls"]
+)
+def test_two_such_waits_add_up_where_the_schedule_ties_their_lines(tied):
+    # A link with one slot for the two calls, or a controller that plays
+    # nothing while a call is out: each wait can hold back every line.
+    machine = _linked(**tied)
+    free = pulse.compile(_two_waits, control_system=machine()).lower(Q[0], Q[1])
+    scheduled = _end(free)
+    _limits(
+        _two_waits,
+        machine,
+        scheduled + 96 + 296,
+        f"kernel '_two_waits' lasts up to {scheduled + 392} cycles ({scheduled} as scheduled, "
+        "the waits of run-time length that hold it back add up to 392), more than controllers[0]",
+    )
+
+
+def test_the_lowest_of_two_limits_on_a_builder_holds():
+    from cudaq_pulse.kernel.packed_ir_builder import PackedIRBuilder
+
+    stops = []
+    for first, second in ((1000, 400), (400, 1000)):
+        builder = PackedIRBuilder()
+        builder.limit_cycles(first)
+        builder.limit_cycles(second)
+        buffer = builder.get_buffer()
+        stops.append(list(buffer)[-1])
+    # The last record's sum is the lowest limit's, on one line here.
+    assert stops == [400, 400]

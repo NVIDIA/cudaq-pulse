@@ -490,11 +490,16 @@ class PackedIRBuilder:
         controller's longest program) times the lines it takes an error when
         the module is built: no schedule of it fits, since the operations of
         one line follow each other. Within that the schedule decides. Only a
-        builder given a limit counts its lines, when its buffer is taken."""
+        builder given a limit counts its lines, when its buffer is taken.
+        Of several limits the lowest holds."""
         import weakref
 
+        # The module is built with the lowest limit and the last record's
+        # sum, so the last record carries the lowest limit's.
+        earlier = vars(self).get("get_buffer")
+        lowest = cycles if earlier is None else min(cycles, earlier.lowest)
         at = self._cur + 2
-        self._record(_MAX_CYCLES, [cycles, cycles])
+        self._record(_MAX_CYCLES, [cycles, lowest])
         # The builder holds the function and the function must not hold the
         # builder: a builder under a limit is freed as any other is.
         held = weakref.ref(self)
@@ -503,9 +508,10 @@ class PackedIRBuilder:
             builder = held()
             assert builder is not None
             lines = max(1, len(builder._line_qudit))
-            builder._buf[at] = min(cycles * lines, 1 << 60)
+            builder._buf[at] = min(lowest * lines, 1 << 60)
             return PackedIRBuilder.get_buffer(builder)
 
+        with_stop.lowest = lowest  # type: ignore[attr-defined]
         self.get_buffer = with_stop  # type: ignore[method-assign]
 
     def _w(self, val: int) -> None:

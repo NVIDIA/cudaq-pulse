@@ -265,8 +265,12 @@ that gives its length. A wait whose length a float sets counts at the
 length each call gives it; a call whose values make the scheduled program
 longer is a ``ValueError`` when it binds them. A wait whose length is known
 only when the program runs (an answer of a classical call) is scheduled at
-its lowest length and counts at its highest, once for each time it runs:
-the error then gives the length as scheduled and what those waits add.
+its lowest length and counts at its highest, once for each time it runs,
+for the lines it holds back: those a ``sync`` or a value ties to it. A line
+that nothing ties to the wait ends when it is scheduled to. The error then
+gives the length as scheduled and what those waits add. Such a wait with
+no highest length (``bounds=(lowest, None)``, or no ``bounds``) counts at
+its lowest: the limit is not held against what it can add.
 
 Building the module from the traced kernel also sums the program op after
 op, every iteration of its loops (the longer arm of an ``if``), so that a

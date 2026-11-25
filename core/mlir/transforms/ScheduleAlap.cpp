@@ -50,6 +50,7 @@
 #include "mlir/Pass/Pass.h"
 
 #include "llvm/ADT/SmallBitVector.h"
+#include "llvm/Support/MathExtras.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -6440,18 +6441,18 @@ static bool playsElsewhere(mlir::Operation *op,
   return owners[qudit] >= 0 && owners[qudit] != controller;
 }
 
-/// The end of the last execution of the last op of the scheduled
-/// `function`, with each line delayed as `clocks` (its module's; none when
-/// null) delays it; with `controller`, of the ops on its lines and on lines
-/// of no known controller.
-static int64_t programLength(mlir::func::FuncOp function,
-                             const pulse::ClockAttributes *clocks = nullptr,
-                             int64_t controller = -1) {
+/// Call `fn(op, end)` with the end of the last execution of each timed op
+/// of the scheduled `function` that runs, with each line delayed as `clocks`
+/// (its module's; none when null) delays it; with `controller`, of the ops
+/// on its lines and on lines of no known controller.
+template <typename Fn>
+static void forEachEnd(mlir::func::FuncOp function,
+                       const pulse::ClockAttributes *clocks, int64_t controller,
+                       Fn fn) {
   std::optional<pulse::LineDelays> lines;
   if (clocks && clocks->delayed())
     lines.emplace(*clocks);
   pulse::AllocationTracer trace;
-  int64_t length = 0;
   function.walk([&](mlir::Operation *op) {
     if (!isTimedOp(op) ||
         (clocks && playsElsewhere(op, *clocks, controller, trace)))
@@ -6473,6 +6474,19 @@ static int64_t programLength(mlir::func::FuncOp function,
     end += pulse::scheduledDuration(op).value_or(0);
     if (lines)
       end += lines->of(op);
+    fn(op, end);
+  });
+}
+
+/// The end of the last execution of the last op of the scheduled
+/// `function`, with each line delayed as `clocks` (its module's; none when
+/// null) delays it; with `controller`, of the ops on its lines and on lines
+/// of no known controller.
+static int64_t programLength(mlir::func::FuncOp function,
+                             const pulse::ClockAttributes *clocks = nullptr,
+                             int64_t controller = -1) {
+  int64_t length = 0;
+  forEachEnd(function, clocks, controller, [&](mlir::Operation *, int64_t end) {
     length = std::max(length, end);
   });
   return length;
@@ -6515,41 +6529,96 @@ static mlir::LogicalResult checkProgramBudget(mlir::func::FuncOp function,
 inline constexpr llvm::StringLiteral kProgramLimitsAttr =
     "pulse.program_limits";
 
-/// How many cycles longer than scheduled one execution of `region` can
-/// take, by the waits in it whose length is known only when the program
-/// runs: each at its highest length, a loop's body once per trip. A wait
-/// with no highest length adds nothing, as it is scheduled. (Such a wait is
-/// in no arm of an if: the schedule refuses one there.)
-static int64_t stretchPast(mlir::Region &region) {
-  int64_t total = 0;
-  for (mlir::Block &block : region)
-    for (mlir::Operation &op : block) {
-      if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(&op)) {
-        total += pulse::constantTripCount(loop).value_or(0) *
-                 stretchPast(loop.getRegion());
-      } else if (op.getNumRegions()) {
-        for (mlir::Region &inner : op.getRegions())
-          total += stretchPast(inner);
-      } else if (op.hasAttr("classical.variable")) {
-        // Not a wait whose length a call's floats set: a call is scheduled
-        // with its values.
-        total += std::max<int64_t>(0, stretchOf(&op));
+/// a + b and a * b of lengths in cycles, none negative, held at the highest
+/// number where they pass it.
+static int64_t cappedAdd(int64_t a, int64_t b) {
+  int64_t sum = 0;
+  return llvm::AddOverflow(a, b, sum) ? std::numeric_limits<int64_t>::max()
+                                      : sum;
+}
+
+static int64_t cappedMul(int64_t a, int64_t b) {
+  int64_t product = 0;
+  return llvm::MulOverflow(a, b, product) ? std::numeric_limits<int64_t>::max()
+                                          : product;
+}
+
+/// A wait of the scheduled function whose length is known only when the
+/// program runs and has a highest length: its timeline, the end of its
+/// first execution as scheduled, and how many cycles longer than scheduled
+/// its executions can take together.
+struct RunTimeWait {
+  int64_t timeline, end, stretch;
+};
+
+/// The timeline of `op`, of the `count` the schedule kept apart (one when
+/// it kept none), as the scheduler has it (Scheduler::timelineOf): its own,
+/// or that of the first line or tone it plays on.
+static int64_t timelineIn(mlir::Operation *op, int64_t count,
+                          pulse::AllocationTracer &trace) {
+  if (count < 2)
+    return 0;
+  int64_t timeline = 0;
+  if (op->hasAttr(classical::kTimelineAttr)) {
+    timeline = classical::intAttr(op, classical::kTimelineAttr);
+  } else {
+    for (mlir::Value operand : op->getOperands())
+      if (mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType,
+                    pulse::ToneType>(operand.getType())) {
+        if (mlir::Operation *allocation = trace(operand))
+          timeline = classical::intAttr(allocation, classical::kTimelineAttr);
+        break;
       }
-    }
-  return total;
+  }
+  return std::clamp<int64_t>(timeline, 0, count - 1);
+}
+
+/// The waits of run-time length of `function`, each with its timeline of
+/// the `count` the schedule kept apart (with none kept apart they are in
+/// one: such a wait then holds back every line). A wait with no highest length
+/// is not one of them: it counts as it is scheduled. Neither is a wait whose
+/// length a call's floats set: each call is scheduled, and checked, with its
+/// values.
+static llvm::SmallVector<RunTimeWait> runTimeWaits(mlir::func::FuncOp function,
+                                                   int64_t count) {
+  llvm::SmallVector<RunTimeWait> waits;
+  pulse::AllocationTracer trace;
+  function.walk([&](mlir::Operation *op) {
+    if (!op->hasAttr("classical.variable"))
+      return;
+    int64_t stretch = stretchOf(op);
+    std::optional<int64_t> start = pulse::startCycles(op);
+    if (stretch <= 0 || !start)
+      return;
+    // Each execution adds its own: a loop's body once per trip. (In an arm
+    // of an if, where pulse-verify refuses such a wait, it counts as if the
+    // arm always ran.)
+    for (mlir::scf::ForOp loop : pulse::enclosingLoops(op, function))
+      stretch = cappedMul(stretch, pulse::constantTripCount(loop).value_or(0));
+    if (stretch > 0)
+      waits.push_back({timelineIn(op, count, trace),
+                       *start + pulse::scheduledDuration(op).value_or(0),
+                       stretch});
+  });
+  return waits;
 }
 
 /// checkProgramLimits for a module that has limits: out of line, so that a
 /// module without any pays the look for the attribute and nothing else.
+///
+/// A wait of run-time length is scheduled at its lowest length and can last
+/// its highest, and what it adds moves the ops of its timeline that come
+/// after it, which end no earlier than it does as scheduled, and no other
+/// op (see Timelines). So a controller's part of the program can last, by
+/// timeline, to the end of that timeline's last op on the controller's
+/// lines plus what the timeline's waits that end by then add; and of those
+/// the longest.
 LLVM_ATTRIBUTE_NOINLINE static mlir::LogicalResult
 checkAgainstLimits(mlir::func::FuncOp function, mlir::ArrayAttr limits,
-                   const pulse::ClockAttributes &clocks, int64_t latency) {
+                   const pulse::ClockAttributes &clocks, int64_t latency,
+                   int64_t count) {
   auto module = function->getParentOfType<mlir::ModuleOp>();
-  // A wait whose length a call sets counts at its length as scheduled: each
-  // call's values are scheduled, and checked, again. A wait whose length is
-  // known only when the program runs is scheduled at its lowest length and
-  // can last its highest: the program is held to what it can then last.
-  int64_t stretch = stretchPast(function.getBody());
+  llvm::SmallVector<RunTimeWait> waits = runTimeWaits(function, count);
   for (mlir::Attribute entry : limits) {
     auto fields = mlir::dyn_cast<mlir::DictionaryAttr>(entry);
     auto controller =
@@ -6560,16 +6629,41 @@ checkAgainstLimits(mlir::func::FuncOp function, mlir::ArrayAttr limits,
         fields ? fields.getAs<mlir::StringAttr>("duration") : nullptr;
     if (!controller || !cycles || !name || !duration)
       continue;
-    int64_t length = programLength(function, &clocks, controller.getInt());
-    if (length + stretch <= cycles.getInt())
+    // The longest of the timelines: its length as scheduled and what its
+    // waits add.
+    int64_t length = 0, stretch = 0;
+    if (waits.empty()) {
+      length = programLength(function, &clocks, controller.getInt());
+    } else {
+      llvm::SmallVector<int64_t> ends(std::max<int64_t>(1, count), 0);
+      pulse::AllocationTracer trace;
+      forEachEnd(function, &clocks, controller.getInt(),
+                 [&](mlir::Operation *op, int64_t end) {
+                   int64_t &last = ends[timelineIn(op, count, trace)];
+                   last = std::max(last, end);
+                 });
+      for (auto [timeline, end] : llvm::enumerate(ends)) {
+        int64_t added = 0;
+        for (const RunTimeWait &wait : waits)
+          if (wait.timeline == static_cast<int64_t>(timeline) &&
+              wait.end <= end)
+            added = cappedAdd(added, wait.stretch);
+        if (cappedAdd(end, added) > cappedAdd(length, stretch)) {
+          length = end;
+          stretch = added;
+        }
+      }
+    }
+    int64_t longest = cappedAdd(length, stretch);
+    if (longest <= cycles.getInt())
       continue;
     auto diagnostic = function->emitError()
                       << "kernel '" << module.getSymName().value_or("main")
-                      << "' lasts " << (stretch ? "up to " : "")
-                      << length + stretch << " cycles";
+                      << "' lasts " << (stretch ? "up to " : "") << longest
+                      << " cycles";
     if (stretch)
-      diagnostic << " (" << length << " as scheduled, its waits of run-time "
-                 << "length add up to " << stretch << ")";
+      diagnostic << " (" << length << " as scheduled, the waits of run-time "
+                 << "length that hold it back add up to " << stretch << ")";
     diagnostic << ", more than " << name.getValue()
                << "'s max_program_duration of " << duration.getValue() << " ("
                << cycles.getInt() << " cycles)";
@@ -6592,17 +6686,18 @@ checkAgainstLimits(mlir::func::FuncOp function, mlir::ArrayAttr limits,
 /// plays (every line, with one), line delays included, with its waits of
 /// run-time length at their highest. `latency`: the feedback latency the
 /// schedule waits after a readout something depends on (0: none), which the
-/// message names.
+/// message names; `timelines`: those the schedule kept apart.
 static mlir::LogicalResult
 checkProgramLimits(mlir::func::FuncOp function,
-                   const pulse::ClockAttributes &clocks, int64_t latency) {
+                   const pulse::ClockAttributes &clocks, int64_t latency,
+                   const Timelines &timelines) {
   auto module = function->getParentOfType<mlir::ModuleOp>();
   auto limits = module
                     ? module->getAttrOfType<mlir::ArrayAttr>(kProgramLimitsAttr)
                     : nullptr;
   if (!limits)
     return mlir::success();
-  return checkAgainstLimits(function, limits, clocks, latency);
+  return checkAgainstLimits(function, limits, clocks, latency, timelines.count);
 }
 
 // ── Driver ───────────────────────────────────────────────────────────────
@@ -6859,7 +6954,7 @@ static mlir::LogicalResult schedule(mlir::func::FuncOp function,
           pulse::LineGrid(clocks), pulse::Controllers(clocks))) ||
       mlir::failed(checkProgramBudget(function, waited)) ||
       mlir::failed(checkDelayedLength(function, clocks)) ||
-      mlir::failed(checkProgramLimits(function, clocks, waited)))
+      mlir::failed(checkProgramLimits(function, clocks, waited, timelines)))
     return mlir::failure();
   bool placed = pulse::applyLineDelays(function, clocks);
   function->setAttr(
