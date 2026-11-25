@@ -31,6 +31,21 @@ class _NoTrace:
         pass
 
 
+def _refuse_coupling_line(error: Exception) -> None:
+    """Where the loader fails on a coupling line's op, say that load() does
+    not take one yet: the loader builds its module without the mark of a
+    module that holds a coupling line, so the op's own check would tell
+    the reader to give the module a mark it may already have. Reached
+    only from a failed load."""
+    text = str(error)
+    if "'pulse.get_coupling_line' op" in text or "'pulse.drive_baseband' op" in text:
+        from ._errors import UnsupportedError
+
+        raise UnsupportedError(
+            "load does not load a function that holds a coupling line yet"
+        ) from None
+
+
 def load(
     module: str | bytes,
     /,
@@ -152,6 +167,7 @@ def load(
     try:
         declared = cast("list[Any]", builder.load_callables(text))
     except (RuntimeError, ValueError) as error:
+        _refuse_coupling_line(error)
         # A module that does not parse: the parser's reasons say where.
         raise CompilationError(str(error), code="wrong_argument") from None
     given = _given_functions(classical, declared)
@@ -187,6 +203,7 @@ def load(
         _, frequencies, readouts = target._frequency_tables(max(carriers) + 1)
         bound = generic.place_carriers(carriers, frequencies, readouts)
     except (RuntimeError, ValueError) as error:
+        _refuse_coupling_line(error)
         from ._errors import InvalidValueError
 
         if error.__class__ is InvalidValueError:

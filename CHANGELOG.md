@@ -250,7 +250,12 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   a coupling line, a classical call, a kernel with its own `schedule=`
   (compile with `flatten_schedules=True`) and a value a measurement
   selects at run time (each an `UnsupportedError` that says so, even
-  when the line is never used). Idle
+  when the line is never used). `pulse.load` does not load a function
+  that holds a coupling line yet, and raises `UnsupportedError`. A placed
+  call (`pulse.call`) may stand beside a coupling line of its caller. A
+  coupling line does not cross a call (the call's own check refuses it
+  as an argument and as a result), and a function that a call runs
+  fetches and plays on none yet (an error of `pulse-verify`). Idle
   replacement (`replace_idle`) counts a pulse on a coupling line as each
   qudit the line reaches being busy, as the qudit's own readout is: an
   idle window ends where the pulse starts, and the rest is filled; a
