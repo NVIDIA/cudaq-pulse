@@ -444,10 +444,12 @@ class QuantumSystem:
         self._tables: tuple[int, Any, Any] = (-1, None, None)
         # A variant (replace) makes the rest when it is first read
         # (__getattr__): most are only simulated against, which reads none of it.
-        # One with couplings makes it now: its tones are dressed (_finish),
-        # which reading a class attribute such as _line_tones would not make.
-        if not _variant or target.couplings:
+        # One with couplings reads its line tones through the dressed method,
+        # which makes it first (a class attribute would not).
+        if not _variant:
             self._finish()
+        elif target.couplings:
+            self._line_tones = self._dressed_line_tones  # type: ignore[method-assign]
 
     # The frequencies, fingerprint, identity and qudit handles.
     def _finish(self) -> None:
@@ -509,8 +511,10 @@ class QuantumSystem:
         self, index: int, readout: bool
     ) -> tuple[tuple[int, int], dict[tuple[int, int], float]]:
         default, tones = QuantumSystem._line_tones(self, index, readout)
-        if not readout and index >= 0 and (0, 1) in tones:
-            tones[0, 1] = self._dressed[index]
+        # The tone table: made first in a variant (__getattr__ finishes it).
+        frequencies = self.frequencies
+        if self._dressed is not None and not readout and index >= 0 and (0, 1) in tones:
+            tones[0, 1] = frequencies[index]
         return default, tones
 
     # The 0-1 frequency of carriers 0 to *count* - 1 (or more), and the

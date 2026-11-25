@@ -177,7 +177,8 @@ def test_frames_is_a_keyword_of_a_built_system_and_of_replace():
         frames="bare",
     )
     assert built._dressed is None
-    assert built.replace(frames="dressed")._dressed is not None
+    dressed = built.replace(frames="dressed")
+    assert dressed.qudits[0].dressed_frequency_hz != dressed.physical_qudits[4].frequency_hz
     with pytest.raises(pulse.QuantumSystemDefinitionError, match="frames"):
         pulse.quantum_system(name="x", qudits=dict(built.physical_qudits), frames="lab")
 
@@ -188,3 +189,14 @@ def test_dressed_frames_keep_the_fingerprints_systems_had():
     assert (
         plain.fingerprint == pulse.quantum_system("transmon_lattice:1", frames="bare").fingerprint
     )
+
+
+def test_a_variant_plays_dressed_tones_whatever_it_is_first_asked():
+    # A variant makes its tone table when first read; its line tones, read
+    # first, still make it and are dressed.
+    variant = pulse.quantum_system("transmon_surface17").replace(layout=[4, 14])
+    assert "fingerprint" not in vars(variant)
+    index = variant.layout[0]
+    _, tones = variant._line_tones(index, False)
+    assert tones[0, 1] == dressed_frequencies(variant._description)[index]
+    assert tones[0, 1] == variant.qudits[0].dressed_frequency_hz
