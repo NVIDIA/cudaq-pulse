@@ -503,11 +503,11 @@ class QuantumSystem:
             return default, {default: self._frequency_tables(index + 1)[2][index]}
         return default, model.transitions_hz(qudit, model.levels_of(index))
 
+    # ``_line_tones`` of a system whose couplings dress its qudits: a
+    # drive line's 0-1 tone at the qudit's dressed frequency.
     def _dressed_line_tones(
         self, index: int, readout: bool
     ) -> tuple[tuple[int, int], dict[tuple[int, int], float]]:
-        """``_line_tones`` of a system whose couplings dress its qudits: a
-        drive line's 0-1 tone at the qudit's dressed frequency."""
         default, tones = QuantumSystem._line_tones(self, index, readout)
         if not readout and index >= 0 and (0, 1) in tones:
             tones[0, 1] = self._dressed[index]

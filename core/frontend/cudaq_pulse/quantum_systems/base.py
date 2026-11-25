@@ -1083,11 +1083,11 @@ def _coupling_operator(model: Any) -> str | None:
     return None
 
 
+# The eigenvalues of the real symmetric *matrix* and its eigenvectors
+# (``vectors[i][k]``, component *i* of eigenvector *k*), by cyclic Jacobi
+# rotations: plain Python, as a coupled system's dressed frequencies are
+# made when it is first compiled for, which loads no numerical library.
 def _jacobi(matrix: list[list[float]]) -> tuple[list[float], list[list[float]]]:
-    """The eigenvalues of the real symmetric *matrix* and its eigenvectors
-    (``vectors[i][k]``, component *i* of eigenvector *k*), by cyclic Jacobi
-    rotations: plain Python, as a coupled system's dressed frequencies are
-    made when it is first compiled for, which loads no numerical library."""
     n = len(matrix)
     a = [row[:] for row in matrix]
     v = [[float(i == j) for j in range(n)] for i in range(n)]
@@ -1117,14 +1117,14 @@ def _jacobi(matrix: list[list[float]]) -> tuple[list[float], list[list[float]]]:
     return [a[i][i] for i in range(n)], v
 
 
+# Each qudit's 0-1 frequency in Hz, by index, among the qudits of
+# *frequencies* (their bare 0-1 frequencies) with the exchange couplings
+# *pairs* ((qudits, strength_hz)) between them: an eigenvalue of the
+# single-excitation matrix ``diag(f) + J``, solved for each group of
+# qudits the couplings join. Each qudit takes the eigenstate that holds
+# most of it, the states going to qudits in order of weight, so that two
+# qudits near resonance, mixed, each still take one.
 def _single_excitation(frequencies: Mapping[int, float], pairs: list[Any]) -> dict[int, float]:
-    """Each qudit's 0-1 frequency in Hz, by index, among the qudits of
-    *frequencies* (their bare 0-1 frequencies) with the exchange couplings
-    *pairs* ((qudits, strength_hz)) between them: an eigenvalue of the
-    single-excitation matrix ``diag(f) + J``, solved for each group of
-    qudits the couplings join. Each qudit takes the eigenstate that holds
-    most of it, the states going to qudits in order of weight, so that two
-    qudits near resonance, mixed, each still take one."""
     out = {q: float(f) for q, f in frequencies.items()}
     joined: dict[int, set[int]] = {q: {q} for q in out}
     for (a, b), _ in pairs:
@@ -1160,9 +1160,9 @@ def _single_excitation(frequencies: Mapping[int, float], pairs: list[Any]) -> di
     return out
 
 
+# The exchange couplings of known strength of *description*, as
+# (qudits, strength_hz); none when its model gives no exchange.
 def _exchange_pairs(description: Any) -> list[Any]:
-    """The exchange couplings of known strength of *description*, as
-    (qudits, strength_hz); none when its model gives no exchange."""
     if _coupling_operator(description.model) != "exchange":
         return []
     return [(c.qudits, c.strength_hz) for c in description.couplings if c.strength_hz]
