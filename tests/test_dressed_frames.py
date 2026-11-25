@@ -150,3 +150,41 @@ def test_a_ramsey_on_a_coupled_qudit_shows_no_offset(surface17):
 
     turned = math.remainder(phase(12_000) - phase(2_000), 2 * math.pi)
     assert abs(turned / (2 * math.pi * 10e-6)) < 100
+
+
+def test_bare_frames_keep_the_drive_tones_at_frequency_hz():
+    bare = pulse.quantum_system("transmon_surface17", frames="bare")
+    dressed = pulse.quantum_system("transmon_surface17")
+    d5 = bare.qudit("D5")
+    assert bare._dressed is None and "_line_tones" not in vars(bare)
+    assert d5.dressed_frequency_hz == bare.physical_qudits[d5.index].frequency_hz
+    assert bare._line_tones(d5.index, False)[1][0, 1] == d5.dressed_frequency_hz
+    # A different system: another fingerprint, as its programs differ.
+    assert bare.fingerprint != dressed.fingerprint and bare != dressed
+    # The registered name stays, and a system file says which frames.
+    data = bare.as_dict()
+    assert data["name"] == "transmon_surface17" and data["frames"] == "bare"
+    assert "frames" not in dressed.as_dict()
+    assert pulse.QuantumSystem.from_dict(data) == bare
+
+
+def test_frames_is_a_keyword_of_a_built_system_and_of_replace():
+    surface = pulse.quantum_system("transmon_surface17")
+    built = pulse.quantum_system(
+        name="pair",
+        qudits={4: surface.physical_qudits[4], 14: surface.physical_qudits[14]},
+        couplings=[c for c in surface.couplings if set(c.qudits) == {4, 14}],
+        frames="bare",
+    )
+    assert built._dressed is None
+    assert built.replace(frames="dressed")._dressed is not None
+    with pytest.raises(pulse.QuantumSystemDefinitionError, match="frames"):
+        pulse.quantum_system(name="x", qudits=dict(built.physical_qudits), frames="lab")
+
+
+def test_dressed_frames_keep_the_fingerprints_systems_had():
+    # The default adds nothing to what a fingerprint hashes.
+    plain = pulse.quantum_system("transmon_lattice:1")
+    assert (
+        plain.fingerprint == pulse.quantum_system("transmon_lattice:1", frames="bare").fingerprint
+    )

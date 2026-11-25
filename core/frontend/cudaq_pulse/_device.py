@@ -42,6 +42,7 @@ from .quantum_systems._registry import (
 )
 from .quantum_systems.base import (
     _DESCRIPTION_FIELDS,
+    _FRAMES,
     _TRANSMON,
     _Description,
     dressed_frequencies,
@@ -108,6 +109,7 @@ _CONFIG_KEYS = (
     "measurement_run",
     "control_system",
     "clock_ghz",
+    "frames",
 )
 # The keys that build a quantum system rather than name a registered one.
 _BUILT_KEYS = ("qudits", "couplings", "residual_zz", "model", "attribution")
@@ -152,6 +154,8 @@ def _fingerprint(target: _Description, layout: tuple[int, ...], calibration: Any
         residual_zz,
         layout,
     )
+    # Dressed frames are the default and add nothing; bare ones do.
+    content += target._frames_content
     # Uncalibrated quantum systems keep their fingerprints.
     if calibration is not None:
         content += (calibration._identity,)
@@ -202,11 +206,7 @@ class Qudit:
         couplings included: the frequency its drive tone plays at. Without
         couplings it is the qudit's ``frequency_hz``, which stays the bare
         value the Hamiltonian uses."""
-        system = self.quantum_system
-        dressed = system._dressed
-        if dressed is None:
-            return float(system._description.qudits[self.index].frequency_hz)
-        return dressed[self.index]
+        return float(self.quantum_system.frequencies[self.index])
 
     def __repr__(self) -> str:
         return (
@@ -444,7 +444,9 @@ class QuantumSystem:
         self._tables: tuple[int, Any, Any] = (-1, None, None)
         # A variant (replace) makes the rest when it is first read
         # (__getattr__): most are only simulated against, which reads none of it.
-        if not _variant:
+        # One with couplings makes it now: its tones are dressed (_finish),
+        # which reading a class attribute such as _line_tones would not make.
+        if not _variant or target.couplings:
             self._finish()
 
     # The frequencies, fingerprint, identity and qudit handles.
@@ -753,8 +755,8 @@ class QuantumSystem:
         """A variant of the quantum system, as ``dataclasses.replace`` makes one:
         the quantum system ``pulse.quantum_system(name=..., qudits=...)`` builds
         from this one's ``name``, ``qudits`` (its ``physical_qudits``),
-        ``couplings``, ``residual_zz``, ``model``, ``attribution``, ``layout``,
-        ``control_system`` and ``clock_ghz``, with *changes* in their place:
+        ``couplings``, ``residual_zz``, ``model``, ``attribution``, ``frames``,
+        ``layout``, ``control_system`` and ``clock_ghz``, with *changes* in their place:
         ``qs.replace(qudits={**qs.physical_qudits, 0: qudit})`` changes one
         qudit. The values are the calibrated ones, so the variant has no
         ``calibration`` of its own.
@@ -776,12 +778,12 @@ class QuantumSystem:
         clock_ghz = changes.pop(
             "clock_ghz", None if self.clock_ghz == described.clock_ghz else self.clock_ghz
         )
-        unknown = sorted(changes.keys() - _DESCRIPTION_FIELDS)
+        unknown = sorted(changes.keys() - _DESCRIPTION_FIELDS - {"frames"})
         if unknown:
             raise InvalidTypeError(
                 f"QuantumSystem.replace() got an unexpected keyword argument {unknown[0]!r}; "
-                f"it takes {', '.join(_DESCRIPTION_FIELDS[:-1])}, layout, control_system, "
-                "clock_ghz, parameter_drift and parameter_drift_seed"
+                f"it takes {', '.join(_DESCRIPTION_FIELDS[:-1])}, frames, layout, "
+                "control_system, clock_ghz, parameter_drift and parameter_drift_seed"
             )
         return QuantumSystem(
             described.replace(**changes),
@@ -1095,6 +1097,18 @@ def _checked(config: Mapping[str, Any], source: str, problems: list[Problem]) ->
         problems.extend(
             _program_clock(control, clock_ghz, 0.0 if target is None else target.clock_ghz)[1]
         )
+    frames = config.get("frames")
+    if frames is not None and target is not None and frames != target.frames:
+        if frames in _FRAMES:
+            target = target.replace(frames=frames)
+        else:
+            problems.append(
+                Problem(
+                    f'is {frames!r}; it is "dressed" (the default: a system with couplings '
+                    'drives each qudit at its dressed frequency) or "bare"',
+                    path="frames",
+                )
+            )
     if problems or target is None:
         return None
     try:
@@ -1189,6 +1203,7 @@ def quantum_system(
     clock_ghz: float | None = None,
     parameter_drift: bool | ParameterDriftModel | Mapping[int, ParameterDriftModel] = False,
     parameter_drift_seed: int | None = None,
+    frames: str = "dressed",
 ) -> QuantumSystem:
     """A quantum system: a registered one by name, or one built from its qudits.
 
@@ -1225,6 +1240,12 @@ def quantum_system(
     (2 GHz for one built here).
     Controller clocks that do not divide evenly into one need it, and the
     problem lists the clocks that work.
+
+    ``frames`` is where the drive tones of a system with couplings play:
+    ``"dressed"`` (the default) at each qudit's 0-1 frequency with the
+    couplings included (``Qudit.dressed_frequency_hz``), so that a qudit
+    does not precess at its neighbours' shift; ``"bare"`` at its
+    ``frequency_hz``. A system without couplings is the same either way.
 
     ``parameter_drift`` makes the simulated system's qudit parameters drift
     (``cudaq_pulse.quantum_systems.drift``): ``True`` for the default
@@ -1280,6 +1301,7 @@ def quantum_system(
             and clock_ghz is None
             and not parameter_drift
             and parameter_drift_seed is None
+            and frames == "dressed"
         ):
             return _calibrated(
                 make_quantum_system(name), name, f"quantum system {name}", None, None
@@ -1293,6 +1315,7 @@ def quantum_system(
             and clock_ghz is None
             and not parameter_drift
             and parameter_drift_seed is None
+            and frames == "dressed"
         ):
             from .quantum_systems._registry import current_quantum_system
 
@@ -1332,6 +1355,7 @@ def quantum_system(
         "measurement_run": measurement_run,
         "control_system": control_system,
         "clock_ghz": clock_ghz,
+        "frames": None if frames == "dressed" else frames,
     }
     problems: list[Problem] = []
     found = _definition(
@@ -1345,7 +1369,7 @@ def quantum_system(
         from .quantum_systems.drift import _replaced
 
         drift = {"parameter_drift": parameter_drift, "parameter_drift_seed": parameter_drift_seed}
-        return _replaced(found, drift)
+        found = _replaced(found, drift)
     return found
 
 

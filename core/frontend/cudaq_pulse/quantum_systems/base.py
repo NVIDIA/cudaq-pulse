@@ -1174,7 +1174,8 @@ _DRESSED: weakref.WeakKeyDictionary[Any, dict[int, float] | None] = weakref.Weak
 def dressed_frequencies(description: Any) -> dict[int, float] | None:
     """Each qudit's 0-1 frequency in Hz with the system's couplings
     included, by qudit index, or None when no coupling moves one (no
-    exchange coupling of known strength). Computed once per description.
+    exchange coupling of known strength) or the system keeps bare frames
+    (``frames="bare"``). Computed once per description.
 
     The exchange conserves the number of excitations, so with every other
     qudit in its ground level a qudit's dressed 0-1 frequency is an
@@ -1184,7 +1185,7 @@ def dressed_frequencies(description: Any) -> dict[int, float] | None:
         return _DRESSED[description]
     except KeyError:
         pass
-    pairs = _exchange_pairs(description)
+    pairs = _exchange_pairs(description) if description.frames == "dressed" else []
     dressed = (
         _single_excitation({q: p.frequency_hz for q, p in description.qudits.items()}, pairs)
         if pairs
@@ -1227,6 +1228,9 @@ _DESCRIPTION_FIELDS = (
     "attribution",
     "clock_ghz",
 )
+# What the drive tones of a system with couplings are at: each qudit's
+# dressed 0-1 frequency, or its bare frequency_hz.
+_FRAMES = ("dressed", "bare")
 
 
 class _Description:
@@ -1255,6 +1259,12 @@ class _Description:
     model: SimulationModel | None
     attribution: str
     clock_ghz: float
+    # Where the drive tones of a system with couplings play (_FRAMES): not a
+    # field, so that the default costs a description nothing to build; a
+    # description with bare frames is a _BareDescription.
+    frames = "dressed"
+    # What it adds to a quantum system's fingerprint (_device._fingerprint).
+    _frames_content: tuple[str, ...] = ()
 
     def __init__(
         self,
@@ -1309,8 +1319,17 @@ class _Description:
             "attribution": self.attribution,
             "clock_ghz": self.clock_ghz,
         }
+        frames = changes.pop("frames", self.frames)
+        if frames not in _FRAMES:
+            raise InvalidValueError(
+                f'frames must be "dressed" or "bare", got {frames!r}: "dressed" drives each '
+                'qudit of a system with couplings at its dressed frequency, "bare" at its '
+                "frequency_hz"
+            )
         values.update(changes)
-        return _Description(**values)
+        # Without couplings the frames are the same: the default description.
+        bare = frames == "bare" and values["couplings"]
+        return (_BareDescription if bare else _Description)(**values)
 
     def __repr__(self) -> str:
         values = ", ".join(f"{f}={getattr(self, f)!r}" for f in _DESCRIPTION_FIELDS)
@@ -1327,7 +1346,7 @@ class _Description:
     def __reduce__(self) -> tuple[Any, ...]:
         from .._pickling import _plain, rebuilt
 
-        return (rebuilt, (_Description, {f: _plain(getattr(self, f)) for f in _DESCRIPTION_FIELDS}))
+        return (rebuilt, (type(self), {f: _plain(getattr(self, f)) for f in _DESCRIPTION_FIELDS}))
 
     @property
     def qudit_count(self) -> int:
@@ -1425,6 +1444,15 @@ class _Description:
         if x is not None and x.amplitude:
             return math.pi / (float(x.amplitude) * _area_ns(x, _qudit_name(qudit)))
         return 1.0
+
+
+class _BareDescription(_Description):
+    """A description whose system plays each qudit's drive tone at its bare
+    ``frequency_hz``, couplings or not (``frames="bare"``)."""
+
+    __slots__ = ()
+    frames = "bare"
+    _frames_content = ("bare",)
 
 
 # The error that *needs* the strengths of *target*'s couplings at

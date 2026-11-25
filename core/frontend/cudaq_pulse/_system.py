@@ -3049,6 +3049,8 @@ def _device_data(quantum_system: QuantumSystem) -> dict[str, Any]:
     if spec is None:
         data |= _quantum_data(base)
     data["layout"] = list(quantum_system.layout)
+    if base.frames != "dressed":
+        data["frames"] = base.frames
     if spec is None or quantum_system.clock_ghz != base.clock_ghz:
         data["clock_ghz"] = quantum_system.clock_ghz
     calibration = quantum_system.calibration

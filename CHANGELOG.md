@@ -266,6 +266,38 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 
 ### Changed
 
+- **Coupled qudits are driven at their dressed frequencies.** In a quantum
+  system with couplings, each qudit's drive tone now plays at its 0-1
+  frequency with the couplings included (`qs.qudits[i].dressed_frequency_hz`,
+  computed exactly from the qudit frequencies and coupling strengths) instead
+  of its bare `frequency_hz`. Simulations of coupled qudits no longer show a
+  spurious offset of J^2/Delta per neighbour: up to 66 kHz on
+  `transmon_surface17` and 0.94 MHz on `transmon_lattice:9:grid`. A
+  simulation of some of a system's qudits keeps the share of that shift
+  their left-out neighbours give them. Systems without couplings are
+  unchanged. `pulse.quantum_system(..., frames="bare")` and
+  `qs.replace(frames="bare")` keep the old behaviour.
+
+  What 0.1.0 users see:
+  - Simulations of coupled qudits change. An idling or Ramsey-measured qudit
+    no longer drifts at its neighbours' shift (D5 of `transmon_surface17`
+    by 63 kHz); calibrated gates come out closer to their target; two-qudit
+    experiments show the physical ZZ instead of the ZZ plus that drift. The
+    `several_qubits` tutorial's Ramsey next to an excited neighbour now shows
+    the ZZ alone.
+  - Compiled programs and controller exports of coupled systems carry
+    different drive tone frequencies, and a coupled system's frames are part
+    of what it is: one with `frames="bare"` has another fingerprint.
+  - `frequency_hz`, `qudit_freq` and the Hamiltonian keep the bare values.
+  - The 1-2 and higher tones of a coupled qudit's drive line are dressed
+    too, each the difference of two of its dressed levels.
+  - A simulation of some of a coupled system's qudits at three levels or
+    more also gives each kept qudit the 1-2 transition it has on the whole
+    system (worked out once per system and set of qudits). Where kept
+    qudits are too near resonance to be given their dressed frequencies
+    without a left-out neighbour, a `RuntimeWarning` (a `PulseWarning`)
+    says how far off they are simulated and which qudits to add.
+
 - **Controllers in the printed MLIR carry what they were given.** In
   `pulse.control_system`, each `#pulse.controller` of a system of several
   controllers gives the controller's own facts, in its own cycles, where it
