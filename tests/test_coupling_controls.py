@@ -967,3 +967,49 @@ def test_a_long_chain_of_variants_answers_from_the_system_they_were_made_from(sh
     assert type(vars(variant)["_made_from"]).__name__ == "_Carried"
     again = shipped.replace(layout=[D4, X2]).replace(layout=[X2, D4])
     assert again.qudits[0].index == X2
+
+
+def test_a_system_that_does_not_state_its_frequencies_declares_no_components_yet():
+    from cudaq_pulse.quantum_systems import Offset
+
+    tuning = FluxTuning(ec_hz=1.65e8, ej_max_hz=2.6e10, asymmetry=0.47, idle_flux=0.0)
+
+    def system(frequencies, **components):
+        return pulse.quantum_system(
+            name="framed",
+            qudits={
+                i: PhysicalQudit(i, frequency, 50.0, 30.0, anharmonicity_hz=-3.0e8)
+                for i, frequency in enumerate(frequencies)
+            },
+            **components,
+        )
+
+    # Its description is a class of its own, by what its frequencies are
+    # measured from; one that declares components would read as a system
+    # that states them.
+    for frequencies, frame in (
+        ((Offset(0.0), Offset(1.0e8)), "shared_reference"),
+        ((None, None), "own_carrier"),
+    ):
+        plain = system(frequencies)
+        assert plain.frequency_frame == frame
+        for declare in (
+            lambda frequencies=frequencies: system(frequencies, tunings={0: tuning}),
+            lambda plain=plain: plain.replace(tunings={1: tuning}),
+        ):
+            with pytest.raises(pulse.QuantumSystemDefinitionError) as raised:
+                declare()
+            (problem,) = raised.value.problems
+            assert problem.path == "tunings"
+            assert f"frequency_frame {frame!r}" in problem.message
+            assert problem.fix == "give each qudit its 0-1 frequency in Hz as frequency_hz"
+            said = str(problem)
+    # The whole of what the last one says.
+    assert said == (
+        "tunings: are declared on a quantum system whose qudits give their frequencies "
+        "not at all (frequency_frame 'own_carrier'); such a system declares no tunings, "
+        "controls or interactions yet; give each qudit its 0-1 frequency in Hz as "
+        "frequency_hz"
+    )
+    # A system that states its frequencies declares them as ever.
+    assert system((5.0e9, 5.1e9), tunings={0: tuning}).tuning(0) == tuning
