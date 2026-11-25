@@ -82,6 +82,7 @@ def get_coupling_line(emitter: PulseIREmitter, call_args: list[Any]) -> tuple[An
             "its qudits once",
             code="wrong_argument",
         )
+    _refuse_in_a_fill(emitter)
     lines = emitter._lines
     key = ("_".join(str(q.vid) for q in qudits), _FETCH)
     held = lines.held.get(key)
@@ -107,6 +108,16 @@ def get_coupling_line(emitter: PulseIREmitter, call_args: list[Any]) -> tuple[An
         results = b.emit("pulse.get_coupling_line", tuple(qudits), (_LINE,), said)
     lines.add(key, results)
     return results
+
+
+def _refuse_in_a_fill(emitter: Any) -> None:
+    """Refuses a coupling line fetched by the fill of an idle replacement:
+    a fill plays on its qudit's drive line only. The kernel's own coupling
+    lines are time on the qudits they reach, which idle replacement reads
+    from the module. A trace that fills nothing has no record to ask."""
+    sites = getattr(emitter.b, "_sites", None)
+    if sites is not None and sites.filling is not None:
+        raise sites.filling.refuse("fetches a coupling line")
 
 
 class _DrivesCouplingLines:

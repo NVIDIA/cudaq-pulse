@@ -1324,7 +1324,8 @@ def test_a_gap_through_a_loop_of_too_many_readouts_to_list_is_left_alone(schedul
     (window,) = program.idle_windows
     assert (window.start, window.end, window.filled) == (499640, 500040, False)
     assert window.result == (
-        "left alone: a loop reads the qudit out or plays its tone in every round meanwhile"
+        "left alone: a loop reads the qudit out, plays a coupling line that reaches it, or "
+        "plays its tone in every round meanwhile"
     )
 
 
