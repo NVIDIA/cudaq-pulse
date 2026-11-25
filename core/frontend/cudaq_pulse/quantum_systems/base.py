@@ -1311,8 +1311,9 @@ def layout_frequencies(description: Any, qudits: Sequence[int]) -> Mapping[int, 
 # A dressed level above the first is worked out among the qudits within
 # this many couplings of its qudit, as the whole coupled group of a large
 # chip would not fit in memory: each coupling further moves it by about
-# (g / detuning)^2 of the last, under a millihertz on transmon_surface17,
-# a few hertz where neighbours are within ten couplings of resonance.
+# (g / detuning)^2 of the last: under a millihertz on transmon_surface17,
+# but tens of kHz on a chain of qudits 80 MHz apart with 30 MHz couplings,
+# and up to about a MHz on such a chain of nine.
 _HOPS = 3
 
 
@@ -1450,7 +1451,12 @@ class _DressedTones(Mapping[tuple[int, int], float]):
         made = self._made.get(transition)
         if made is None:
             if transition not in self._bare:
-                raise KeyError(transition)
+                from .._errors import NotFoundError
+
+                raise NotFoundError(
+                    f"the drive line has no tone {transition}; it has "
+                    + ", ".join(map(str, self._bare))
+                )
             lower, upper = transition
             made = dressed_level_energy(
                 self._description, self._qudit, upper

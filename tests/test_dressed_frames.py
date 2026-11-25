@@ -434,7 +434,37 @@ def test_the_0_2_tone_near_resonance_is_the_whole_chains_level_2():
         _, tones = chain._line_tones(q, False)
         # Within the share of the qudits beyond three couplings.
         assert tones[0, 2] == pytest.approx(_level(energies, pairs, q, 2)[0], abs=50e3)
-        assert tones[0, 2] == pytest.approx(tones[0, 1] + tones[1, 2], abs=1e-3)
+
+
+def test_the_1_2_tone_near_resonance_drives_a_transition_out_of_the_dressed_state():
+    # The whole chain at three levels each: the 1-2 tone is a transition of
+    # weight from the state the 0-1 tone reaches.
+    chain = _crowded_chain()
+    description = chain._description
+    n, levels = 5, 3
+    a = np.diag(np.sqrt(np.arange(1, levels)), 1)
+
+    def at(op, q):
+        out = np.eye(1)
+        for r in range(n):
+            out = np.kron(out, op if r == q else np.eye(levels))
+        return out
+
+    h = sum(
+        at(np.diag([0.0, f, 2 * f - 200e6]), q)
+        for q, f in ((q, description.qudits[q].frequency_hz) for q in range(n))
+    )
+    for (p, q), g in _exchange_pairs(description):
+        h = h + g * (at(a.T, p) @ at(a, q) + at(a, p) @ at(a.T, q))
+    values, vectors = np.linalg.eigh(h)
+    for q in range(n):
+        _, tones = chain._line_tones(q, False)
+        first = np.argmin(abs(values - tones[0, 1]))
+        assert values[first] == pytest.approx(tones[0, 1], abs=1.0)
+        raised = at(a.T, q) @ vectors[:, first]
+        strength = (vectors.T @ raised) ** 2
+        lines = values[strength > 0.1] - values[first]
+        assert min(abs(lines - tones[1, 2])) < 50e3
 
 
 def test_a_part_simulated_at_two_levels_is_not_corrected():
@@ -445,3 +475,11 @@ def test_a_part_simulated_at_two_levels_is_not_corrected():
     assert set(layout_anharmonicities(description, (14, 4), (2, 3))) == {4}
     assert not layout_anharmonicities(description, (4, 14), (2, 2))
     assert set(layout_anharmonicities(description, (4, 14), (3, 3))) == {4, 14}
+
+
+def test_a_tone_the_line_does_not_have_is_not_found():
+    alone, _, _, _ = _pair_alone("missing")
+    _, tones = alone._line_tones(alone.qudits[0].index, False)
+    with pytest.raises(pulse.NotFoundError, match=r"no tone \(5, 6\); it has \(0, 1\)"):
+        tones[5, 6]
+    assert tones.get((5, 6)) is None
