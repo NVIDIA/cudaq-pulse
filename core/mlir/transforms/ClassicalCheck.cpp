@@ -58,6 +58,12 @@
 #include <optional>
 #include <vector>
 
+namespace pulse {
+/// What the waits of run-time length of a scheduled `module` add under its
+/// controllers' longest programs, if it lists any (PulseProgramLimits.cpp).
+mlir::LogicalResult checkWaitLimits(mlir::ModuleOp module);
+} // namespace pulse
+
 namespace {
 
 /// Loops of at least this many trips are checked from one copy of their
@@ -1022,7 +1028,8 @@ struct PulseClassicalCheckPass
 
   void runOnOperation() override {
     if (mlir::failed(checkClassicalCalls(getOperation(), kSummarizedTrips,
-                                         readoutLatency)))
+                                         readoutLatency)) ||
+        mlir::failed(pulse::checkWaitLimits(getOperation())))
       signalPassFailure();
   }
 
@@ -1051,7 +1058,8 @@ struct PulseClassicalCheckOptionsPass
   }
   void runOnOperation() override {
     if (mlir::failed(checkClassicalCalls(getOperation(), summarizeTrips,
-                                         readoutLatency)))
+                                         readoutLatency)) ||
+        mlir::failed(pulse::checkWaitLimits(getOperation())))
       signalPassFailure();
   }
 

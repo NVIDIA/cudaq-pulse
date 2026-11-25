@@ -59,6 +59,7 @@ nanobind_add_module(
   "${_build_stamp}"
   LengthInference.cpp
   ModuleLoader.cpp
+  ProgramLimitError.cpp
 )
 
 target_link_libraries(_cudaq_pulse_native PRIVATE

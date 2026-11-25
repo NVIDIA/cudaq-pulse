@@ -1,13 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// RUN: cudaq-pulse-opt %s --split-input-file --pulse-schedule-asap --verify-diagnostics
-// RUN: cudaq-pulse-opt %s --split-input-file --pulse-schedule-alap --verify-diagnostics
-// RUN: cudaq-pulse-opt %s --split-input-file --pulse-schedule-rcp --verify-diagnostics
+// RUN: cudaq-pulse-opt %s --split-input-file --pulse-schedule-asap --pulse-classical-check --verify-diagnostics
+// RUN: cudaq-pulse-opt %s --split-input-file --pulse-schedule-alap --pulse-classical-check --verify-diagnostics
+// RUN: cudaq-pulse-opt %s --split-input-file --pulse-schedule-rcp --pulse-classical-check --verify-diagnostics
 
 // Under pulse.program_limits a wait whose length is an answer counts at its
 // highest length for the lines it holds back, those of its timeline, and
-// for no other line.
+// for no other line. The schedule passes hold the program as scheduled to
+// the limits, and pulse-classical-check, which follows them for a module
+// with classical calls, the program with those waits at their highest.
 
 // Line e plays 300 cycles and nothing ties it to line d, whose wait of 16 to
 // 1000 cycles starts at 101 and whose last drive ends at 157 as scheduled:

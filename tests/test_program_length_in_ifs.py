@@ -98,8 +98,10 @@ def test_a_call_is_checked_as_the_program_with_its_lengths_written_in(shape):
     compiled = pulse.compile(_kernel(shape), control_system=MACHINE)
     waits = compiled.lower(Q[0], 4.0, 4.0).generic.waits
     assert len(waits.length) == 5
-    cycles, stop, most, repeats = waits.length[:4]
-    assert (stop, most) == (20_000, 10_000)
+    cycles, stop, limited, repeats = waits.length[:4]
+    # The sum stops at the longest program, 10,000 cycles, times two lines.
+    most = 10_000
+    assert (stop, limited) == (2 * most, 1)
     newly = 0
     outcomes = set()
     for x in LENGTHS:

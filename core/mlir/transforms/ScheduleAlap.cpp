@@ -50,7 +50,6 @@
 #include "mlir/Pass/Pass.h"
 
 #include "llvm/ADT/SmallBitVector.h"
-#include "llvm/Support/MathExtras.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -6447,18 +6446,18 @@ static bool playsElsewhere(mlir::Operation *op,
   return owners[qudit] >= 0 && owners[qudit] != controller;
 }
 
-/// Call `fn(op, end)` with the end of the last execution of each timed op
-/// of the scheduled `function` that runs, with each line delayed as `clocks`
-/// (its module's; none when null) delays it; with `controller`, of the ops
-/// on its lines and on lines of no known controller.
-template <typename Fn>
-static void forEachEnd(mlir::func::FuncOp function,
-                       const pulse::ClockAttributes *clocks, int64_t controller,
-                       Fn fn) {
+/// The end of the last execution of the last op of the scheduled
+/// `function`, with each line delayed as `clocks` (its module's; none when
+/// null) delays it; with `controller`, of the ops on its lines and on lines
+/// of no known controller.
+static int64_t programLength(mlir::func::FuncOp function,
+                             const pulse::ClockAttributes *clocks = nullptr,
+                             int64_t controller = -1) {
   std::optional<pulse::LineDelays> lines;
   if (clocks && clocks->delayed())
     lines.emplace(*clocks);
   pulse::AllocationTracer trace;
+  int64_t length = 0;
   function.walk([&](mlir::Operation *op) {
     if (!isTimedOp(op) ||
         (clocks && playsElsewhere(op, *clocks, controller, trace)))
@@ -6480,19 +6479,6 @@ static void forEachEnd(mlir::func::FuncOp function,
     end += pulse::scheduledDuration(op).value_or(0);
     if (lines)
       end += lines->of(op);
-    fn(op, end);
-  });
-}
-
-/// The end of the last execution of the last op of the scheduled
-/// `function`, with each line delayed as `clocks` (its module's; none when
-/// null) delays it; with `controller`, of the ops on its lines and on lines
-/// of no known controller.
-static int64_t programLength(mlir::func::FuncOp function,
-                             const pulse::ClockAttributes *clocks = nullptr,
-                             int64_t controller = -1) {
-  int64_t length = 0;
-  forEachEnd(function, clocks, controller, [&](mlir::Operation *, int64_t end) {
     length = std::max(length, end);
   });
   return length;
@@ -6535,162 +6521,22 @@ static mlir::LogicalResult checkProgramBudget(mlir::func::FuncOp function,
 inline constexpr llvm::StringLiteral kProgramLimitsAttr =
     "pulse.program_limits";
 
-/// a + b and a * b of lengths in cycles, none negative, held at the highest
-/// number where they pass it.
-static int64_t cappedAdd(int64_t a, int64_t b) {
-  int64_t sum = 0;
-  return llvm::AddOverflow(a, b, sum) ? std::numeric_limits<int64_t>::max()
-                                      : sum;
-}
-
-static int64_t cappedMul(int64_t a, int64_t b) {
-  int64_t product = 0;
-  return llvm::MulOverflow(a, b, product) ? std::numeric_limits<int64_t>::max()
-                                          : product;
-}
-
-/// A wait of the scheduled function whose length is known only when the
-/// program runs: its place among the function's ops in their order, the
-/// outermost loop it is in (null: none), its timeline, the start of its
-/// first execution as scheduled, and how many cycles longer than scheduled
-/// its executions can take together (-1: it has no highest length).
-/// `blocking`: a wait for the answer of a blocking classical function, at
-/// the end of which the answer is there, rather than a wait on a line whose
-/// length an answer sets; it has no highest length.
-struct RunTimeWait {
-  mlir::Operation *op, *loop;
-  int64_t place, timeline, start, stretch;
-  bool blocking;
-};
-
-/// The timeline of `op`, of the `count` the schedule kept apart (one when
-/// it kept none), as the scheduler has it (Scheduler::timelineOf): its own,
-/// or that of the first line or tone it plays on.
-static int64_t timelineIn(mlir::Operation *op, int64_t count,
-                          pulse::AllocationTracer &trace) {
-  if (count < 2)
-    return 0;
-  int64_t timeline = 0;
-  if (op->hasAttr(classical::kTimelineAttr)) {
-    timeline = classical::intAttr(op, classical::kTimelineAttr);
-  } else {
-    for (mlir::Value operand : op->getOperands())
-      if (mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType,
-                    pulse::ToneType>(operand.getType())) {
-        if (mlir::Operation *allocation = trace(operand))
-          timeline = classical::intAttr(allocation, classical::kTimelineAttr);
-        break;
-      }
-  }
-  return std::clamp<int64_t>(timeline, 0, count - 1);
-}
-
-/// The outermost loop of `function` that `op` is in, if any.
-static mlir::Operation *outermostLoop(mlir::Operation *op,
-                                      mlir::func::FuncOp function) {
-  auto loops = pulse::enclosingLoops(op, function);
-  return loops.empty() ? nullptr : loops.front().getOperation();
-}
-
-/// The waits of run-time length of `function` that run, in the order of
-/// its ops, with the place of every timed op in `places`; each wait with
-/// its timeline of the `count` the schedule kept apart (with none kept
-/// apart they are in one: such a wait then holds back every line). A wait
-/// whose length a call's floats set is not one of them: each call is
-/// scheduled, and checked, with its values.
-static llvm::SmallVector<RunTimeWait>
-runTimeWaits(mlir::func::FuncOp function, int64_t count,
-             llvm::DenseMap<mlir::Operation *, int64_t> &places) {
-  llvm::SmallVector<RunTimeWait> waits;
-  pulse::AllocationTracer trace;
-  int64_t place = 0;
-  // Timed ops hold no op, so the walk meets them in the function's order.
-  function.walk([&](mlir::Operation *op) {
-    if (!isTimedOp(op))
-      return;
-    places[op] = place++;
-    bool blocking =
-        mlir::isa<classical::WaitOp>(op) && op->hasAttr("classical.blocking");
-    if (!blocking && !op->hasAttr("classical.variable"))
-      return;
-    int64_t stretch = stretchOf(op);
-    std::optional<int64_t> start = pulse::startCycles(op);
-    if (stretch == 0 || !start)
-      return;
-    // Each execution adds its own: a loop's body once per trip. (In an arm
-    // of an if, where pulse-verify refuses such a wait, it counts as if the
-    // arm always ran.)
-    auto loops = pulse::enclosingLoops(op, function);
-    for (mlir::scf::ForOp loop : loops) {
-      int64_t trips = pulse::constantTripCount(loop).value_or(0);
-      if (trips == 0)
-        return;
-      if (stretch > 0)
-        stretch = cappedMul(stretch, trips);
-    }
-    waits.push_back({op, loops.empty() ? nullptr : loops.front().getOperation(),
-                     place - 1, timelineIn(op, count, trace), *start, stretch,
-                     blocking});
-  });
-  return waits;
-}
-
-/// The waits of run-time length of one timeline, in the order of the
-/// function's ops: `added[k]` is what the first k of them add together,
-/// `unbounded` the first without a highest length (the size: none), and
-/// `starts[k]` the earliest start, as scheduled, of those from the k-th on.
-struct TimelineWaits {
-  llvm::SmallVector<const RunTimeWait *> waits;
-  llvm::SmallVector<int64_t> added, starts;
-  size_t unbounded = 0;
-
-  void close() {
-    added.assign(waits.size() + 1, 0);
-    starts.assign(waits.size() + 1, std::numeric_limits<int64_t>::max());
-    unbounded = waits.size();
-    for (size_t k = 0; k < waits.size(); ++k) {
-      added[k + 1] =
-          cappedAdd(added[k], std::max<int64_t>(0, waits[k]->stretch));
-      if (waits[k]->stretch < 0 && unbounded == waits.size())
-        unbounded = k;
-    }
-    for (size_t k = waits.size(); k-- > 0;)
-      starts[k] = std::min(starts[k + 1], waits[k]->start);
-  }
-};
-
-/// checkProgramLimits for a module that has limits: out of line, so that a
-/// module without any pays the look for the attribute and nothing else.
-///
-/// A wait of run-time length is scheduled at its lowest length and can last
-/// its highest, and what it adds moves the ops of its timeline that come
-/// after it, and no other op (see Timelines). An op comes before the wait,
-/// and is not moved, when it is before it in the function's order, ends by
-/// the wait's first start as scheduled, and shares no loop with it; every
-/// other op of the timeline counts as after it. So an op on a controller's
-/// lines can end as late as it is scheduled to plus what the waits of its
-/// timeline that it is not before add, and the controller's part of the
-/// program lasts to the latest of those ends. Such a wait with no highest
-/// length, or a wait for the answer of a blocking classical function, where
-/// an op on the controller's lines is not before it, has no bound to hold
-/// to the limit: it is an error, as under a timing budget (checkBudget).
-/// (A wait on a line is itself an op of that line; a wait for an answer,
-/// which every controller counts, is not after itself.)
-LLVM_ATTRIBUTE_NOINLINE static mlir::LogicalResult
-checkAgainstLimits(mlir::func::FuncOp function, mlir::ArrayAttr limits,
-                   const pulse::ClockAttributes &clocks, int64_t latency,
-                   int64_t count) {
+/// Fail if the scheduled `function` lasts longer than a controller's
+/// longest program: to the end of its last op on the lines that controller
+/// plays (every line, with one), line delays included. `latency`: the
+/// feedback latency the schedule waits after a readout something depends
+/// on (0: none), which the message names.
+static mlir::LogicalResult
+checkProgramLimits(mlir::func::FuncOp function,
+                   const pulse::ClockAttributes &clocks, int64_t latency) {
   auto module = function->getParentOfType<mlir::ModuleOp>();
-  llvm::DenseMap<mlir::Operation *, int64_t> places;
-  llvm::SmallVector<RunTimeWait> waits = runTimeWaits(function, count, places);
-  llvm::SmallVector<TimelineWaits> byTimeline;
-  if (!waits.empty()) {
-    byTimeline.resize(std::max<int64_t>(1, count));
-    for (const RunTimeWait &wait : waits)
-      byTimeline[wait.timeline].waits.push_back(&wait);
-    for (TimelineWaits &timeline : byTimeline)
-      timeline.close();
-  }
+  auto limits = module
+                    ? module->getAttrOfType<mlir::ArrayAttr>(kProgramLimitsAttr)
+                    : nullptr;
+  if (!limits)
+    return mlir::success();
+  // A wait whose length a call sets counts at its length as scheduled: each
+  // call's values are scheduled, and checked, again.
   for (mlir::Attribute entry : limits) {
     auto fields = mlir::dyn_cast<mlir::DictionaryAttr>(entry);
     auto controller =
@@ -6701,118 +6547,21 @@ checkAgainstLimits(mlir::func::FuncOp function, mlir::ArrayAttr limits,
         fields ? fields.getAs<mlir::StringAttr>("duration") : nullptr;
     if (!controller || !cycles || !name || !duration)
       continue;
-    // The op that can end last: its end as scheduled and what the waits
-    // add to it.
-    int64_t length = 0, stretch = 0;
-    const RunTimeWait *unbounded = nullptr;
-    if (waits.empty()) {
-      length = programLength(function, &clocks, controller.getInt());
-    } else {
-      pulse::AllocationTracer trace;
-      forEachEnd(
-          function, &clocks, controller.getInt(),
-          [&](mlir::Operation *op, int64_t end) {
-            const TimelineWaits &timeline =
-                byTimeline[timelineIn(op, count, trace)];
-            int64_t place = places.lookup(op);
-            // The waits up to the op in the function's order, itself
-            // included, move it.
-            size_t k = std::partition_point(
-                           timeline.waits.begin(), timeline.waits.end(),
-                           [&](const RunTimeWait *wait) {
-                             return wait->place < place ||
-                                    (wait->place == place && !wait->blocking);
-                           }) -
-                       timeline.waits.begin();
-            int64_t added = timeline.added[k];
-            const RunTimeWait *open = timeline.unbounded < k
-                                          ? timeline.waits[timeline.unbounded]
-                                          : nullptr;
-            // Of the later ones, those it does not end before, and those
-            // in a loop with it, whose later trips come after them.
-            mlir::Operation *loop = k < timeline.waits.size()
-                                        ? outermostLoop(op, function)
-                                        : nullptr;
-            if (end > timeline.starts[k] || loop)
-              for (const RunTimeWait *wait :
-                   llvm::ArrayRef(timeline.waits).drop_front(k)) {
-                if (wait->op == op ||
-                    (end <= wait->start && !(loop && loop == wait->loop)))
-                  continue;
-                if (wait->stretch < 0)
-                  open = open ? open : wait;
-                else
-                  added = cappedAdd(added, wait->stretch);
-              }
-            if (open && (!unbounded || open->place < unbounded->place))
-              unbounded = open;
-            if (cappedAdd(end, added) > cappedAdd(length, stretch)) {
-              length = end;
-              stretch = added;
-            }
-          });
-    }
-    if (unbounded) {
-      // Not left on the function: no values of a call make it so, the
-      // kernel does.
-      auto diagnostic = unbounded->op->emitError()
-                        << "kernel '" << module.getSymName().value_or("main")
-                        << "' runs under " << name.getValue()
-                        << "'s max_program_duration of " << duration.getValue();
-      if (unbounded->blocking)
-        return diagnostic
-               << ", but it waits for an answer of a blocking classical "
-                  "function, which has no bound; use latency_mode=\"bounded\" "
-                  "or \"timeout\", or drop max_program_duration";
-      return diagnostic
-             << ", but this wait in it has no highest length; bound it with "
-                "wait(..., bounds=(lowest, highest)), or drop "
-                "max_program_duration";
-    }
-    int64_t longest = cappedAdd(length, stretch);
-    if (longest <= cycles.getInt())
+    int64_t length = programLength(function, &clocks, controller.getInt());
+    if (length <= cycles.getInt())
       continue;
     auto diagnostic = function->emitError()
                       << "kernel '" << module.getSymName().value_or("main")
-                      << "' lasts " << (stretch ? "up to " : "") << longest
-                      << " cycles";
-    if (stretch)
-      diagnostic << " (" << length << " as scheduled, the waits of run-time "
-                 << "length that hold it back add up to " << stretch << ")";
-    diagnostic << ", more than " << name.getValue()
-               << "'s max_program_duration of " << duration.getValue() << " ("
-               << cycles.getInt() << " cycles)";
+                      << "' lasts " << length << " cycles, more than "
+                      << name.getValue() << "'s max_program_duration of "
+                      << duration.getValue() << " (" << cycles.getInt()
+                      << " cycles)";
     nameLatency(diagnostic, latency);
     diagnostic << "; let its operations overlap, shorten them or raise "
                   "max_program_duration";
-    // The fact, for whoever ran the schedule: a call whose values made the
-    // program this long reports it as an error of those values.
-    function->setAttr(
-        pulse::kPastProgramLimitAttr,
-        mlir::StringAttr::get(function->getContext(),
-                              diagnostic.getUnderlyingDiagnostic()->str()));
     return mlir::failure();
   }
   return mlir::success();
-}
-
-/// Fail if the scheduled `function` lasts longer than a controller's
-/// longest program: to the end of its last op on the lines that controller
-/// plays (every line, with one), line delays included, with its waits of
-/// run-time length at their highest. `latency`: the feedback latency the
-/// schedule waits after a readout something depends on (0: none), which the
-/// message names; `timelines`: those the schedule kept apart.
-static mlir::LogicalResult
-checkProgramLimits(mlir::func::FuncOp function,
-                   const pulse::ClockAttributes &clocks, int64_t latency,
-                   const Timelines &timelines) {
-  auto module = function->getParentOfType<mlir::ModuleOp>();
-  auto limits = module
-                    ? module->getAttrOfType<mlir::ArrayAttr>(kProgramLimitsAttr)
-                    : nullptr;
-  if (!limits)
-    return mlir::success();
-  return checkAgainstLimits(function, limits, clocks, latency, timelines.count);
 }
 
 // ── Driver ───────────────────────────────────────────────────────────────
@@ -7072,7 +6821,7 @@ static mlir::LogicalResult schedule(mlir::func::FuncOp function,
           pulse::LineGrid(clocks), pulse::Controllers(clocks))) ||
       mlir::failed(checkProgramBudget(function, waited)) ||
       mlir::failed(checkDelayedLength(function, clocks)) ||
-      mlir::failed(checkProgramLimits(function, clocks, waited, timelines)))
+      mlir::failed(checkProgramLimits(function, clocks, waited)))
     return mlir::failure();
   bool placed = pulse::applyLineDelays(function, clocks);
   function->setAttr(

@@ -1251,6 +1251,10 @@ def _rejected_literal(
     from .kernel._emitter import add_source_note
 
     message, word = error.args
+    limited = vars(traced).get("get_buffer")
+    if limited is not None:
+        # A builder under a controller's longest program says the limit.
+        message = limited.restated(message)
     arms = message.startswith("arms:")
     if arms:
         located = _different_lines(message, None)

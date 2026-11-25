@@ -4,6 +4,7 @@
 add_mlir_dialect_library(CudaqPulsePulseTransforms
   PulseVerify.cpp
   PulseCallCheck.cpp
+  PulseProgramLimits.cpp
   Canonicalize.cpp
   VirtualZ.cpp
   Fusion.cpp

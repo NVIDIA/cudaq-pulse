@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// RUN: cudaq-pulse-opt %s '--pulse-schedule-rcp=max-drives=1' --verify-diagnostics
+// RUN: cudaq-pulse-opt %s '--pulse-schedule-rcp=max-drives=1' --pulse-classical-check --verify-diagnostics
 
 // With more lines than lanes the schedule keeps no timelines apart: a wait
 // whose length is an answer then holds back every line, and under
