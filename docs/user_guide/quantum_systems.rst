@@ -284,7 +284,11 @@ file as before, as is every program on it. ``qs.replace(tunings={...})``
 gives a system's tunings anew (``{}`` takes them away); a variant keeps
 what the system declares for the qudits and couplings that remain. A
 problem with what is declared is a ``QuantumSystemDefinitionError`` at its
-path, as ``tunings[3].ec_hz`` or ``controls[(1, 2)].amplitudes``.
+path, as ``tunings[3].ec_hz`` or ``controls[(1, 2)].amplitudes``. A system whose
+qudits give their frequencies as an ``Offset``, or not at all, declares no
+tunings, controls or interactions yet: that is such an error too, at
+``tunings``, ``controls`` or ``interactions``, and it says to give each
+qudit its frequency in Hz.
 
 The helpers read the components without compiling anything:
 

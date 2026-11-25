@@ -294,6 +294,29 @@ def declared(plain: _Description, components: Mapping[str, Any]) -> _Description
         )
     if not any(kept.values()):
         return plain._plain() if isinstance(plain, _Declared) else plain
+    # A system whose qudits give offsets, or no frequency, has a description
+    # class of its own, which carries its frequency_frame. A description
+    # that declares components is made from the plain class, so it would
+    # read as a system that states its frequencies.
+    if plain._frame != "absolute":
+        how = {
+            "shared_reference": "as offsets from a shared reference",
+            "own_carrier": "not at all",
+        }
+        first = next(name for name in COMPONENTS if kept[name])
+        raise QuantumSystemDefinitionError(
+            f"{_count(1, 'problem')} in the quantum system {plain.name!r}",
+            problems=[
+                Problem(
+                    "are declared on a quantum system whose qudits give their frequencies "
+                    f"{how[plain._frame]} (frequency_frame {plain._frame!r}); such a "
+                    "system declares no tunings, controls or interactions yet",
+                    path=first,
+                    value=sorted(kept[first]),
+                    fix="give each qudit its 0-1 frequency in Hz as frequency_hz",
+                )
+            ],
+        )
     return _Declared(plain, kept)
 
 

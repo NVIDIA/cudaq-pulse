@@ -164,7 +164,10 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   can state what a baseband control does, by qudit and by pair:
   `pulse.quantum_system(..., tunings={q: FluxTuning(...)}, controls={(a,
   d): ExchangeControl(...)}, interactions={(a, d): ChargeCoupling(...)})`,
-  and `qs.replace(tunings=...)` on a system that exists. A tuning is how a
+  and `qs.replace(tunings=...)` on a system that exists. Either way each
+  qudit states its frequency in Hz: a system whose qudits give an
+  `Offset` or no frequency declares no tunings, controls or interactions
+  yet (a `QuantumSystemDefinitionError` that says so). A tuning is how a
   qudit's own frequency moves with an amplitude (flux quanta from its idle
   point, signed). A control is a coupling's own, which a coupling line
   reaches and which sets its exchange (tabulated against its amplitude).
