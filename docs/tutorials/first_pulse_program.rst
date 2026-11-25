@@ -341,7 +341,7 @@ among them:
        %c64_i64 = arith.constant 64 : i64
        %0 = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
        %line, %tone = pulse.get_drive_line %0
-           {frequency_hz = 3.885000e+09 : f64}
+           {frequency_hz = 3884968867.2938495 : f64}
            : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
        %line_3, %tone_4 = pulse.get_readout_line %0
            {frequency_hz = 6.769000e+09 : f64}
@@ -371,7 +371,9 @@ What to notice: the kernel's ``drive``, ``sync`` and ``readout`` are
 drive and the readout carry the start and duration in cycles listed above,
 between ``<{`` and ``}>``. The constants at the top are the program's
 numbers, such as the pulse lengths of 64 and 600 cycles and this call's
-amplitude, 0.16, which ``lower`` fills in.
+amplitude, 0.16, which ``lower`` fills in. The drive line's frequency is
+qudit 0's 0-1 transition with its couplings to its neighbours included,
+31 kHz below the 3.885 GHz printed above: its ``dressed_frequency_hz``.
 
 You don't need to read MLIR to use CUDA-Q Pulse, but it's there when you
 want to check what the compiler did. :doc:`../architecture/dialects`

@@ -11,7 +11,7 @@ from operator import attrgetter
 from typing import Any
 
 from .._errors import InvalidValueError
-from ..quantum_systems.base import _unmeasured
+from ..quantum_systems.base import _unmeasured, layout_frequencies
 
 _QUDITS = attrgetter("qudits")
 
@@ -108,7 +108,9 @@ def _target_attributes(
     *qudits* are the simulated qudits, one mode each in this order; the
     others are left out, along with their couplings. Each simulated qudit is
     at its frequency on *target*, which may differ from the frequency the
-    program was compiled for; the others' are 0 Hz. Qudits dephase at their Ramsey T2* (*dephasing*
+    program was compiled for, moved where couplings to left-out qudits dress
+    it (``layout_frequencies``); the others' are 0 Hz. Qudits dephase at
+    their Ramsey T2* (*dephasing*
     ``"t2_star"``) or their Hahn-echo T2 (``"t2_echo"``).
     """
     qudit_count = _extent(qudits)
@@ -129,12 +131,6 @@ def _target_attributes(
         t2_ns[qi] = max(0.0, t2_us) * 1.0e3
         thermal[qi] = qudit.thermal_population
         drive_scales[qi] = target.drive_amplitude_scale(qi)
-    system = (
-        f"qudit_frequency_hz = [{', '.join(frequencies)}], {levels}{levels and ', '}"
-        f"t1_ns = [{', '.join(_f64_literal(v) for v in t1_ns)}], "
-        f"t2_ns = [{', '.join(_f64_literal(v) for v in t2_ns)}], "
-        f"drive_scale_rad_per_ns = [{', '.join(_f64_literal(v) for v in drive_scales)}]"
-    )
     attrs = [
         f"qop.qudit_count = {len(qudits)} : i64",
         f"pulse.modes = array<i64: {', '.join(map(str, qudits))}>",
@@ -147,6 +143,11 @@ def _target_attributes(
     # one model that simulates (quantum_systems.base._COUPLING_OPERATORS).
     couplings = target.couplings
     if couplings:
+        # The drive tones are at the whole system's dressed frequencies: a
+        # simulated qudit whose couplings to left-out qudits dress it is
+        # given the frequency that the kept couplings dress to the same.
+        for qi, hz in layout_frequencies(target, qudits).items():
+            frequencies[qi] = f"{hz:.17e}"
         couplings = list(compress(couplings, map(active.issuperset, map(_QUDITS, couplings))))
     if couplings:
         strengths = [c.strength_hz for c in couplings]
@@ -164,6 +165,12 @@ def _target_attributes(
         pairs = ", ".join(f"{c.qudits[0]}, {c.qudits[1]}" for c in couplings)
         attrs.append(f"pulse.coupling_pairs = array<i64: {pairs}>")
         attrs.append("pulse.coupling_strength_hz = " + _f64_array(strengths))
+    system = (
+        f"qudit_frequency_hz = [{', '.join(frequencies)}], {levels}{levels and ', '}"
+        f"t1_ns = [{', '.join(_f64_literal(v) for v in t1_ns)}], "
+        f"t2_ns = [{', '.join(_f64_literal(v) for v in t2_ns)}], "
+        f"drive_scale_rad_per_ns = [{', '.join(_f64_literal(v) for v in drive_scales)}]"
+    )
     residual = target.residual_zz
     if residual:
         residual = list(compress(residual, map(active.issuperset, map(_QUDITS, residual))))

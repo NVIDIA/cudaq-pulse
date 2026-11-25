@@ -40,7 +40,12 @@ from .quantum_systems._registry import (
     _registry,
     make_quantum_system,
 )
-from .quantum_systems.base import _DESCRIPTION_FIELDS, _TRANSMON, _Description
+from .quantum_systems.base import (
+    _DESCRIPTION_FIELDS,
+    _TRANSMON,
+    _Description,
+    dressed_frequencies,
+)
 from .quantum_systems.models import SimulationModel
 
 try:
@@ -190,6 +195,18 @@ class Qudit:
 
     def __reduce__(self) -> tuple[Any, ...]:
         return (Qudit, (self.quantum_system, self.index, self.logical))
+
+    @property
+    def dressed_frequency_hz(self) -> float:
+        """The qudit's 0-1 frequency in Hz with its quantum system's
+        couplings included: the frequency its drive tone plays at. Without
+        couplings it is the qudit's ``frequency_hz``, which stays the bare
+        value the Hamiltonian uses."""
+        system = self.quantum_system
+        dressed = system._dressed
+        if dressed is None:
+            return float(system._description.qudits[self.index].frequency_hz)
+        return dressed[self.index]
 
     def __repr__(self) -> str:
         return (
@@ -364,6 +381,9 @@ class QuantumSystem:
     # The registered name the quantum system was made from, as ``as_dict`` writes it.
     _spec: str | None = None
     _drift = False
+    # Each qudit's dressed 0-1 frequency, in a system whose couplings move
+    # some (dressed_frequencies); else None.
+    _dressed: dict[int, float] | None = None
     # What a kernel whose qudits are runtime parameters depends on, made by
     # the first such kernel (_programs._structure).
     _structure: str | None = None
@@ -430,7 +450,16 @@ class QuantumSystem:
     # The frequencies, fingerprint, identity and qudit handles.
     def _finish(self) -> None:
         target, layout, control_system = self._description, self.layout, self.control_system
+        # The tones' frequencies: each qudit's 0-1 frequency, dressed by the
+        # couplings in a system that has some (the Hamiltonian keeps the
+        # bare frequency_hz). A system without couplings does no more than
+        # test that it has none.
         self.frequencies: Mapping[int, float] = target.frequencies
+        if target.couplings:
+            dressed = dressed_frequencies(target)
+            if dressed is not None:
+                self.frequencies = self._dressed = dressed
+                self._line_tones = self._dressed_line_tones  # type: ignore[method-assign]
         self.fingerprint = _fingerprint(target, layout, self.calibration)
         # What equality compares: the fingerprint alone without a control
         # system, so comparing such quantum systems costs one string comparison.
@@ -471,6 +500,16 @@ class QuantumSystem:
         if readout:
             return default, {default: self._frequency_tables(index + 1)[2][index]}
         return default, model.transitions_hz(qudit, model.levels_of(index))
+
+    def _dressed_line_tones(
+        self, index: int, readout: bool
+    ) -> tuple[tuple[int, int], dict[tuple[int, int], float]]:
+        """``_line_tones`` of a system whose couplings dress its qudits: a
+        drive line's 0-1 tone at the qudit's dressed frequency."""
+        default, tones = QuantumSystem._line_tones(self, index, readout)
+        if not readout and index >= 0 and (0, 1) in tones:
+            tones[0, 1] = self._dressed[index]
+        return default, tones
 
     # The 0-1 frequency of carriers 0 to *count* - 1 (or more), and the
     # tone of each one's readout line (its readout's ``frequency_hz``, else

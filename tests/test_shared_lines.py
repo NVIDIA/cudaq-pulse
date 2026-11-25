@@ -97,9 +97,12 @@ def _lowered(kernel, qs, *qudits, **options):
 
 
 def _native(qs, role, qudit):
-    """The frequency of the own tone of qudit *qudit*'s *role* line."""
+    """The frequency of the own tone of qudit *qudit*'s *role* line: its
+    readout's, or its dressed 0-1 frequency for a drive line."""
     physical = qs.physical_qudits[qs.layout[qudit]]
-    return physical.readout.frequency_hz if role == "readout" else physical.frequency_hz
+    if role == "readout":
+        return physical.readout.frequency_hz
+    return qs.qudits[qudit].dressed_frequency_hz
 
 
 # ── The line ────────────────────────────────────────────────────────────────

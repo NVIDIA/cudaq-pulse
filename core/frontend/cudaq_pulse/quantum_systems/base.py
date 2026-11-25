@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import math
 import numbers
+import weakref
 from collections.abc import Mapping, Sequence
 from dataclasses import FrozenInstanceError
 from itertools import chain
@@ -1080,6 +1081,140 @@ def _coupling_operator(model: Any) -> str | None:
         if operator is not None:
             return operator
     return None
+
+
+def _jacobi(matrix: list[list[float]]) -> tuple[list[float], list[list[float]]]:
+    """The eigenvalues of the real symmetric *matrix* and its eigenvectors
+    (``vectors[i][k]``, component *i* of eigenvector *k*), by cyclic Jacobi
+    rotations: plain Python, as a coupled system's dressed frequencies are
+    made when it is first compiled for, which loads no numerical library."""
+    n = len(matrix)
+    a = [row[:] for row in matrix]
+    v = [[float(i == j) for j in range(n)] for i in range(n)]
+    scale = max((abs(x) for row in a for x in row), default=0.0) or 1.0
+    for _ in range(100):
+        off = sum(a[i][j] * a[i][j] for i in range(n) for j in range(i + 1, n))
+        if off <= (1e-30 * scale) ** 2:
+            break
+        for p in range(n - 1):
+            for q in range(p + 1, n):
+                apq = a[p][q]
+                if apq == 0.0:
+                    continue
+                theta = (a[q][q] - a[p][p]) / (2.0 * apq)
+                t = math.copysign(1.0, theta) / (abs(theta) + math.sqrt(theta * theta + 1.0))
+                c = 1.0 / math.sqrt(t * t + 1.0)
+                s = t * c
+                for k in range(n):
+                    akp, akq = a[k][p], a[k][q]
+                    a[k][p], a[k][q] = c * akp - s * akq, s * akp + c * akq
+                for k in range(n):
+                    apk, aqk = a[p][k], a[q][k]
+                    a[p][k], a[q][k] = c * apk - s * aqk, s * apk + c * aqk
+                for k in range(n):
+                    vkp, vkq = v[k][p], v[k][q]
+                    v[k][p], v[k][q] = c * vkp - s * vkq, s * vkp + c * vkq
+    return [a[i][i] for i in range(n)], v
+
+
+def _single_excitation(frequencies: Mapping[int, float], pairs: list[Any]) -> dict[int, float]:
+    """Each qudit's 0-1 frequency in Hz, by index, among the qudits of
+    *frequencies* (their bare 0-1 frequencies) with the exchange couplings
+    *pairs* ((qudits, strength_hz)) between them: an eigenvalue of the
+    single-excitation matrix ``diag(f) + J``, solved for each group of
+    qudits the couplings join. Each qudit takes the eigenstate that holds
+    most of it, the states going to qudits in order of weight, so that two
+    qudits near resonance, mixed, each still take one."""
+    out = {q: float(f) for q, f in frequencies.items()}
+    joined: dict[int, set[int]] = {q: {q} for q in out}
+    for (a, b), _ in pairs:
+        group = joined[a] | joined[b]
+        for q in group:
+            joined[q] = group
+    groups = {id(g): sorted(g) for g in joined.values() if len(g) > 1}
+    for qudits in groups.values():
+        row = {qudit: i for i, qudit in enumerate(qudits)}
+        # About the group's mean, so that kHz shifts keep their digits
+        # against GHz frequencies.
+        mean = sum(out[q] for q in qudits) / len(qudits)
+        matrix = [[0.0] * len(qudits) for _ in qudits]
+        for q in qudits:
+            matrix[row[q]][row[q]] = out[q] - mean
+        for (a, b), strength in pairs:
+            if a in row:
+                matrix[row[a]][row[b]] += strength
+                matrix[row[b]][row[a]] += strength
+        values, vectors = _jacobi(matrix)
+        ranked = sorted(
+            ((vectors[i][k] ** 2, i, k) for i in range(len(qudits)) for k in range(len(qudits))),
+            reverse=True,
+        )
+        rows: set[int] = set()
+        states: set[int] = set()
+        for _, i, k in ranked:
+            if i in rows or k in states:
+                continue
+            rows.add(i)
+            states.add(k)
+            out[qudits[i]] = values[k] + mean
+    return out
+
+
+def _exchange_pairs(description: Any) -> list[Any]:
+    """The exchange couplings of known strength of *description*, as
+    (qudits, strength_hz); none when its model gives no exchange."""
+    if _coupling_operator(description.model) != "exchange":
+        return []
+    return [(c.qudits, c.strength_hz) for c in description.couplings if c.strength_hz]
+
+
+_DRESSED: weakref.WeakKeyDictionary[Any, dict[int, float] | None] = weakref.WeakKeyDictionary()
+
+
+def dressed_frequencies(description: Any) -> dict[int, float] | None:
+    """Each qudit's 0-1 frequency in Hz with the system's couplings
+    included, by qudit index, or None when no coupling moves one (no
+    exchange coupling of known strength). Computed once per description.
+
+    The exchange conserves the number of excitations, so with every other
+    qudit in its ground level a qudit's dressed 0-1 frequency is an
+    eigenvalue of the single-excitation matrix ``diag(f) + J``, exactly,
+    whatever the qudits' levels and anharmonicities."""
+    try:
+        return _DRESSED[description]
+    except KeyError:
+        pass
+    pairs = _exchange_pairs(description)
+    dressed = (
+        _single_excitation({q: p.frequency_hz for q, p in description.qudits.items()}, pairs)
+        if pairs
+        else None
+    )
+    _DRESSED[description] = dressed
+    return dressed
+
+
+def layout_frequencies(description: Any, qudits: Sequence[int]) -> dict[int, float]:
+    """For a simulation of the qudits *qudits* of *description* alone: the
+    0-1 frequency in Hz to give each of them, by index, so that with the
+    couplings between them it is at its dressed frequency on the whole
+    system. A qudit whose dropped neighbours dress it (the others in their
+    ground level) is moved by their share; the others are left out."""
+    dressed = dressed_frequencies(description)
+    if dressed is None:
+        return {}
+    kept = set(qudits)
+    pairs = [(q, s) for q, s in _exchange_pairs(description) if kept.issuperset(q)]
+    bare = {q: float(description.qudits[q].frequency_hz) for q in kept}
+    # The frequencies that, dressed by the kept couplings alone, are the
+    # whole system's dressed ones: a few corrections, each exact to first
+    # order in the last.
+    given = dict(bare)
+    for _ in range(4):
+        within = _single_excitation(given, pairs) if pairs else given
+        for q in kept:
+            given[q] += dressed[q] - within[q]
+    return {q: f for q, f in given.items() if f != bare[q]}
 
 
 # The fields of a _Description, in the order its constructor takes them.
