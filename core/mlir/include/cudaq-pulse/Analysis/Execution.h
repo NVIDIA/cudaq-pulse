@@ -312,6 +312,11 @@ private:
       return forLoop(loop);
     if (auto branch = mlir::dyn_cast<mlir::scf::IfOp>(op))
       return ifOp(branch);
+    // A call plays its callee's pulses, which are walked once it is written
+    // out (pulse-expand-calls).
+    if (name == "pulse.call")
+      return fail(op, "a pulse.call is run once it is written out; run "
+                      "pulse-expand-calls first");
     return true;
   }
 

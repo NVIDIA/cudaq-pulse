@@ -3,11 +3,13 @@
 
 add_mlir_dialect_library(CudaqPulsePulseTransforms
   PulseVerify.cpp
+  PulseCallCheck.cpp
   Canonicalize.cpp
   VirtualZ.cpp
   Fusion.cpp
   Rewrite.cpp
   ScheduleAlap.cpp
+  PulseExpandCalls.cpp
   ClassicalCheck.cpp
   FrameChanges.cpp
   LowerSelects.cpp

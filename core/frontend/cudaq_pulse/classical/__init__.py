@@ -707,6 +707,25 @@ class _LazyTypes:
 _NO_VERSIONS: Mapping[Any, Any] = types.MappingProxyType({})
 
 
+# Refuse *name* for a function of the user's when it is the name
+# cudaq-pulse gives a version of a CUDA-Q QEC decoder message
+# (``get_corrections__3_1``): a program's functions, and the simulation's
+# replay of a decoder's calls, are found by name.
+def _not_a_message(name: str, what: str, fix: str = "give it another name") -> None:
+    from . import _cudaqx
+
+    found = _cudaqx._message_version(name)
+    if found is None:
+        return
+    message, numbers = found
+    raise InvalidValueError(
+        f"{what}: that is the name cudaq-pulse gives the CUDA-Q QEC decoder message "
+        f"{message.name} for decoder {numbers[0]}"
+        + (f" and length {numbers[1]}" if len(numbers) > 1 else "")
+        + f", and a call of it would be taken for that message; {fix}"
+    )
+
+
 class ClassicalFunction[**P, R]:
     """A classical function a pulse kernel can call while the QPU runs.
 
@@ -758,6 +777,9 @@ class ClassicalFunction[**P, R]:
             raise InvalidValueError(
                 f"a classical function name must be an identifier, got {name!r}"
             )
+        # The functions cudaq-pulse declares itself give their dispatch key.
+        if _dispatch_key is None and "__" in name:
+            _not_a_message(name, f"a classical function can't be named {name!r}")
         self.name = name
         self.implementation = implementation
         self.args: tuple[ValueType, ...] = _LazyTypes(self, "args")  # type: ignore[assignment]
@@ -930,7 +952,10 @@ class ClassicalFunction[**P, R]:
                     f"{self.name}.specialize(): {name} must be a positive length"
                 )
             key.append(n)
-        version = _version(self, key[0] if self._n == 1 else tuple(key))
+        made = key[0] if self._n == 1 else tuple(key)
+        # No kernel is compiling here: a name is refused as a value.
+        _version_name(self, made)
+        version = _version(self, made)
         return typing.cast("ClassicalFunction[P, R]", version)
 
     # A declaration, like a function: a copy is the function itself.
@@ -1121,6 +1146,21 @@ def _lengths_text(template: ClassicalFunction[..., Any], key: Any) -> str:
     )
 
 
+# The name of the version of *template* for *key*: the template's and its
+# lengths (``decode__4``, ``i`` before the length of a ``list[int]`` of
+# numbers), which must not be a decoder message version's.
+def _version_name(template: ClassicalFunction[..., Any], key: Any) -> str:
+    suffix = "_".join(str(n) if n >= 0 else f"i{-n}" for n in _key_items(key))
+    name = f"{template.name}__{suffix}"
+    _not_a_message(
+        name,
+        f"the version of {template.name} for {_lengths_text(template, key)} "
+        f"would be named {name!r}",
+        f"rename {template.name}",
+    )
+    return name
+
+
 # The version of *template* for *key*: per unsized parameter its
 # length, negative for a ``list[int]`` of numbers (i32) rather than
 # measurements (levels).
@@ -1150,8 +1190,10 @@ def _make(template: ClassicalFunction[..., Any], key: Any) -> ClassicalFunction[
             version.results = _result_specs(template, shape, lengths, text)
         except TypeError as error:
             raise CompilationError(str(error), code="wrong_argument") from None
-    suffix = "_".join(str(n) if n >= 0 else f"i{-n}" for n in _key_items(key))
-    version.name = f"{template.name}__{suffix}"
+    try:
+        version.name = _version_name(template, key)
+    except InvalidValueError as error:
+        raise CompilationError(str(error), code="wrong_argument") from None
     version._dispatch_key = dispatch_key(version.name)
     version._template = template
     version._key = key

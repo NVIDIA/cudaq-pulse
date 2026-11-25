@@ -72,7 +72,7 @@ def with_unit_warnings(options: CompileOptions) -> CompileOptions:
 def carrier_hz(quantum_system: QuantumSystem) -> float:
     """The lowest qudit frequency of *quantum_system*, which frequencies are
     held against; its clock rate when it gives none."""
-    given = [q.frequency_hz for q in quantum_system.physical_qudits.values() if q.frequency_hz > 0]
+    given = [q._frame_hz for q in quantum_system.physical_qudits.values() if q._frame_hz > 0]
     return float(min(given)) if given else quantum_system.clock_ghz * 1e9
 
 

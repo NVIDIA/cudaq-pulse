@@ -16,6 +16,8 @@ simulation models, and the shipped quantum systems.
    :members:
    :undoc-members:
 
+.. autoclass:: cudaq_pulse.quantum_systems.Offset
+
 Drive and readout
 -----------------
 

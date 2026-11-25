@@ -296,7 +296,10 @@ a window whose fill would move an operation of the kernel there is left
 unfilled, and its ``result`` says so. Under ``"asap"`` and ``"alap"``, fills
 that take the control system past one of its limits (``max_concurrent_drives``)
 make compiling fail with ``ControllerLimitError``, which names idle
-replacement and the way out (``qudits=``, a fill with fewer pulses).
+replacement and the way out (``qudits=``, a fill with fewer pulses). A
+program that ``"asap"`` or ``"alap"`` places past such a limit without its
+fills is placed as ``"rcp"`` or ``"alap_rcp"`` places it, and its windows are
+read from and filled under that policy.
 ``compiled.replace_idle(rule)`` returns a new compiled kernel and leaves
 ``compiled`` as it is; a kernel whose idle windows are not replaced runs
 none of this. A program with filled windows pickles as the program it is,

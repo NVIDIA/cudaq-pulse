@@ -624,7 +624,14 @@ def _per_line(
     found = []
     most = controller.max_frequencies_per_line
     if most is not None:
-        tones = {e["frequency_hz"] for e in played if e.get("frequency_hz") is not None}
+        if lowered.quantum_system._description._own_carrier:
+            # Each tone is an offset from its own qudit's carrier: the tones
+            # of two qudits are two frequencies, whatever their numbers.
+            tones = {
+                (e["qudit"], e["frequency_hz"]) for e in played if e.get("frequency_hz") is not None
+            }
+        else:
+            tones = {e["frequency_hz"] for e in played if e.get("frequency_hz") is not None}
         if len(tones) > most:
             found.append(
                 f"{line.label}: {len(tones)} tone frequencies; the controller holds {most} per line"

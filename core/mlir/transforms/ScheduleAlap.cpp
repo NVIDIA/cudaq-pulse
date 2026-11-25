@@ -85,6 +85,12 @@
 
 #include <map>
 
+namespace pulse {
+/// Refuses each pulse.call of `function`: the schedule passes do not place
+/// one yet (PulseCallCheck.cpp).
+mlir::LogicalResult refuseCalls(mlir::func::FuncOp function);
+} // namespace pulse
+
 namespace {
 
 constexpr int64_t kNever = std::numeric_limits<int64_t>::max() / 4;
@@ -6750,6 +6756,9 @@ static mlir::LogicalResult schedule(mlir::func::FuncOp function,
   // A declaration has no body to schedule.
   if (function.isExternal())
     return mlir::success();
+  // Nor do the passes place a pulse.call yet.
+  if (mlir::failed(pulse::refuseCalls(function))) [[unlikely]]
+    return mlir::failure();
   // The passes time the ops of one block, in their order.
   if (!function.getBody().hasOneBlock())
     return function.emitError(

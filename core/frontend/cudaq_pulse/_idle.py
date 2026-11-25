@@ -253,13 +253,16 @@ class _IdleOptions(CompileOptions):
             return with_unit_warnings(plain)
         return plain
 
-    def traced(self, sites: Sites) -> CompileOptions:
+    def traced(self, sites: Sites, keeps_schedule: bool = False) -> CompileOptions:
         """The options of one of the compilations an idle replacement makes
-        of the program: no rule, and the record *sites* its trace keeps."""
+        of the program: no rule, and the record *sites* its trace keeps;
+        with *keeps_schedule*, the schedule asap or alap gives, past a
+        limit too."""
         return _SiteOptions(
             **{f.name: getattr(self, f.name) for f in dataclasses.fields(CompileOptions)},
             units=self.units,
             _sites=sites,
+            keeps_schedule=keeps_schedule,
         )
 
     def __repr__(self) -> str:
@@ -277,6 +280,9 @@ class _SiteOptions(CompileOptions):
 
     units: bool = False
     _sites: Sites | None = None
+    #: A compilation of the program with fills keeps the schedule asap or
+    #: alap gives, past a limit too (compiler._placed_by_limits).
+    keeps_schedule: bool = False
 
     unit_warnings = True
 
@@ -473,6 +479,10 @@ def specialize(
     if refused is not None:
         raise refused
     lowered = base.lowered
+    if lowered.options.schedule != options.schedule:
+        # Placed past a limit as rcp or alap_rcp places it: the windows are
+        # that schedule's, and the fills are placed by it too.
+        options = dataclasses.replace(options, schedule=lowered.options.schedule)
     if not lowered.scheduled:
         raise UnsupportedError(
             f"idle replacement: {kernel.__name__}() is scheduled only once a call gives "
@@ -645,7 +655,7 @@ def _filled(
 
     try:
         filling = Sites(planned, rule)
-        entry = kernel._specialize(values, target, options.traced(filling))
+        entry = kernel._specialize(values, target, options.traced(filling, keeps_schedule=True))
         filling.finish()
         if filling.nothing:
             raise _EmptyFillError(frozenset(filling.nothing))

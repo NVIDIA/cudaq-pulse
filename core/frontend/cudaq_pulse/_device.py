@@ -42,7 +42,8 @@ from .quantum_systems._registry import (
 )
 from .quantum_systems.base import (
     _DESCRIPTION_FIELDS,
-    _FRAMES,
+    _DESCRIPTIONS,
+    _DRIVE_FRAMES,
     _TRANSMON,
     _Description,
     _DressedTones,
@@ -202,12 +203,23 @@ class Qudit:
         return (Qudit, (self.quantum_system, self.index, self.logical))
 
     @property
-    def dressed_frequency_hz(self) -> float:
+    def dressed_frequency_hz(self) -> float | None:
         """The qudit's 0-1 frequency in Hz with its quantum system's
         couplings included: the frequency its drive tone plays at. Without
         couplings it is the qudit's ``frequency_hz``, which stays the bare
-        value the Hamiltonian uses."""
-        return float(self.quantum_system.frequencies[self.index])
+        value the Hamiltonian uses. Where the qudits give their frequencies
+        as offsets from a shared reference it is an ``Offset`` from it, and
+        where they give none it is ``None``."""
+        system = self.quantum_system
+        frequency = float(system.frequencies[self.index])
+        frame = system._description._frame
+        if frame == "absolute":
+            return frequency
+        if frame == "shared_reference":
+            from .quantum_systems.base import Offset
+
+            return Offset(frequency)
+        return None
 
     def __repr__(self) -> str:
         return (
@@ -360,10 +372,11 @@ class QuantumSystem:
     ``cudaq_pulse.controller``).
 
     ``qudit_freq[q]`` is the 0-1 transition frequency of qudit ``q`` (Hz) and
-    ``transition_freq[q, i, j]`` that of levels ``i`` and ``j``, over the
-    levels the system's model gives each qudit (NaN past a qudit's last
-    level); both are indexed by the user's qudit numbering and are read-only
-    arrays.
+    ``transition_freq[q, i, j]`` that of levels ``i`` and ``j`` (the upper
+    level's energy less the lower's, in either order of ``i`` and ``j``),
+    over the levels the system's model gives each qudit (NaN past a qudit's
+    last level); both are indexed by the user's qudit numbering and are
+    read-only arrays.
     ``control_system`` is the ``ControlSystem`` that plays it, if given;
     ``compile(kernel, quantum_system=dev)`` checks every program against it.
 
@@ -481,11 +494,17 @@ class QuantumSystem:
             model = target.model if isinstance(target.model, SimulationModel) else SimulationModel()
             qudits = [target.qudits[p] for p in self.layout]
             levels = [model.levels_of(p) for p in self.layout]
-            f01 = np.array([q.frequency_hz for q in qudits], dtype=float)
+            f01 = np.array([q._frame_hz for q in qudits], dtype=float)
             energies = np.full((len(qudits), max(levels, default=model.levels)), np.nan)
             for row, qudit, n in zip(energies, qudits, levels, strict=False):
                 row[:n] = model.energies_hz(qudit, n)
-            transitions = np.abs(energies[:, None, :] - energies[:, :, None])
+            # A transition's frequency: its upper level's energy less its
+            # lower's, for [q, i, j] and [q, j, i] alike; 0.0 between levels
+            # of one energy, in either order (adding 0.0 makes a -0.0 one).
+            level = np.arange(energies.shape[1])
+            transitions = (energies[:, None, :] - energies[:, :, None]) * np.sign(
+                level - level[:, None]
+            ) + 0.0
             self._arrays = (_read_only(f01), _read_only(transitions))
         return self._arrays
 
@@ -562,6 +581,8 @@ class QuantumSystem:
             given = list(map(attrgetter("frequency_hz"), components))
         except AttributeError:
             given = [None if r is None else r.frequency_hz for r in components]
+        if not _ONLY_HZ(map(type, given)):
+            _offset_readouts(self, carriers, given)
         if len(given) == len(table) and None not in given:
             readouts = array("d", given)
         else:
@@ -696,6 +717,8 @@ class QuantumSystem:
         def coupling_map(self) -> list[tuple[int, ...]]: ...
         def connectivity_graph(self) -> dict[int, list[int]]: ...
         def drive_amplitude_scale(self, qudit_index: int) -> float: ...
+        @property
+        def frequency_frame(self) -> str: ...
 
         # Parameter drift: read by __getattr__ without drift, and set by the
         # drifting subclass (quantum_systems.drift).
@@ -736,6 +759,7 @@ class QuantumSystem:
             "coupling_map",
             "connectivity_graph",
             "drive_amplitude_scale",
+            "frequency_frame",
         }:
             return getattr(self.__dict__["_description"], name)
         if name == "true_qudits":
@@ -831,6 +855,53 @@ class QuantumSystem:
 
     def __repr__(self) -> str:
         return f"<QuantumSystem {self.name} ({len(self.layout)} qudits)>"
+
+
+# The types of readout frequencies that are frequencies in Hz (or none
+# given), and whether some types are all among them: any other takes
+# _offset_readouts, which adds a float type it meets (numpy.float64).
+_HZ_TYPES = {float, int, type(None)}
+_ONLY_HZ = _HZ_TYPES.issuperset
+
+
+# Refuse a readout frequency of *system* that is an ``Offset`` (or as a
+# system file holds one) when its qudits give their frequencies in Hz:
+# it would be read as a frequency in Hz. *given* are the readout
+# frequencies of *carriers*. A system whose qudits give offsets from a
+# shared reference checked its readouts when it was built.
+def _offset_readouts(system: QuantumSystem, carriers: Sequence[int], given: Sequence[Any]) -> None:
+    from .quantum_systems.base import Offset
+
+    kinds = set(map(type, given))
+    if Offset not in kinds and not any(issubclass(kind, Mapping) for kind in kinds):
+        # Numbers of other types: the float types among them are looked at
+        # once, here and where a system file is written.
+        from . import _system
+
+        floats = [k for k in kinds if issubclass(k, float) and not issubclass(k, Offset)]
+        _HZ_TYPES.update(floats)
+        _system._HZ_TYPES.update(floats)
+        return
+    target = system._description
+    if target._frame != "absolute":
+        return
+    for carrier, frequency in zip(carriers, given, strict=True):
+        if frequency.__class__ is Offset or isinstance(frequency, Mapping):
+            raise InvalidValueError(
+                f"the readout of qudit {carrier} of quantum system {target.name!r} gives its "
+                f"frequency_hz as {frequency!r}, an offset from a shared reference, and the "
+                "system's qudits give their frequencies in Hz; an Offset readout frequency "
+                "needs qudits that give Offsets from the same reference"
+            )
+
+
+# ``_offset_readouts`` for the system file of *quantum_system*, whose
+# qudits are *target*'s: the file would hold an ``Offset`` as its number.
+def _offset_readouts_in_file(quantum_system: QuantumSystem, target: _Description) -> None:
+    carriers = sorted(target.qudits)
+    readouts = [target.qudits[carrier].readout for carrier in carriers]
+    given = [None if readout is None else readout.frequency_hz for readout in readouts]
+    _offset_readouts(quantum_system, carriers, given)
 
 
 # The quantum system of *target*, registered as *spec* (``None`` for a
@@ -1068,7 +1139,7 @@ def _checked(config: Mapping[str, Any], source: str, problems: list[Problem]) ->
             )
         )
     spec = config.get("name")
-    described = spec if spec.__class__ is _Description else None
+    described = spec if spec.__class__ in _DESCRIPTIONS else None
     built = described is not None or "qudits" in config
     if not built and config.keys() & _BUILT_KEYS:
         for key in sorted(config.keys() & _BUILT_KEYS):
@@ -1106,7 +1177,7 @@ def _checked(config: Mapping[str, Any], source: str, problems: list[Problem]) ->
         )
     frames = config.get("frames", "dressed")
     if target is not None and frames != target.frames:
-        if frames.__class__ is str and frames in _FRAMES:
+        if frames.__class__ is str and frames in _DRIVE_FRAMES:
             target = target.replace(frames=frames)
         else:
             problems.append(

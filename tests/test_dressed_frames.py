@@ -483,3 +483,81 @@ def test_a_tone_the_line_does_not_have_is_not_found():
     with pytest.raises(pulse.NotFoundError, match=r"no tone \(5, 6\); it has \(0, 1\)"):
         tones[5, 6]
     assert tones.get((5, 6)) is None
+
+
+def _offset_pair(reference=5e9, frames="dressed"):
+    # D5 beside Z2, their frequencies as offsets from *reference*.
+    from cudaq_pulse.quantum_systems.base import Offset
+
+    alone, d, z, pair = _pair_alone(f"offsets {reference}")
+    qudits = {
+        i: q.replace(frequency_hz=Offset(q.frequency_hz - reference), readout=None)
+        for i, q in ((4, d), (14, z))
+    }
+    return pulse.quantum_system(
+        name=f"offsets {reference}", qudits=qudits, couplings=[pair]
+    ).replace(frames=frames)
+
+
+def test_offsets_from_a_shared_reference_dress_as_the_frequencies_do():
+    from cudaq_pulse.quantum_systems.base import Offset
+
+    reference = 5e9
+    absolute, _, _, _ = _pair_alone("absolute")
+    offsets = _offset_pair(reference)
+    assert offsets.frequency_frame == "shared_reference"
+    for index in (4, 14):
+        dressed = offsets.qudits[
+            [q.index for q in offsets.qudits].index(index)
+        ].dressed_frequency_hz
+        whole = absolute.qudits[
+            [q.index for q in absolute.qudits].index(index)
+        ].dressed_frequency_hz
+        # The exchange keeps the number of excitations: every level of k
+        # excitations moves by k times the reference.
+        assert dressed.__class__ is Offset
+        assert float(dressed) == pytest.approx(whole - reference, abs=1e-3)
+        _, tones = offsets._line_tones(index, False)
+        _, tones_absolute = absolute._line_tones(index, False)
+        assert tones[0, 1] == pytest.approx(tones_absolute[0, 1] - reference, abs=1e-3)
+        # A difference of a 2-excitation and a 1-excitation level: 2R - R.
+        assert tones[1, 2] == pytest.approx(tones_absolute[1, 2] - reference, abs=1e-3)
+        assert tones[0, 2] == pytest.approx(tones_absolute[0, 2] - 2 * reference, abs=1e-3)
+
+
+def test_bare_frames_on_offsets_keep_both():
+    bare = _offset_pair(frames="bare")
+    assert bare.frequency_frame == "shared_reference"
+    assert bare._description.frames == "bare"
+    d5 = bare.qudits[0]
+    assert d5.dressed_frequency_hz == bare.physical_qudits[d5.index].frequency_hz
+    dressed = _offset_pair()
+    assert bare.fingerprint != dressed.fingerprint
+    assert bare.replace(frames="dressed").fingerprint == dressed.replace().fingerprint
+
+
+def test_a_system_without_frequencies_has_nothing_to_dress():
+    full = pulse.quantum_system("transmon_surface17")._description
+    qudits = {i: full.qudits[i].replace(frequency_hz=None, readout=None) for i in (4, 14)}
+    qs = pulse.quantum_system(
+        name="own carriers",
+        qudits=qudits,
+        residual_zz=[pulse.quantum_systems.ResidualZZ((4, 14), -50e3)],
+    )
+    assert qs.frequency_frame == "own_carrier"
+    assert [q.dressed_frequency_hz for q in qs.qudits] == [None, None]
+    assert "_line_tones" not in vars(qs)
+
+
+def test_transition_freq_keeps_the_bare_signed_transitions():
+    alone, d, _, _ = _pair_alone("signed")
+    q = [h.index for h in alone.qudits].index(4)
+    table = alone.transition_freq
+    alpha = d.anharmonicity_hz
+    assert table[q, 0, 1] == pytest.approx(d.frequency_hz)
+    assert table[q, 1, 2] == pytest.approx(d.frequency_hz + alpha)
+    # Signed: the upper level's energy less the lower's, either way round.
+    assert table[q, 2, 1] == pytest.approx(d.frequency_hz + alpha)
+    # The drive line plays the dressed tones, which the table does not hold.
+    _, tones = alone._line_tones(4, False)
+    assert tones[1, 2] != pytest.approx(table[q, 1, 2], abs=1.0)

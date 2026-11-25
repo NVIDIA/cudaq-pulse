@@ -130,7 +130,7 @@ def _target_attributes(
         if t2_us is None:
             raise InvalidValueError(f"qudit {qi} has no Hahn-echo T2 to dephase at")
         # A frequency is finite, so it is spelled as _f64_literal would.
-        frequencies[qi] = f"{qudit.frequency_hz:.17e}"
+        frequencies[qi] = f"{qudit._frame_hz:.17e}"
         # _f64_literal makes each a float.
         t1_ns[qi] = max(0.0, qudit.t1_us) * 1.0e3
         t2_ns[qi] = max(0.0, t2_us) * 1.0e3

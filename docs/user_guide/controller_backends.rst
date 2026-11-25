@@ -38,7 +38,13 @@ its qudit's 0-1 frequency on a drive line, and its readout's
 starts that tone's frame at this frequency, and its ``phase_rad`` advances
 from it when the tone is retuned, so a backend that plays a line's other
 frequencies (another transition's tone, a shifted frequency) as offsets
-from one oscillator needs nothing from the quantum system. A kernel with
+from one oscillator needs nothing from the quantum system. On a system
+that does not state its frequencies they are offsets:
+``quantum_system.frequency_frame`` is ``"shared_reference"`` when every
+``frequency_hz`` and ``native_frequency_hz`` is an offset from one reference
+the qudits share, and ``"own_carrier"`` when each line's native frequency
+is 0 and its events' frequencies are offsets from its own qudit's carrier
+(see :doc:`quantum_systems`); the export's keys are the same. A kernel with
 qudit parameters gives it as the slot's symbols instead (``s0.f01``,
 ``s0.f_ro``; see below) and its lines leave it out. ``events`` lists every drive, readout,
 wait, sync, classical call and frame update in program order, once per loop
@@ -610,8 +616,13 @@ Under ``rcp`` and ``alap_rcp``, ``max_concurrent_drives`` and
 follows another controller's on the same lane starts their start
 uncertainty after it, so the two never overlap. Given to a control system
 with controllers, they are checked under every schedule, counted the same
-way: a program that plays more at once fails to compile with a
-``ControllerLimitError`` naming the count and the first cycle.
+way. A program that ``asap`` places past them is placed as ``rcp`` places
+it, and one that ``alap`` places past them as ``alap_rcp`` does; its
+``options.schedule`` names the policy that placed it. A program that ``asap``
+or ``alap`` places within them keeps its schedule exactly. It fails to compile with a
+``ControllerLimitError`` naming the count and the first cycle when that
+placement does not keep to every limit either, or when the values a call
+binds place its pulses past one.
 
 A wait whose length is computed at run time (``wait(line, value,
 bounds=(low, high))``) is scheduled at its lowest length, and what follows

@@ -189,6 +189,12 @@ def load(
         _, frequencies, readouts = target._frequency_tables(max(carriers) + 1)
         bound = generic.place_carriers(carriers, frequencies, readouts)
     except (RuntimeError, ValueError) as error:
+        from ._errors import InvalidValueError
+
+        if error.__class__ is InvalidValueError:
+            # The quantum system's own: a readout frequency its frequency
+            # tables refuse, as a compile for it reports it.
+            raise
         # The module or the entry is not what load() takes; a module that is
         # not valid as written here comes with the verifier's reasons.
         raise CompilationError(str(error), code="wrong_argument") from None

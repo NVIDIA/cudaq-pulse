@@ -642,6 +642,43 @@ def read(module: Any) -> tuple[list[tuple[str, int]], list[Any]]:
     return [(str(role), int(qudit)) for role, qudit in lines], out
 
 
+def numbered(items: list[Any]) -> list[Any]:
+    """*items* (``read()``'s) of a program that was not traced, such as one
+    ``pulse.load`` read, with each op numbered as a trace numbers it: the
+    same number for every execution of one op of the kernel (each copy of a
+    loop's body), in program order. ``gaps()`` tells a gap's executions and
+    a loop's syncs apart by these numbers. A program that has any number
+    of its own is returned as it is."""
+    events = [item for item in items if item.__class__ is not tuple]
+    if any(event.site is not None for event in events):
+        return items
+    # read() numbers a loop (and a branch) anew in each copy of the loops
+    # around it; the loop of the kernel is its place in its parent's body:
+    # the parent's, and the order it comes in among the loops of one copy
+    # of the parent.
+    kernel_loop: dict[int, tuple[Any, ...]] = {}
+    loops_in: dict[tuple[Any, ...], int] = {}
+    # An op is its loop of the kernel and how many ops came before it in the
+    # same copy of that loop's body, both arms of its branches counted in
+    # turn: every copy is read in the same order.
+    seen: dict[tuple[Any, ...], int] = {}
+    number: dict[tuple[Any, ...], int] = {}
+    for event in events:
+        parent: tuple[Any, ...] = ()
+        copies: tuple[int, ...] = ()
+        for loop, copy, _ in event.path:
+            if loop not in kernel_loop:
+                nth = loops_in.get((parent, copies), 0)
+                loops_in[parent, copies] = nth + 1
+                kernel_loop[loop] = (parent, nth)
+            parent = kernel_loop[loop]
+            copies = (*copies, copy)
+        nth = seen.get(event.path, 0)
+        seen[event.path] = nth + 1
+        event.site = number.setdefault((parent, nth), len(number))
+    return items
+
+
 # ---------------------------------------------------------------- gaps and their idle parts
 
 _PLAYS = ("drive", "readout")

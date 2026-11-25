@@ -284,11 +284,11 @@ class Calibration:
         for c in target.couplings:
             a, b = qudits[c.qudits[0]], qudits[c.qudits[1]]
             strength = self._exchange(
-                idle_exchange, f"{a.label}-{b.label}", a.frequency_hz, b.frequency_hz
+                idle_exchange, f"{a.label}-{b.label}", a._circuit_hz, b._circuit_hz
             )
             if strength is None:
                 strength = self._exchange(
-                    idle_exchange, f"{b.label}-{a.label}", b.frequency_hz, a.frequency_hz
+                    idle_exchange, f"{b.label}-{a.label}", b._circuit_hz, a._circuit_hz
                 )
             if strength is not None:
                 if c.__class__ is Coupling:

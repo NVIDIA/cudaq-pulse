@@ -18,6 +18,16 @@ from cudaq_pulse.controller import ControllerLimitError, DriveLine, ReadoutLine
 _RCP = ("rcp", "alap_rcp")
 
 
+@pytest.fixture(autouse=True)
+def _checked_as_placed(monkeypatch):
+    """These tests are of the check: asap and alap keep the schedule they
+    place, which compile would otherwise place again as rcp does past a
+    limit (test_placed_by_limits.py)."""
+    from cudaq_pulse import compiler
+
+    monkeypatch.setattr(compiler, "_PLACED_BY_LIMITS", {})
+
+
 @pulse.kernel
 def drives_then_readouts(qs: list):
     for q in qs:

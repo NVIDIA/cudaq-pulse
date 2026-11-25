@@ -13,6 +13,23 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 
 ### Added
 
+- **`pulse.call`, a placed call of a function scheduled on its own.** In MLIR,
+  `pulse.call @f(args) <{start_cycles = s, duration_cycles = d}>` runs `@f`
+  at one start time, every timed op of `@f` keeping its start relative to
+  the call's. Lines, tones, measurements and links cross as with
+  `pulse.schedule_block`, and `f64` and `i64` arguments are values at the
+  call. The callee records its length in `pulse.length_cycles`; a call lasts
+  at least that long, and a call that lasts longer holds every line the
+  callee plays on until its end. `pulse-verify` checks a module with placed
+  calls, as IR another compiler writes, by writing the calls out: no call
+  runs back into itself, a callee takes its lines and links as arguments and
+  returns each line, tone and link in the order it takes them, a recorded
+  length is where its last operation ends, and the written-out program
+  passes every check a flat program does (an error inside a call is
+  reported at the callee's operation). `pulse-expand-calls` writes placed
+  calls out. The schedule passes do not place calls yet and refuse them with
+  a message naming the callee; kernels with their own `schedule=` compile as
+  before.
 - **Challenges.** A `challenges/` folder with three starter problems, each with a
   statement, a scorer and reference solutions: find a pi pulse of half the
   calibrated length, measure a hidden qubit's T1 from shots, and find a
@@ -263,6 +280,38 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   kernel's calls of them are compiled. A call of another function of the
   module that states its start (`pulse.start_cycles`, provisional) is written
   in place.
+- **Systems that do not state their frequencies.** A qudit may give its
+  frequency as an offset from a reference the system's qudits share,
+  `PhysicalQudit(1, Offset(1.5e8), t1, t2)` (`Offset` is a `float` that says
+  what it is measured from), or leave it out, `PhysicalQudit(0, None, t1,
+  t2)`, for a control stack that owns the carriers. With offsets, couplings
+  and drives at another qudit's tone compute on the offsets, and every
+  frequency of the system's programs is an offset from the shared
+  reference. Without any, each tone's frequency is an offset from its own
+  qudit's carrier (a line's tone is at 0 Hz), the system declares no
+  couplings (an interaction is a `ResidualZZ`), and a drive at another
+  qudit's tone is an error. `qs.frequency_frame` says which a system is:
+  `"absolute"`, `"shared_reference"` or `"own_carrier"`; the exports' keys
+  are unchanged. A system's qudits give their frequencies all one way,
+  0 Hz is still refused, and a system file holds an offset as
+  `{"offset_hz": ...}` and a missing frequency as `null`. Either kind of
+  program compiles, exports and simulates as the same system with
+  frequencies does, less the reference. What needs a frequency such a
+  system does not state is an error that says so: a readout's
+  `frequency_hz`, `simulate(program, quantum_system=other)` on a system of
+  another `frequency_frame`, a `Calibration` of its couplings and parameter
+  drift; a readout's `frequency_hz` is an `Offset` from the same reference
+  with offsets, and not taken without frequencies. Without frequencies a
+  line several qudits share counts each qudit's tones apart
+  (`max_frequencies_per_line`). An `Offset` equals and is ordered against
+  another `Offset` only. A system whose qudits give their frequencies does
+  no more work than before.
+- **A transition's frequency is the upper level's energy less the lower's.**
+  `SimulationModel.transitions_hz` and `qs.transition_freq` no longer take
+  its absolute value. For
+  levels that ascend, which every shipped model's do, nothing changes; where
+  frequencies are offsets, a qudit's 1-2 tone is its anharmonicity below
+  its 0-1 tone, as it must be, and no longer above.
 
 ### Changed
 
@@ -288,7 +337,12 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   - Compiled programs and controller exports of coupled systems carry
     different drive tone frequencies, and a coupled system's frames are part
     of what it is: one with `frames="bare"` has another fingerprint.
-  - `frequency_hz`, `qudit_freq` and the Hamiltonian keep the bare values.
+  - `frequency_hz`, `qudit_freq`, `transition_freq` and the Hamiltonian keep
+    the bare values.
+  - Where the qudits give their frequencies as `Offset`s from a shared
+    reference, the couplings dress the offsets the same way, and
+    `dressed_frequency_hz` is an `Offset`; where they give none, there are
+    no couplings to dress and it is `None`.
   - The 1-2 and higher tones of a coupled qudit's drive line are dressed
     too, each the difference of two of its dressed levels.
   - A simulation of some of a coupled system's qudits at three levels or
@@ -298,6 +352,17 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
     without a left-out neighbour, a `RuntimeWarning` (a `PulseWarning`)
     says how far off they are simulated and which qudits to add.
 
+- **asap and alap place a program over a concurrency limit as rcp does.**
+  On a control system with controllers that declares
+  `max_concurrent_drives` or `max_concurrent_readouts`, a program that
+  `asap` places past one of them is placed as `rcp` places it, and one that
+  `alap` places past one as `alap_rcp` does, when that keeps to every limit;
+  `options.schedule` names the policy that placed it. A program `asap` or
+  `alap` places within its limits keeps its schedule exactly and costs
+  nothing more to compile. Such a program failed to compile before, with a
+  `ControllerLimitError`; it still does when the rcp placement does not keep
+  to every limit either, or when the values a call binds place its pulses
+  past a limit.
 - **Controllers in the printed MLIR carry what they were given.** In
   `pulse.control_system`, each `#pulse.controller` of a system of several
   controllers gives the controller's own facts, in its own cycles, where it
@@ -492,6 +557,20 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   type-checked and then raised `TypeError` inside `plot_schedule`.
 
 ### Fixed
+
+- **A classical function of the user's cannot take the name of a decoder
+  message version.** cudaq-pulse names the versions of the CUDA-Q QEC
+  decoder messages by decoder and length (`enqueue_syndromes__0_1`,
+  `get_corrections__3_1`, `reset_decoder__7`), and a program's functions,
+  and the simulation's replay of a decoder's calls, are found by name. A
+  `@pulse.classical` function declared under such a name compiled; after
+  a kernel that used the real message, simulating a kernel that called it
+  failed with a bare `IndexError`, and with arguments of fitting kinds its
+  bits were enqueued into the decoder. Declaring such a function is now
+  an `InvalidValueError` that names the message, and a function whose
+  version for some list lengths would get such a name (a `reset_decoder`
+  of the user's that takes a list) is a `CompilationError` at the call,
+  and an `InvalidValueError` from `specialize()`.
 
 - **The limits on what plays at once hold for pulses after a wait of a
   run-time length or a blocking wait for an answer.** `wait(line, answer,

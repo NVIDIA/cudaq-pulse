@@ -885,10 +885,15 @@ def test_a_word_of_a_decoder_message_is_a_constant_64_bit_integer(system):
 def test_an_ordinary_function_is_not_given_for_a_decoder_message(system):
     machine, text, qudits, _, _ = _decoder_text(system)
 
-    @pulse.classical(max_latency_ns=10, link="host")
-    def get_corrections__3_1(a: int, b: int, c: int) -> pulse.Length[pulse.Bits, 1]:
+    def corrections(a: int, b: int, c: int) -> pulse.Length[pulse.Bits, 1]:
         return pulse.Bits([False])
 
+    # A function cannot be declared under a message version's name.
+    with pytest.raises(pulse.InvalidValueError, match="can't be named 'get_corrections__3_1'"):
+        pulse.classical(corrections, name="get_corrections__3_1", max_latency_ns=10, link="host")
+    # One that has the name all the same is not taken for the message.
+    ordinary = pulse.classical(corrections, max_latency_ns=10, link="host")
+    ordinary.name = "get_corrections__3_1"
     with pytest.raises(
         pulse.InvalidValueError,
         match="get_corrections__3_1 is CUDA-Q QEC's get_corrections; give pulse.classical",
@@ -898,7 +903,7 @@ def test_an_ordinary_function_is_not_given_for_a_decoder_message(system):
             entry="main",
             qudits=qudits,
             control_system=machine,
-            classical=[get_corrections__3_1],
+            classical=[ordinary],
         )
 
 

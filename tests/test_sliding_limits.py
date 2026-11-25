@@ -22,6 +22,16 @@ from cudaq_pulse.quantum_systems import PhysicalQudit
 _SCHEDULES = ("asap", "alap", "rcp", "alap_rcp")
 
 
+@pytest.fixture(autouse=True)
+def _the_check_alone(monkeypatch):
+    """These tests are of the check: asap and alap keep the schedule they
+    place, which compile would otherwise place again as rcp and alap_rcp do
+    past a declared limit (test_slides_placed_as_rcp_does below)."""
+    from cudaq_pulse import compiler
+
+    monkeypatch.setattr(compiler, "_PLACED_BY_LIMITS", {})
+
+
 @pulse.classical(max_latency_ns=50)
 def next_tau(x: float) -> float:
     return 2.0 * x
@@ -332,3 +342,61 @@ def test_the_segments_of_a_long_loop_are_counted_as_one_block():
     assert max(count for _, count in steps) == 1
     pulses[0] = [*pulses[0], (9000, 9040, {})]
     assert _slides.first_over(_slides.most_at_once(pulses, after, ranges), 1) == (9000, 2, 2)
+
+
+# ── What compile gives for the programs the check refuses ────────────────────
+
+_PLACED = {"asap": "rcp", "alap": "alap_rcp"}
+_REFUSED = {
+    "a drive that can slide onto another": _TWO_DRIVES,
+    "a wait without an upper bound": ["wait(da, next_tau.submit(tau0).result())", *_TWO_DRIVES[1:]],
+    "waits on two lines": [
+        _WAIT,
+        "drive(da, square(40, 0.1))",
+        "wait(da, next_tau.submit(tau0).result(), bounds=(16, 300))",
+        "drive(da, square(40, 0.1))",
+        "wait(db, next_tau.submit(tau0).result(), bounds=(16, 500))",
+        "drive(db, square(40, 0.1))",
+    ],
+    "a blocking wait": [
+        "x = slow.submit(tau0).result()",
+        "drive(da, square(40, x))",
+        "wait(db, 600)",
+        "drive(db, square(40, 0.1))",
+    ],
+    "the arms of a branch after a wait": [
+        "m = readout(ra, square(100, 0.05))",
+        _WAIT,
+        "if m:",
+        "    drive(da, square(40, 0.1))",
+        "else:",
+        "    drive(da, square(60, 0.1))",
+        "wait(db, 600)",
+        "drive(db, square(40, 0.1))",
+    ],
+    "a loop of 50 with a wait each trip": _rounds(
+        50, ["wait(db, 9000)", "drive(db, square(40, 0.1))"]
+    ),
+    "a loop of 2000 with a wait each trip": _rounds(
+        2000, ["wait(db, 9000)", "drive(db, square(40, 0.1))"]
+    ),
+}
+
+
+def _events(lowered):
+    return [(e.kind, e.line, e.start_cycles, e.duration_cycles) for e in lowered.schedule]
+
+
+@pytest.mark.parametrize("schedule", ["asap", "alap"])
+@pytest.mark.parametrize("name", list(_REFUSED))
+def test_slides_placed_as_rcp_does(name, schedule, monkeypatch):
+    # Past max_concurrent_drives for some run, asap and alap place the
+    # program as rcp and alap_rcp place it, which the check passes.
+    from cudaq_pulse import compiler
+
+    monkeypatch.setattr(compiler, "_PLACED_BY_LIMITS", _PLACED)
+    body = _REFUSED[name]
+    lowered = _compiled(body, schedule, limit=1)
+    assert lowered.options.schedule == _PLACED[schedule]
+    assert _events(lowered) == _events(_compiled(body, _PLACED[schedule], limit=1))
+    assert list(pulse.controller.check(lowered)) == []
