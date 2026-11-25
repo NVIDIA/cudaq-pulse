@@ -927,3 +927,38 @@ def test_the_tracing_module_loads_only_for_a_kernel_with_a_coupling_line():
     before, after = ["False"] * 4, ["True", "False", "True", "True"]
     same = ["True", "True", "False"]
     assert out.stdout.split() == ["False", "False", *before, "True", *after, *same]
+
+
+_LOADED = """
+module attributes {pulse.coupling_lines} {
+  func.func private @tune(%a: !pulse.qudit) attributes {pulse.schedule_state =
+        #pulse.schedule_state<timed>} {
+    %da, %ta = pulse.get_drive_line %a : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
+    COUPLING
+    %n = arith.constant 16 : i64
+    %amp = arith.constant 0.5 : f64
+    %zero = arith.constant 0.0 : f64
+    %w = pulse.square %n, %amp, %zero : i64, f64, f64 -> !pulse.waveform
+    %da1, %ta1 = pulse.drive %da, %w, %ta <{duration_cycles = 16 : i64, start_cycles = 0 : i64}> :
+          !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+    return
+  }
+}
+"""
+
+
+def test_load_refuses_a_function_that_holds_a_coupling_line():
+    fetch = "%c = pulse.get_coupling_line %a : (!pulse.qudit) -> !pulse.coupling_line"
+    held = _LOADED.replace("COUPLING", fetch)
+    # With the module's mark of a coupling line, and without it.
+    for text in (held, held.replace(" attributes {pulse.coupling_lines}", "", 1)):
+        with pytest.raises(pulse.UnsupportedError) as raised:
+            pulse.load(text, entry="tune", qudits=[A])
+        assert str(raised.value) == "load does not load a function that holds a coupling line yet"
+    # Another module that is not valid keeps its own reasons.
+    with pytest.raises(pulse.CompilationError) as other:
+        pulse.load(_LOADED.replace("COUPLING", "%x = pulse.no_such_op"), entry="tune", qudits=[A])
+    assert not isinstance(other.value, pulse.UnsupportedError)
+    # The same function without the line loads.
+    plain = _LOADED.replace("COUPLING", "").replace(" attributes {pulse.coupling_lines}", "", 1)
+    assert len(pulse.load(plain, entry="tune", qudits=[A]).schedule) == 1

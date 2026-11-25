@@ -97,6 +97,7 @@ mlir::LogicalResult scheduleFunction(mlir::func::FuncOp function, bool enabled,
 } // namespace coupled
 } // namespace pulse
 #endif
+
 namespace pulse {
 /// Refuses each pulse.call of `function`: the schedule passes do not place
 /// one yet (PulseCallCheck.cpp).
