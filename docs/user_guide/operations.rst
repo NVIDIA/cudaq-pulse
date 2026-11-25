@@ -173,7 +173,10 @@ too; so does a program that holds
 a coupling line beside a classical call, a kernel with its own
 ``schedule=`` (compile with ``flatten_schedules=True``) or a value a
 measurement selects while the program runs, even when the line is never
-used. Beside none of those, a coupling line that is fetched and never
+used. Idle replacement (``replace_idle``) counts a
+pulse on a coupling line as each qudit the line reaches being busy, as the
+qudit's own readout is: an idle window ends where the pulse starts, and the
+rest is filled. A fill plays on its qudit's drive line only. Beside none of those, a coupling line that is fetched and never
 used is dropped, as any unused line: the program exports and simulates. The calibrated two-qudit gate of a
 coupling, played as one call, comes with a later release.
 

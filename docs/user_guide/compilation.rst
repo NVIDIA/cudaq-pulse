@@ -249,8 +249,9 @@ it did, and the program is as long as it was (280 ns).
 
 **Windows.** A qudit idles while its drive line has no operation, its
 line's tone does not play from another line (a cross-resonance pulse at its
-tone makes it busy), and its own readout does not run, in any iteration of
-the loops around them. A window is such a stretch of at
+tone makes it busy), its own readout does not run, and no coupling line
+that reaches it plays (a wait on a coupling line is not the qudit being
+busy), in any iteration of the loops around them. A window is such a stretch of at
 least ``threshold``, an ``int`` of clock cycles or a time
 (``100 * pulse.ns``); a stretch of exactly the threshold is one. A window
 ends at the next operation on the line or at the qudit's tone, where a

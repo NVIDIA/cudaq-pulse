@@ -62,6 +62,7 @@ nanobind_add_module(
   LengthInference.cpp
   Lines.cpp
   ModuleLoader.cpp
+  CoupledSites.cpp
   ProgramLimitError.cpp
   SegmentBoundaries.cpp
   # The pulse-broadcast-lines pass, which registers itself (transforms/).
