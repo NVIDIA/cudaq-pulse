@@ -128,9 +128,7 @@ def warm_up(system, qudit):
     """Everything the scorer does after the second process, done once before it starts."""
     pulses = [
         {"start": 4 * n, "samples": [0.01 + 0.01j] * 4, "frequency_hz": hz, "phase_rad": n}
-        for n, hz in enumerate(
-            (qudit.dressed_frequency_hz, 1.0e6 + qudit.dressed_frequency_hz)
-        )
+        for n, hz in enumerate((qudit.dressed_frequency_hz, 1.0e6 + qudit.dressed_frequency_hz))
     ]
     check(pulses, ["a readout"], 8, system, qudit)
     replay(pulses, system, qudit)

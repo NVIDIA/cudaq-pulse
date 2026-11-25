@@ -1191,7 +1191,7 @@ def _exchange_pairs(description: Any) -> list[Any]:
 
 
 # The description last asked for and its table.
-_LAST_DRESSED: list[Any] = [None, None]
+_LAST_DRESSED: list[tuple[Any, Any]] = [(None, None)]
 _DRESSED: weakref.WeakKeyDictionary[Any, dict[int, float] | None] = weakref.WeakKeyDictionary()
 
 
@@ -1207,7 +1207,7 @@ def dressed_frequencies(description: Any) -> dict[int, float] | None:
     whatever the qudits' levels and anharmonicities."""
     # The registry gives a named system's description itself on every
     # call: the last one asked for is answered without hashing it.
-    last = _LAST_DRESSED
+    last = _LAST_DRESSED[0]
     if last[0] is description:
         remembered: dict[int, float] | None = last[1]
         return remembered
@@ -1216,7 +1216,7 @@ def dressed_frequencies(description: Any) -> dict[int, float] | None:
     except KeyError:
         pass
     else:
-        last[0], last[1] = description, dressed
+        _LAST_DRESSED[0] = (description, dressed)
         return dressed
     pairs = _exchange_pairs(description) if description.frames == "dressed" else []
     dressed = (
@@ -1225,7 +1225,7 @@ def dressed_frequencies(description: Any) -> dict[int, float] | None:
         else None
     )
     _DRESSED[description] = dressed
-    _LAST_DRESSED[0], _LAST_DRESSED[1] = description, dressed
+    _LAST_DRESSED[0] = (description, dressed)
     return dressed
 
 
@@ -1308,6 +1308,13 @@ def layout_frequencies(description: Any, qudits: Sequence[int]) -> Mapping[int, 
     return known[kept]
 
 
+# A dressed level above the first is worked out among the qudits within
+# this many couplings of its qudit: each coupling further moves it by
+# about (g / detuning)^2 of the last, far below a hertz on these systems,
+# and the whole coupled group of a large chip would not fit in memory.
+_HOPS = 3
+
+
 # Dressed levels above the first: by description, (qudit, level) -> energy
 # in Hz from the ground state, and the qudits whose higher tones a program
 # has read (simulate then corrects their anharmonicity, layout_anharmonicities).
@@ -1316,14 +1323,21 @@ _HIGHER_READ: weakref.WeakKeyDictionary[Any, set[int]] = weakref.WeakKeyDictiona
 
 
 # The qudits the couplings *pairs* join to *qudit*, it among them.
-def _group_of(description: Any, qudit: int, pairs: list[Any]) -> list[int]:
-    group, edge = {qudit}, True
-    while edge:
-        edge = False
+def _group_of(
+    description: Any, qudit: int, pairs: list[Any], hops: int | None = _HOPS
+) -> list[int]:
+    group, edge = {qudit}, set([qudit])
+    while edge and (hops is None or hops > 0):
+        reached = set()
         for (a, b), _ in pairs:
-            if (a in group) != (b in group):
-                group |= {a, b}
-                edge = True
+            if a in edge and b not in group:
+                reached.add(b)
+            elif b in edge and a not in group:
+                reached.add(a)
+        group |= reached
+        edge = reached
+        if hops is not None:
+            hops -= 1
     return sorted(group)
 
 
@@ -1410,7 +1424,7 @@ def dressed_level_energy(description: Any, qudit: int, level: int) -> float:
 class _DressedTones(Mapping[tuple[int, int], float]):
     """The tones of a coupled qudit's drive line, by (lower, upper) level:
     each the difference of its dressed levels, worked out when it is first
-    read (the 0-1 one at once)."""
+    read."""
 
     __slots__ = ("_description", "_qudit", "_bare", "_made")
 
@@ -1429,6 +1443,10 @@ class _DressedTones(Mapping[tuple[int, int], float]):
             ) - dressed_level_energy(self._description, self._qudit, lower)
             self._made[transition] = made
         return made
+
+    def __contains__(self, transition: object) -> bool:
+        # Without working the tone out.
+        return transition in self._bare
 
     def __iter__(self) -> Any:
         return iter(self._bare)
@@ -1449,10 +1467,10 @@ def layout_anharmonicities(description: Any, qudits: Sequence[int]) -> Mapping[i
     kept = sorted(set(qudits))
     pairs = _exchange_pairs(description)
     inside = set(kept)
+    # A kept qudit whose group reaches a dropped qudit: its level 2 has
+    # that qudit's share.
     marked = [
-        q
-        for q in kept
-        if q in read and any((q in pair) and not inside.issuperset(pair) for pair, _ in pairs)
+        q for q in kept if q in read and not inside.issuperset(_group_of(description, q, pairs))
     ]
     if not marked:
         return _NOTHING_MOVED
@@ -1505,17 +1523,23 @@ def _warn_layout(
         {b if a in missing else a for (a, b), _ in pairs if (a in missing) != (b in missing)}
         - set(kept)
     )
-    names = ", ".join(map(str, missing))
-    left = ", ".join(map(str, near))
+    if not near:
+        near = sorted({q for pair, _ in pairs for q in pair} - set(kept))
+
+    def listed(qudits: list[int]) -> str:
+        return ("qudit " if len(qudits) == 1 else "qudits ") + ", ".join(map(str, qudits))
+
+    one = len(missing) == 1
     warnings.warn(
-        f"simulate: qudits {names} are so near resonance that, simulated without "
-        f"{'qudit' if len(near) == 1 else 'qudits'} {left}, no frequencies give them the "
-        "dressed frequencies they have on the whole quantum system: they are simulated up to "
-        f"{max(abs(m) for m in miss) / 1e3:.3g} kHz from them. Simulate qudits {left} too to "
-        "have them exactly.",
+        f"simulate: {listed(missing)} {'is' if one else 'are'} so near resonance that, "
+        f"simulated without {listed(near)}, no frequencies give {'it' if one else 'them'} "
+        f"the dressed frequencies {'it has' if one else 'they have'} on the whole quantum "
+        f"system: {'it is' if one else 'they are'} simulated up to "
+        f"{max(abs(m) for m in miss) / 1e3:.3g} kHz from them. Simulate {listed(near)} too "
+        "to have them exactly.",
         _DressedLayoutWarning,
         # At the program's call of simulate, not in the package.
-        skip_file_prefixes=(os.path.dirname(os.path.dirname(__file__)),),
+        skip_file_prefixes=(os.path.dirname(os.path.dirname(__file__)) + os.sep,),
     )
 
 

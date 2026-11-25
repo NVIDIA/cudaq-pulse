@@ -368,3 +368,43 @@ def test_a_0_1_program_on_a_coupled_system_loads_no_numpy(tmp_path):
     )
     out = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "False"
+
+
+def test_asking_whether_a_tone_exists_works_nothing_out():
+    from cudaq_pulse.quantum_systems.base import _LEVELS
+
+    qs = pulse.quantum_system("transmon_surface17")
+    _, tones = qs._line_tones(6, False)
+    assert (1, 2) in tones and (5, 6) not in tones
+    assert (6, 2) not in _LEVELS.get(qs._description, {})
+
+
+def test_a_kept_qudit_two_couplings_from_a_dropped_one_is_corrected():
+    from cudaq_pulse.quantum_systems.base import (
+        _level,
+        dressed_level_energy,
+        layout_anharmonicities,
+    )
+
+    base = pulse.quantum_system("transmon_surface17")._description
+    q = {i: base.qudits[k].replace(index=i) for i, k in enumerate((4, 14, 13))}
+    for i, hz in enumerate((5.0e9, 5.3e9, 5.25e9)):
+        q[i] = q[i].replace(frequency_hz=hz, anharmonicity_hz=-200e6)
+    coupling = pulse.quantum_systems.Coupling
+    chain = pulse.quantum_system(
+        name="chain", qudits=q, couplings=[coupling((0, 1), 30e6), coupling((1, 2), 30e6)]
+    )
+    description = chain._description
+    _, tones = chain._line_tones(0, False)
+    tones[1, 2]
+    kept = (0, 1)
+    alphas = layout_anharmonicities(description, kept)
+    assert 0 in alphas
+    moved = layout_frequencies(description, kept)
+    f = {k: moved.get(k, description.qudits[k].frequency_hz) for k in kept}
+    alpha = {k: alphas.get(k, description.qudits[k].anharmonicity_hz) for k in kept}
+    energies = {k: [0.0, f[k], 2 * f[k] + alpha[k]] for k in kept}
+    pairs = [((0, 1), 30e6)]
+    assert _level(energies, pairs, 0, 2)[0] == pytest.approx(
+        dressed_level_energy(description, 0, 2), abs=0.01
+    )
