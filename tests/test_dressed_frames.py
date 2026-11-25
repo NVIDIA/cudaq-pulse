@@ -127,8 +127,8 @@ def _ramsey(d, z, t: int, quarter: int):
 def test_a_ramsey_on_a_coupled_qudit_shows_no_offset(surface17):
     # D5 beside Z2 (in its ground level), the rest of surface17 left out, no
     # decoherence: at its default frame D5 no longer precesses at its dressed
-    # shift (-15 kHz from Z2, -63 kHz from all its neighbours, which bare
-    # frames showed).
+    # shift (-63 kHz from all its neighbours; with bare frames, as before, a
+    # simulation of D5 and Z2 alone showed Z2's -15 kHz).
     d5, z2 = surface17.qudit("D5").index, surface17.qudit("Z2").index
     base = pulse.quantum_system("transmon_surface17", layout=[d5, z2])
     quiet = {
@@ -179,8 +179,9 @@ def test_frames_is_a_keyword_of_a_built_system_and_of_replace():
     assert built._dressed is None
     dressed = built.replace(frames="dressed")
     assert dressed.qudits[0].dressed_frequency_hz != dressed.physical_qudits[4].frequency_hz
-    with pytest.raises(pulse.QuantumSystemDefinitionError, match="frames"):
-        pulse.quantum_system(name="x", qudits=dict(built.physical_qudits), frames="lab")
+    for wrong in ("lab", None):
+        with pytest.raises(pulse.QuantumSystemDefinitionError, match="frames"):
+            pulse.quantum_system(name="x", qudits=dict(built.physical_qudits), frames=wrong)
 
 
 def test_dressed_frames_keep_the_fingerprints_systems_had():
@@ -200,3 +201,85 @@ def test_a_variant_plays_dressed_tones_whatever_it_is_first_asked():
     _, tones = variant._line_tones(index, False)
     assert tones[0, 1] == dressed_frequencies(variant._description)[index]
     assert tones[0, 1] == variant.qudits[0].dressed_frequency_hz
+
+
+def test_a_dressed_system_keeps_the_fingerprint_it_had():
+    # Main's fingerprints before dressed frames: the default adds nothing.
+    assert pulse.quantum_system("transmon_surface17").fingerprint == (
+        "c206f28b5e1c7f2351cc47c17f36449b"
+    )
+    assert pulse.quantum_system("transmon_lattice:4").fingerprint == (
+        "c3f8edd5695e3391f1501b05425e3313"
+    )
+
+
+def test_the_dressed_table_is_the_eigenvalues_of_the_whole_system(surface17):
+    description = surface17._description
+    qudits = sorted(description.qudits)
+    matrix = np.diag([description.qudits[q].frequency_hz for q in qudits])
+    row = {q: i for i, q in enumerate(qudits)}
+    for (a, b), g in _exchange_pairs(description):
+        matrix[row[a], row[b]] = matrix[row[b], row[a]] = g
+    assert sorted(dressed_frequencies(description).values()) == pytest.approx(
+        sorted(np.linalg.eigvalsh(matrix)), abs=1e-3
+    )
+
+
+@pytest.mark.parametrize("detuning_hz", [100e6, 20e6, 5e6, 1e6])
+def test_a_simulated_pair_near_resonance_is_dressed_exactly(detuning_hz):
+    # Two kept qudits within a few couplings of each other, each with a
+    # dropped neighbour: their given frequencies dress, with the kept
+    # coupling alone, to their frequencies on the whole system.
+    base = pulse.quantum_system("transmon_surface17")._description
+    q = {i: base.qudits[k].replace(index=i) for i, k in enumerate((4, 14, 13, 3))}
+    q[0] = q[0].replace(frequency_hz=5.0e9)
+    q[1] = q[1].replace(frequency_hz=5.0e9 + detuning_hz)
+    q[2] = q[2].replace(frequency_hz=5.015e9)
+    q[3] = q[3].replace(frequency_hz=5.0e9 + detuning_hz + 15e6)
+    coupling = pulse.quantum_systems.Coupling
+    system = pulse.quantum_system(
+        name="near",
+        qudits=q,
+        couplings=[coupling((0, 1), 5e6), coupling((0, 2), 5e6), coupling((1, 3), 5e6)],
+    )
+    description = system._description
+    given = layout_frequencies(description, (0, 1))
+    within = {k: given.get(k, description.qudits[k].frequency_hz) for k in (0, 1)}
+    dressed = dressed_frequencies(description)
+    # The pair has the whole system's spectrum of them (near resonance which
+    # qudit a mixed state counts as may differ between the two)...
+    got = sorted(_single_excitation(within, [((0, 1), 5e6)]).values())
+    want = sorted(dressed[k] for k in (0, 1))
+    if want[1] - want[0] >= 2 * 5e6:
+        assert got == pytest.approx(want, abs=0.01)
+    else:
+        # ...unless the dropped neighbours narrow the pair's splitting below
+        # twice its coupling, which no frequencies of the pair alone give:
+        # then the closest, the splitting at its least.
+        least = (2 * 5e6 - (want[1] - want[0])) / 2
+        assert max(abs(g - w) for g, w in zip(got, want, strict=True)) == pytest.approx(
+            least, rel=0.02
+        )
+
+
+@pytest.mark.parametrize("eps_hz", [0.0, 1.0, 1e3])
+def test_a_simulated_pair_at_resonance_still_gets_the_closest(eps_hz):
+    # Two qubits at resonance, coupled at 5 MHz, each pulled 4.5 MHz by a
+    # coupler left out: the step is nearly singular, and they still move.
+    base = pulse.quantum_system("transmon_surface17")._description
+    q = {i: base.qudits[k].replace(index=i) for i, k in enumerate((4, 14, 13, 3))}
+    for i, hz in enumerate((5.0e9, 5.0e9 + eps_hz, 5.5e9, 5.6e9)):
+        q[i] = q[i].replace(frequency_hz=hz)
+    coupling = pulse.quantum_systems.Coupling
+    system = pulse.quantum_system(
+        name="resonant",
+        qudits=q,
+        couplings=[coupling((0, 1), 5e6), coupling((0, 2), 50e6), coupling((1, 3), 50e6)],
+    )
+    description = system._description
+    given = layout_frequencies(description, (0, 1))
+    assert set(given) == {0, 1}
+    within = {k: given[k] for k in (0, 1)}
+    got = sorted(_single_excitation(within, [((0, 1), 5e6)]).values())
+    want = sorted(dressed_frequencies(description)[k] for k in (0, 1))
+    assert max(abs(g - w) for g, w in zip(got, want, strict=True)) < 50e3

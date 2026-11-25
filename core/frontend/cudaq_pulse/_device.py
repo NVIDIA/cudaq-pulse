@@ -1101,9 +1101,9 @@ def _checked(config: Mapping[str, Any], source: str, problems: list[Problem]) ->
         problems.extend(
             _program_clock(control, clock_ghz, 0.0 if target is None else target.clock_ghz)[1]
         )
-    frames = config.get("frames")
-    if frames is not None and target is not None and frames != target.frames:
-        if frames in _FRAMES:
+    frames = config.get("frames", "dressed")
+    if target is not None and frames != target.frames:
+        if frames.__class__ is str and frames in _FRAMES:
             target = target.replace(frames=frames)
         else:
             problems.append(
@@ -1359,12 +1359,12 @@ def quantum_system(
         "measurement_run": measurement_run,
         "control_system": control_system,
         "clock_ghz": clock_ghz,
-        "frames": None if frames == "dressed" else frames,
     }
+    defined: dict[str, Any] = {k: v for k, v in arguments.items() if v is not None}
+    if frames != "dressed":
+        defined["frames"] = frames
     problems: list[Problem] = []
-    found = _definition(
-        {k: v for k, v in arguments.items() if v is not None}, "arguments", problems
-    )
+    found = _definition(defined, "arguments", problems)
     if found is None:
         raise QuantumSystemDefinitionError(
             f"{_count(len(problems), 'problem')} in pulse.quantum_system()", problems=problems

@@ -1117,15 +1117,24 @@ def _jacobi(matrix: list[list[float]]) -> tuple[list[float], list[list[float]]]:
     return [a[i][i] for i in range(n)], v
 
 
+# A coupled group this large is solved with numpy: plain Python grows as
+# the cube of its size (about 1 s for 100 qudits).
+_PLAIN_JACOBI_LIMIT = 32
+
+
 # Each qudit's 0-1 frequency in Hz, by index, among the qudits of
 # *frequencies* (their bare 0-1 frequencies) with the exchange couplings
-# *pairs* ((qudits, strength_hz)) between them: an eigenvalue of the
+# *pairs* ((qudits, strength_hz)) between them, and the weight on each
+# qudit of the eigenstate each one takes: an eigenvalue of the
 # single-excitation matrix ``diag(f) + J``, solved for each group of
 # qudits the couplings join. Each qudit takes the eigenstate that holds
 # most of it, the states going to qudits in order of weight, so that two
 # qudits near resonance, mixed, each still take one.
-def _single_excitation(frequencies: Mapping[int, float], pairs: list[Any]) -> dict[int, float]:
+def _single_excitation_weights(
+    frequencies: Mapping[int, float], pairs: list[Any]
+) -> tuple[dict[int, float], dict[int, dict[int, float]]]:
     out = {q: float(f) for q, f in frequencies.items()}
+    weights = {q: {q: 1.0} for q in out}
     joined: dict[int, set[int]] = {q: {q} for q in out}
     for (a, b), _ in pairs:
         group = joined[a] | joined[b]
@@ -1133,21 +1142,27 @@ def _single_excitation(frequencies: Mapping[int, float], pairs: list[Any]) -> di
             joined[q] = group
     groups = {id(g): sorted(g) for g in joined.values() if len(g) > 1}
     for qudits in groups.values():
+        n = len(qudits)
         row = {qudit: i for i, qudit in enumerate(qudits)}
         # About the group's mean, so that kHz shifts keep their digits
         # against GHz frequencies.
-        mean = sum(out[q] for q in qudits) / len(qudits)
-        matrix = [[0.0] * len(qudits) for _ in qudits]
+        mean = sum(out[q] for q in qudits) / n
+        matrix = [[0.0] * n for _ in qudits]
         for q in qudits:
             matrix[row[q]][row[q]] = out[q] - mean
         for (a, b), strength in pairs:
             if a in row:
                 matrix[row[a]][row[b]] += strength
                 matrix[row[b]][row[a]] += strength
-        values, vectors = _jacobi(matrix)
+        if n > _PLAIN_JACOBI_LIMIT:
+            import numpy as np
+
+            w, v = np.linalg.eigh(np.array(matrix))
+            values, vectors = w.tolist(), v.tolist()
+        else:
+            values, vectors = _jacobi(matrix)
         ranked = sorted(
-            ((vectors[i][k] ** 2, i, k) for i in range(len(qudits)) for k in range(len(qudits))),
-            reverse=True,
+            ((vectors[i][k] ** 2, i, k) for i in range(n) for k in range(n)), reverse=True
         )
         rows: set[int] = set()
         states: set[int] = set()
@@ -1157,7 +1172,14 @@ def _single_excitation(frequencies: Mapping[int, float], pairs: list[Any]) -> di
             rows.add(i)
             states.add(k)
             out[qudits[i]] = values[k] + mean
-    return out
+            weights[qudits[i]] = {qudits[r]: vectors[r][k] ** 2 for r in range(n)}
+    return out, weights
+
+
+# Each qudit's 0-1 frequency in Hz with the couplings *pairs*
+# (_single_excitation_weights).
+def _single_excitation(frequencies: Mapping[int, float], pairs: list[Any]) -> dict[int, float]:
+    return _single_excitation_weights(frequencies, pairs)[0]
 
 
 # The exchange couplings of known strength of *description*, as
@@ -1195,27 +1217,100 @@ def dressed_frequencies(description: Any) -> dict[int, float] | None:
     return dressed
 
 
-def layout_frequencies(description: Any, qudits: Sequence[int]) -> dict[int, float]:
+_NOTHING_MOVED: Mapping[int, float] = MappingProxyType({})
+_LAYOUTS: weakref.WeakKeyDictionary[Any, dict[tuple[int, ...], Mapping[int, float]]] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def layout_frequencies(description: Any, qudits: Sequence[int]) -> Mapping[int, float]:
     """For a simulation of the qudits *qudits* of *description* alone: the
     0-1 frequency in Hz to give each of them, by index, so that with the
     couplings between them it is at its dressed frequency on the whole
     system. A qudit whose dropped neighbours dress it (the others in their
-    ground level) is moved by their share; the others are left out."""
+    ground level) is moved by their share; the others are left out. Kept
+    per description and set of qudits."""
     dressed = dressed_frequencies(description)
     if dressed is None:
-        return {}
-    kept = set(qudits)
-    pairs = [(q, s) for q, s in _exchange_pairs(description) if kept.issuperset(q)]
+        return _NOTHING_MOVED
+    kept = tuple(sorted(set(qudits)))
+    known = _LAYOUTS.setdefault(description, {})
+    found = known.get(kept)
+    if found is not None:
+        return found
+    pairs = _exchange_pairs(description)
+    inside = set(kept)
+    # Nothing coupled dropped: the kept couplings dress the kept qudits as
+    # the whole system does.
+    if all((a in inside) == (b in inside) for (a, b), _ in pairs):
+        known[kept] = MappingProxyType({})
+        return known[kept]
+    within_pairs = [(q, s) for q, s in pairs if inside.issuperset(q)]
     bare = {q: float(description.qudits[q].frequency_hz) for q in kept}
-    # The frequencies that, dressed by the kept couplings alone, are the
-    # whole system's dressed ones: a few corrections, each exact to first
-    # order in the last.
     given = dict(bare)
-    for _ in range(4):
-        within = _single_excitation(given, pairs) if pairs else given
-        for q in kept:
-            given[q] += dressed[q] - within[q]
-    return {q: f for q, f in given.items() if f != bare[q]}
+    # Newton on the spectrum: the kept qudits' eigenvalues, in order, are
+    # to be the whole system's dressed frequencies of them, in order (which
+    # qudit a state of two near-resonant qudits counts as can differ between
+    # the two). An eigenvalue moves with each bare frequency by the weight
+    # its state has there (Hellmann-Feynman). Exact to a millihertz, unless
+    # no frequencies can give that spectrum: two kept qudits near resonance
+    # split by at least twice their coupling, which their dropped
+    # neighbours can narrow. Then the closest it gets, by damped steps.
+    targets = sorted(dressed[q] for q in kept)
+
+    def missed(frequencies: dict[int, float]) -> tuple[float, list[Any], Any]:
+        within, weights = _single_excitation_weights(frequencies, within_pairs)
+        states = sorted((within[q], q) for q in kept)
+        miss = [t - value for t, (value, _) in zip(targets, states, strict=True)]
+        return max(abs(m) for m in miss), miss, [weights[q] for _, q in states]
+
+    worst, miss, rows = missed(given)
+    # Levenberg-Marquardt: (J^T J + mu I) step = J^T miss, mu raised until a
+    # step helps and lowered after one does, so that a nearly singular J
+    # (two kept qudits at resonance) still gives a finite step.
+    mu = 1e-9
+    for _ in range(200):
+        if worst < 1e-3 or mu > 1e12:
+            break
+        jacobian = [[row.get(r, 0.0) for r in kept] for row in rows]
+        n = len(kept)
+        normal = [
+            [sum(jacobian[k][i] * jacobian[k][j] for k in range(n)) + (mu if i == j else 0.0)
+             for j in range(n)]
+            for i in range(n)
+        ]
+        gradient = [sum(jacobian[k][i] * miss[k] for k in range(n)) for i in range(n)]
+        step = _solve(normal, gradient)
+        trial = {r: given[r] + d for r, d in zip(kept, step, strict=True)}
+        trial_worst, trial_miss, trial_rows = missed(trial)
+        if trial_worst < worst:
+            given, worst, miss, rows = trial, trial_worst, trial_miss, trial_rows
+            mu /= 10
+        else:
+            mu *= 10
+    known[kept] = MappingProxyType({q: f for q, f in given.items() if f != bare[q]})
+    return known[kept]
+
+
+def _solve(a: list[list[float]], b: list[float]) -> list[float]:
+    """The solution of the linear system *a* x = *b*, by Gaussian elimination
+    with partial pivoting."""
+    n = len(b)
+    m = [row[:] + [b[i]] for i, row in enumerate(a)]
+    for col in range(n):
+        pivot = max(range(col, n), key=lambda r: abs(m[r][col]))
+        m[col], m[pivot] = m[pivot], m[col]
+        if m[col][col] == 0.0:
+            continue
+        for r in range(col + 1, n):
+            f = m[r][col] / m[col][col]
+            for c in range(col, n + 1):
+                m[r][c] -= f * m[col][c]
+    x = [0.0] * n
+    for r in range(n - 1, -1, -1):
+        if m[r][r] != 0.0:
+            x[r] = (m[r][n] - sum(m[r][c] * x[c] for c in range(r + 1, n))) / m[r][r]
+    return x
 
 
 # The fields of a _Description, in the order its constructor takes them.
@@ -1327,9 +1422,12 @@ class _Description:
                 "frequency_hz"
             )
         values.update(changes)
-        # Without couplings the frames are the same: the default description.
-        bare = frames == "bare" and values["couplings"]
-        return (_BareDescription if bare else _Description)(**values)
+        described = _Description(**values)
+        # Without a coupling that dresses, the frames are the same: the
+        # default description.
+        if frames == "bare" and _exchange_pairs(described):
+            return _BareDescription(**values)
+        return described
 
     def __repr__(self) -> str:
         values = ", ".join(f"{f}={getattr(self, f)!r}" for f in _DESCRIPTION_FIELDS)
