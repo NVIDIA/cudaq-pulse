@@ -7543,7 +7543,8 @@ public:
         if (p[0] < 1)
           throw std::invalid_argument(
               "packed: longest program must be positive");
-        controllerLimit = p[0] < maxCycles;
+        // Of several limits the lowest holds.
+        controllerLimit |= p[0] < maxCycles;
         maxCycles = std::min(maxCycles, p[0]);
         // [1]: the most the program may last op after op, at least [0].
         stopCycles = std::clamp(p[1], maxCycles, backstop);
