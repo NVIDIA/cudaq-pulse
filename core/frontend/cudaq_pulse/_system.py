@@ -769,8 +769,8 @@ class Controller:
     together on different lines count once; a longer one is a compile error
     giving its length (with a wait whose length floats set, an error at the
     call). A wait whose length is known only when the program runs counts at
-    its highest length for the lines it holds back, and at its lowest where
-    it has no highest. When the module is built the compiler also sums the
+    its highest length for the lines it holds back, and is a compile error
+    where it has no highest. When the module is built the compiler also sums the
     traced program op after op, every iteration of its loops, and refuses it
     where the sum passes the limit times the lines the program takes: no
     schedule of it fits then. Without the limit, a program may last up to

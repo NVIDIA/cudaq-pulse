@@ -772,3 +772,59 @@ def test_the_lowest_of_two_limits_on_a_builder_holds():
         stops.append(list(buffer)[-1])
     # The last record's sum is the lowest limit's, on one line here.
     assert stops == [400, 400]
+
+
+# ── Such a wait with no highest length has nothing to hold to the limit ────
+
+NO_HIGHEST = (
+    r"kernel 'unbounded' runs under controllers\[0\]'s max_program_duration of 50000 ns, but "
+    r"this wait in it has no highest length; bound it with wait\(\.\.\., bounds=\(lowest, "
+    r"highest\)\), or drop max_program_duration"
+)
+
+
+def _unbounded(bounds):
+    """_apart(950) with its wait bounded by *bounds* (None: not at all)."""
+    options = {} if bounds is None else {"bounds": bounds}
+
+    @pulse.kernel
+    def unbounded(a, b):
+        d = get_drive_line(a)
+        r = get_readout_line(a)
+        e = get_drive_line(b)
+        drive(e, square(950, 0.1))
+        m = readout(r, square(100, 0.05))
+        n = _how_long.submit([m]).result()
+        sync(d, r)
+        wait(d, n, **options)
+        drive(d, square(100, 0.1))
+
+    return unbounded
+
+
+@pytest.mark.parametrize("bounds", [(4, None), None], ids=["no highest", "no bounds"])
+def test_a_wait_set_by_an_answer_with_no_highest_length_is_refused_under_a_limit(bounds):
+    kernel = _unbounded(bounds)
+    # Without a limit it compiles, as it does bounded under one.
+    assert pulse.compile(kernel, control_system=_answering()).lower(Q[0], Q[1])
+    assert pulse.compile(_unbounded((4, 100)), control_system=_answering(100_000)).lower(Q[0], Q[1])
+    with pytest.raises(CompilationError, match=NO_HIGHEST):
+        pulse.compile(kernel, control_system=_answering(100_000)).lower(Q[0], Q[1])
+    # On several controllers it is refused for the one whose lines it holds
+    # back.
+    with pytest.raises(CompilationError, match=NO_HIGHEST):
+        pulse.compile(kernel, control_system=_two_controllers(0)(100_000)).lower(Q[0], Q[1])
+
+
+def test_such_a_wait_is_not_refused_for_a_controller_it_does_not_hold_back():
+    # Controller 1 plays line e, which nothing ties to the wait, and counts
+    # the call, whose answer is there at 201: the wait, 4 cycles at least,
+    # ends after that.
+    kernel = _unbounded((4, None))
+    assert pulse.compile(kernel, control_system=_two_controllers(1)(100_000)).lower(Q[0], Q[1])
+    # A wait that may last 0 cycles ends, as scheduled, with the answer that
+    # the controller counts: it may hold that back, and is refused.
+    with pytest.raises(CompilationError, match=NO_HIGHEST.replace("[0", "[1")):
+        pulse.compile(_unbounded(None), control_system=_two_controllers(1)(100_000)).lower(
+            Q[0], Q[1]
+        )

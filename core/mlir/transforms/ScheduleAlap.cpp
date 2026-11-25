@@ -6544,10 +6544,11 @@ static int64_t cappedMul(int64_t a, int64_t b) {
 }
 
 /// A wait of the scheduled function whose length is known only when the
-/// program runs and has a highest length: its timeline, the end of its
-/// first execution as scheduled, and how many cycles longer than scheduled
-/// its executions can take together.
+/// program runs: its timeline, the end of its first execution as scheduled,
+/// and how many cycles longer than scheduled its executions can take
+/// together (-1: it has no highest length).
 struct RunTimeWait {
+  mlir::Operation *op;
   int64_t timeline, end, stretch;
 };
 
@@ -6573,12 +6574,11 @@ static int64_t timelineIn(mlir::Operation *op, int64_t count,
   return std::clamp<int64_t>(timeline, 0, count - 1);
 }
 
-/// The waits of run-time length of `function`, each with its timeline of
-/// the `count` the schedule kept apart (with none kept apart they are in
-/// one: such a wait then holds back every line). A wait with no highest length
-/// is not one of them: it counts as it is scheduled. Neither is a wait whose
-/// length a call's floats set: each call is scheduled, and checked, with its
-/// values.
+/// The waits of run-time length of `function` that run, each with its
+/// timeline of the `count` the schedule kept apart (with none kept apart
+/// they are in one: such a wait then holds back every line). A wait whose
+/// length a call's floats set is not one of them: each call is scheduled,
+/// and checked, with its values.
 static llvm::SmallVector<RunTimeWait> runTimeWaits(mlir::func::FuncOp function,
                                                    int64_t count) {
   llvm::SmallVector<RunTimeWait> waits;
@@ -6588,17 +6588,21 @@ static llvm::SmallVector<RunTimeWait> runTimeWaits(mlir::func::FuncOp function,
       return;
     int64_t stretch = stretchOf(op);
     std::optional<int64_t> start = pulse::startCycles(op);
-    if (stretch <= 0 || !start)
+    if (stretch == 0 || !start)
       return;
     // Each execution adds its own: a loop's body once per trip. (In an arm
     // of an if, where pulse-verify refuses such a wait, it counts as if the
     // arm always ran.)
-    for (mlir::scf::ForOp loop : pulse::enclosingLoops(op, function))
-      stretch = cappedMul(stretch, pulse::constantTripCount(loop).value_or(0));
-    if (stretch > 0)
-      waits.push_back({timelineIn(op, count, trace),
-                       *start + pulse::scheduledDuration(op).value_or(0),
-                       stretch});
+    for (mlir::scf::ForOp loop : pulse::enclosingLoops(op, function)) {
+      int64_t trips = pulse::constantTripCount(loop).value_or(0);
+      if (trips == 0)
+        return;
+      if (stretch > 0)
+        stretch = cappedMul(stretch, trips);
+    }
+    waits.push_back({op, timelineIn(op, count, trace),
+                     *start + pulse::scheduledDuration(op).value_or(0),
+                     stretch});
   });
   return waits;
 }
@@ -6612,7 +6616,8 @@ static llvm::SmallVector<RunTimeWait> runTimeWaits(mlir::func::FuncOp function,
 /// op (see Timelines). So a controller's part of the program can last, by
 /// timeline, to the end of that timeline's last op on the controller's
 /// lines plus what the timeline's waits that end by then add; and of those
-/// the longest.
+/// the longest. Such a wait with no highest length has no bound to hold to
+/// the limit: it is an error, as under a timing budget (checkBudget).
 LLVM_ATTRIBUTE_NOINLINE static mlir::LogicalResult
 checkAgainstLimits(mlir::func::FuncOp function, mlir::ArrayAttr limits,
                    const pulse::ClockAttributes &clocks, int64_t latency,
@@ -6644,10 +6649,26 @@ checkAgainstLimits(mlir::func::FuncOp function, mlir::ArrayAttr limits,
                  });
       for (auto [timeline, end] : llvm::enumerate(ends)) {
         int64_t added = 0;
-        for (const RunTimeWait &wait : waits)
-          if (wait.timeline == static_cast<int64_t>(timeline) &&
-              wait.end <= end)
-            added = cappedAdd(added, wait.stretch);
+        for (const RunTimeWait &wait : waits) {
+          if (wait.timeline != static_cast<int64_t>(timeline) || wait.end > end)
+            continue;
+          if (wait.stretch < 0) {
+            auto diagnostic =
+                wait.op->emitError()
+                << "kernel '" << module.getSymName().value_or("main")
+                << "' runs under " << name.getValue()
+                << "'s max_program_duration of " << duration.getValue()
+                << ", but this wait in it has no highest length; bound it "
+                   "with wait(..., bounds=(lowest, highest)), or drop "
+                   "max_program_duration";
+            function->setAttr(pulse::kPastProgramLimitAttr,
+                              mlir::StringAttr::get(
+                                  function->getContext(),
+                                  diagnostic.getUnderlyingDiagnostic()->str()));
+            return mlir::failure();
+          }
+          added = cappedAdd(added, wait.stretch);
+        }
         if (cappedAdd(end, added) > cappedAdd(length, stretch)) {
           length = end;
           stretch = added;

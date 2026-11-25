@@ -436,6 +436,12 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   lines it holds back: a line that nothing ties to the wait ends when it
   is scheduled to. A call whose values take the schedule past the limit
   is still a `ValueError`; its message now gives the scheduled length.
+  Stricter than before: such a wait with no highest length
+  (`bounds=(lowest, None)`, or no `bounds`) that holds back a line of a
+  controller with `max_program_duration` is now a `CompilationError` at
+  the wait, which says to bound it, as under `max_duration_cycles`. It
+  compiled before, counted at its lowest length, and could run past the
+  limit.
 - **`viz.save_schedule` takes a path-like path and names its keywords.**
   `path` may be a `pathlib.Path` as well as a string, and the function takes
   `figsize` and `title`, the two keywords of `plot_schedule`, where it passed
