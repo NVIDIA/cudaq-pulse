@@ -935,3 +935,72 @@ def test_such_a_wait_under_a_limit_is_an_error_of_the_kernel_at_a_call_too():
     with pytest.raises(CompilationError, match=NO_HIGHEST) as said:
         pulse.compile(unbounded, control_system=_answering(100_000)).lower(Q[0], Q[1], 8.0)
     assert not isinstance(said.value, ValueError)
+
+
+# ── Nor has the answer of a blocking classical function a latest time ──────
+
+
+@pulse.classical(max_latency_ns=50, latency_mode="blocking", name="blocking_bit")
+def _blocking_bit(bits: pulse.Bits) -> pulse.Bits:
+    return [0]
+
+
+def _blocked(used, after=False):
+    """Line e (b's drive line) plays 150 cycles that nothing ties to the
+    rest. On a's lines: a readout, a blocking call on it, and a drive that
+    the answer decides (*used*) or that follows the call without using it.
+    With *after*, line e plays again at the end of the kernel."""
+
+    @pulse.kernel
+    def blocked(a, b):
+        d = get_drive_line(a)
+        r = get_readout_line(a)
+        e = get_drive_line(b)
+        drive(e, square(150, 0.1))
+        m = readout(r, square(100, 0.05))
+        answer = _blocking_bit.submit([m]).result()
+        sync(d, r)
+        if used:
+            if answer[0]:
+                drive(d, square(100, 0.1))
+        else:
+            drive(d, square(100, 0.1))
+        if after:
+            drive(e, square(150, 0.1))
+
+    return blocked
+
+
+BLOCKING = (
+    r"kernel 'blocked' runs under controllers\[{}\]'s max_program_duration of 50000 ns, but it "
+    r"waits for an answer of a blocking classical function, which has no bound; use "
+    r'latency_mode="bounded" or "timeout", or drop max_program_duration'
+)
+
+
+@pytest.mark.parametrize("used", [True, False])
+def test_a_blocking_call_is_refused_under_a_limit(used):
+    kernel = _blocked(used)
+    assert pulse.compile(kernel, control_system=_answering()).lower(Q[0], Q[1])
+    with pytest.raises(CompilationError, match=BLOCKING.format(0)):
+        pulse.compile(kernel, control_system=_answering(100_000)).lower(Q[0], Q[1])
+    # On several controllers, for the one whose line follows the answer.
+    with pytest.raises(CompilationError, match=BLOCKING.format(0)):
+        pulse.compile(kernel, control_system=_two_controllers(0)(100_000)).lower(Q[0], Q[1])
+
+
+@pytest.mark.parametrize(("used", "after"), [(True, False), (True, True), (False, False)])
+def test_a_blocking_call_is_not_refused_for_a_controller_with_nothing_after_it(used, after):
+    # Controller 1 plays line e and counts the call itself, as scheduled.
+    # Where the answer is used, nothing ties line e to it, whenever e plays;
+    # where nothing uses it the call holds every line, and e is done.
+    kernel = _blocked(used, after)
+    assert pulse.compile(kernel, control_system=_two_controllers(1)(100_000)).lower(Q[0], Q[1])
+
+
+def test_a_blocking_call_whose_answer_nothing_uses_holds_every_line():
+    # So line e, which plays again after it, follows it on controller 1.
+    with pytest.raises(CompilationError, match=BLOCKING.format(1)):
+        pulse.compile(_blocked(False, True), control_system=_two_controllers(1)(100_000)).lower(
+            Q[0], Q[1]
+        )

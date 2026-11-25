@@ -272,7 +272,9 @@ gives the length as scheduled and what those waits add. Such a wait with
 no highest length (``bounds=(lowest, None)``, or no ``bounds``) has nothing
 to hold to the limit: where it holds back a line of a controller that sets
 ``max_program_duration`` it is a ``CompilationError`` at the wait, which
-says to bound it.
+says to bound it. So is a call of a blocking classical function
+(``latency_mode="blocking"``), whose answer has no latest time, where an
+operation of such a controller comes after its answer.
 
 Building the module from the traced kernel also sums the program op after
 op, every iteration of its loops (the longer arm of an ``if``), so that a

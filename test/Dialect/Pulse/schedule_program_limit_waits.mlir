@@ -143,3 +143,53 @@ module attributes {pulse.control_system = #pulse.control_system<clock_period_fs 
     return
   }
 }
+
+// -----
+
+// The answer of a blocking classical function has no latest time: under a
+// limit, with a drive after it, an error at the wait for it.
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>, pulse.program_limits = [{controller = 0 : i64, cycles = 100000 : i64, name = "controllers[0]", duration = "100000 ns"}]} {
+  classical.callable @slow {dispatch_key = 1 : i64, device = 0 : i64,
+      args = [], results = ["i64"], latency_min_ns = 0.0,
+      latency_nominal_ns = 50.0, latency_max_ns = 100.0, mode = "blocking",
+      submit = "eager", dispatch_key_override}
+
+  func.func @blocking() {
+    %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+    %d0, %t0 = pulse.get_drive_line %q : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
+    %c40 = arith.constant 40 : i64
+    %a = arith.constant 0.05 : f64
+    %z = arith.constant 0.0 : f64
+    %x = pulse.square %c40, %a, %z : i64, f64, f64 -> !pulse.waveform
+    %l = classical.get_link {device = 0 : i64} : !classical.link
+    %l1, %h = classical.submit %l, @slow() : () -> (!classical.link, !classical.future)
+    // expected-error@+1 {{kernel 'main' runs under controllers[0]'s max_program_duration of 100000 ns, but it waits for an answer of a blocking classical function, which has no bound; use latency_mode="bounded" or "timeout", or drop max_program_duration}}
+    %n = classical.wait %h, @slow : i64
+    %d1, %t1 = pulse.drive %d0, %x, %t0 : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+    return
+  }
+}
+
+// -----
+
+// With nothing after the answer the program ends with it as scheduled.
+module attributes {pulse.control_system = #pulse.control_system<clock_period_fs = 1000000>, pulse.program_limits = [{controller = 0 : i64, cycles = 100000 : i64, name = "controllers[0]", duration = "100000 ns"}]} {
+  classical.callable @slow {dispatch_key = 1 : i64, device = 0 : i64,
+      args = [], results = ["i64"], latency_min_ns = 0.0,
+      latency_nominal_ns = 50.0, latency_max_ns = 100.0, mode = "blocking",
+      submit = "eager", dispatch_key_override}
+
+  func.func @blocking_last() {
+    %q = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+    %d0, %t0 = pulse.get_drive_line %q : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
+    %c40 = arith.constant 40 : i64
+    %a = arith.constant 0.05 : f64
+    %z = arith.constant 0.0 : f64
+    %x = pulse.square %c40, %a, %z : i64, f64, f64 -> !pulse.waveform
+    %d1, %t1 = pulse.drive %d0, %x, %t0 : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+    %l = classical.get_link {device = 0 : i64} : !classical.link
+    %l1, %h = classical.submit %l, @slow() : () -> (!classical.link, !classical.future)
+    %n = classical.wait %h, @slow : i64
+    return
+  }
+}

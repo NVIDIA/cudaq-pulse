@@ -441,7 +441,9 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   controller with `max_program_duration` is now a `CompilationError` at
   the wait, which says to bound it, as under `max_duration_cycles`. It
   compiled before, counted at its lowest length, and could run past the
-  limit.
+  limit. So is a wait for the answer of a blocking classical function
+  (`latency_mode="blocking"`) that an operation of such a controller
+  follows: the error at the wait says to use `"bounded"` or `"timeout"`.
 - **`viz.save_schedule` takes a path-like path and names its keywords.**
   `path` may be a `pathlib.Path` as well as a string, and the function takes
   `figsize` and `title`, the two keywords of `plot_schedule`, where it passed

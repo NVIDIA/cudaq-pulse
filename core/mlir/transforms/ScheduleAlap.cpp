@@ -6548,9 +6548,13 @@ static int64_t cappedMul(int64_t a, int64_t b) {
 /// outermost loop it is in (null: none), its timeline, the start of its
 /// first execution as scheduled, and how many cycles longer than scheduled
 /// its executions can take together (-1: it has no highest length).
+/// `blocking`: a wait for the answer of a blocking classical function, at
+/// the end of which the answer is there, rather than a wait on a line whose
+/// length an answer sets; it has no highest length.
 struct RunTimeWait {
   mlir::Operation *op, *loop;
   int64_t place, timeline, start, stretch;
+  bool blocking;
 };
 
 /// The timeline of `op`, of the `count` the schedule kept apart (one when
@@ -6599,7 +6603,9 @@ runTimeWaits(mlir::func::FuncOp function, int64_t count,
     if (!isTimedOp(op))
       return;
     places[op] = place++;
-    if (!op->hasAttr("classical.variable"))
+    bool blocking =
+        mlir::isa<classical::WaitOp>(op) && op->hasAttr("classical.blocking");
+    if (!blocking && !op->hasAttr("classical.variable"))
       return;
     int64_t stretch = stretchOf(op);
     std::optional<int64_t> start = pulse::startCycles(op);
@@ -6617,7 +6623,8 @@ runTimeWaits(mlir::func::FuncOp function, int64_t count,
         stretch = cappedMul(stretch, trips);
     }
     waits.push_back({op, loops.empty() ? nullptr : loops.front().getOperation(),
-                     place - 1, timelineIn(op, count, trace), *start, stretch});
+                     place - 1, timelineIn(op, count, trace), *start, stretch,
+                     blocking});
   });
   return waits;
 }
@@ -6658,9 +6665,11 @@ struct TimelineWaits {
 /// lines can end as late as it is scheduled to plus what the waits of its
 /// timeline that it is not before add, and the controller's part of the
 /// program lasts to the latest of those ends. Such a wait with no highest
-/// length, where an op on the controller's lines is not before it, has no
-/// bound to hold to the limit: it is an error, as under a timing budget
-/// (checkBudget).
+/// length, or a wait for the answer of a blocking classical function, where
+/// an op on the controller's lines is not before it, has no bound to hold
+/// to the limit: it is an error, as under a timing budget (checkBudget).
+/// (A wait on a line is itself an op of that line; a wait for an answer,
+/// which every controller counts, is not after itself.)
 LLVM_ATTRIBUTE_NOINLINE static mlir::LogicalResult
 checkAgainstLimits(mlir::func::FuncOp function, mlir::ArrayAttr limits,
                    const pulse::ClockAttributes &clocks, int64_t latency,
@@ -6694,54 +6703,62 @@ checkAgainstLimits(mlir::func::FuncOp function, mlir::ArrayAttr limits,
       length = programLength(function, &clocks, controller.getInt());
     } else {
       pulse::AllocationTracer trace;
-      forEachEnd(function, &clocks, controller.getInt(),
-                 [&](mlir::Operation *op, int64_t end) {
-                   const TimelineWaits &timeline =
-                       byTimeline[timelineIn(op, count, trace)];
-                   int64_t place = places.lookup(op);
-                   // The waits up to the op in the function's order, itself
-                   // included, move it.
-                   size_t k = std::partition_point(
-                                  timeline.waits.begin(), timeline.waits.end(),
-                                  [&](const RunTimeWait *wait) {
-                                    return wait->place <= place;
-                                  }) -
-                              timeline.waits.begin();
-                   int64_t added = timeline.added[k];
-                   const RunTimeWait *open =
-                       timeline.unbounded < k
-                           ? timeline.waits[timeline.unbounded]
-                           : nullptr;
-                   // Of the later ones, those it does not end before, and those
-                   // in a loop with it, whose later trips come after them.
-                   mlir::Operation *loop = k < timeline.waits.size()
-                                               ? outermostLoop(op, function)
-                                               : nullptr;
-                   if (end > timeline.starts[k] || loop)
-                     for (const RunTimeWait *wait :
-                          llvm::ArrayRef(timeline.waits).drop_front(k)) {
-                       if (end <= wait->start && !(loop && loop == wait->loop))
-                         continue;
-                       if (wait->stretch < 0)
-                         open = open ? open : wait;
-                       else
-                         added = cappedAdd(added, wait->stretch);
-                     }
-                   if (open && (!unbounded || open->place < unbounded->place))
-                     unbounded = open;
-                   if (cappedAdd(end, added) > cappedAdd(length, stretch)) {
-                     length = end;
-                     stretch = added;
-                   }
-                 });
+      forEachEnd(
+          function, &clocks, controller.getInt(),
+          [&](mlir::Operation *op, int64_t end) {
+            const TimelineWaits &timeline =
+                byTimeline[timelineIn(op, count, trace)];
+            int64_t place = places.lookup(op);
+            // The waits up to the op in the function's order, itself
+            // included, move it.
+            size_t k = std::partition_point(
+                           timeline.waits.begin(), timeline.waits.end(),
+                           [&](const RunTimeWait *wait) {
+                             return wait->place < place ||
+                                    (wait->place == place && !wait->blocking);
+                           }) -
+                       timeline.waits.begin();
+            int64_t added = timeline.added[k];
+            const RunTimeWait *open = timeline.unbounded < k
+                                          ? timeline.waits[timeline.unbounded]
+                                          : nullptr;
+            // Of the later ones, those it does not end before, and those
+            // in a loop with it, whose later trips come after them.
+            mlir::Operation *loop = k < timeline.waits.size()
+                                        ? outermostLoop(op, function)
+                                        : nullptr;
+            if (end > timeline.starts[k] || loop)
+              for (const RunTimeWait *wait :
+                   llvm::ArrayRef(timeline.waits).drop_front(k)) {
+                if (wait->op == op ||
+                    (end <= wait->start && !(loop && loop == wait->loop)))
+                  continue;
+                if (wait->stretch < 0)
+                  open = open ? open : wait;
+                else
+                  added = cappedAdd(added, wait->stretch);
+              }
+            if (open && (!unbounded || open->place < unbounded->place))
+              unbounded = open;
+            if (cappedAdd(end, added) > cappedAdd(length, stretch)) {
+              length = end;
+              stretch = added;
+            }
+          });
     }
     if (unbounded) {
       // Not left on the function: no values of a call make it so, the
       // kernel does.
-      return unbounded->op->emitError()
-             << "kernel '" << module.getSymName().value_or("main")
-             << "' runs under " << name.getValue()
-             << "'s max_program_duration of " << duration.getValue()
+      auto diagnostic = unbounded->op->emitError()
+                        << "kernel '" << module.getSymName().value_or("main")
+                        << "' runs under " << name.getValue()
+                        << "'s max_program_duration of " << duration.getValue();
+      if (unbounded->blocking)
+        return diagnostic
+               << ", but it waits for an answer of a blocking classical "
+                  "function, which has no bound; use latency_mode=\"bounded\" "
+                  "or \"timeout\", or drop max_program_duration";
+      return diagnostic
              << ", but this wait in it has no highest length; bound it with "
                 "wait(..., bounds=(lowest, highest)), or drop "
                 "max_program_duration";
