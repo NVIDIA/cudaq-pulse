@@ -250,7 +250,12 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   a coupling line, a classical call, a kernel with its own `schedule=`
   (compile with `flatten_schedules=True`) and a value a measurement
   selects at run time (each an `UnsupportedError` that says so, even
-  when the line is never used). Beside none of those, a coupling line that
+  when the line is never used). Idle
+  replacement (`replace_idle`) counts a pulse on a coupling line as each
+  qudit the line reaches being busy, as the qudit's own readout is: an
+  idle window ends where the pulse starts, and the rest is filled; a
+  fill itself plays on its qudit's drive line only, and one that fetches
+  a coupling line is a `CompilationError`. Beside none of those, a coupling line that
   is fetched and never used is dropped as any unused line. Programs without coupling lines compile, schedule
   and export as before.
 - **Simulating a pulse on a coupling line.** `simulate` plays a pulse on

@@ -709,7 +709,8 @@ class Gap:
     end of ``lo`` (a drive or wait on the line; None at the program's
     start) to the start of ``hi`` (None at its end), with the events on the
     qudit in between, each (event, start, end, what): ``"tone"`` while its
-    tone plays from another line, ``"readout"`` while its own readout runs,
+    tone plays from another line, ``"readout"`` while its own readout runs
+    or a coupling line that reaches it plays,
     ``"frame"`` where the kernel changes the tone's phase, ``"frequency"``
     where it changes its frequency, ``"sync"`` where a sync of the line
     meets, and ``"busy"`` for a pulse at its tone that began before the gap.
@@ -1032,7 +1033,13 @@ def gaps(lines: list[tuple[str, int]], items: list[Any]) -> dict[int, list[Gap]]
                 line = state[qudit]
                 line.since = _Timed(event.end, event)
                 line.started = True
-            elif role == "readout" and event.kind == "readout" and qudit in state:
+            # A qudit's own readout, and a pulse on a coupling line that
+            # reaches it: the module lists such a line once per qudit and a
+            # pulse on it as a "readout" of each, since it is time on the
+            # qudit that the program orders with nothing on its drive line.
+            # (The roles are written out where they are tested: a name for
+            # them would be one more thing this module does when it loads.)
+            elif role in ("readout", "coupling") and event.kind == "readout" and qudit in state:
                 if not any(copy for _, copy, _ in event.path):
                     readouts[qudit].append(event)
         if event.tone < 0 or event.tone == event.line:
@@ -1133,7 +1140,7 @@ def _sync_shifts(
             span[outer] = [min(low, event.start), max(high, event.end)]
         if event.kind == "readout" and 0 <= event.line < len(lines):
             role, qudit = lines[event.line]
-            if role == "readout":
+            if role in ("readout", "coupling"):
                 on_qudit.append((qudit, _outer(event), event.start, event.end))
         # A pulse at its tone from another line, and a change of the
         # tone's frame or frequency there.
@@ -1349,7 +1356,8 @@ def _steady(gap: Gap, fills: set[tuple[int, int]], forward: bool) -> bool:
 class IdleWindow:
     """One idle window of a compiled program: a stretch of at least the
     threshold in which a qudit's drive line has no operation, none of its
-    tones plays, and its readout does not run.
+    tones plays, its readout does not run and no coupling line that reaches
+    it plays.
 
     ``start`` and ``end`` are in clock cycles, of the window's first
     execution; ``rounds`` counts its executions (the iterations of a loop
@@ -1448,7 +1456,8 @@ def kept(gap: Gap, part: tuple[int, int], rule: Any, log: list[Site], forward: b
     if gap.holes:
         if gap.repeats & {"readout", "tone", "busy"}:
             return (
-                "left alone: a loop reads the qudit out or plays its tone in every round meanwhile"
+                "left alone: a loop reads the qudit out, plays a coupling line that reaches "
+                "it, or plays its tone in every round meanwhile"
             )
         if gap.repeats & {"frame", "frequency"}:
             return (
@@ -1847,6 +1856,21 @@ def prove(
             continue
         site = _site(was if was.__class__ is not tuple else None, log)
         if site is None or a[:2] != b[:2] or a[1] == "sync":
+            if (
+                was.__class__ is not tuple
+                and was.site is None
+                and a[:2] == b[:2]
+                and 0 <= was.line < len(lines)
+                and lines[was.line][0] == "coupling"
+            ):
+                # A pulse on a coupling line, which the record of the trace
+                # does not hold: it moved, as any op of the kernel may.
+                raise CompilationError(
+                    f"idle replacement: with the idle windows of {name}() filled, a pulse "
+                    f"on a coupling line is at cycles {b[4]} to {b[5]} instead of {a[4]} to "
+                    f"{a[5]}, or in other iterations of its loops",
+                    code="timing",
+                )
             break
         if a[4] != b[4]:
             moved = f"starts at cycle {b[4]} instead of {a[4]}"
@@ -1968,7 +1992,8 @@ def _overlap(a: _Event, b: _Event) -> bool:
 
 def _clear_of_the_qudit(lines: list[tuple[str, int]], final: list[Any], name: str) -> None:
     """Check that no pulse written into a window plays while its qudit's
-    own readout runs or its tone plays from another line, in any iteration
+    own readout runs, a coupling line that reaches it plays or its tone
+    plays from another line, in any iteration
     of the loops around either: the gaps are found from two iterations of
     each loop, and this is what they must have got right."""
     readout_of = {qudit: index for index, (role, qudit) in enumerate(lines) if role == "readout"}
@@ -1981,7 +2006,7 @@ def _clear_of_the_qudit(lines: list[tuple[str, int]], final: list[Any], name: st
         if item.site is not None and item.site < 0:
             if role == "drive":
                 written.setdefault(qudit, []).append(item)
-        elif item.kind == "readout" and role == "readout":
+        elif item.kind == "readout" and role in ("readout", "coupling"):
             busy.setdefault(qudit, []).append(item)
         if item.tone >= 0 and item.tone != item.line and (item.site is None or item.site >= 0):
             tone_role, owner = lines[item.tone]
@@ -1994,6 +2019,8 @@ def _clear_of_the_qudit(lines: list[tuple[str, int]], final: list[Any], name: st
                     what = (
                         "its own readout runs"
                         if other.line == readout_of.get(qudit)
+                        else "a coupling line that reaches it plays"
+                        if lines[other.line][0] == "coupling"
                         else "its tone plays from another line"
                     )
                     raise InternalError(
@@ -2149,5 +2176,9 @@ def _before(gap: Gap, part: tuple[int, int], log: list[Site]) -> str | None:
     if ending is None:
         return None
     if ending.site is None or not 0 <= ending.site < len(log):
+        if ending.kind == "readout" and ending.tone < 0:
+            # A pulse on a coupling line, which the module lists as a
+            # readout with no tone and the record of the trace does not hold.
+            return "drive() on a coupling line"
         return f"{ending.kind}()"
     return log[ending.site].describe()
