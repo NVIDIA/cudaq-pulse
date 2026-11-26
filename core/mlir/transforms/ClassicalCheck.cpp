@@ -158,9 +158,13 @@ static void sentValues(mlir::ValueRange values,
 
 /// Every execution of every submission, per link, in program order. Both
 /// arms of a branch are listed, so capacity is checked for the worst case.
-/// The first loop around a submission with at least `summarizeFrom` trips
-/// (none when 0) is kept as runs; every other loop is walked iteration by
-/// iteration.
+/// Of the loops around a submission at most one is kept as runs, and the
+/// others are walked iteration by iteration: the outermost loop with at
+/// least `summarizeFrom` trips (none when 0) that walking would not be
+/// much less work for (keptAs). Of rounds around many more repeats that is
+/// the repeats; of loops of equal trips, the outer; and a loop with a
+/// large body or submissions of its own stays the one kept until a loop
+/// inside it is long enough to pay for walking it.
 ///
 /// With `Ordering` (a function with a branch), the walk also checks the
 /// order of the calls a branch on an answer relies on: the scheduler bounds
@@ -226,7 +230,7 @@ struct Submissions {
         int64_t count = pulse::constantTripCount(loop).value_or(0);
         iteration.push_back(0);
         if ((!Ordering || recording) && !level && summarizeFrom > 0 &&
-            count >= summarizeFrom) {
+            count >= summarizeFrom && keptAs(loop).second) {
           level = iteration.size() - 1;
           group = groups++;
           trips = count;
@@ -297,6 +301,93 @@ private:
       error(op, "an operation in a branch on an answer starts at " +
                     llvm::Twine(start) + ", before the answer is taken at " +
                     llvm::Twine(answered));
+  }
+
+  /// What one iteration of a loop's body costs the walk: the executions of
+  /// its submissions and the operations it holds, every loop in it written
+  /// out; and the runs recorded and the operations visited when each loop
+  /// in it is kept or walked by the rule below. Counts that do not fit 64
+  /// bits are held at the most they hold.
+  struct Listed {
+    int64_t executions = 0, operations = 0, runs = 0, visits = 0;
+  };
+
+  /// How many times less work walking a loop must be to walk it.
+  static constexpr int64_t kWalkPays = 16;
+
+  static int64_t plus(int64_t a, int64_t b) {
+    int64_t sum;
+    if (__builtin_add_overflow(a, b, &sum))
+      return std::numeric_limits<int64_t>::max();
+    return sum;
+  }
+
+  static int64_t times(int64_t a, int64_t b) {
+    int64_t product;
+    if (__builtin_mul_overflow(a, b, &product))
+      return std::numeric_limits<int64_t>::max();
+    return product;
+  }
+
+  Listed listed(mlir::Block &block) {
+    Listed total;
+    for (mlir::Operation &op : block) {
+      total.operations = plus(total.operations, 1);
+      total.visits = plus(total.visits, 1);
+      if (mlir::isa<classical::SubmitOp>(op)) {
+        total.executions = plus(total.executions, 1);
+        total.runs = plus(total.runs, 1);
+      } else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
+        auto [body, keep] = keptAs(loop);
+        int64_t count = pulse::constantTripCount(loop).value_or(0);
+        total.executions =
+            plus(total.executions, times(count, body.executions));
+        total.operations =
+            plus(total.operations, times(count, body.operations));
+        total.runs =
+            plus(total.runs, keep ? body.executions : times(count, body.runs));
+        total.visits = plus(total.visits,
+                            keep ? body.operations : times(count, body.visits));
+      } else {
+        for (mlir::Region &region : op.getRegions())
+          for (mlir::Block &nested : region) {
+            Listed inner = listed(nested);
+            total.executions = plus(total.executions, inner.executions);
+            total.operations = plus(total.operations, inner.operations);
+            total.runs = plus(total.runs, inner.runs);
+            total.visits = plus(total.visits, inner.visits);
+          }
+      }
+    }
+    return total;
+  }
+
+  /// What an iteration of `loop` costs, and whether the loop is kept as
+  /// runs when no loop around it is. Kept, every loop inside it is walked:
+  /// the walk visits the operations of one iteration written out and
+  /// records a run per execution in it. Walked, the walk visits its trips
+  /// times what an iteration takes with the loops inside kept or walked in
+  /// turn, and records as many times its runs. The runs of a link are then
+  /// compared with one another, so the work is taken as the operations
+  /// visited plus the square of the runs. The measure is rough (it does
+  /// not tell links apart, nor a count that falls back to every
+  /// execution), so a loop of at least `summarizeFrom` trips is kept, as
+  /// every such loop was before, unless walking it is less work by
+  /// kWalkPays times.
+  std::pair<Listed, bool> keptAs(mlir::scf::ForOp loop) {
+    auto found = kept.find(loop.getOperation());
+    if (found != kept.end())
+      return found->second;
+    Listed body = listed(*loop.getBody());
+    int64_t count = pulse::constantTripCount(loop).value_or(0);
+    int64_t walkedRuns = times(count, body.runs);
+    int64_t asKept =
+        plus(body.operations, times(body.executions, body.executions));
+    int64_t asWalked =
+        plus(times(count, body.visits), times(walkedRuns, walkedRuns));
+    bool keep = summarizeFrom > 0 && count >= summarizeFrom &&
+                asKept <= times(kWalkPays, asWalked);
+    return kept[loop.getOperation()] = {body, keep};
   }
 
   /// A call with a time the check does not compute with.
@@ -425,6 +516,8 @@ private:
   /// The latest answer a branch around the op walked is on.
   int64_t answered = kNone;
   llvm::DenseSet<mlir::Operation *> reported;
+  /// keptAs of the loops asked so far.
+  llvm::DenseMap<mlir::Operation *, std::pair<Listed, bool>> kept;
 };
 
 static int64_t floorDiv(int64_t a, int64_t b) {

@@ -167,3 +167,86 @@ def _calls_before(n: int) -> dict[str, Any]:
 
 def test_a_call_before_a_loop_of_10_7_iterations_lowers_in_bounded_time_and_memory():
     _lowers_as_extrapolated(_calls_before, 10**7)
+
+
+def _nested(trips: tuple[int, ...]) -> Any:
+    """Rounds around repeats (around repeats): a call and a branch on its
+    answer inside loops of *trips*, outermost first, with a call of its own
+    at each level but the innermost."""
+    outer, *rest = trips
+
+    @pulse.kernel
+    def two(q, r, t):
+        d = get_drive_line(q)
+        ro = get_readout_line(q)
+        for _ in range(outer):
+            first = decide.submit([readout(ro, square(60, 0.05))]).result()
+            sync(d, ro)
+            if first[0]:
+                drive(d, square(12, 0.2))
+            for _ in range(rest[0]):
+                m = readout(ro, square(100, 0.05))
+                fix = decide.submit([m]).result()
+                sync(d, ro)
+                if fix[0]:
+                    drive(d, square(20, 0.3))
+
+    @pulse.kernel
+    def three(q, r, t):
+        d = get_drive_line(q)
+        ro = get_readout_line(q)
+        for _ in range(outer):
+            zeroth = decide.submit([readout(ro, square(40, 0.05))]).result()
+            sync(d, ro)
+            if zeroth[0]:
+                drive(d, square(8, 0.2))
+            for _ in range(rest[0]):
+                first = decide.submit([readout(ro, square(60, 0.05))]).result()
+                sync(d, ro)
+                if first[0]:
+                    drive(d, square(12, 0.2))
+                for _ in range(rest[1]):
+                    m = readout(ro, square(100, 0.05))
+                    fix = decide.submit([m]).result()
+                    sync(d, ro)
+                    if fix[0]:
+                        drive(d, square(20, 0.3))
+
+    return two if len(trips) == 2 else three
+
+
+# The loop kept as one run is the outermost of 64 or more trips unless
+# walking it and keeping a longer loop inside it is much less work: the
+# longest loop outside, inside and in the middle, loops of equal trips, an
+# outer loop of 64 or more around one long enough to be kept in its place
+# (the nests with a loop of 800 or more) and around one that is not, and
+# none of 64 or more. Each level but the innermost has a call of its own.
+_NESTS = [
+    (130, 3),
+    (3, 130),
+    (70, 65),
+    (65, 70),
+    (64, 130),
+    (64, 1200),
+    (70, 1500),
+    (64, 64),
+    (5, 6),
+    (70, 2, 3),
+    (2, 70, 3),
+    (2, 3, 70),
+    (65, 2, 70),
+    (64, 2, 800),
+    (66, 70, 2),
+    (64, 2, 64),
+]
+
+
+@pytest.mark.parametrize("schedule", POLICIES)
+def test_nested_loops_of_calls_are_checked_from_the_longest_as_every_iteration(schedule):
+    kernels = {"x".join(map(str, trips)): _nested(trips) for trips in _NESTS}
+    # Every nest is scheduled on the default machine, so none is passed over.
+    for name, kernel in kernels.items():
+        assert _scheduled(kernel, schedule, {}) is not None, name
+    differ, failing = _differ(kernels, schedule)
+    assert differ == []
+    assert failing > 50

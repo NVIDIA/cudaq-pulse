@@ -578,6 +578,35 @@ def test_a_round_on_many_controllers_is_checked_in_linear_time():
 
 
 @pytest.mark.scaling
+def test_rounds_around_repeats_of_a_call_cost_the_same_at_any_repeat_count():
+    @pulse.classical(max_latency_ns=60)
+    def decide(bits: pulse.Bits) -> bool:
+        return True
+
+    def program(repeats: int):
+        @pulse.kernel
+        def rounds(q):
+            d = get_drive_line(q)
+            r = get_readout_line(q)
+            for _ in range(100):
+                if decide.submit([readout(r, square(32, 0.05))]).result():
+                    drive(d, square(24, 0.1))
+                for _ in range(repeats):
+                    if decide.submit([readout(r, square(32, 0.05))]).result():
+                        drive(d, square(40, 0.1))
+
+        # A fresh compiled kernel holds no specializations, so this compiles.
+        return lambda: pulse.compile(rounds).lower(Q[0])
+
+    # Both loops are kept as loops. The classical check keeps one of them as
+    # one run and walks the other: here the repeats are kept, which is the
+    # less work, so the rounds are walked 100 times whatever the repeats.
+    # With the rounds kept, every repeat was an entry compared with every
+    # other: eight times the repeats took 64 times as long.
+    _assert_flat("rounds of repeats", {n: program(n) for n in (2_000, 16_000)})
+
+
+@pytest.mark.scaling
 def test_calls_with_branches_on_their_answers_are_timed_in_linear_time():
     from cudaq_pulse.quantum_systems import PhysicalQudit
 
