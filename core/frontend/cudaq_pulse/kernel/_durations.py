@@ -28,6 +28,7 @@ from .ir_builder import (
     CompilationError,
     IRValue,
     ParameterExpression,
+    Selection,
     arithmetic_text,
     expression_leaves,
     expression_nodes,
@@ -212,6 +213,8 @@ def cycles(fname: str, what: str, value: Any, whole: bool, call: str, clock_ghz:
     if whole and isinstance(value, float) and cls is not Cycles:
         raise float_duration(fname, what, value, call)
     if is_symbolic(value) and _has_time(value):
+        if isinstance(value, Selection):
+            return _chosen(fname, what, value, whole, call, clock_ghz)
         if unit(value, fname, what) != 1:
             raise CompilationError(
                 f"{fname}(): {what} {arithmetic_text(value)} is a number, not a time: "
@@ -259,7 +262,26 @@ def _has_time(value: Any) -> bool:
         return True
     if value.__class__ is ParameterExpression:
         return any(leaf.__class__ is Time for leaf in expression_leaves(value, ARITHMETIC))
+    if isinstance(value, Selection):
+        return _has_time(value.then) or _has_time(value.other)
     return False
+
+
+# *value*, a choice of an if on a measurement that holds a time (``t`` set to
+# ``50 * pulse.ns`` in one arm and ``150 * pulse.ns`` in the other), in
+# program cycles: each value it may take converted as the op would convert
+# it. The builder makes one select of each choice, so a choice converts once
+# for each clock, and the ops that read it read one select.
+def _chosen(fname: str, what: str, value: Any, whole: bool, call: str, clock_ghz: float) -> Any:
+    from ._emitter import _choice_map
+
+    made = getattr(value, "program_cycles", None)
+    if made is None:
+        made = value.program_cycles = {}
+    key = (clock_ghz, whole)
+    if key not in made:
+        made[key] = _choice_map(lambda v: cycles(fname, what, v, whole, call, clock_ghz), value)
+    return made[key]
 
 
 def unit(value: Any, fname: str, what: str) -> int:

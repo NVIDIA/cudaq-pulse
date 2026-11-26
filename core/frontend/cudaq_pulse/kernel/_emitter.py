@@ -477,9 +477,11 @@ class _Choice(Selection):
     ``_emit_chosen``). ``scope`` is the regions open where the choice was
     made, outside which ``cond`` is not defined; ``name`` and ``line`` name
     it in errors.
+    ``program_cycles``, once set, holds the choice of a time in program
+    cycles, for each clock (``_durations.cycles``).
     """
 
-    __slots__ = ("name", "line", "scope", "vtype", "size")
+    __slots__ = ("name", "line", "scope", "vtype", "size", "program_cycles")
     __hash__ = object.__hash__
     chan = None
     vid = UNDEFINED_VID
