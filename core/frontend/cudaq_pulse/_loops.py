@@ -1076,7 +1076,7 @@ def _off_grid(
         start, duration = found
         line, kind = events[i]["line"], events[i]["kind"]
         return _OnProgramClock(
-            lambda s: message(own, lines[line], line, kind, s, duration), start, own.ratio, i
+            lambda s: message(own, lines[line], kind, s, duration), start, own.ratio, i
         )
 
     return _each_event(tree, make)

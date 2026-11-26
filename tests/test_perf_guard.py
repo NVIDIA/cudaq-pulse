@@ -345,6 +345,57 @@ def test_a_wide_sync_traces_in_linear_time():
 
 
 @pytest.mark.scaling
+def test_an_if_costs_what_its_arms_change_not_the_lines_held_in_lists():
+    # A readout and a measurement-conditioned if per qudit, with every line
+    # held in a list: each if puts back the list slots its arms wrote, not
+    # every list the kernel holds.
+    wide = ladder_target(1600).qudits
+
+    def program(n: int):
+        @pulse.kernel
+        def kernel(qudits):
+            lines = [get_drive_line(q) for q in qudits]
+            reads = [get_readout_line(q) for q in qudits]
+            for i in range(len(lines)):
+                sync(reads[i], lines[i])
+                m = readout(reads[i], square(40, 0.05))
+                if m:
+                    drive(lines[i], square(8, 0.1))
+
+        return lambda: pulse.compile(kernel).lower(wide[0:n])
+
+    # Eight times the ifs and lines: about 8x the time when linear, 64x when not.
+    _assert_linear("trace", {n: program(n) for n in (200, 1600)}, 16)
+
+
+@pulse.kernel
+def _reset_one(lines, reads, i):
+    m = readout(reads[i], square(40, 0.05))
+    if m:
+        drive(lines[i], square(8, 0.1))
+
+
+@pytest.mark.scaling
+def test_an_if_in_a_called_kernel_costs_what_its_arms_change():
+    # As above, with each if in a kernel the round calls: the trace's first
+    # if is then inside a call, and the ifs after it still put back only
+    # what their arms wrote.
+    wide = ladder_target(1600).qudits
+
+    def program(n: int):
+        @pulse.kernel
+        def kernel(qudits):
+            lines = [get_drive_line(q) for q in qudits]
+            reads = [get_readout_line(q) for q in qudits]
+            for i in range(len(lines)):
+                _reset_one(lines, reads, i)
+
+        return lambda: pulse.compile(kernel).lower(wide[0:n])
+
+    _assert_linear("trace", {n: program(n) for n in (200, 1600)}, 16)
+
+
+@pytest.mark.scaling
 def test_the_events_of_a_long_line_are_listed_in_linear_time():
     def program(n: int):
         @pulse.kernel
@@ -478,6 +529,43 @@ def test_a_round_on_many_controllers_is_checked_in_linear_time():
 
 
 @pytest.mark.scaling
+def test_calls_with_branches_on_their_answers_are_timed_in_linear_time():
+    from cudaq_pulse.quantum_systems import PhysicalQudit
+
+    @pulse.classical(max_latency_ns=60)
+    def decide(bits: pulse.Bits) -> bool:
+        return True
+
+    controllers = [Controller(clock_ghz=2.0, drive_lines=[i], readout_lines=[i]) for i in range(2)]
+    system = pulse.quantum_system(
+        name="calls",
+        qudits={i: PhysicalQudit(i, 4.5e9 + 1.0e5 * i, 37.7, 9.2) for i in range(2)},
+        control_system=ControlSystem(controllers=controllers, reference_clock_ghz=2.0),
+        clock_ghz=2.0,
+    )
+
+    def program(n: int):
+        @pulse.kernel
+        def kernel(qudits):
+            line = get_drive_line(qudits[0])
+            answer = get_readout_line(qudits[0])
+            for i in range(n):
+                if decide.submit([readout(answer, square(32 + 0 * i, 0.05))]).result():
+                    drive(line, square(40, 0.1))
+
+        # A fresh compiled kernel holds no specializations, so this compiles.
+        return lambda: pulse.compile(kernel, quantum_system=system, unroll_threshold=100_000).lower(
+            system.qudits[0:2]
+        )
+
+    # On several controllers a call's budget takes the controllers that play
+    # what uses its answer: the line a branch on it drives, through every
+    # branch after it. Eight times the calls: about 8x the time when the
+    # branches are followed once for all calls, 64x when once per call.
+    _assert_linear("calls", {n: program(n) for n in (250, 2000)}, 8 * TOLERANCE)
+
+
+@pytest.mark.scaling
 def test_the_pulses_at_once_are_counted_in_linear_time():
     from cudaq_pulse._concurrency import violations
     from cudaq_pulse.quantum_systems import PhysicalQudit
@@ -506,6 +594,36 @@ def test_the_pulses_at_once_are_counted_in_linear_time():
 
 
 @pytest.mark.scaling
+def test_the_pulses_of_a_round_kept_as_a_loop_are_bounded_in_linear_time():
+    from cudaq_pulse._concurrency import violations
+    from cudaq_pulse.quantum_systems import PhysicalQudit
+
+    @pulse.kernel
+    def rounds(qudits):
+        for _ in range(1000):
+            for q in qudits:
+                drive(get_drive_line(q), square(40, 0.1))
+
+    def program(n: int):
+        # Every drive of a round is in flight at once, and the limit lets
+        # them be: the bound on what a round plays settles it.
+        control = ControlSystem(
+            controllers=[Controller(drive_lines=range(n), readout_lines=range(n))],
+            max_concurrent_drives=n,
+        )
+        qudits = {i: PhysicalQudit(i, 5.0e9 + 1.0e3 * i, 50.0, 30.0) for i in range(n)}
+        system = pulse.quantum_system(name=f"round{n}", qudits=qudits, control_system=control)
+        lowered = pulse.compile(rounds, quantum_system=system, schedule="asap").lower(
+            system.qudits[0:n]
+        )
+        return lambda: violations(lowered)
+
+    # Eight times the drives: about 8x the time when linear, 64x when each
+    # drive is summed with every other in flight.
+    _assert_linear("a round's bound", {n: program(n) for n in (500, 4000)}, 8 * TOLERANCE)
+
+
+@pytest.mark.scaling
 def test_the_values_of_a_long_list_are_bound_in_linear_time():
     @pulse.kernel
     def stream(q, amplitudes: list[float], count: int):
@@ -528,6 +646,69 @@ def test_the_values_of_a_long_list_are_bound_in_linear_time():
     # Eight times the values: about 10x the time when linear, 64x when what
     # the values reach is gathered once per value.
     _assert_linear("bind", {n: bind(n) for n in (1000, 8000)}, 8 * TOLERANCE)
+
+
+def _doubled(first: str, line: str, last: str, times: int, **names: object) -> Callable[[], object]:
+    """A compile, traced afresh at every call, of a kernel that sets a value
+    with *first*, runs *line* on it *times* times and uses it with *last*."""
+    turn = [0]
+
+    def run():
+        turn[0] += 1
+        source = (
+            f"def k(q, x: float):\n    d = get_drive_line(q)\n    unused = {turn[0]}\n"
+            f"    {first}\n" + f"    {line}\n" * times + last
+        )
+        scope = dict(vars(pulse))
+        scope.update(names)
+        exec(compile(source, f"<doubled {times}>", "exec"), scope)
+        return pulse.compile(pulse.kernel(scope["k"])).lower(Q[0], 2.0**-times)
+
+    return run
+
+
+@pytest.mark.scaling
+def test_a_wait_length_that_doubles_a_term_is_traced_in_linear_time():
+    # v = v + v uses the line before it twice: written out, six more lines
+    # are 64 times the terms. Each walk of the value visited them all. The
+    # sizes are small so that this fails and does not hang.
+    runs = {
+        n: _doubled("v = x * 1.0", "v = v + v", "    wait(d, v, bounds=(0, 4000))\n", n)
+        for n in (6, 12)
+    }
+    _assert_linear("trace", runs, 2 * TOLERANCE)
+    # The error for the length names each line once: a megabyte written out.
+    with pytest.raises(ValueError) as raised:
+        pulse.compile(pulse.kernel(_doubled_kernel(16))).lower(Q[0], 1.0)
+    assert len(str(raised.value)) < 1000
+
+
+def _doubled_kernel(times: int):
+    source = (
+        "def k(q, x: float):\n    d = get_drive_line(q)\n    v = x * 1.0\n"
+        + "    v = v + v\n" * times
+        + "    wait(d, v, bounds=(0, 4000))\n"
+    )
+    scope = dict(vars(pulse))
+    exec(compile(source, f"<doubled {times}>", "exec"), scope)
+    return scope["k"]
+
+
+@pytest.mark.scaling
+@pytest.mark.parametrize(
+    ("line", "sizes"), [("c = c & c", (6, 12)), ("c = (c | c) & (c | e)", (4, 8))]
+)
+def test_a_condition_that_doubles_a_condition_is_traced_in_linear_time(line, sizes):
+    @pulse.classical(max_latency_ns=50, name="perf_doubled_flag")
+    def flag(x: float) -> bool:
+        return x > 1.0
+
+    first = "c = flag.submit(x).result(); e = flag.submit(x + 1.0).result(); c = c & e"
+    last = "    if c:\n        drive(d, square(40, 0.1))\n"
+    # The second line uses the one before it three times: 81 times the
+    # terms for four more lines.
+    runs = {n: _doubled(first, line, last, n, flag=flag) for n in sizes}
+    _assert_linear("trace", runs, 2 * TOLERANCE)
 
 
 @pytest.mark.scaling
@@ -799,6 +980,32 @@ def test_a_sweep_of_a_wait_from_an_answer_and_a_float_compiles_once(monkeypatch)
         readout(r, square(100, 0.05))
 
     _sweep(pulse.compile(t1), [float(4 * i + 1) for i in range(1000)], monkeypatch)
+
+
+@pytest.mark.scaling
+def test_a_loop_that_hands_each_answer_to_the_next_call_compiles_in_linear_time():
+
+    @pulse.classical(max_latency_ns=50, name="perf_next_tau")
+    def next_tau(x: float) -> float:
+        return 2.0 * x
+
+    def program(n: int):
+        @pulse.kernel
+        def adaptive(q, tau0: float):
+            d = get_drive_line(q)
+            tau = tau0
+            for _ in range(n):
+                tau = next_tau.submit(tau).result()
+                drive(d, square(40, 0.1))
+                wait(d, tau, bounds=(16, 4000))
+
+        return lambda: pulse.compile(adaptive).lower(Q[0], 10.0)
+
+    # Twice the rounds: about 2x the time when linear. The scheduler asks for
+    # each wait's length; a walk from it through the calls behind it, by each
+    # call's link and by its argument, took 2^10 times the time for ten more
+    # rounds. The sizes are small so that this fails and does not hang.
+    _assert_linear("compile", {n: program(n) for n in (10, 20)}, 2 * TOLERANCE)
 
 
 # Peak memory a simulation of two qutrits may add: their 9 x 9 density matrix

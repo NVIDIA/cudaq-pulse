@@ -908,3 +908,44 @@ def test_the_check_names_each_controller_a_call_holds(policy):
     unrolled = pulse.compile(_rolled_across, schedule=policy, control_system=_one_each(1))
     assert held.schedule == unrolled.lower(*args).schedule
     assert 1 not in _playing(held)
+
+
+def test_who_takes_an_answer_is_found_along_a_line_of_any_length():
+    # A branch on an answer gives the lines its arms touch, and finding the
+    # controllers that take the answer follows each of those lines through
+    # every sync and branch after it. That was a call for every op on the
+    # line: about 34,000 of them ended the process (a segmentation fault).
+    from cudaq_pulse.quantum_systems import PhysicalQudit
+
+    @pulse.classical(max_latency_ns=60)
+    def decide(bits: pulse.Bits) -> pulse.Bits:
+        return [bits[0]]
+
+    @pulse.kernel
+    def long_line(qs):
+        d = [get_drive_line(qs[i]) for i in range(4)]
+        r = [get_readout_line(qs[i]) for i in range(4)]
+        m = readout(r[0], square(32, 0.05))
+        if decide.submit([m]).result()[0]:
+            sync(r[1], d[0])
+        else:
+            sync(r[1], d[3])
+        for _ in range(60_000):
+            sync(r[1], d[3])
+            wait(d[3], 4)
+
+    # Who takes an answer matters on several controllers only.
+    controllers = [
+        pulse.Controller(clock_ghz=2.0, drive_lines=lines, readout_lines=lines)
+        for lines in ([0, 1], [2, 3])
+    ]
+    system = pulse.quantum_system(
+        name="long_line",
+        qudits={i: PhysicalQudit(i, 4.5e9 + 1.0e5 * i, 37.7, 9.2) for i in range(4)},
+        control_system=ControlSystem(controllers=controllers, reference_clock_ghz=2.0),
+        clock_ghz=2.0,
+    )
+    lowered = pulse.compile(long_line, quantum_system=system, unroll_threshold=10**6).lower(
+        system.qudits[0:4]
+    )
+    assert sum(1 for event in lowered.schedule if event.kind == "wait") == 60_000
