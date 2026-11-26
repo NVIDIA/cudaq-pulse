@@ -153,7 +153,8 @@ _JUMPS = frozenset(
 )
 
 # A canonical instruction is an ``(op, arg)`` pair. Jumps carry the target
-# instruction index; FOR_ITER carries ``(exit_index, loop_var_is_read)``.
+# instruction index; FOR_ITER carries ``(exit_index, unrolled)``: whether
+# the loop is never rolled (see the second pass of ``_decode``).
 Instr = tuple[int, Any]
 
 # ── Opname table (union over 3.12-3.15; opnames never change meaning) ─
@@ -264,6 +265,8 @@ _NB_OPS = (
     _op.ixor,
 )
 _NB_SUBSCR = 26
+# The operators of augmented assignments.
+_IN_PLACE_OPS = frozenset(_NB_OPS[13:])
 
 _UNARY_NAMES = {
     "UNARY_NEGATIVE": _op.neg,
@@ -729,10 +732,17 @@ def _decode(code: CodeType) -> DecodedCode:
                 # place; the tracer notes it first. One on a name (x += 1) is
                 # not noted unless its operator is a set's or dict's: a
                 # container a name holds is compared after a branch arm.
+                # A rolled loop's trace checks one in a for loop that binds
+                # the name before it or may skip it (_checked_augmentation);
+                # one that every pass runs on the name the loop carries in
+                # keeps the loop unrolled (_augments_a_carried_name).
                 fn = _NB_OPS[iarg]
+                at = raw.index(ins)
+                store = raw[at + 1]
                 if (
                     fn in (_op.iand, _op.ior, _op.ixor)
-                    or raw[raw.index(ins) + 1].opname != "STORE_FAST"
+                    or store.opname != "STORE_FAST"
+                    or _checked_augmentation(raw, at, store.argval)
                 ):
                     out.append([NOTE_INPLACE, None])
                 out.append([BINARY, fn])
@@ -841,7 +851,12 @@ def _decode(code: CodeType) -> DecodedCode:
         target = index_at.get(entry[1], end)
         if op == FOR_ITER:
             # A yield in a rolled loop would run once: unroll a generator's loops.
-            entry[1] = (target, in_genexpr or _loop_var_is_read(out, i, target))
+            entry[1] = (
+                target,
+                in_genexpr
+                or _loop_var_is_read(out, i, target)
+                or _augments_a_carried_name(out, i, target),
+            )
         elif target <= i and out[target][0] != FOR_ITER:
             # Only for-loops jump backwards to their FOR_ITER header.
             out[i] = [UNSUPPORTED, _WHILE_MESSAGE]
@@ -927,6 +942,53 @@ def _loop_var_is_read(out: list[list[Any]], for_idx: int, exit_idx: int) -> bool
     for j in range(for_idx + 2, exit_idx):
         op, arg = out[j]
         if arg == name and op in (LOAD_FAST, DELETE_FAST, LOAD_DEREF, LOAD_FAST_AND_CLEAR):
+            return True
+    return False
+
+
+# Whether the augmented assignment at ``raw[at]``, to the local *name*, is
+# noted for a rolled trace to check: a for loop around it binds *name*
+# before it in its body, or may jump past it (a branch, ``break`` or
+# ``continue``; the loops around it do not count). Its left operand is then
+# not simply what the loop carries in, and may be an object the trace must
+# not change in place, such as a NumPy array taken from a list.
+def _checked_augmentation(raw: list[_Instr], at: int, name: str) -> bool:
+    end = len(raw)
+    index: dict[int, int] = {}
+    headers: list[int] = []
+    for f in range(at - 1, -1, -1):
+        if raw[f].opname == "FOR_ITER":
+            if not index:
+                index = {ins.offset: i for i, ins in enumerate(raw)}
+            if index.get(raw[f].argval, end) > at:
+                headers.append(f)
+    for f in headers:
+        for p in range(f + 1, at):
+            ins = raw[p]
+            op = ins.opname
+            if op in _JUMP_NAMES:
+                target = index.get(ins.argval, end)
+                if p not in headers and (target > at or target in headers):
+                    return True
+            # A superinstruction's argument is a pair of locals: both stored,
+            # or the first stored and the second loaded.
+            elif (op == "STORE_FAST" and ins.argval == name) or (
+                op in ("STORE_FAST_STORE_FAST", "STORE_FAST_LOAD_FAST")
+                and name in ins.argval[: 2 if op == "STORE_FAST_STORE_FAST" else 1]
+            ):
+                return True
+    return False
+
+
+# Whether the body of the loop at *for_idx* changes a name it carries in
+# with an augmented assignment that every pass runs, unnoted (see
+# ``_checked_augmentation``). Such a loop is unrolled: the change carries to
+# the next iteration anyway, and a rolled trace would apply it once to the
+# object the name holds, a NumPy array say, without the tracer seeing it.
+def _augments_a_carried_name(out: list[list[Any]], for_idx: int, exit_idx: int) -> bool:
+    for j in range(for_idx + 2, exit_idx):
+        op, arg = out[j]
+        if op == BINARY and arg in _IN_PLACE_OPS and out[j - 1][0] != NOTE_INPLACE:
             return True
     return False
 
