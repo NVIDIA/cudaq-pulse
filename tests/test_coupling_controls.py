@@ -969,6 +969,75 @@ def test_a_long_chain_of_variants_answers_from_the_system_they_were_made_from(sh
     assert again.qudits[0].index == X2
 
 
+def test_a_system_that_declares_components_drives_at_its_dressed_frequencies():
+    """A system with couplings drives each qudit at its dressed frequency.
+    Declaring a tuning changes none of that, in a built system or a variant;
+    a system with bare frames declares no components yet."""
+    tuning = FluxTuning(ec_hz=1.65e8, ej_max_hz=2.6e10, asymmetry=0.47, idle_flux=0.0)
+
+    def system(**more):
+        return pulse.quantum_system(
+            name="pair",
+            qudits={
+                i: PhysicalQudit(i, 5.0e9 + 1.0e8 * i, 50.0, 30.0, anharmonicity_hz=-3.0e8)
+                for i in range(2)
+            },
+            couplings=[Coupling((0, 1), 4.0e6)],
+            **more,
+        )
+
+    plain = system()
+    bare = [plain.physical_qudits[i].frequency_hz for i in range(2)]
+    dressed = [plain.frequencies[i] for i in range(2)]
+    assert dressed != bare
+    for declaring in (system(tunings={0: tuning}), plain.replace(tunings={0: tuning})):
+        assert [declaring.frequencies[i] for i in range(2)] == dressed
+        assert [q.dressed_frequency_hz for q in declaring.qudits] == [
+            q.dressed_frequency_hz for q in plain.qudits
+        ]
+        assert declaring.tuning(0) == tuning
+        # It is another system than the one without the tuning, and so are
+        # its handles, which pickle as themselves.
+        assert declaring != plain and declaring.fingerprint != plain.fingerprint
+        assert declaring.qudits[0] != plain.qudits[0]
+        assert pickle.loads(pickle.dumps(declaring.qudits[0])) == declaring.qudits[0]
+    # Bare frames: refused with components, however they are asked for.
+    said = (
+        'tunings: are declared on a quantum system with bare frames (frames="bare"); such a '
+        'system declares no tunings, controls or interactions yet; leave frames at "dressed", '
+        "the default"
+    )
+    for declare in (
+        lambda: system(frames="bare", tunings={0: tuning}),
+        lambda: system(frames="bare").replace(tunings={0: tuning}),
+        lambda: system(tunings={0: tuning}).replace(frames="bare"),
+        lambda: plain.replace(frames="bare", tunings={0: tuning}),
+    ):
+        with pytest.raises(pulse.QuantumSystemDefinitionError) as raised:
+            declare()
+        (problem,) = raised.value.problems
+        assert str(problem) == said
+    # Bare frames asked of a system with nothing to dress are its frames
+    # still; asked together with the coupling that dresses, they are refused.
+    alone = pulse.quantum_system(
+        name="alone",
+        qudits={i: plain.physical_qudits[i] for i in range(2)},
+        tunings={0: tuning},
+    )
+    assert alone.replace(frames="bare").tuning(0) == tuning
+    with pytest.raises(pulse.QuantumSystemDefinitionError) as raised:
+        alone.replace(frames="bare", couplings=[Coupling((0, 1), 4.0e6)])
+    (problem,) = raised.value.problems
+    assert str(problem) == said
+    # A system with bare frames that gives its components up is bare.
+    freed = system(tunings={0: tuning}).replace(frames="bare", tunings={})
+    assert [freed.frequencies[i] for i in range(2)] == bare
+    assert type(freed) is pulse.QuantumSystem and freed == system(frames="bare")
+    # Dressed frames by name are the default.
+    again = system(tunings={0: tuning}).replace(frames="dressed")
+    assert [again.frequencies[i] for i in range(2)] == dressed and again.tuning(0) == tuning
+
+
 def test_a_system_that_does_not_state_its_frequencies_declares_no_components_yet():
     from cudaq_pulse.quantum_systems import Offset
 

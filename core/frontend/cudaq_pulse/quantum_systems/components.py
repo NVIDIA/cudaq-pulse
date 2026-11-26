@@ -38,7 +38,7 @@ from operator import attrgetter
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
-from .._device import QuantumSystem, Qudit, _fingerprint, _Handles
+from .._device import QuantumSystem, Qudit, _fingerprint
 from .._errors import (
     InvalidTypeError,
     NotFoundError,
@@ -144,6 +144,15 @@ class _Declared(_Description):
             set_(self, name, MappingProxyType(dict(components.get(name) or {})))
         # The interactions it has answered with, by the pair as asked.
         set_(self, "_through", {})
+
+    @property
+    def _frames_content(self) -> tuple[Any, ...]:  # type: ignore[override]
+        """What it adds to a quantum system's fingerprint
+        (``_device._fingerprint``): what it declares. Its frames are
+        dressed, which add nothing (``declared`` refuses bare ones). So a
+        declaring system finishes as any quantum system does, and its
+        fingerprint, identity and handles are its own from the first."""
+        return (("declares", self._content()),)
 
     def _plain(self) -> _Description:
         """The description without what it declares."""
@@ -317,27 +326,28 @@ def declared(plain: _Description, components: Mapping[str, Any]) -> _Description
                 )
             ],
         )
+    # Likewise a system with bare frames: its description is a class of its
+    # own too, and one that declares components would read as dressed.
+    if plain.frames != "dressed":
+        first = next(name for name in COMPONENTS if kept[name])
+        raise QuantumSystemDefinitionError(
+            f"{_count(1, 'problem')} in the quantum system {plain.name!r}",
+            problems=[
+                Problem(
+                    'are declared on a quantum system with bare frames (frames="bare"); such '
+                    "a system declares no tunings, controls or interactions yet",
+                    path=first,
+                    value=sorted(kept[first]),
+                    fix='leave frames at "dressed", the default',
+                )
+            ],
+        )
     return _Declared(plain, kept)
 
 
 class _Declaring(QuantumSystem):
     """A quantum system that declares components: its fingerprint takes
     them in, its variants keep them, and its system file lists them."""
-
-    def _finish(self) -> None:
-        target, layout, control_system = self._description, self.layout, self.control_system
-        self.frequencies = target.frequencies
-        fingerprint = _fingerprint(target, layout, self.calibration)
-        content = getattr(target, "_content", None)
-        if content is not None:
-            import hashlib
-
-            fingerprint = hashlib.blake2b(
-                repr((fingerprint, content())).encode(), digest_size=16
-            ).hexdigest()
-        self.fingerprint = fingerprint
-        self._identity = fingerprint if control_system is None else (fingerprint, control_system)
-        self.qudits = _Handles(tuple(Qudit(self, p, i) for i, p in enumerate(layout)))
 
     @property
     def _twin(self) -> QuantumSystem:
@@ -574,14 +584,17 @@ def redeclared(system: QuantumSystem, changes: dict[str, Any]) -> QuantumSystem:
     clock_ghz = changes.pop(
         "clock_ghz", None if system.clock_ghz == described.clock_ghz else system.clock_ghz
     )
-    unknown = sorted(changes.keys() - {*_DESCRIPTION_FIELDS, *COMPONENTS})
+    unknown = sorted(changes.keys() - {*_DESCRIPTION_FIELDS, *COMPONENTS, "frames"})
     if unknown:
         raise InvalidTypeError(
             f"QuantumSystem.replace() got an unexpected keyword argument {unknown[0]!r}; "
-            f"it takes {', '.join(_DESCRIPTION_FIELDS[:-1])}, {', '.join(COMPONENTS)}, layout, "
-            "control_system, clock_ghz, parameter_drift and parameter_drift_seed"
+            f"it takes {', '.join(_DESCRIPTION_FIELDS[:-1])}, frames, {', '.join(COMPONENTS)}, "
+            "layout, control_system, clock_ghz, parameter_drift and parameter_drift_seed"
         )
     if isinstance(described, _Declared):
+        # With frames among the changes too: the description is replaced
+        # without its components and declares them again, which is refused
+        # if what comes out has bare frames.
         replaced = described.replace(**changes)
     else:
         given = {name: changes.pop(name) for name in COMPONENTS if name in changes}
@@ -617,10 +630,6 @@ def _keeping(made: QuantumSystem) -> QuantumSystem:
     if not _DRIFTING:
 
         class _DriftingDeclaring(_DriftingQuantumSystem):
-            # One rebuilt from a pickle whose twin is a variant has no
-            # fingerprint yet: it is a declaring system's.
-            _finish = _Declaring._finish
-
             def replace(self, **changes: Any) -> QuantumSystem:
                 return redeclared(self, changes)
 
