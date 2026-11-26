@@ -10,11 +10,11 @@
   },
   "source": {
     "repository": "NVIDIA/cudaq-pulse",
-    "run": 45773121072,
+    "run": 45783675336,
     "attempt": 1,
     "event": "workflow_dispatch",
-    "ref": "refs/heads/dialect-lazy-load",
-    "commit": "f63eff5e2bf45a52d4939bbc2fe72e7c6ef0dfea",
+    "ref": "refs/heads/simulate-sparse-ranges",
+    "commit": "d26a73f47f03abe09543a4cd86e31abe4f1d4842",
     "processes": 5
   },
   "cases": {
@@ -178,7 +178,7 @@
       "op_count": 9,
       "packed_bytes": 440,
       "instructions": 1367307,
-      "estimated_cycles": 2276257,
+      "estimated_cycles": 2276259,
       "python_work": {
         "bytecodes": 17612.4,
         "python_calls": 241.0,
@@ -211,7 +211,7 @@
     "export_to_controller": {
       "export_bytes": 87794,
       "instructions": 4658291,
-      "estimated_cycles": 7220044,
+      "estimated_cycles": 7220056,
       "python_work": {
         "bytecodes": 1362.0,
         "python_calls": 30.0,
@@ -231,7 +231,7 @@
     "export_to_controller_sampled": {
       "export_bytes": 49449,
       "instructions": 1505604,
-      "estimated_cycles": 2373867,
+      "estimated_cycles": 2373880,
       "python_work": {
         "bytecodes": 5289.0,
         "python_calls": 41.0,
@@ -258,7 +258,7 @@
       "op_count": 15,
       "packed_bytes": 744,
       "instructions": 9855326,
-      "estimated_cycles": 15722219,
+      "estimated_cycles": 15722139,
       "python_work": {
         "bytecodes": 56958.0,
         "python_calls": 866.0,
@@ -282,12 +282,12 @@
     "simulate_setup": {
       "density_matrix_entries": 4,
       "time_points": 2,
-      "instructions": 1199914,
-      "estimated_cycles": 2052230,
+      "instructions": 1189136,
+      "estimated_cycles": 2035385,
       "python_work": {
-        "bytecodes": 4946.0,
-        "python_calls": 122.0,
-        "c_calls": 364.667
+        "bytecodes": 4850.0,
+        "python_calls": 119.0,
+        "c_calls": 351.667
       },
       "address_keyed": {
         "mlir::StorageUniquer::getParametricStorageTypeImpl(mlir::TypeID, unsigned int, llvm::function_ref<bool (mlir::StorageUniquer::BaseStorage const*)>, llvm::function_ref<mlir::StorageUniquer::BaseStorage* (mlir::StorageUniquer::StorageAllocator&)>)": [

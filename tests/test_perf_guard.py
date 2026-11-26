@@ -1332,6 +1332,27 @@ def test_a_long_idle_simulates_in_constant_time():
     assert times["200 us"] < 3 * times["1 us"] + 0.01, times
 
 
+@pytest.mark.scaling
+def test_drives_apart_from_each_other_simulate_in_linear_time():
+    def train(n: int):
+        @pulse.kernel
+        def kernel(q):
+            line = get_drive_line(q)
+            for _ in range(n):
+                drive(line, square(8, 0.1))
+                wait(line, 16)
+
+        return kernel
+
+    runs = {}
+    for n in (32, 256):
+        lowered = pulse.compile(train(n), schedule="asap", unroll_threshold=10**6).lower(Q[0])
+        runs[n] = lambda m=lowered: pulse.simulate(m, levels=2, backend="cpu", dt_ns=0.5, seed=0)
+    # 8x the drives, each stepped with its own terms: linear is 8x; asking
+    # every term at every drive is 64x.
+    _assert_linear("simulate", runs, 16)
+
+
 def test_an_adaptive_loop_of_fifty_rounds_simulates_one_path_per_shot():
     from cudaq_pulse.classical import Link
 

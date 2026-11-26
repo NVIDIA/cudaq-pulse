@@ -653,21 +653,42 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   program's schedule twice, once to check it against the controller's part
   and once to write the controller's events. It builds it once; the export
   is the same.
+- **A GPU interval with no long idle stretch is found without building
+  its operators on the host.** With `backend="gpu"`, an interval of 1024
+  steps or more is checked for an idle stretch long enough to propagate
+  exactly on the host. The check built every operator of the interval as a
+  matrix on the whole register, and only then found that no stretch is
+  idle that long, or that the register is too large to keep a
+  superoperator for (more than 40 levels with collapse operators). It now
+  decides from the terms' supports and the register's size first, and
+  builds matrices only for an interval that has such a stretch; of those
+  it no longer builds the drives', which it did not use. For eight qubits
+  driven through 1024 steps the check took 20 ms or more and takes 0.1 ms,
+  and the simulation goes from 7,915 ms to 7,895 ms (NVIDIA RTX A6000,
+  driver 570.211.01, CUDA runtime 12.9.79, cuDensityMat 0.7.1). Which
+  intervals are split, and every result, are as before.
 
 ### Fixed
 
-- **A rolled `range()` loop no longer plays its first iteration's value on
-  every iteration when its body changes Python state through a call.** A
-  loop kept as an `scf.for` is traced once, and only the names, lists and
-  dicts it reaches were checked for changes. A body that advanced an
-  iterator made before the loop (`next(it)`), called a method that changes
-  its object, drew from `random` or changed a NumPy array in place played
-  its first value every time, with no error, and one that then failed to
-  roll for another reason was unrolled from the second value on. Such a
-  body is now unrolled from the state before the loop. A call in the body
-  to anything but a builtin, `math`, `cmath`, NumPy outside `numpy.random`
-  or cudaq-pulse itself, such as a helper that runs as plain Python, now
-  unrolls the loop too, since it may change state the next iteration reads.
+- **`simulate` finds its default end without listing a long loop's events.**
+  Without `t_end`, a simulation runs to the latest end of the program's
+  events, and built one `ScheduledEvent` per event of every iteration of
+  every loop to find it. Past 10,000 events, a loop kept as a loop now
+  gives its latest end from its last iteration, and below that no event
+  object is built. The end is the same.
+
+- **CPU simulation of drives apart from each other takes time in proportion
+  to the drives.** The CPU integrator steps each stretch of time in which
+  some drive plays, and asked every drive of the interval at every stretch
+  whether it plays there: n drives with idle time between them made n
+  stretches and n times n questions, so eight times the drives took well
+  over eight times as long. Past three stretches, each is now stepped
+  with its own drives alone, sorted into their stretches once. A drive adds
+  nothing outside its stretch and the drives of a stretch add in the same
+  order, so every density matrix is the same to the last bit. A program
+  whose drives overlap, touch or make up to three stretches is stepped as
+  before, and so is a register of detuned coupled qudits whose idle time
+  is propagated in the frame of its couplings.
 - **Finding a program's segments no longer walks a loop that opens none.**
   `segments()` went through every iteration of every loop kept as a loop
   once the program declared a classical function, so a loop of n
@@ -1227,6 +1248,18 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   the decoder looked for the instruction after it from the function's first
   instruction. It now reads that instruction directly. What is decoded is
   the same.
+- **A rolled `range()` loop no longer plays its first iteration's value on
+  every iteration when its body changes Python state through a call.** A
+  loop kept as an `scf.for` is traced once, and only the names, lists and
+  dicts it reaches were checked for changes. A body that advanced an
+  iterator made before the loop (`next(it)`), called a method that changes
+  its object, drew from `random` or changed a NumPy array in place played
+  its first value every time, with no error, and one that then failed to
+  roll for another reason was unrolled from the second value on. Such a
+  body is now unrolled from the state before the loop. A call in the body
+  to anything but a builtin, `math`, `cmath`, NumPy outside `numpy.random`
+  or cudaq-pulse itself, such as a helper that runs as plain Python, now
+  unrolls the loop too, since it may change state the next iteration reads.
 
 ## [0.1.0] - 2026-11-13
 
