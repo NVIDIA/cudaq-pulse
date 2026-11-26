@@ -293,6 +293,69 @@ def test_a_method_of_a_global_is_cached_until_the_global_changes():
     assert calls_a_method.cache_info().compiled == 2
 
 
+class _Gate:
+    def __init__(self, amplitude):
+        self.amplitude = amplitude
+        self.runs = 0
+
+    def play(self, d):
+        drive(d, square(40, self.amplitude))
+
+    def current(self):
+        return self.amplitude
+
+
+GATE = _Gate(0.1)
+
+
+def _play_gate(d, gate):
+    drive(d, square(40, gate.amplitude))
+
+
+@pulse.kernel
+def reads_a_named_global(q):
+    gate = GATE
+    drive(get_drive_line(q), square(40, gate.amplitude))
+
+
+@pulse.kernel
+def reads_in_a_helper(q):
+    _play_gate(get_drive_line(q), GATE)
+
+
+@pulse.kernel
+def reads_in_a_method(q):
+    GATE.play(get_drive_line(q))
+
+
+@pulse.kernel
+def reads_in_a_host_method(q):
+    drive(get_drive_line(q), square(40, GATE.current()))
+
+
+@pytest.mark.parametrize(
+    "kernel",
+    [reads_a_named_global, reads_in_a_helper, reads_in_a_method, reads_in_a_host_method],
+    ids=["through a local name", "in a helper", "in an inlined method", "in a host method"],
+)
+def test_a_changed_attribute_of_a_global_object_is_seen_however_the_kernel_reads_it(kernel):
+    q = _device().qudits[0]
+    first = kernel.lower(q)
+    assert kernel.lower(q) is first
+    try:
+        GATE.amplitude = 0.2
+        assert "2.000000e-01" in kernel.lower(q).mlir()
+    finally:
+        GATE.amplitude = 0.1
+
+
+def test_an_attribute_the_trace_did_not_read_does_not_compile_again():
+    q = _device().qudits[0]
+    first = reads_in_a_method.lower(q)
+    GATE.runs += 1
+    assert reads_in_a_method.lower(q) is first
+
+
 def test_a_changed_closure_cell_is_seen_on_the_next_call():
     amplitude = 0.1
 

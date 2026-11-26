@@ -98,7 +98,13 @@ and evicted.
 Globals and closure variables behave as in Python: the values a kernel read
 while it compiled (module globals, closure cells, attribute chains such as
 ``cfg.amplitude``, the contents of lists and dicts it read) are checked on
-every call, and a change compiles the kernel again. A kernel that calls a
+every call, and a change compiles the kernel again.
+An attribute is checked however the kernel reads it: through another name
+(``c = cfg; c.amplitude``), in a helper the kernel passes ``cfg`` to, or in a
+method of ``cfg``.
+A method that runs as plain Python, one that calls no pulse op, may read any
+attribute of its object, so all of them are checked.
+A kernel that calls a
 host function whose result can change between calls (``random.random()``)
 compiles on every call.
 

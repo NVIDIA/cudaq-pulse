@@ -342,6 +342,54 @@ class Guard:
         self.registers = registers
 
 
+# Append to *lines* a line for each attribute the trace read off an object
+# that the guard compares only by identity (``c = cfg; c.amp``, or a
+# helper's or method's read off its parameter or ``self``), and that the
+# kernel does not read as a chain (``cfg.amp``). *items* holds the reads by
+# the object's id; an attribute read off an attribute is followed in turn,
+# in a register from *registers* on.
+def _attribute_lines(
+    lines: list[list[Any]],
+    items: Mapping[int, list[tuple[Any, Any]]],
+    parents: set[int],
+    escaped: set[int],
+    registers: int,
+) -> None:
+    chained = {(line[2], line[3]) for line in lines if line[0] is not None and line[1] == _ATTR}
+    done: set[int] = set()
+    for line in lines:
+        register = line[0]
+        if register is None:
+            continue
+        value = line[4]
+        read = items.get(id(value))
+        if (
+            read is None
+            or register < 0
+            or id(value) in done
+            or value.__class__ in _SNAPSHOT
+            or type(value).__name__ == "ndarray"
+            or _immutable(value)
+        ):
+            continue
+        done.add(id(value))
+        parents.add(register)
+        for name, _ in read:
+            if (register, name) in chained:
+                continue
+            try:
+                attribute = getattr(value, name)
+            except Exception:
+                continue
+            child = -1
+            if id(attribute) in items:
+                child = registers
+                registers += 1
+            # Not known to be only subscripted: a dict is compared whole.
+            escaped.add(id(attribute))
+            lines.append([child, _ATTR, register, name, attribute, False])
+
+
 def build_guard(
     fn: types.FunctionType,
     *,
@@ -356,6 +404,8 @@ def build_guard(
     are the dict items the trace read, ``(id(dict), key) -> (dict, key,
     value)``, and *dict_whole* the ids of the dicts it iterated or tested
     with ``in``; without *dict_items* every dict is compared whole.
+    *dict_items* holds too the attributes the trace read off other objects,
+    ``(id(obj), name) -> (obj, name, value)``.
     """
     if impure:
         return Guard(_always_false, 0, True, (), 0)
@@ -441,6 +491,7 @@ def build_guard(
     if dict_items:
         for container, index, value in dict_items.values():
             items.setdefault(id(container), []).append((index, value))
+        _attribute_lines(lines, items, parents, escaped, len(slots))
     plan: list[tuple[Any, ...]] = []
     # The globals of the step that tests unbound names, while it is the last.
     unbound_in: dict[str, Any] | None = None

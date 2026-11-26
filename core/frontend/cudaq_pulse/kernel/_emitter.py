@@ -213,6 +213,11 @@ class Future:
 _SUBMIT = ClassicalFunction.submit
 _RESULT = Future.result
 
+# The classes whose attributes the trace does not keep for the guard: a
+# kernel reads a module's as chains (``math.pi``), a container's are its
+# methods, and a classical function's and its futures' do not change.
+_ATTRIBUTES_NOT_KEPT = frozenset({types.ModuleType, dict, list, ClassicalFunction, Future})
+
 
 # Whether *value* is a branch condition computed from an answer.
 def _is_answer_condition(value: Any) -> bool:
@@ -1070,6 +1075,19 @@ def _attribute_error(obj: Any, attr: str) -> CompilationError:
     return attribute_error(obj, attr)
 
 
+# ``obj.attr``, kept with the dict items the trace read (*kept*, unless
+# None): the guard compares what the trace read off an object it reached
+# (``c = cfg; c.amp``).
+def _kept_attribute(obj: Any, attr: str, kept: dict[Any, Any] | None) -> Any:
+    try:
+        value = getattr(obj, attr)
+    except (AttributeError, TypeError) as e:
+        raise _attribute_error(obj, attr) from e
+    if kept is not None:
+        kept[(id(obj), attr)] = (obj, attr, value)
+    return value
+
+
 # How an operand error names what the kernel passed.
 def _describe(value: Any) -> str:
     if value.__class__ is IRValue:
@@ -1844,6 +1862,7 @@ class PulseIREmitter:
             return
         # The builder's record of the dict items the trace read, for the
         # guard (``_guard.py``); None for a builder that keeps none.
+        # It holds too the attributes the trace read off other objects.
         self._dict_items = getattr(builder, "dict_items", None)
         self._can_roll = getattr(builder, "supports_regions", False)
         self._unroll = resolve_unroll_threshold(getattr(builder, "unroll_threshold", None))
@@ -1942,6 +1961,7 @@ class PulseIREmitter:
         _contains: int = bc.CONTAINS,
         _hashed: frozenset[type] = _HASHED,
         _iter_slots: int = ITER_SLOTS,
+        _not_kept: frozenset[type] = _ATTRIBUTES_NOT_KEPT,
     ) -> Any:
         instrs = prog.instrs
         stack = self.stack
@@ -2044,13 +2064,15 @@ class PulseIREmitter:
                             push(chan.held.cells[1].value)
                         else:
                             push(self._value_attribute(obj, arg))
-                    elif isinstance(obj, tuple) and len(obj) == 2 and obj[0] == "__unresolved__":
-                        push((_UNRESOLVED, arg))
-                    else:
+                    elif obj.__class__ in _not_kept:
                         try:
                             push(getattr(obj, arg))
                         except (AttributeError, TypeError) as e:
                             raise _attribute_error(obj, arg) from e
+                    elif isinstance(obj, tuple) and len(obj) == 2 and obj[0] == "__unresolved__":
+                        push((_UNRESOLVED, arg))
+                    else:
+                        push(_kept_attribute(obj, arg, dict_items))
 
                 elif op is _call_kw:
                     names = pop()
@@ -3546,6 +3568,19 @@ class PulseIREmitter:
 
         return unknown(f"unknown pulse op: {name}", "unknown_name", name, known, call=True)
 
+    # Keep for the guard every attribute in *obj*'s ``__dict__``, as if the
+    # trace read it: a method of *obj* runs as plain Python, unseen. Not for
+    # a class (its ``__dict__`` is no dict) or an object of cudaq_pulse's.
+    def _keep_attributes(self, obj: Any) -> None:
+        kept = self._dict_items
+        held = getattr(obj, "__dict__", None)
+        if kept is None or held.__class__ is not dict:
+            return
+        if type(obj).__module__.startswith("cudaq_pulse."):
+            return
+        for name, value in held.items():
+            kept[(id(obj), name)] = (obj, name, value)
+
     # ── Call dispatch ────────────────────────────────────────────────
 
     # Route a call to pulse IR emission or Python evaluation.
@@ -3665,13 +3700,16 @@ class PulseIREmitter:
         if (
             callable_val.__class__ is types.MethodType
             and callable_val.__func__.__class__ is types.FunctionType
-            and (
-                _takes_ir(call_args, kwargs)
-                or _uses_pulse_ops(callable_val.__func__, owner=callable_val.__self__)
-            )
         ):
-            self._inline_helper(callable_val.__func__, [callable_val.__self__, *call_args], kwargs)
-            return
+            if _takes_ir(call_args, kwargs) or _uses_pulse_ops(
+                callable_val.__func__, owner=callable_val.__self__
+            ):
+                self._inline_helper(
+                    callable_val.__func__, [callable_val.__self__, *call_args], kwargs
+                )
+                return
+            # Run as plain Python below: it may read any attribute of its object.
+            self._keep_attributes(callable_val.__self__)
         if (
             callable_val.__class__ is functools.partial
             and callable_val.func.__class__ is types.FunctionType

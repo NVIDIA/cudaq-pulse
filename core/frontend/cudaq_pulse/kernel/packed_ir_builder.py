@@ -435,7 +435,9 @@ class PackedIRBuilder:
         self.impure = False
         # For the guard, kept by the emitter: the dict items the trace read,
         # (id(dict), key) -> (dict, key, value), and the ids of the dicts it
-        # iterated or tested with `in`, whose every item matters.
+        # iterated or tested with `in`, whose every item matters. dict_items
+        # holds too the attributes the trace read off other objects,
+        # (id(obj), name) -> (obj, name, value).
         self.dict_items: dict[tuple[int, Any], tuple[dict[Any, Any], Any, Any]] = {}
         self.dict_whole: set[int] = set()
         # The compilation's loop-unroll threshold; None for the default.
