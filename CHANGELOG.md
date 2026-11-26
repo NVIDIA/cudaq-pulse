@@ -843,8 +843,12 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   to a static parameter by the object itself, so after `amps[:] = new` or
   `p.amplitude = 0.5` the next call ran the program traced for the old
   contents, with no error. The cache now keeps a copy of such an argument's
-  contents, or of its attributes, and compares it on every call, as it does
-  for the globals a kernel reads.
+  contents, or of the attributes the kernel reads off it, and compares it on
+  every call, as it does for the globals a kernel reads.
+- **A NumPy array holding NaN no longer compiles its kernel on every call.**
+  NaN is not equal to itself, so the cache saw a global array holding one as
+  changed on every call. Arrays with NaN in the same places now count as
+  unchanged.
 - The schedule passes no longer take the square of the number of drives on
   waveforms computed from one another (`w = wf_scale(w, 0.5)` before each
   drive, or sums and products of earlier waveforms): they keep the length
