@@ -1449,6 +1449,7 @@ def quantum_system(
                 "clock_ghz": clock_ghz,
                 "parameter_drift": parameter_drift,
                 "parameter_drift_seed": parameter_drift_seed,
+                "frames": frames,
             },
         )
     if qudits is not None:
