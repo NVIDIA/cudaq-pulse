@@ -29,10 +29,12 @@ import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse import Controller, ControlSystem
+from cudaq_pulse.kernel._bytecode_normalize import _decode
 from cudaq_pulse.kernel._emitter import PulseIREmitter
 from cudaq_pulse.kernel._unroll import DEFAULT_UNROLL_THRESHOLD
 from cudaq_pulse.kernel.bytecode_bridge import _trace_kernel_with_builder
@@ -345,6 +347,19 @@ def test_a_wide_sync_traces_in_linear_time():
 
 
 @pytest.mark.scaling
+def test_augmented_assignments_are_decoded_in_linear_time():
+    def decoding(n: int):
+        scope = {}
+        exec("def f(x):\n" + "    x += 1\n" * n + "    return x\n", scope)
+        code = scope["f"].__code__
+        return lambda: _decode(code)
+
+    # Eight times the assignments: about 8x the time when linear, 64x when
+    # the instruction after each is looked for from the first.
+    _assert_linear("decode", {n: decoding(n) for n in (1000, 8000)}, 16)
+
+
+@pytest.mark.scaling
 def test_an_if_costs_what_its_arms_change_not_the_lines_held_in_lists():
     # A readout and a measurement-conditioned if per qudit, with every line
     # held in a list: each if puts back the list slots its arms wrote, not
@@ -393,6 +408,40 @@ def test_an_if_in_a_called_kernel_costs_what_its_arms_change():
         return lambda: pulse.compile(kernel).lower(wide[0:n])
 
     _assert_linear("trace", {n: program(n) for n in (200, 1600)}, 16)
+
+
+@pytest.mark.scaling
+def test_a_further_name_of_a_list_of_lines_costs_an_if_what_one_of_a_list_of_numbers_does():
+    # Measurement-conditioned ifs over a list of lines that further names
+    # hold: each if keeps one record of the list and puts it back once, so a
+    # further name of it costs an if what a further name of a list of
+    # numbers does (the if still looks at each name once). With a record for
+    # each name, it cost over three times that.
+    def program(n: int, held: str):
+        source = (
+            "def k(q, r):\n"
+            "    lines = [get_drive_line(r)]\n"
+            "    numbers = [0.1, 0.2]\n"
+            "    probe = get_readout_line(q)\n"
+            + "".join(f"    n{i} = {held}\n" for i in range(n))
+            + "    for _ in range(24):\n"
+            "        if readout(probe, square(40, 0.05)):\n"
+            "            drive(lines[0], square(8, numbers[0]))\n"
+            "        else:\n"
+            "            drive(lines[0], square(8, numbers[1]))\n"
+        )
+        scope = dict(vars(pulse))
+        exec(compile(source, f"<{n} names of {held}>", "exec"), scope)
+        kernel = pulse.kernel(scope["k"], unroll_threshold=10_000)
+        return lambda: pulse.compile(kernel).lower(Q[0], Q[1])
+
+    # What 240 further names add to the Python work of the 24 ifs.
+    added = {}
+    for held in ("lines", "numbers"):
+        work = {n: python_work(program(n, held)) for n in (16, 256)}
+        added[held] = {count: work[256][count] - work[16][count] for count in work[16]}
+    for count in ("lines", "calls"):
+        assert added["lines"][count] <= added["numbers"][count] * 1.5, (count, added)
 
 
 @pytest.mark.scaling
@@ -875,6 +924,63 @@ def test_a_rolled_loop_is_checked_and_exported_rolled_in_constant_time():
     _assert_flat("export", exports)
     small, large = ROLLED_TRIPS
     assert size[large] < size[small] + 64, size
+
+
+@pytest.mark.scaling
+def test_the_segments_of_a_rolled_loop_that_opens_none_are_found_in_constant_time():
+    @pulse.classical(max_latency_ns=20, link=0)
+    def tune(x: float) -> float:
+        return x
+
+    @pulse.classical(max_latency_ns=20, latency_mode="blocking", link=0)
+    def hold(x: float) -> float:
+        return x
+
+    def program(n: int, call: Any):
+        @pulse.kernel
+        def kernel(q):
+            line = get_drive_line(q)
+            for _ in range(n):
+                drive(line, square(8, 0.1))
+                wait(line, 16)
+            drive(line, square(8, call.submit(0.1).result()))
+
+        return kernel
+
+    # A call after the loop, whose answer opens no segment or one: the loop
+    # opens none, and its iterations are not walked to find that.
+    for call, segments in ((tune, 1), (hold, 2)):
+        runs = {}
+        for n in ROLLED_TRIPS:
+            lowered = pulse.compile(program(n, call), schedule="asap", unroll_threshold=0).lower(
+                Q[0]
+            )
+            assert len(lowered.segments()) == segments
+            runs[n] = lowered.segments
+        _assert_flat(f"segments, {segments}", runs)
+
+    def inside(n: int):
+        @pulse.kernel
+        def kernel(q):
+            line = get_drive_line(q)
+            for _ in range(3):
+                for _ in range(n):
+                    drive(line, square(8, 0.1))
+                    wait(line, 16)
+                drive(line, square(8, hold.submit(0.1).result()))
+
+        return kernel
+
+    # A loop that opens none inside one that opens a segment in every
+    # iteration: the outer loop is walked, the inner one passed over each time.
+    runs = {}
+    for n in ROLLED_TRIPS:
+        lowered = pulse.compile(inside(n), schedule="asap", unroll_threshold=0).lower(Q[0])
+        # Both loops are kept (the outer one may have an iteration peeled).
+        assert lowered.mlir().count("scf.for") >= 2
+        assert len(lowered.segments()) == 4
+        runs[n] = lowered.segments
+    _assert_flat("segments, inside", runs)
 
 
 @pytest.mark.scaling

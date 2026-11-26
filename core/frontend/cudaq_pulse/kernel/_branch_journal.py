@@ -280,6 +280,40 @@ def _materialize(
             mutated[key] = (obj, list(contents))
 
 
+def _put_back_order(
+    containers: list[tuple[Any, Any]], repeats: list[tuple[int, list[Any]]]
+) -> list[tuple[Any, Any]]:
+    """The order in which an if puts back its *containers* when names repeat
+    a list of lines among them: each such list where its last name comes
+    (*repeats*: each further name of one, in order, with the number of
+    containers before it), the others where they are, with any container
+    an arm added after the names (``_conditions.add_built``) at the end.
+    Putting a list back records its lines and tones as its own, so one that
+    two lists hold is recorded as the later list's: the order is the one a
+    record for each name would give, which the if kept before it kept one
+    for each list."""
+    # Each repeated list's last name, in the order those names come.
+    last: dict[int, tuple[int, list[Any]]] = {}
+    for entry in repeats:
+        key = id(entry[1])
+        if key in last:
+            del last[key]
+        last[key] = entry
+    moved = iter(last.values())
+    at, obj = next(moved)
+    back: list[tuple[Any, Any]] = []
+    for index, entry in enumerate(containers):
+        while at <= index:
+            back.append((obj, None))
+            at, obj = next(moved, (len(containers) + 1, obj))
+        if entry[1] is not None or id(entry[0]) not in last:
+            back.append(entry)
+    while at <= len(containers):
+        back.append((obj, None))
+        at, obj = next(moved, (len(containers) + 1, obj))
+    return back
+
+
 class _Between(dict):  # type: ignore[type-arg]
     """What code changed between a trace's measured ifs, outside them: its
     record of changed containers (the emitter's ``_mutated`` there), as an
@@ -344,13 +378,19 @@ class JournalLines(_Lines):
 
     @staticmethod
     def logged(
-        emitter: PulseIREmitter, containers: list[tuple[Any, Any]], lazy: list[Any]
+        emitter: PulseIREmitter,
+        containers: list[tuple[Any, Any]],
+        lazy: list[Any],
+        backed: dict[int, list[Any]],
+        repeats: list[tuple[int, list[Any]]] | None,
     ) -> Logged:
         """At a measured if that holds lists of lines (*containers* without
-        a copy), put back from its arms' slot logs: the trace's channels and
-        slot records from then on note what changes them
-        (``SlotJournalLines``), and the containers *lazy*, copied when first
-        changed, become the if's ``Logged`` record."""
+        a copy; *backed*, by id), put back from its arms' slot logs: the
+        trace's channels and slot records from then on note what changes
+        them (``SlotJournalLines``), and the containers *lazy*, copied when
+        first changed, become the if's ``Logged`` record. A list that more
+        than one name holds is in *containers* once, at its first name;
+        *repeats* has each further name of one (``_put_back_order``)."""
         lines: Any = emitter._lines
         fresh = True
         if lines.__class__ is SlotJournalLines:
@@ -368,7 +408,8 @@ class JournalLines(_Lines):
             lines.start(emitter)
         logged = Logged(lazy)
         logged.fresh = fresh
-        logged.backed = {id(obj): obj for obj, copy in containers if copy is None}
+        logged.backed = backed
+        logged.repeats = repeats
         return logged
 
     def add(self, key: tuple[Any, ...], values: tuple[IRValue, ...]) -> None:
@@ -577,6 +618,13 @@ class SlotJournalLines(JournalLines):
         _canonical_list(emitter, obj, full)
 
     @staticmethod
+    def put_back_order(
+        containers: list[tuple[Any, Any]], repeats: list[tuple[int, list[Any]]]
+    ) -> list[tuple[Any, Any]]:
+        """``_put_back_order``, for the emitter's ``_runtime_branch``."""
+        return _put_back_order(containers, repeats)
+
+    @staticmethod
     def log_by_list(
         log: dict[tuple[int, int], tuple[list[Any], int, IRValue]],
     ) -> dict[int, list[tuple[int, IRValue]]]:
@@ -744,13 +792,15 @@ class Logged(list):  # type: ignore[type-arg]
     none of the others, as it keeps each arm's ``log``, and ``made``, the
     lists of lines code changed in it, as they were when it began.
     ``fresh``: whether the if records every slot of the lists it puts back
-    (``SlotJournalLines.watch``)."""
+    (``SlotJournalLines.watch``). ``repeats``: each further name of a list
+    in ``backed``, or None if each has one name (``_put_back_order``)."""
 
-    __slots__ = ("fresh", "backed", "lengths", "log", "made", "around_log", "by_list")
+    __slots__ = ("fresh", "backed", "repeats", "lengths", "log", "made", "around_log", "by_list")
 
     if TYPE_CHECKING:
         fresh: bool
         backed: dict[int, list[Any]]
+        repeats: list[tuple[int, list[Any]]] | None
         lengths: dict[int, int]
         log: dict[tuple[int, int], tuple[list[Any], int, IRValue]]
         made: dict[int, list[Any]]

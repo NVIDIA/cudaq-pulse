@@ -37,6 +37,7 @@ import dis
 import opcode
 import operator as _op
 import sys
+from bisect import bisect_right
 from types import CodeType
 from typing import TYPE_CHECKING, Any
 
@@ -736,13 +737,14 @@ def _decode(code: CodeType) -> DecodedCode:
                 # the name before it or may skip it (_checked_augmentation);
                 # one that every pass runs on the name the loop carries in
                 # keeps the loop unrolled (_augments_a_carried_name).
+                # index_at has an entry for each instruction up to this
+                # one, so its length is the index of the next.
                 fn = _NB_OPS[iarg]
-                at = raw.index(ins)
-                store = raw[at + 1]
+                store = raw[len(index_at)]
                 if (
                     fn in (_op.iand, _op.ior, _op.ixor)
                     or store.opname != "STORE_FAST"
-                    or _checked_augmentation(raw, at, store.argval)
+                    or _checked_augmentation(raw, len(index_at) - 1, store.argval)
                 ):
                     out.append([NOTE_INPLACE, None])
                 out.append([BINARY, fn])
@@ -953,31 +955,59 @@ def _loop_var_is_read(out: list[list[Any]], for_idx: int, exit_idx: int) -> bool
 # not simply what the loop carries in, and may be an object the trace must
 # not change in place, such as a NumPy array taken from a list.
 def _checked_augmentation(raw: list[_Instr], at: int, name: str) -> bool:
-    end = len(raw)
-    index: dict[int, int] = {}
-    headers: list[int] = []
-    for f in range(at - 1, -1, -1):
-        if raw[f].opname == "FOR_ITER":
-            if not index:
-                index = {ins.offset: i for i, ins in enumerate(raw)}
-            if index.get(raw[f].argval, end) > at:
-                headers.append(f)
-    for f in headers:
-        for p in range(f + 1, at):
-            ins = raw[p]
-            op = ins.opname
-            if op in _JUMP_NAMES:
-                target = index.get(ins.argval, end)
-                if p not in headers and (target > at or target in headers):
-                    return True
-            # A superinstruction's argument is a pair of locals: both stored,
-            # or the first stored and the second loaded.
-            elif (op == "STORE_FAST" and ins.argval == name) or (
-                op in ("STORE_FAST_STORE_FAST", "STORE_FAST_LOAD_FAST")
-                and name in ins.argval[: 2 if op == "STORE_FAST_STORE_FAST" else 1]
-            ):
-                return True
+    loops, jumps, stores = _loop_scope(raw)
+    headers = [f for f, exit_ in loops if f < at < exit_]
+    if not headers:
+        return False
+    # The outermost loop's body before the assignment holds the others'.
+    first = headers[0]
+    named = stores.get(name, ())
+    k = bisect_right(named, first)
+    if k < len(named) and named[k] < at:
+        return True
+    for k in range(bisect_right(jumps, (first, len(raw))), len(jumps)):
+        p, target = jumps[k]
+        if p >= at:
+            break
+        if p not in headers and (target > at or target in headers):
+            return True
     return False
+
+
+# What ``_checked_augmentation`` reads of the code it was last asked about,
+# built at its first augmented assignment to a name and replaced in one step:
+# (raw instructions, for loops as (header, exit), jumps as (index, target),
+# each local's store indices).
+_Scope = tuple[list[tuple[int, int]], list[tuple[int, int]], dict[str, list[int]]]
+_SCOPE: list[tuple[list[_Instr], _Scope] | None] = [None]
+
+
+def _loop_scope(raw: list[_Instr]) -> _Scope:
+    entry = _SCOPE[0]
+    if entry is not None and entry[0] is raw:
+        return entry[1]
+    end = len(raw)
+    index = {ins.offset: i for i, ins in enumerate(raw)}
+    loops: list[tuple[int, int]] = []
+    jumps: list[tuple[int, int]] = []
+    stores: dict[str, list[int]] = {}
+    for i, ins in enumerate(raw):
+        op = ins.opname
+        if op in _JUMP_NAMES:
+            target = index.get(ins.argval, end)
+            jumps.append((i, target))
+            if op == "FOR_ITER":
+                loops.append((i, target))
+        elif op == "STORE_FAST":
+            stores.setdefault(ins.argval, []).append(i)
+        elif op in ("STORE_FAST_STORE_FAST", "STORE_FAST_LOAD_FAST"):
+            # A pair of locals: both stored, or the first stored and the
+            # second loaded.
+            for stored in ins.argval[: 2 if op == "STORE_FAST_STORE_FAST" else 1]:
+                stores.setdefault(stored, []).append(i)
+    scope = (loops, jumps, stores)
+    _SCOPE[0] = (raw, scope)
+    return scope
 
 
 # Whether the body of the loop at *for_idx* changes a name it carries in

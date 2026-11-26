@@ -299,6 +299,96 @@ def test_blocking_waits_start_segments():
         assert _events(low, "drive")[0].start_cycles + ARM <= first_answer
 
 
+def _looped(shape: str, trips: int):
+    """A loop of *trips* iterations that opens no segment ("none"), one
+    followed by a blocking answer ("outside"), one that takes a blocking
+    answer in every iteration ("inside"), one that holds both a loop that
+    opens none and a blocking answer ("nested"), one whose only blocking
+    answer is in a loop inside it ("inner"), and one that waits on each of
+    two lines for the length an answer gives ("variable")."""
+
+    @pulse.kernel
+    def k(q, p):
+        d = get_drive_line(q)
+        e = get_drive_line(p)
+        drive(e, square(ARM, 0.1))
+        for _ in range(trips):
+            drive(d, square(8, 0.1))
+            wait(d, 16)
+            if shape == "nested":
+                for _ in range(3):
+                    drive(e, square(8, 0.1))
+                    wait(e, 4)
+            if shape == "inner":
+                for _ in range(3):
+                    drive(e, square(8, calibrate.submit(0.5).result()))
+            if shape in ("inside", "nested"):
+                drive(d, square(8, calibrate.submit(0.5).result()))
+            if shape == "variable":
+                wait(d, tune.submit(8.0).result(), bounds=(0, 40))
+                drive(d, square(8, 0.1))
+                wait(e, tune.submit(4.0).result(), bounds=(0, 40))
+                drive(e, square(8, 0.1))
+        if shape != "inside":
+            drive(d, square(ARM, tune.submit(0.5).result()))
+        if shape in ("outside", "nested"):
+            drive(d, square(ARM, calibrate.submit(0.25).result()))
+        drive(e, square(ARM, 0.1))
+
+    return k
+
+
+@pytest.mark.parametrize("schedule", ["asap", "alap"])
+@pytest.mark.parametrize(
+    ("shape", "loops", "boundaries"),
+    [
+        ("none", 1, 0),
+        ("outside", 1, 1),
+        ("inside", 1, 5),
+        ("nested", 2, 6),
+        ("inner", 2, 15),
+        ("variable", 1, 10),
+    ],
+)
+def test_a_loop_kept_as_a_loop_has_the_segments_of_its_iterations_written_out(
+    shape, loops, boundaries, schedule
+):
+    """The segments are asked for without walking the iterations of a loop
+    that opens none: they are those of the same program with its loops
+    written out, which has no loop to pass over."""
+    trips = 5
+    rolled, unrolled = (
+        pulse.compile(_looped(shape, trips), schedule=schedule, unroll_threshold=threshold).lower(
+            Q[0], Q[1]
+        )
+        for threshold in (0, 10**6)
+    )
+    # Under asap the loops stay as written (one may be peeled), a loop
+    # inside a loop included; alap may write an inner one out.
+    kept = rolled.mlir().count("scf.for")
+    assert kept >= (loops if schedule == "asap" else 1)
+    assert "scf.for" not in unrolled.mlir()
+    segments, after = rolled._segments()
+    assert len(segments) == 1 + boundaries
+    assert (segments, after) == unrolled._segments()
+    assert [s.index for s in segments] == list(range(len(segments)))
+    assert after[0] is None and all(0 <= a < k for k, a in enumerate(after[1:], start=1))
+    if shape == "variable":
+        # Two lines that wait in turn: a segment follows the one its own
+        # line was in, not the one opened just before it.
+        assert any(a != k - 1 for k, a in enumerate(after[1:], start=1))
+    # The walk that gives each event its segment visits every iteration,
+    # and reaches the same last segment.
+    assert max(rolled._event_segments(syncs=True)) == len(segments) - 1
+    assert [c.segment for c in rolled.classical_report()] == [
+        c.segment for c in unrolled.classical_report()
+    ]
+    exported = rolled.export_to_controller(version=2)
+    assert exported["segments"] == unrolled.export_to_controller(version=2)["segments"]
+    assert len(exported["segments"]) == len(segments)
+    assert rolled.export_to_controller(version=1)["segments"] == exported["segments"]
+
+
 def test_a_missed_deadline_is_rejected():
     @pulse.classical(max_latency_ns=1000, deadline_ns=800)
     def tight(b: pulse.Bits) -> pulse.Bits:

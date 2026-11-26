@@ -90,6 +90,7 @@
 #include "ContextDialects.h"
 #include "LengthInference.h"
 #include "ModuleLoader.h"
+#include "SegmentBoundaries.h"
 #include "cudaq-pulse/Analysis/ClassicalTiming.h"
 #include "cudaq-pulse/Analysis/Execution.h"
 #include "cudaq-pulse/Analysis/LineGrid.h"
@@ -4618,7 +4619,13 @@ public:
     if (!classical::declaresClassicalCalls(*module_))
       return {};
     SegmentWalk walk(*module_);
-    walk.run(*module_->getBody(), [](mlir::Operation *, int64_t) {});
+    // Only where segments open is asked for: the iterations of a loop that
+    // opens none are not walked (SegmentBoundaries.h).
+    cudaq_pulse::walkSegmentBoundaries(
+        *module_->getBody(), walk.names.variable, walk.names.blocking,
+        [&](mlir::Operation *op, llvm::ArrayRef<int64_t> iteration) {
+          walk.visit(op, iteration);
+        });
     return std::move(walk.boundaries);
   }
 

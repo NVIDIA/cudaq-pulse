@@ -455,6 +455,14 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 - **Faster compiles of branches beside long lists of lines.** Tracing a
   measurement-conditioned `if` in a kernel that keeps many lines or tones
   in a list costs less; the programs compiled are unchanged.
+- **A list of lines held under several names costs a branch once.** A
+  measurement-conditioned `if` kept a record of a list of lines or tones for
+  every local name that held it (a further variable, or a called kernel
+  given the list as several arguments) and put the list back between its
+  arms once for each name, so a kernel with many names of one list spent
+  most of its compile there. The `if` keeps one record of each list and
+  puts it back once, and a further name of a list of lines costs it what a
+  further name of any other list does. Programs and errors are as before.
 - **`alap` and `alap_rcp` end a program at its last operation.** They placed
   every line as late as the forward schedule's end, and that end could come
   after the last operation: under `rcp` a readout holds its line for the
@@ -660,6 +668,17 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   to anything but a builtin, `math`, `cmath`, NumPy outside `numpy.random`
   or cudaq-pulse itself, such as a helper that runs as plain Python, now
   unrolls the loop too, since it may change state the next iteration reads.
+- **Finding a program's segments no longer walks a loop that opens none.**
+  `segments()` went through every iteration of every loop kept as a loop
+  once the program declared a classical function, so a loop of n
+  iterations followed by one call took time in proportion to n to answer,
+  though it adds no segment. A loop that holds no variable wait and no
+  blocking answer is now passed over, at any trip count; one that holds
+  either is walked as before, each iteration opening its segments. The
+  segments are unchanged, as are the segment of every event and call,
+  which are found as before: an export that lists each event's segment
+  still visits every iteration.
+
 - **A value computed through very many operations no longer ends the
   process.** Several walks over what a value is computed from, or over what
   it reaches, called themselves once per operation: a run-time selected
@@ -686,6 +705,20 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   2^50, one that counts unsigned, and a region other than a branch, a
   schedule block or an `scf.for`. Before, a loop without constant bounds
   was refused only when a drive, a readout or a wait was directly in it.
+
+- **The classical check no longer visits every corner of the loops around
+  a call.** For a call inside D loops, the check that an answer is taken no
+  earlier than it is due, and the check of a `reaction_deadline_ns`,
+  visited 2^D corners of the loops' iterations, also when every loop ran
+  once: each loop more doubled the work. And from 64 loops on the count
+  of corners no longer fit the number that held it, and only the first
+  corner or the first few were visited: an answer taken too early, or a
+  reaction deadline missed, in an iteration other than the first of such
+  loops was not always reported. Both times change by a fixed amount
+  per iteration of each loop, so the check now takes their extreme from
+  one amount per loop. The iteration and the times an error names are the
+  ones it named before.
+
 - **Compiling many classical calls on several controllers takes time in
   proportion to the program.** On a control system of several controllers,
   a call's budget takes the controllers that play what uses its answer: the
@@ -1189,6 +1222,11 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   spacing, detectors and calls that hold the lines. The pulses of an arm
   are paired only with those that can play with them, as when the loop is
   unrolled.
+- **A function with many augmented assignments (`x += 1`) no longer takes
+  time that grows with the square of their number to decode.** For each one
+  the decoder looked for the instruction after it from the function's first
+  instruction. It now reads that instruction directly. What is decoded is
+  the same.
 
 ## [0.1.0] - 2026-11-13
 
