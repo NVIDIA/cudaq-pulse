@@ -451,6 +451,8 @@ def build_guard(
             else:
                 container, index, value = record
                 items.setdefault(id(container), []).append((index, value))
+                if isinstance(value, types.FunctionType):
+                    visited.discard(id(value.__code__))
                 follow(value, 0)
     plan: list[tuple[Any, ...]] = []
     # The globals of the step that tests unbound names, while it is the last.

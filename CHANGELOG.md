@@ -820,6 +820,10 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 
 ### Fixed
 
+- **Kernel cache invalidation for indirect helpers.** A cached kernel is
+  recompiled when a global read by a helper changes, including helpers called
+  through bound methods, class methods, `functools.partial`, callable objects,
+  or dict, list and tuple lookups.
 - **Compiling loops of classical calls inside loops no longer slows with
   the trips of any of them.** Of the loops around a call, the classical
   check took one from a single copy of its body and walked the others

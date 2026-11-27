@@ -294,7 +294,7 @@ def test_a_method_of_a_global_is_cached_until_the_global_changes():
     assert calls_a_method.cache_info().compiled == 2
 
 
-def _play(d, duration):
+def _drive(d, duration):
     drive(d, square(duration, AMPLITUDE))
 
 
@@ -307,12 +307,13 @@ class _Gates:
         drive(d, square(16, AMPLITUDE))
 
 
-@pytest.mark.parametrize("route", ["method", "classmethod", "partial", "dict", "list"])
+@pytest.mark.level0
+@pytest.mark.parametrize("route", ["method", "classmethod", "partial", "dict", "list", "tuple"])
 def test_cache_tracks_globals_of_indirect_helpers(route, monkeypatch):
     gates = _Gates()
-    partial = functools.partial(_play, duration=16)
-    table = {"x": _play}
-    sequence = [_play]
+    partial = functools.partial(_drive, duration=16)
+    table = {"x": _drive}
+    sequence = [_drive] if route == "list" else (_drive,)
 
     @pulse.kernel
     def k(q):

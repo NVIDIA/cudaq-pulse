@@ -2042,6 +2042,8 @@ class PulseIREmitter:
                         self._slots[id(value)] = (obj, index, value)
                     elif obj.__class__ is dict and dict_items is not None:
                         dict_items[(id(obj), index)] = (obj, index, value)
+                    elif value.__class__ is types.FunctionType and dict_items is not None:
+                        dict_items.setdefault(value, value)
 
                 elif op is _load_attr:
                     obj = pop()
@@ -3666,10 +3668,6 @@ class PulseIREmitter:
         if isinstance(callable_val, types.FunctionType) and (
             _takes_ir(call_args, kwargs) or _uses_pulse_ops(callable_val)
         ):
-            # A plain function can come from a subscript or another helper's
-            # return value, not just a name the guard can resolve statically.
-            if self._dict_items is not None:
-                self._dict_items.setdefault(callable_val, callable_val)
             self._inline_helper(callable_val, call_args, kwargs)
             return
         # A method of a helper object is inlined the same way, with its object
@@ -3837,6 +3835,8 @@ class PulseIREmitter:
         kwargs: dict[str, StackVal] | None,
     ) -> bool:
         if fn.__class__ is types.FunctionType:
+            if self._dict_items is not None:
+                self._dict_items.setdefault(fn, fn)
             self._inline_helper(fn, call_args, kwargs)
             return True
         if fn.__class__ is types.MethodType and fn.__func__.__class__ is types.FunctionType:
