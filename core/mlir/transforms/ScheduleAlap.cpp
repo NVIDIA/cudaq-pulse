@@ -6706,41 +6706,17 @@ static mlir::LogicalResult checkBlockBudget(pulse::ScheduleBlockOp block,
                      waitedLatency(block, latency));
 }
 
-/// Whether `op` plays on a line the control system `clocks` gives another
-/// controller than `controller` (-1: any).
-static bool playsElsewhere(mlir::Operation *op,
-                           const pulse::ClockAttributes &clocks,
-                           int64_t controller, pulse::AllocationTracer &trace) {
-  if (controller < 0 ||
-      !mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(op))
-    return false;
-  mlir::Operation *allocation = trace(op->getOperand(0));
-  if (!allocation)
-    return false;
-  int64_t qudit = pulse::quditOf(allocation);
-  const llvm::SmallVector<int64_t> &owners =
-      mlir::isa<pulse::GetDriveLineOp>(allocation) ? clocks.driveOwner
-                                                   : clocks.readoutOwner;
-  if (qudit < 0 || qudit >= static_cast<int64_t>(owners.size()))
-    return false;
-  return owners[qudit] >= 0 && owners[qudit] != controller;
-}
-
 /// The end of the last execution of the last op of the scheduled
 /// `function`, with each line delayed as `clocks` (its module's; none when
-/// null) delays it; with `controller`, of the ops on its lines and on lines
-/// of no known controller.
+/// null) delays it.
 static int64_t programLength(mlir::func::FuncOp function,
-                             const pulse::ClockAttributes *clocks = nullptr,
-                             int64_t controller = -1) {
+                             const pulse::ClockAttributes *clocks = nullptr) {
   std::optional<pulse::LineDelays> lines;
   if (clocks && clocks->delayed())
     lines.emplace(*clocks);
-  pulse::AllocationTracer trace;
   int64_t length = 0;
   function.walk([&](mlir::Operation *op) {
-    if (!isTimedOp(op) ||
-        (clocks && playsElsewhere(op, *clocks, controller, trace)))
+    if (!isTimedOp(op))
       return;
     std::optional<int64_t> start = pulse::startCycles(op);
     if (!start)
@@ -6762,6 +6738,80 @@ static int64_t programLength(mlir::func::FuncOp function,
     length = std::max(length, end);
   });
   return length;
+}
+
+/// How long the program of each controller of `clocks` lasts, from one walk
+/// of the scheduled `function`: `shared`, the end of the last op
+/// on a line of no known controller or on no line, and `own[c]`, that of
+/// the last op on controller c's lines. The program of controller c lasts
+/// to the later of `shared` and `own[c]`; of no one controller (-1), to the
+/// latest of them all.
+struct ControllerLengths {
+  int64_t shared = 0;
+  llvm::SmallVector<int64_t, 0> own;
+
+  int64_t of(int64_t controller) const {
+    if (controller < 0) {
+      int64_t length = shared;
+      for (int64_t end : own)
+        length = std::max(length, end);
+      return length;
+    }
+    if (controller >= static_cast<int64_t>(own.size()))
+      return shared;
+    return std::max(shared, own[controller]);
+  }
+};
+
+static ControllerLengths
+controllerLengths(mlir::func::FuncOp function,
+                  const pulse::ClockAttributes &clocks) {
+  std::optional<pulse::LineDelays> lines;
+  if (clocks.delayed())
+    lines.emplace(clocks);
+  pulse::AllocationTracer trace;
+  ControllerLengths lengths;
+  function.walk([&](mlir::Operation *op) {
+    if (!isTimedOp(op))
+      return;
+    std::optional<int64_t> start = pulse::startCycles(op);
+    if (!start)
+      return;
+    auto loops = pulse::enclosingLoops(op, function);
+    llvm::SmallVector<int64_t, 2> last;
+    for (mlir::scf::ForOp loop : loops) {
+      int64_t trips = pulse::constantTripCount(loop).value_or(0);
+      if (trips == 0)
+        return;
+      last.push_back(trips - 1);
+    }
+    int64_t end = *start;
+    for (auto [k, period] : llvm::zip(last, pulse::periodCycles(op)))
+      end += std::max<int64_t>(0, k * period);
+    end += pulse::scheduledDuration(op).value_or(0);
+    if (lines)
+      end += lines->of(op);
+    // The controller of the line's allocation, where the op plays on a line
+    // and the control system gives the line one.
+    int64_t owner = -1;
+    if (mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(op))
+      if (mlir::Operation *allocation = trace(op->getOperand(0))) {
+        int64_t qudit = pulse::quditOf(allocation);
+        const llvm::SmallVector<int64_t> &owners =
+            mlir::isa<pulse::GetDriveLineOp>(allocation) ? clocks.driveOwner
+                                                         : clocks.readoutOwner;
+        if (qudit >= 0 && qudit < static_cast<int64_t>(owners.size()))
+          owner = owners[qudit];
+      }
+    if (owner < 0) {
+      lengths.shared = std::max(lengths.shared, end);
+      return;
+    }
+    if (owner >= static_cast<int64_t>(lengths.own.size()))
+      lengths.own.resize(owner + 1, 0);
+    lengths.own[owner] = std::max(lengths.own[owner], end);
+  });
+  return lengths;
 }
 
 /// The longest program a schedule counts, in cycles, as building the module
@@ -6816,7 +6866,9 @@ checkProgramLimits(mlir::func::FuncOp function,
   if (!limits)
     return mlir::success();
   // A wait whose length a call sets counts at its length as scheduled: each
-  // call's values are scheduled, and checked, again.
+  // call's values are scheduled, and checked, again. The function is walked
+  // once for every controller's length, at the first limit that asks.
+  std::optional<ControllerLengths> lengths;
   for (mlir::Attribute entry : limits) {
     auto fields = mlir::dyn_cast<mlir::DictionaryAttr>(entry);
     auto controller =
@@ -6827,7 +6879,9 @@ checkProgramLimits(mlir::func::FuncOp function,
         fields ? fields.getAs<mlir::StringAttr>("duration") : nullptr;
     if (!controller || !cycles || !name || !duration)
       continue;
-    int64_t length = programLength(function, &clocks, controller.getInt());
+    if (!lengths)
+      lengths = controllerLengths(function, clocks);
+    int64_t length = lengths->of(controller.getInt());
     if (length <= cycles.getInt())
       continue;
     auto diagnostic = function->emitError()

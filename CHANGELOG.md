@@ -820,6 +820,11 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 
 ### Fixed
 
+- Scheduling a program on a control system whose controllers declare
+  `max_program_duration` walks the program once for all of them, where it
+  walked it once per controller with a limit. The lengths compared and the
+  errors are the same, and the first controller in the control system's
+  order whose limit the program exceeds is still the one named.
 - **Compiling loops of classical calls inside loops no longer slows with
   the trips of any of them.** Of the loops around a call, the classical
   check took one from a single copy of its body and walked the others
