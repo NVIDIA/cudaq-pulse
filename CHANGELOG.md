@@ -820,6 +820,22 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 
 ### Fixed
 
+- **A NaN in a controller limit is refused.**
+  `Controller(max_pulses=float("nan"))` was accepted, because `nan < 1` is
+  false, and so was a system file with `"max_pulses": NaN`, which Python's
+  `json` reads, or a controller description with `max_pulses = nan`. No
+  check of a program against the limit could fail after that, so a program
+  the limit should refuse compiled and exported as if the controller had no
+  such limit. The same held for `waveform_memory_samples`,
+  `max_frequencies_per_line`, `instruction_cycles`, `min_idle_cycles` and
+  `detector_recovery_cycles`; on a controller that lists no lines, a NaN in
+  one of these five ended the compile in a `TypeError` from the native
+  module instead. Each of the six must now be a whole number, as
+  `feedback_latency_cycles` must: a whole value of another type (`4096.0`,
+  numpy's `int64(4096)`) is still accepted and is stored as that `int`,
+  while a NaN, an infinity, a fraction such as `2.5` and a bool, which were
+  accepted, are refused. A string in one of them is an error that names the
+  field, where it was a `TypeError` about `<`.
 - **Compiling loops of classical calls inside loops no longer slows with
   the trips of any of them.** Of the loops around a call, the classical
   check took one from a single copy of its body and walked the others

@@ -493,30 +493,39 @@ def _lines(value: Iterable[Any], name: str, cls: type[_Line]) -> tuple[Any, ...]
 _BOOL_TYPES = frozenset({"bool_", "bool"})
 
 
+def _whole(value: Any) -> Any:
+    """A whole number of a type other than int (6.0, numpy's int64,
+    Fraction(6), Decimal(6)) as that int, and a fraction, an infinity or a NaN
+    as None. An int, a bool, a time or a value that is no real number is
+    returned as it is."""
+    if (
+        isinstance(value, (bool, int))
+        or value.__class__ is Time
+        or type(value).__name__ in _BOOL_TYPES
+        or not isinstance(value, numbers.Number)
+        # Complex and not real; a number not complex at all, as Decimal is, is read.
+        or (isinstance(value, numbers.Complex) and not isinstance(value, numbers.Real))
+    ):
+        return value
+    number: Any = value
+    try:
+        whole = int(number)
+    except (OverflowError, ValueError):
+        return None
+    return whole if whole == number else None
+
+
 def _cycles(value: Any, name: str, *, whole_floats: bool = False) -> int:
     if value.__class__ is Time:
         raise InvalidTypeError(
             f"Controller.{name} is a whole number of the controller's own cycles, "
             f"got the time {value}; divide it by the controller's cycle time"
         )
-    if (
-        whole_floats
-        and not isinstance(value, (bool, int))
-        and type(value).__name__ not in _BOOL_TYPES
-        and isinstance(value, numbers.Number)
-        # Real, or a number not complex at all, as Decimal is.
-        and (isinstance(value, numbers.Real) or not isinstance(value, numbers.Complex))
-    ):
-        # A whole number of another type (6.0, numpy's int64, Fraction(6),
-        # Decimal(6)) is that number of cycles; a fraction of a cycle, an
-        # infinity or a NaN is not.
-        number: Any = value
-        whole: int | None
-        try:
-            whole = int(number)
-        except (OverflowError, ValueError):
-            whole = None
-        if whole is None or whole != number:
+    if whole_floats:
+        # A whole number of another type is that number of cycles; a fraction
+        # of a cycle, an infinity or a NaN is not.
+        whole = _whole(value)
+        if whole is None and value is not None:
             raise InvalidValueError(f"Controller.{name} is a whole number of cycles, got {value!r}")
         value = whole
     if isinstance(value, bool) or not isinstance(value, int):
@@ -942,19 +951,17 @@ class Controller:
             raise InvalidValueError(
                 f"Controller.cycles_per_timestep must be an int of at least 1, got {steps!r}"
             )
+        for name in (
+            "instruction_cycles",
+            "min_idle_cycles",
+            "detector_recovery_cycles",
+            "feedback_latency_cycles",
+        ):
+            object.__setattr__(self, name, _cycles(getattr(self, name), name, whole_floats=True))
         if self.instruction_cycles < 1:
             raise InvalidValueError(
                 f"Controller.instruction_cycles must be at least 1, got {self.instruction_cycles!r}"
             )
-        for name in ("min_idle_cycles", "detector_recovery_cycles"):
-            value = getattr(self, name)
-            if value < 0:
-                raise InvalidValueError(f"Controller.{name} cannot be negative, got {value!r}")
-        object.__setattr__(
-            self,
-            "feedback_latency_cycles",
-            _cycles(self.feedback_latency_cycles, "feedback_latency_cycles", whole_floats=True),
-        )
         least = self.min_pulse_cycles
         if isinstance(least, bool) or not isinstance(least, int) or least < 0:
             raise InvalidValueError(
@@ -1004,8 +1011,15 @@ class Controller:
             )
         for name in ("waveform_memory_samples", "max_frequencies_per_line", "max_pulses"):
             value = getattr(self, name)
-            if value is not None and value < 1:
-                raise InvalidValueError(f"Controller.{name} must be positive or None")
+            if value is None:
+                continue
+            # A whole number of another type (4096.0) is that count, as before.
+            count = _whole(value)
+            if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+                raise InvalidValueError(
+                    f"Controller.{name} must be a positive int or None, got {value!r}"
+                )
+            object.__setattr__(self, name, count)
         size = self.max_instructions
         if size is not None and (isinstance(size, bool) or not isinstance(size, int) or size < 1):
             raise InvalidValueError(
