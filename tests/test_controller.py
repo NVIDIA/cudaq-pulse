@@ -12,7 +12,14 @@ import cudaq_pulse.controller as controller_module
 import numpy as np
 import pytest
 from cudaq_pulse import Controller, ControlSystem
-from cudaq_pulse.controller import FORMAT, ControllerLimitError, check, sample_waveform, shape_key
+from cudaq_pulse.controller import (
+    FORMAT,
+    ControllerLimitError,
+    check,
+    sample_waveform,
+    shape_key,
+    shape_known,
+)
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -329,6 +336,182 @@ def test_shape_key_ignores_an_amplitude_not_known_while_compiling():
     assert shape_key(square) is not None
     sigma = {"shape": "drag", "params": {**known["params"], "sigma": None}}
     assert shape_key(sigma) is None
+
+
+def _waveforms():
+    """Makers of waveform trees, well formed and not: each call gives a new
+    tree, so that one whose samples can be read only once is new each time."""
+    from collections import UserDict
+    from decimal import Decimal
+    from fractions import Fraction
+    from types import MappingProxyType
+
+    def custom(samples):
+        return lambda: {"shape": "custom_samples", "samples": samples()}
+
+    def gaussian(**params):
+        return {"shape": "gaussian", "params": {"duration": 16.0, "sigma": 4.0, **params}}
+
+    floats = [0.25 * math.sin(0.1 * k) for k in range(64)]
+    unset = {"shape": "gaussian", "params": {"duration": None, "amplitude": 0.5}}
+    makers = [
+        lambda: None,
+        lambda: {},
+        lambda: [],
+        lambda: {"shape": "custom_samples"},
+        lambda: {"shape": "custom"},
+        lambda: {"shape": ["custom_samples"]},
+        lambda: {"shape": [], "params": {}},
+        lambda: {"shape": {}, "params": {"duration": None}},
+        lambda: gaussian(amplitude=0.5),
+        lambda: gaussian(amplitude=None),
+        lambda: gaussian(amplitude=0.5, sigma=None),
+        lambda: gaussian(amplitude=0.5, sigma={"parameter": 0}),
+        lambda: unset,
+        lambda: {"shape": "gaussian", "params": []},
+        lambda: {"shape": "gaussian", "params": {}},
+        lambda: {"shape": "gaussian", "params": MappingProxyType({"duration": None, 3: None})},
+        lambda: {"shape": "square", "params": {"duration": 8, "amplitude": None}},
+        lambda: {"shape": "custom", "name": "mine", "params": {"duration": 40.0}},
+        lambda: {"shape": "nonesuch", "params": {"duration": None, "other": {}, "more": None}},
+        lambda: UserDict(gaussian(amplitude=0.5)),
+        lambda: MappingProxyType(gaussian(amplitude=None)),
+        lambda: {"shape": "scale", "params": {"factor": 0.5}, "of": [gaussian(amplitude=0.5)]},
+        lambda: {"shape": "scale", "of": []},
+        lambda: {"shape": "scale"},
+        lambda: {"shape": "neg", "of": [None]},
+        lambda: {"shape": "neg", "of": [{"shape": "neg", "of": [unset]}]},
+        lambda: {"shape": "neg", "of": [{"shape": "custom_samples", "samples": floats}]},
+        lambda: {"shape": "add", "of": [gaussian(amplitude=0.5), gaussian(amplitude=None)]},
+        lambda: {"shape": "add", "of": [gaussian(amplitude=0.5), unset]},
+        lambda: {"shape": "add", "of": [unset, {"shape": "custom_samples", "samples": ["x"]}]},
+        lambda: {"shape": "add", "of": [unset, {}], "values": 5},
+        lambda: {"shape": "add", "of": [gaussian(amplitude=0.5)], "values": 5},
+        lambda: {"shape": "add", "of": [gaussian(amplitude=0.5)], "values": iter([1.0])},
+        lambda: {"shape": "add", "of": None},
+        lambda: {"shape": "add"},
+        lambda: {"shape": "mul", "of": (gaussian(amplitude=0.5) for _ in range(2))},
+    ]
+    samples = [
+        lambda: floats,
+        lambda: floats[:1],
+        lambda: [],
+        lambda: (),
+        lambda: "",
+        lambda: None,
+        lambda: 0,
+        lambda: tuple(floats),
+        lambda: iter(floats),
+        lambda: (v for v in [0.5, "x"]),
+        lambda: np.array(floats),
+        lambda: np.array([]),
+        lambda: [0.0, -0.0],
+        lambda: [math.inf, -math.inf, math.nan, 0.5],
+        lambda: [math.nan],
+        lambda: [0],
+        lambda: [0.5, 1],
+        lambda: [True, 0.5],
+        lambda: [np.float64(0.5), 0.25],
+        lambda: [0.5, 10**400],
+        lambda: [10**400],
+        lambda: [0.5, "x"],
+        lambda: ["x", 10**400],
+        lambda: [0.5, None],
+        lambda: [complex(1, 0)],
+        lambda: [0.5, Fraction(1, 3)],
+        lambda: [Decimal("0.5")],
+        lambda: [[0.5]],
+    ]
+    return makers + [custom(s) for s in samples]
+
+
+def _outcome(fn):
+    try:
+        return fn()
+    except Exception as error:
+        return type(error), str(error)
+
+
+def _counted(fn):
+    """The bytecodes, the Python calls and the calls of anything else that a
+    call of *fn* makes."""
+    import gc
+    import sys
+    import types
+
+    monitoring = sys.monitoring
+    tool = next((i for i in range(6) if monitoring.get_tool(i) is None), None)
+    if tool is None:
+        pytest.skip("every sys.monitoring tool id is in use")
+    counts = [0, 0, 0]
+    collecting = gc.isenabled()
+
+    def instruction(code, offset):
+        counts[0] += 1
+
+    def start(code, offset):
+        counts[1] += 1
+
+    def call(code, offset, called, first):
+        counts[2] += not isinstance(called, (types.FunctionType, types.MethodType))
+
+    events = monitoring.events
+    monitoring.use_tool_id(tool, "cudaq-pulse tests")
+    try:
+        monitoring.register_callback(tool, events.INSTRUCTION, instruction)
+        monitoring.register_callback(tool, events.PY_START, start)
+        monitoring.register_callback(tool, events.CALL, call)
+        gc.collect()
+        gc.disable()
+        monitoring.set_events(tool, events.INSTRUCTION | events.PY_START | events.CALL)
+        try:
+            fn()
+        except Exception:
+            pass
+    finally:
+        monitoring.set_events(tool, events.NO_EVENTS)
+        if collecting:
+            gc.enable()
+        for event in (events.INSTRUCTION, events.PY_START, events.CALL):
+            monitoring.register_callback(tool, event, None)
+        monitoring.free_tool_id(tool)
+    return counts
+
+
+def test_shape_known_answers_as_the_key_does_for_every_waveform():
+    for make in _waveforms():
+        keyed = _outcome(lambda: shape_key(make()) is not None)  # noqa: B023
+        assert _outcome(lambda: shape_known(make())) == keyed, make()  # noqa: B023
+    known = {"shape": "gaussian", "params": {"duration": 16.0, "amplitude": None, "sigma": 4.0}}
+    assert shape_known(known) is True
+    assert shape_known({"shape": "gaussian", "params": {"duration": None}}) is False
+    assert shape_known(None) is False
+
+
+def test_shape_known_does_no_more_work_than_the_key_for_a_waveform_it_can_read():
+    import sys
+
+    # Bytecodes are compared where they were counted, on Python 3.12; calls everywhere.
+    compared = slice(0, 3) if sys.version_info[:2] == (3, 12) else slice(1, 3)
+    more = []
+    for make in _waveforms():
+        node, again = make(), make()
+        key = _counted(lambda: shape_key(node) is not None)[compared]  # noqa: B023
+        known = _counted(lambda: shape_known(again))[compared]  # noqa: B023
+        if any(k > limit for k, limit in zip(known, key, strict=True)):
+            more.append((make(), [k - limit for k, limit in zip(known, key, strict=True)]))
+    # Samples that are no sequence are found one call later, by the same error.
+    assert [node["samples"] for node, _ in more] == [None, 0]
+    for node, (*bytecodes, python_calls, other_calls) in more:
+        assert _outcome(lambda: shape_known(node))[0] is TypeError  # noqa: B023
+        assert bytecodes in ([], [0]) and python_calls == 0 and other_calls == 1
+
+
+def test_shape_known_does_not_read_float_samples_one_by_one():
+    few, many = ({"shape": "custom_samples", "samples": [0.5] * n} for n in (16, 4096))
+    assert _counted(lambda: shape_known(few)) == _counted(lambda: shape_known(many))
+    # The key reads each sample twice.
+    assert _counted(lambda: shape_key(many) is not None)[2] > 2 * 4096
 
 
 @pulse.kernel

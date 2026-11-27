@@ -131,6 +131,7 @@ __all__ = [
     "export",
     "sample_waveform",
     "shape_key",
+    "shape_known",
     "usage",
     "unroll",
 ]
@@ -368,6 +369,56 @@ def shape_key(node: Mapping[str, Any] | None) -> tuple[Any, ...] | None:
     if any(v is None or isinstance(v, dict) for _, v in kept):
         return None
     return (shape, node.get("name"), kept)
+
+
+def shape_known(node: Mapping[str, Any] | None) -> bool:
+    """Whether ``shape_key(node)`` is not ``None``, without building the key.
+
+    A backend that refuses a waveform known only at run time asks this of
+    each drive and readout of a format /1 program before it emits anything::
+
+        refused = [
+            f"event {event['index']} has a waveform known only at run time"
+            for event in program["events"]
+            if event["kind"] in ("drive", "readout") and not shape_known(event["waveform"])
+        ]
+
+    The answer, and the error for a waveform that is not well formed, are
+    those of ``shape_key``; a list of samples that are all floats is not
+    read one by one.
+    """
+    if node is None:
+        return False
+    shape = node["shape"]
+    if shape in ("scale", "neg"):
+        return shape_known(node["of"][0])
+    if shape == "custom_samples":
+        samples = node.get("samples", [])
+        peak = max(map(abs, samples), default=0.0) or 1.0
+        # Floats alone have a quotient by their largest magnitude and a
+        # rounding each: nothing a key would stop at.
+        if samples.__class__ is list and (not samples or {*map(type, samples)} <= {float}):
+            return True
+        for v in samples:
+            round(v / peak, 12)
+        return True
+    params = node.get("params")
+    if params is None:
+        known = True
+        for child in node.get("of", ()):
+            if not shape_known(child):
+                known = False
+        if known:
+            tuple(node.get("values", ()))
+        return known
+    skip = _AMPLITUDE_NAMES.get(shape, frozenset())
+    known = True
+    for k, v in params.items():
+        if k not in skip and known and (v is None or isinstance(v, dict)):
+            known = False
+    if known:
+        node.get("name")
+    return known
 
 
 def _exact(value: float) -> Fraction:
@@ -3484,6 +3535,7 @@ class ControllerNames(Protocol):
         self, node: Mapping[str, Any], duration_cycles: int, samples_per_cycle: float = 1
     ) -> npt.NDArray[np.complex128]: ...
     def shape_key(self, node: Mapping[str, Any] | None) -> tuple[Any, ...] | None: ...
+    def shape_known(self, node: Mapping[str, Any] | None) -> bool: ...
     def unroll(self, program: Mapping[str, Any]) -> dict[str, Any]: ...
     def usage(self, lowered: ScheduledKernel) -> _Usage: ...
 

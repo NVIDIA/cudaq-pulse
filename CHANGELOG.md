@@ -342,6 +342,16 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   levels that ascend, which every shipped model's do, nothing changes; where
   frequencies are offsets, a qudit's 1-2 tone is its anharmonicity below
   its 0-1 tone, as it must be, and no longer above.
+- **`controller.shape_known`.** `shape_known(waveform)` says whether every
+  shape parameter of an exported waveform is known while the program
+  compiles: what `shape_key(waveform) is not None` says, without building
+  the key. A backend that refuses a waveform known only at run time asks it
+  of each event. A list of samples that are all floats is not read one by one, so
+  4,096 of them cost what 16 do, where the key takes the magnitude of each,
+  divides each and rounds each. A waveform that has a key, or that is known
+  only at run time, never costs more than its key in bytecodes, Python
+  calls or calls of built-in functions. The answer, and the error for a
+  waveform that is not well formed, are the key's.
 
 ### Changed
 

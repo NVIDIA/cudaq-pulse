@@ -217,6 +217,8 @@ assert_type(
 )
 assert_type(pulse.controller.sample_waveform({}, 40).real, npt.NDArray[np.float64])
 assert_type(pulse.controller.export(lowered, version=2), dict[str, Any])
+assert_type(pulse.controller.shape_known({}), bool)
+assert_type(pulse.controller.shape_known(None), bool)
 assert_type(pulse.controller.WaveformMemoryScope("program"), WaveformMemoryScope)
 pulse.controller.sample_waveform({}, 40, samples_per_cycles=2)  # type: ignore[call-arg]
 # The module is what checkers take pulse.controller to be, but for the call.
