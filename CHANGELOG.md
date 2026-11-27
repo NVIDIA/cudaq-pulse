@@ -794,6 +794,13 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 
 ### Fixed
 
+- **`pulse.simulate` refuses a NaN or infinite `t_end` or `dt_ns`.** A
+  NaN passed the existing checks: `t_end=float("nan")` ran and returned
+  populations at time NaN, and `dt_ns=float("nan")` failed with a bare
+  `ValueError` from inside the integrator. An infinite `t_end` failed with
+  an `OverflowError`, and an infinite `dt_ns` warned about the step and then
+  reported that the integrator diverged. Each now raises
+  `InvalidValueError` that names the value.
 - **Compiling rounds around many repeats of a classical call no longer
   slows with the square of the repeats.** Of the loops around a call, the
   classical check keeps at most one as a single run and walks the others

@@ -498,6 +498,10 @@ def _simulate_lowered(
         )
     if t_end is not None:
         t_end = as_nanoseconds(t_end)
+        # A NaN passes every comparison below and ends the simulation at
+        # time NaN; an infinite end cannot be reached.
+        if not math.isfinite(t_end):
+            raise InvalidValueError(f"t_end must be a finite time, got {t_end}")
     if integrator not in _VALID_INTEGRATORS:
         raise InvalidValueError(
             f"Unknown integrator {integrator!r}. "
@@ -575,8 +579,9 @@ def _step(
     step: float
     if given is None:
         step = _default_step(lowered, target, levels)
-    elif given <= 0:
-        raise InvalidValueError("dt_ns must be positive")
+    elif not given > 0 or not math.isfinite(given):
+        # `not given > 0` also refuses a NaN, which `given <= 0` lets through.
+        raise InvalidValueError(f"dt_ns must be positive and finite, got {given}")
     else:
         step = given
         # A step of fewer than 20 per period of what the simulation holds

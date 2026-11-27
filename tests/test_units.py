@@ -571,6 +571,10 @@ def test_simulate_takes_its_end_and_step_as_times():
     [
         ({"t_end": -1 * ns}, "must not precede"),
         ({"dt_ns": 0 * ns}, "dt_ns must be positive"),
+        ({"dt_ns": float("nan")}, "dt_ns must be positive and finite"),
+        ({"dt_ns": float("inf")}, "dt_ns must be positive and finite"),
+        ({"t_end": float("nan")}, "t_end must be a finite time"),
+        ({"t_end": float("inf")}, "t_end must be a finite time"),
     ],
 )
 def test_simulate_checks_a_time_as_its_number_of_ns(time, message):
