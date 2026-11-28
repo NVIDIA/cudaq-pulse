@@ -43,6 +43,7 @@ if TYPE_CHECKING:
 
 _IMMUTABLE = (int, float, complex, str, bytes, bool, types.NoneType, range)
 _SNAPSHOT = (list, dict, set, bytearray)
+_SNAPSHOT_OR_TUPLE = (*_SNAPSHOT, tuple)
 _MAX_HELPER_DEPTH = 8
 
 
@@ -60,7 +61,9 @@ def _immutable(value: Any) -> bool:
 
 # A copy to compare a mutable container's contents against, or None.
 def _snapshot(value: Any) -> Any | None:
-    if isinstance(value, _SNAPSHOT):
+    if isinstance(value, _SNAPSHOT_OR_TUPLE):
+        if isinstance(value, tuple):
+            return _tuple_snapshot(value)
         try:
             return copy.deepcopy(value)
         except Exception:
@@ -68,6 +71,31 @@ def _snapshot(value: Any) -> Any | None:
     if type(value).__module__ == "numpy" and type(value).__name__ == "ndarray":
         return value.copy()
     return None
+
+
+# A copy of the tuple *value* to compare its contents against, or None. It is
+# copied only when it holds a mutable container, and its copy kept only if it
+# compares equal, which one of objects without ``__eq__`` does not.
+def _tuple_snapshot(value: tuple[Any, ...]) -> Any | None:
+    if not _holds_snapshot(value):
+        return None
+    try:
+        snap = copy.deepcopy(value)
+    except Exception:
+        return None
+    return snap if _same_contents(value, snap) else None
+
+
+# Whether the tuple *value* holds, at any depth, one of _SNAPSHOT or an array.
+def _holds_snapshot(value: tuple[Any, ...]) -> bool:
+    for item in value:
+        if isinstance(item, _SNAPSHOT) or (
+            type(item).__module__ == "numpy" and type(item).__name__ == "ndarray"
+        ):
+            return True
+        if isinstance(item, tuple) and _holds_snapshot(item):
+            return True
+    return False
 
 
 # A copy of a dict item to compare its contents against, or None when
@@ -95,7 +123,19 @@ def _same_contents(value: Any, snapshot: Any) -> bool:
     try:
         return bool(value == snapshot)
     except Exception:
-        return False
+        return _same_items(value, snapshot)
+
+
+# Whether the containers *value* and *snapshot*, which ``==`` cannot compare
+# (a list of arrays), hold the same contents, compared item by item.
+def _same_items(value: Any, snapshot: Any) -> bool:
+    if isinstance(value, (list, tuple)):
+        return len(value) == len(snapshot) and all(map(_same_contents, value, snapshot))
+    if isinstance(value, dict):
+        return value.keys() == snapshot.keys() and all(
+            _same_contents(item, snapshot[key]) for key, item in value.items()
+        )
+    return False
 
 
 # What finding reads and generating checks use is made when the first guard
