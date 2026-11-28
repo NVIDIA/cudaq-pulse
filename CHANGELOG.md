@@ -983,6 +983,15 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   gives its latest end from its last iteration, and below that no event
   object is built. The end is the same.
 
+- **A changed attribute of a global object compiles the kernel again,
+  however the kernel reads it.** The cache checked an attribute of a global
+  or closure object only where the kernel wrote it as a chain (`cfg.amp`).
+  Read through another name (`c = cfg; c.amp`), in a helper the object was
+  passed to, or in a method, a change was missed, and the next call ran the
+  program traced with the old value, with no error. The cache now compares
+  every attribute the trace reads off such an object, and all the attributes
+  of one whose method runs as plain Python.
+
 - **CPU simulation of drives apart from each other takes time in proportion
   to the drives.** The CPU integrator steps each stretch of time in which
   some drive plays, and asked every drive of the interval at every stretch
