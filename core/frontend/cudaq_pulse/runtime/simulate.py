@@ -1365,9 +1365,29 @@ def _initial_state(state: npt.ArrayLike | None, dim: int) -> npt.NDArray[np.comp
         psi = np.zeros(dim, dtype=np.complex128)
         psi[0] = 1.0
         return psi
-    array = np.asarray(state, dtype=np.complex128)
+    try:
+        array = np.asarray(state, dtype=np.complex128)
+    except (OverflowError, TypeError, ValueError):
+        raise InvalidTypeError(
+            "initial_state must contain values convertible to complex numbers"
+        ) from None
     if array.shape not in ((dim,), (dim, dim)):
         raise InvalidValueError(f"initial_state must have shape ({dim},) or ({dim}, {dim})")
+    if not np.isfinite(array).all():
+        raise InvalidValueError("initial_state must contain only finite values")
+    with np.errstate(over="ignore", invalid="ignore"):
+        if array.ndim == 1:
+            norm = float(np.linalg.norm(array))
+            if abs(norm - 1.0) > 1e-9:
+                raise InvalidValueError(
+                    f"initial_state is a state vector with norm {norm:.17g}; it must be 1"
+                )
+        else:
+            trace = np.trace(array)
+            if abs(trace - 1.0) > 1e-9:
+                raise InvalidValueError(
+                    f"initial_state is a density matrix with trace {trace}; it must be 1"
+                )
     return array
 
 

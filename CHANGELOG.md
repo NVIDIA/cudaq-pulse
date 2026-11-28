@@ -13,6 +13,7 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 
 ### Added
 
+- **Simulation initial states.** `pulse.simulate` refuses non-finite or unnormalised state vectors and density matrices whose trace is not one.
 - **Readout crosstalk.** `qs.replace(readout_crosstalk=[ReadoutCrosstalk(
   resonator_of=14, qudit=4, chi_hz=-20e3)])` states that a readout of qudit
   14 shifts qudit 4 by `chi_hz` per photon in qudit 14's resonator (level j
