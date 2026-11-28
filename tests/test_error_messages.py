@@ -18,6 +18,27 @@ from tests._handles import Q
 NOT_CALLABLE = object()
 
 
+@pytest.mark.level3
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
+@pytest.mark.parametrize(
+    ("call", "what"),
+    [
+        ("wait(d, value)", "wait(): duration"),
+        ("drive(d, gaussian(value, 0.1, 4.0))", "gaussian(): duration"),
+        ("wait(d, 8, bounds=(value, 40))", "wait(): bounds"),
+        ("wait(d, 8, bounds=(0, value))", "wait(): bounds"),
+    ],
+)
+def test_a_nonfinite_duration_names_the_problem_without_suggestions(value, call, what):
+    source = f"def k(q):\n    d = get_drive_line(q)\n    {call}\n"
+    namespace = {"value": value}
+    exec(compile(source, "<kernel>", "exec"), namespace)
+    with pytest.raises(pulse.CompilationError) as info:
+        pulse.kernel(namespace["k"]).lower(Q[0])
+    assert info.value.code == "invalid_duration"
+    assert str(info.value) == f"{what} must be finite, got {value!r}"
+
+
 @pytest.mark.parametrize("name", ops.__all__)
 def test_an_op_called_outside_a_kernel_is_a_compilation_error_naming_it(name):
     op = getattr(ops, name)
