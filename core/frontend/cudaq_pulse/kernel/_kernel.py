@@ -53,7 +53,7 @@ from ..compiler import (
     build,
     with_line_delays,
 )
-from ._guard import Guard, build_guard
+from ._guard import Guard, build_guard, pin_arguments
 
 if typing.TYPE_CHECKING:
     from .._idle import IdleReplacement
@@ -201,6 +201,33 @@ def _static_key(value: Any) -> Any:
     except TypeError:
         return (id, id(value))
     return (t, value)
+
+
+# The types of the static arguments _static_key keys by value alone.
+_BY_VALUE = frozenset({Qudit, Register, int, bool, float, str, complex, type(None)})
+
+
+def _keyed_by_identity(value: Any, name: str | None, found: list[tuple[str | None, Any]]) -> None:
+    """Add to *found* the values in the static argument *value*, of the
+    parameter *name*, that ``_static_key`` keys by identity (unhashable, or
+    compared by identity), each with its parameter's name if it is the
+    argument itself: changed in place, they keep their key, and the guard
+    compares them."""
+    t = type(value)
+    if t in (tuple, list):
+        for v in value:
+            _keyed_by_identity(v, None, found)
+    elif t is dict:
+        for v in value.values():
+            _keyed_by_identity(v, None, found)
+    elif t not in _BY_VALUE:
+        try:
+            hash(value)
+        except TypeError:
+            found.append((name, value))
+        else:
+            if t.__eq__ is object.__eq__:  # type: ignore[comparison-overlap]
+                found.append((name, value))
 
 
 # ── Return values ────────────────────────────────────────────────────────
@@ -840,8 +867,17 @@ class Kernel[**P]:
             dict_items=builder.dict_items,
             dict_whole=builder.dict_whole,
         )
-        pins = tuple(values[i] for i in static)
-        entry = _Entry(lowered, guard, returns, pins, runtime)
+        entry = _Entry(lowered, guard, returns, (), runtime)
+        # A static argument keyed by identity (an array, a dataclass) keeps its
+        # key when changed in place: the guard compares it, and the entry
+        # keeps it alive.
+        if not _BY_VALUE.issuperset([values[i].__class__ for i in static]):
+            keyed: list[tuple[str | None, Any]] = []
+            for i in static:
+                _keyed_by_identity(values[i], names[i], keyed)
+            if keyed:
+                entry.guard = pin_arguments(guard, fn, keyed)
+                entry.pins = tuple(value for _, value in keyed)
         if options.machine._line_delays and lowered.scheduled:
             # Only a kept entry is scheduled again, for its qudits.
             entry.qudit_count = builder.qudit_count

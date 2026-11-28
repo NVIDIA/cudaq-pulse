@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import builtins
 import copy
+import keyword
 import types
 import weakref
 from itertools import compress
@@ -31,7 +32,7 @@ from . import _bytecode_normalize as bc
 
 if TYPE_CHECKING:
     import threading
-    from collections.abc import Callable, Collection, Mapping
+    from collections.abc import Callable, Collection, Iterable, Mapping
     from typing import Any
 
     _Read = tuple[str, str, tuple[str, ...], bool]
@@ -87,11 +88,16 @@ def _same_contents(value: Any, snapshot: Any) -> bool:
     if type(value) is not type(snapshot):
         return False
     if type(value).__name__ == "ndarray":
-        return bool(
-            value.shape == snapshot.shape
-            and value.dtype == snapshot.dtype
-            and (value == snapshot).all()
-        )
+        if value.shape != snapshot.shape or value.dtype != snapshot.dtype:
+            return False
+        if (value == snapshot).all():
+            return True
+        # NaN is not equal to itself: NaN in the same places is the same.
+        if value.dtype.kind not in "fc":
+            return False
+        import numpy
+
+        return bool(numpy.array_equal(value, snapshot, equal_nan=True))
     try:
         return bool(value == snapshot)
     except Exception:
@@ -340,6 +346,171 @@ class Guard:
         self.impure = impure
         self.plan = plan
         self.registers = registers
+
+
+def _attributes(value: Any) -> list[str]:
+    """The attributes to compare of an object a kernel was passed and is
+    cached for by identity: a dataclass's fields, else what its ``__dict__``
+    holds and its ``__slots__`` declare; none for a class, module or
+    function, or cudaq_pulse's own."""
+    cls = type(value)
+    code = (type, types.ModuleType, types.FunctionType, types.MethodType, types.BuiltinFunctionType)
+    if isinstance(value, code) or cls.__module__.partition(".")[0] == "cudaq_pulse":
+        return []
+    fields = getattr(cls, "__dataclass_fields__", None)
+    if fields is None:
+        held = getattr(value, "__dict__", None)
+        fields = [*(held if isinstance(held, dict) else ()), *_slots(cls)]
+    return [name for name in fields if name.isidentifier() and not keyword.iskeyword(name)]
+
+
+def _slots(cls: type) -> list[str]:
+    """The attributes the ``__slots__`` of *cls* and its bases declare, each
+    by the name it is stored under (``__x`` of a class ``C`` as ``_C__x``)."""
+    names: dict[str, None] = {}
+    for base in cls.__mro__:
+        slots = base.__dict__.get("__slots__", ())
+        owner = base.__name__.lstrip("_")
+        for name in [slots] if isinstance(slots, str) else slots:
+            if name in ("__dict__", "__weakref__"):
+                continue
+            if owner and name.startswith("__") and not name.endswith("__"):
+                name = f"_{owner}{name}"
+            names[name] = None
+    return list(names)
+
+
+def _argument_reads(code: types.CodeType, name: str) -> list[tuple[str, ...]] | None:
+    """The attribute chains *code* reads off its parameter *name*
+    (``p.amplitude``), or None when it uses the parameter otherwise: passes
+    it on, stores it or keeps it in a closure."""
+    if name in code.co_cellvars:
+        return None
+    try:
+        instrs = bc.decode(code).instrs
+    except Exception:
+        return None
+    other = (
+        bc.STORE_FAST,
+        bc.STORE_FAST_MAYBE,
+        bc.DELETE_FAST,
+        bc.LOAD_FAST_AND_CLEAR,
+        bc.LOAD_DEREF,
+        bc.STORE_DEREF,
+    )
+    chains: list[tuple[str, ...]] = []
+    for start, (op, arg) in enumerate(instrs):
+        if op == bc.LOAD_FAST and arg == name:
+            end = start + 1
+            while end < len(instrs) and instrs[end][0] == bc.LOAD_ATTR:
+                end += 1
+            if end == start + 1:
+                return None
+            chains.append(tuple(attr for _, attr in instrs[start + 1 : end]))
+        elif op in other and arg == name:
+            return None
+    return chains
+
+
+# Whether a read of *chain* off *value* meets a method, which may read any
+# attribute of its object.
+def _meets_method(value: Any, chain: tuple[str, ...]) -> bool:
+    for attr in chain:
+        try:
+            value = getattr(value, attr)
+        except Exception:
+            return False
+        if isinstance(value, (types.MethodType, types.BuiltinMethodType)):
+            return True
+    return False
+
+
+def pin_arguments(
+    guard: Guard, fn: types.FunctionType, pinned: Iterable[tuple[str | None, Any]]
+) -> Guard:
+    """*guard*, extended to compare the static arguments *pinned* that the
+    cache keys by the object itself, so a change in place is seen:
+    ``(parameter, value)``, or ``(None, value)`` for a value in a tuple, list
+    or dict argument. An array or a container is compared by a copy of its
+    contents, as a global is; an object by the attribute chains *fn* reads
+    off its parameter (``p.amplitude``), or by all its attributes
+    (``_attributes``) when *fn* uses it otherwise or calls a method of it.
+    """
+    if guard.impure:
+        return guard
+    plan = list(guard.plan)
+    registers = guard.registers
+    seen: set[int] = set()
+
+    def whole(value: Any, source: int, a: Any, b: Any, depth: int) -> None:
+        nonlocal registers
+        if _immutable(value):
+            plan.append((source, a, b, -1, _EQUAL_VALUE, value, None))
+            return
+        if isinstance(value, (types.MethodType, types.BuiltinMethodType)):
+            plan.append((source, a, b, -1, _EQUAL_METHOD, value, None))
+            return
+        snap = _snapshot(value)
+        names = (
+            []
+            if snap is not None or id(value) in seen or depth > _MAX_HELPER_DEPTH
+            else _attributes(value)
+        )
+        if snap is None and not names and source == _GLOBAL:
+            return  # Only its identity, which the cache key holds.
+        register = -1
+        if names:
+            seen.add(id(value))
+            register = registers
+            registers += 1
+        plan.append((source, a, b, register, _SAME_OBJECT, value, snap))
+        for name in names:
+            try:
+                attribute = getattr(value, name)
+            except Exception:
+                continue
+            whole(attribute, _ATTR, register, name, depth + 1)
+
+    for name, value in pinned:
+        reads = None
+        if name is not None and _attributes(value):
+            reads = _argument_reads(fn.__code__, name)
+        if reads is None or any(_meets_method(value, chain) for chain in reads):
+            whole(value, _GLOBAL, (value,), 0, 0)
+            continue
+        # The registers of the argument and of each attribute read off it
+        # that a longer chain reads on from.
+        parents: dict[tuple[str, ...], int] = {(): registers}
+        plan.append((_GLOBAL, (value,), 0, registers, _SAME_OBJECT, value, None))
+        registers += 1
+        for chain in dict.fromkeys(reads):
+            parent = value
+            for n, attr in enumerate(chain, start=1):
+                try:
+                    child = getattr(parent, attr)
+                except Exception:
+                    break
+                if n == len(chain):
+                    whole(child, _ATTR, parents[chain[: n - 1]], attr, 1)
+                elif chain[:n] not in parents:
+                    parents[chain[:n]] = registers
+                    registers += 1
+                    step = (_ATTR, parents[chain[: n - 1]], attr, parents[chain[:n]])
+                    plan.append((*step, _SAME_OBJECT, child, _snapshot(child)))
+                parent = child
+    pinned_guard = Guard(_always_false, guard.reads, False, tuple(plan), registers)
+    steps = pinned_guard.plan
+    ref = weakref.ref(pinned_guard)
+
+    def upgrade() -> Callable[[], bool]:
+        check = _generated(steps)
+        held = ref()
+        if held is not None:
+            held.check = check
+        return check
+
+    pinned_guard.check = _closures(steps, registers, upgrade)
+    return pinned_guard
 
 
 def build_guard(
