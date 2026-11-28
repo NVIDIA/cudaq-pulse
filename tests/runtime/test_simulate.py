@@ -118,6 +118,37 @@ def test_simulate_takes_the_kernel_and_its_arguments():
         pulse.simulate("rabi", q, levels=2)  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize(
+    ("initial_state", "error", "message"),
+    [
+        ("ground", pulse.InvalidTypeError, "initial_state"),
+        ([["ground", 0], [0, 1]], pulse.InvalidTypeError, "initial_state"),
+        ([math.nan, 0], pulse.InvalidValueError, "finite"),
+        ([[1, 0], [0, math.inf]], pulse.InvalidValueError, "finite"),
+        ([2, 0], pulse.InvalidValueError, r"norm 2"),
+        ([0, 0], pulse.InvalidValueError, r"norm 0"),
+        ([[2, 0], [0, 0]], pulse.InvalidValueError, r"trace.*2"),
+        ([[0, 0], [0, 0]], pulse.InvalidValueError, r"trace.*0"),
+    ],
+)
+def test_simulate_rejects_an_invalid_initial_state(initial_state, error, message):
+    with pytest.raises(error, match=message):
+        _run(measure, levels=2, initial_state=initial_state)
+
+
+@pytest.mark.parametrize(
+    "initial_state",
+    [
+        np.array([1.0, 1j]) / math.sqrt(2.0),
+        np.outer(np.array([1.0, 1j]) / math.sqrt(2.0), np.array([1.0, -1j]) / math.sqrt(2.0)),
+    ],
+)
+def test_simulate_preserves_a_normalized_initial_state(initial_state):
+    result = _run(_rabi(0.0), levels=2, initial_state=initial_state)
+    expected = np.outer(np.array([1.0, 1j]) / math.sqrt(2.0), np.array([1.0, -1j]) / math.sqrt(2.0))
+    np.testing.assert_allclose(result.density_matrix, expected, atol=1e-12)
+
+
 @pulse.kernel
 def _rabi_with_amplitude(q0, amplitude: float):
     d0 = get_drive_line(q0)
