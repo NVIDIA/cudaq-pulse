@@ -22,9 +22,9 @@ import pytest
 
 OPTIONAL_TOOLS_VAR = "CUDAQ_PULSE_OPTIONAL_TOOLS"
 _PRELOAD_VARS = ("LD_PRELOAD", "DYLD_INSERT_LIBRARIES")
-# GCC's libasan.so.8 and clang's libclang_rt.asan_osx_dynamic.dylib, and the
-# other sanitizers' runtimes.
-_SANITIZER_RUNTIME = re.compile(r"lib(?:clang_rt\.)?(?:a|hwa|l|m|t|ub)san[._]")
+# GCC's libasan.so.8, clang's libclang_rt.asan_osx_dynamic.dylib and
+# libclang_rt.asan-x86_64.so, and the other sanitizers' runtimes.
+_SANITIZER_RUNTIME = re.compile(r"lib(?:clang_rt\.)?(?:a|hwa|l|m|t|ub)san[._-]")
 
 
 def in_ci() -> bool:
@@ -60,6 +60,26 @@ def c_compiler() -> str:
     if compiler is None:
         missing("cc", "no C compiler (cc, clang or gcc) on PATH")
     return compiler
+
+
+def under_sanitizers(env: Mapping[str, str] | None = None) -> bool:
+    """Whether *env* (``os.environ`` by default) preloads a sanitizer runtime,
+    as the sanitizer jobs do for the uninstrumented interpreter."""
+    env = os.environ if env is None else env
+    return any(
+        _SANITIZER_RUNTIME.match(os.path.basename(lib))
+        for var in _PRELOAD_VARS
+        for lib in re.split(r"[:\s]+", env.get(var, ""))
+        if lib
+    )
+
+
+def skip_raw_limit(what: str) -> None:
+    """Skip the test under a sanitizer runtime: *what* is a ceiling on raw
+    time or memory, which the instrumentation multiplies, so it says nothing
+    about the code there. The unsanitized jobs check it."""
+    if under_sanitizers():
+        pytest.skip(f"{what} is not checked under a sanitizer runtime")
 
 
 def tool_env(env: Mapping[str, str] | None = None) -> dict[str, str]:

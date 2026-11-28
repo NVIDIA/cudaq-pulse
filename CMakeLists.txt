@@ -179,6 +179,7 @@ include_directories(
 add_subdirectory(core/mlir/include/cudaq-pulse)
 
 include(CudaqPulseVersion)
+include(CudaqPulseDialectSource)
 
 # Build the dialects, transforms, conversions, and optimizer driver.
 add_subdirectory(core/mlir)

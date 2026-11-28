@@ -37,7 +37,9 @@ jobs:
   # (tools/ci-changes.py): "native" runs every job, "python" every job but
   # old-compilers, "docs" only test-docs beside lint, and a change of none of
   # them lint alone. A path the tool does not name is native. Only a pull
-  # request is classed: a push and a manual run are native.
+  # request is classed: a push and a manual run are native. The ci-ok job
+  # holds the run to these answers (tools/ci-ok.py): a job's condition here
+  # and its line in that tool's plan say the same.
   changes:
     name: changes
     if: ${{ !startsWith(github.ref, 'refs/heads/pull-request/') }}
@@ -65,7 +67,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           python-version: "3.12"
       - run: uv sync --locked --only-group lint
@@ -93,9 +95,16 @@ jobs:
         # version's bytecode, and tests/kernel/test_ir_golden.py checks they
         # all trace to the same IR. linux-aarch64 runs the oldest and the
         # newest; macOS runs 3.12 to 3.14.
+        #
+        # A pull request runs test level 0 of the pytest suite
+        # (CONTRIBUTING.md, Test levels) on every leg, and with it the test
+        # files it adds or changes, up to level 2
+        # (tools/ci-changed-tests.py); a push to main and a manual run,
+        # levels 0 to 2 on every leg. Level 3, the suite under two hash
+        # seeds and coverage run every night (property-nightly.yml).
         include:
           - { platform: linux-x86_64, runner: ubuntu-24.04, python: "3.12" }
-          - { platform: linux-x86_64, runner: ubuntu-24.04, python: "3.13", hash-seeds: true }
+          - { platform: linux-x86_64, runner: ubuntu-24.04, python: "3.13" }
           - { platform: linux-x86_64, runner: ubuntu-24.04, python: "3.14" }
           - { platform: linux-x86_64, runner: ubuntu-24.04, python: "3.15" }
           - { platform: linux-aarch64, runner: ubuntu-24.04-arm, python: "3.12" }
@@ -110,7 +119,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           python-version: ${{ matrix.python }}
       - run: uv sync --locked
@@ -119,28 +128,27 @@ jobs:
       - name: Configure
         run: uv run --no-sync cmake --preset dev
 
-      # The log ends with the 30 slowest tests, to see where the time goes.
+      # The paths a pull request changes, as the changes action lists them
+      # (.github/actions/changes): pytest reads them as data, and runs the
+      # test files among them beside level 0 (--changed-paths,
+      # tools/ci-changed-tests.py). Without the list the job fails.
+      - name: Paths this pull request changes
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: git diff --name-only --no-renames "$BASE" "$GITHUB_SHA" -- > "$RUNNER_TEMP/changed-paths.txt"
+
+      # The log ends with the 30 slowest tests, to see where the time goes,
+      # and with the test files of the change that ran above level 0 and the
+      # ones that were left. The lit suite and the runtime host tests have no
+      # level and always run.
       - name: check-pulse (lit + pytest)
         env:
-          PYTEST_ADDOPTS: --durations=30
+          PYTEST_ADDOPTS: >-
+            --durations=30 --level
+            ${{ github.event_name == 'pull_request'
+            && format('0 --changed-paths={0}/changed-paths.txt', runner.temp) || '2' }}
         run: uv run --no-sync cmake --build build/dev --target check-pulse
-
-      # Python randomizes str hashes in every run (PYTHONHASHSEED=random is
-      # the default), but a failure that depends on the seed can't be
-      # replayed without it. This leg runs the suite again under two seeds it
-      # draws and logs; replay one with PYTHONHASHSEED=<seed>.
-      - name: pytest under two logged hash seeds
-        if: matrix.hash-seeds
-        env:
-          PYTHONPATH: build/dev/python
-        run: |
-          for seed in $(shuf -i 1-4294967295 -n 2); do
-            echo "::notice title=PYTHONHASHSEED::pytest with PYTHONHASHSEED=$seed"
-            if ! PYTHONHASHSEED=$seed uv run --no-sync python -m pytest tests -q -m "not gpu" -p no:cacheprovider; then
-              echo "::error title=PYTHONHASHSEED::the suite failed with PYTHONHASHSEED=$seed"
-              exit 1
-            fi
-          done
 
       - name: Every pass has a lit test
         run: uv run --no-sync python tools/check-pass-lit-tests.py build/dev/bin/cudaq-pulse-opt
@@ -163,18 +171,6 @@ jobs:
         run: |
           uv run --no-sync python -m mypy.stubtest cudaq_pulse --allowlist tools/stubtest-allowlist.txt
           uv run --no-sync mypy --strict --warn-unused-ignores tests/typing/public_api.py
-
-      # The files a wheel installs (scikit-build installs the same component),
-      # for the editor-types job.
-      - name: Install the CudaqPulse component
-        if: matrix.platform == 'linux-x86_64' && matrix.python == '3.12'
-        run: uv run --no-sync cmake --install build/dev --component CudaqPulse --prefix installed
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: matrix.platform == 'linux-x86_64' && matrix.python == '3.12'
-        with:
-          name: installed-linux-x86_64
-          path: installed
-          retention-days: 1
 
       # Op counts are gated by the perf-gate job and by
       # tests/classical/test_no_call_identity.py; the times are informational.
@@ -217,6 +213,32 @@ jobs:
           than its baseline on $PLATFORM, py$PYTHON; see the
           'Perf guard (baselines, non-blocking)' step"
 
+      # Editor types, on one leg: kernels type-check clean in Pylance's
+      # default mode (VS Code and VS Code-based editors) and in pyright's
+      # standard mode, with the package installed into a fresh environment
+      # and no configuration; a typo is still reported. The environment is
+      # outside the checkout, holds the files a wheel installs (scikit-build
+      # installs the same component) and none of the build's, and pyright
+      # runs from an empty directory (tools/check-editor-types.py). The
+      # steps come last, so they hide no other step's result.
+      - name: Editor types, install the CudaqPulse component
+        if: matrix.platform == 'linux-x86_64' && matrix.python == '3.12'
+        run: uv run --no-sync cmake --install build/dev --component CudaqPulse --prefix installed
+      - name: Editor types, fresh environment with cudaq-pulse installed
+        if: matrix.platform == 'linux-x86_64' && matrix.python == '3.12'
+        run: |
+          uv venv "$RUNNER_TEMP/user"
+          uv pip install --python "$RUNNER_TEMP/user/bin/python" \
+            pyright==1.1.414 "numpy>=2.0" "matplotlib>=3.9"
+          site=$("$RUNNER_TEMP/user/bin/python" -c "import sysconfig; print(sysconfig.get_paths()['purelib'])")
+          cp -R installed/. "$site/"
+      - name: Editor types, pyright (off and standard) over the examples and the docs
+        if: matrix.platform == 'linux-x86_64' && matrix.python == '3.12'
+        run: >
+          python3 tools/check-editor-types.py
+          --python "$RUNNER_TEMP/user/bin/python"
+          --pyright "$RUNNER_TEMP/user/bin/pyright"
+
   # The instructions executed by fixed compile, bind, submit, export and
   # simulate cases, counted by Callgrind, and their program sizes, against
   # benchmarks/baselines/perf_gate.json (tools/perf-gate.py). Both repeat
@@ -226,9 +248,10 @@ jobs:
   # an Ubuntu archive snapshot, uv and Python by version. Changing a pin
   # changes the counts, and the gate fails on counts from another
   # environment than the baseline's until a new baseline is taken on the
-  # change's branch. While the baseline says "bootstrap": true and has no counts,
-  # the counts are reported, not gated (CONTRIBUTING.md, The perf gate). A
-  # manual run with perf_baseline runs this job alone, to take a baseline.
+  # change's branch. A baseline that says "bootstrap": true and has no counts
+  # fails every run but the manual one with perf_baseline, which runs this
+  # job alone, to take a baseline, and fails that one too on main
+  # (CONTRIBUTING.md, The perf gate).
   # Every change that can move it runs it: the compiler, the runtime and the
   # Python package (needs.changes.outputs.python covers all three).
   perf-gate:
@@ -271,7 +294,7 @@ jobs:
       # refuses unless it is marked safe (the checkout step marks it only for
       # itself); the gate compares the change with its base through git.
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           version: "0.12.23"
           python-version: "3.12.15"
@@ -296,6 +319,12 @@ jobs:
       # base is the previous tip; a run dispatched on a branch other than
       # main has the branch's merge base with main (none when it takes a
       # baseline).
+      #
+      # Every run but the one that takes a baseline is strict: it fails
+      # unless the counts were measured, with address randomization off,
+      # against a measured baseline. Without Valgrind or `setarch -R`, or
+      # with a baseline in bootstrap mode, the gate would pass having gated
+      # nothing (perf-gate.py --help).
       - name: Perf gate
         env:
           PROCESSES: ${{ inputs.perf_baseline && 5 || 2 }}
@@ -308,8 +337,10 @@ jobs:
             && [ "$PERF_BASELINE" != true ]; then
             base="$(git merge-base HEAD origin/main)"
           fi
+          strict=yes
+          if [ "$PERF_BASELINE" = true ]; then strict=; fi
           uv run --no-sync python tools/perf-gate.py --processes "$PROCESSES" \
-            ${base:+--base-commit "$base"} \
+            ${strict:+--strict} ${base:+--base-commit "$base"} \
             --out perf-gate/perf_gate.json --dumps perf-gate/callgrind \
             --summary "$GITHUB_STEP_SUMMARY"
 
@@ -332,43 +363,9 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  # Kernels type-check clean in Pylance's default mode (VS Code and
-  # VS Code-based editors) and in pyright's standard mode, with the package
-  # installed into a fresh environment and no configuration; a typo is still
-  # reported.
-  editor-types:
-    name: editor types (pyright, no configuration)
-    if: ${{ !startsWith(github.ref, 'refs/heads/pull-request/') && !inputs.perf_baseline && needs.changes.outputs.python == 'true' }}
-    needs: [changes, test]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-        with:
-          python-version: "3.12"
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: installed-linux-x86_64
-          path: installed
-      - name: Fresh environment with cudaq-pulse installed
-        run: |
-          uv venv "$RUNNER_TEMP/user"
-          uv pip install --python "$RUNNER_TEMP/user/bin/python" \
-            pyright==1.1.414 "numpy>=2.0" "matplotlib>=3.9"
-          site=$("$RUNNER_TEMP/user/bin/python" -c "import sysconfig; print(sysconfig.get_paths()['purelib'])")
-          cp -R installed/. "$site/"
-      - name: pyright (off and standard) over the examples and the docs
-        run: >
-          python3 tools/check-editor-types.py
-          --python "$RUNNER_TEMP/user/bin/python"
-          --pyright "$RUNNER_TEMP/user/bin/pyright"
-
   # Free-threaded CPython: the extension is built to run without the GIL and
-  # the whole CPU suite, tests/test_threads.py included, runs with the GIL
-  # off; any extension that turns it back on fails the job. wheels.yml builds
+  # the CPU suite, at the levels of the test job, runs with the GIL off; any
+  # extension that turns it back on fails the job. wheels.yml builds
   # and tests the cp314t release wheels the same way.
   test-free-threaded:
     name: test (linux-x86_64, py3.14t)
@@ -385,7 +382,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           python-version: "3.14t"
       # The lint and docs tools are checked on the GIL build.
@@ -408,9 +405,23 @@ jobs:
           assert sysconfig.get_config_var('Py_GIL_DISABLED'), 'not a free-threaded interpreter';
           assert not sys._is_gil_enabled(), 'importing cudaq_pulse enabled the GIL'"
 
+      # As the test job.
+      - name: Paths this pull request changes
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: git diff --name-only --no-renames "$BASE" "$GITHUB_SHA" -- > "$RUNNER_TEMP/changed-paths.txt"
+
+      # Level 0 and the test files of the change for a pull request, levels
+      # 0 to 2 otherwise, as the test job. Level 0 holds three tests of
+      # tests/test_threads.py: concurrent compiles, and the kernel cache and
+      # the target cache filled from several threads at once.
       - name: check-pulse (lit + pytest)
         env:
-          PYTEST_ADDOPTS: --durations=30
+          PYTEST_ADDOPTS: >-
+            --durations=30 --level
+            ${{ github.event_name == 'pull_request'
+            && format('0 --changed-paths={0}/changed-paths.txt', runner.temp) || '2' }}
         run: uv run --no-sync cmake --build build/dev --target check-pulse
 
   # The oldest compilers the build supports, Ubuntu 22.04's GCC 11 and
@@ -434,7 +445,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           python-version: "3.12"
       - run: uv sync --locked --no-default-groups --group build --group test
@@ -453,62 +464,11 @@ jobs:
       - name: lit
         run: uv run --no-sync cmake --build build/dev --target check-pulse-mlir
 
-  # Line and branch coverage of the Python package by the CPU suite. It is a
-  # report only: there is no threshold, and the job never blocks a merge.
-  # Code that runs only in a subprocess the tests start is not measured.
-  coverage:
-    name: coverage (report only, linux-x86_64, py3.12)
-    if: ${{ !startsWith(github.ref, 'refs/heads/pull-request/') && !inputs.perf_baseline && needs.changes.outputs.python == 'true' }}
-    needs: changes
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-        with:
-          python-version: "3.12"
-      - run: uv sync --locked --group coverage
-      - uses: ./.github/actions/mlir-toolchain
-
-      - name: Build
-        run: |
-          uv run --no-sync cmake --preset dev
-          uv run --no-sync cmake --build --preset dev
-
-      - name: pytest under coverage
-        env:
-          PYTHONPATH: build/dev/python
-        run: >
-          uv run --no-sync coverage run --branch --source=cudaq_pulse
-          -m pytest tests -q -m "not gpu" -p no:cacheprovider
-
-      - name: Report
-        if: ${{ !cancelled() }}
-        run: |
-          uv run --no-sync coverage xml -o coverage/coverage.xml
-          uv run --no-sync coverage html -d coverage/html
-          {
-            echo "### Python coverage (report only, no threshold)"
-            echo
-            uv run --no-sync coverage report --format=markdown --sort=cover
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: ${{ !cancelled() }}
-        with:
-          name: coverage
-          path: coverage
-          if-no-files-found: warn
-          retention-days: 14
-
   # A change to the pages or to a file that tests read (the README, the
   # changelog, the contributing guide, the license files) and to nothing
-  # wider: the tests that read them, once. A wider change runs them in every
-  # test job. tests/test_ci_changes.py holds this list against the tests.
+  # wider: the tests that read them, once, at every level. A wider change
+  # runs them in every test job, at the levels that job runs.
+  # tests/test_ci_changes.py holds this list against the tests.
   test-docs:
     name: test (the pages' tests, linux-x86_64, py3.12)
     if: >-
@@ -522,7 +482,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           python-version: "3.12"
       - run: uv sync --locked
@@ -538,44 +498,37 @@ jobs:
           PATH="$PWD/build/dev/bin:$PATH" uv run --no-sync python -m pytest
           tests/test_tutorials.py tests/test_tutorial_scripts.py tests/test_tutorial_figures.py
           tests/test_examples.py tests/test_conventions.py tests/test_transmon_surface17_page.py
-          tests/test_release_tools.py
+          tests/test_release_tools.py tests/test_readme_example.py
           tests/test_api_docs.py tests/test_error_codes.py tests/test_third_party_notices.py
           tests/test_ci_changes.py tests/test_perf_gate.py
           -q -m "not gpu" -p no:cacheprovider
 
-  # The check of this workflow to require on main. It runs whatever the
-  # others did, fails when one of them failed or was cancelled, and passes
-  # when the jobs a change does not need were skipped. coverage reports only
-  # and is left out. It has the required name only for a pull request and for
-  # main: a pull-request/<N> branch and a perf-baseline run test only a part,
-  # on a commit that may be a pull request's head, and must not stand in for
-  # the real one.
+  # The check of this workflow to require on main. It always runs, and holds
+  # the run to the plan the classifier's answers give (tools/ci-ok.py): every
+  # job the change needs succeeded and every other job was skipped. A needed
+  # job that was skipped, cancelled or failed fails it, and so does a
+  # classifier that did not succeed or did not answer. It has the required
+  # name only for a pull request and for main: a pull-request/<N> branch and
+  # a perf-baseline run test only a part, on a commit that may be a pull
+  # request's head, and must not stand in for the real one.
   ci-ok:
     name: >-
       ${{ (github.event_name == 'pull_request' || github.ref == 'refs/heads/main')
       && !inputs.perf_baseline && 'ci-ok' || 'ci-ok (a partial run, not the required check)' }}
     if: ${{ always() }}
-    needs: [changes, lint, test, test-docs, perf-gate, editor-types, test-free-threaded, old-compilers]
+    needs: [changes, lint, test, test-docs, perf-gate, test-free-threaded, old-compilers]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Every job that ran passed
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Every job the change needs passed
         env:
           NEEDS: ${{ toJSON(needs) }}
           GPU_ONLY: ${{ startsWith(github.ref, 'refs/heads/pull-request/') }}
-        run: |
-          python3 - <<'PY'
-          import json, os, sys
-
-          results = {job: need["result"] for job, need in json.loads(os.environ["NEEDS"]).items()}
-          print(json.dumps(results, indent=2))
-          bad = {job: result for job, result in results.items() if result not in ("success", "skipped")}
-          # The classifier itself must have run: without it every job is
-          # skipped. A pull-request/<N> branch runs the gpu job alone.
-          if results.get("changes") != "success" and os.environ.get("GPU_ONLY") != "true":
-              bad["changes"] = results.get("changes")
-          sys.exit(f"not passed: {bad}" if bad else 0)
-          PY
+          PERF_BASELINE: ${{ inputs.perf_baseline }}
+        run: python3 tools/ci-ok.py summary
 
   # A source build with GPU support and the GPU tests (gpu-tests.yml), in the
   # CUDA 12.9 development image on a GPU runner, once the GPU_RUNNERS

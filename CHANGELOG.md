@@ -13,6 +13,20 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 
 ### Added
 
+- **Readout crosstalk.** `qs.replace(readout_crosstalk=[ReadoutCrosstalk(
+  resonator_of=14, qudit=4, chi_hz=-20e3)])` states that a readout of qudit
+  14 shifts qudit 4 by `chi_hz` per photon in qudit 14's resonator (level j
+  of qudit 4 by j times that); a tuple gives the shift by qudit 14's level.
+  `pulse.simulate` adds the shift while the readout plays and as its
+  resonator rings down, with the photons the resonator's equation gives for
+  each level of the qudit read out at the tone and amplitude played. A
+  resonator without a stated `frequency_hz` sits at the tone its readout
+  line starts the program at. An entry whose qudit read out has no
+  `DispersiveReadout` with its `dispersive_shift_hz` and `linewidth_hz` is
+  refused when the program reads that qudit out, and lowers nothing when it
+  does not. The entries are checked, are part of the fingerprint, pickle and
+  go in the system file. A system without any lowers and simulates as
+  before.
 - **`pulse.call`, a placed call of a function scheduled on its own.** In MLIR,
   `pulse.call @f(args) <{start_cycles = s, duration_cycles = d}>` runs `@f`
   at one start time, every timed op of `@f` keeping its start relative to
@@ -291,6 +305,32 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   kernel's calls of them are compiled. A call of another function of the
   module that states its start (`pulse.start_cycles`, provisional) is written
   in place.
+- **Bytecode states the dialect source it was written with, and `pulse.load`
+  refuses one written with another.** MLIR bytecode holds an operation's
+  properties by position, in the shape the writer's copy of the dialect
+  gives them, so bytecode read with dialects of another shape can be misread
+  without an error: a start read as a duration. The bytecode this package
+  writes (a pickled program's module) and the bytecode of
+  `cudaq-pulse-opt --emit-bytecode` now state the source of the Pulse and
+  Classical dialects in their producer string, as
+  `cudaq-pulse-dialects=<source>`
+  (`cudaq-pulse cudaq-pulse-dialects=22.1.8-cf2faa24b237fcb9`): the LLVM
+  version and a digest of the two dialects' definition files. `pulse.load`
+  reads the producer string before anything else of the module and refuses
+  bytecode that states another source than its own, naming both: give that
+  module as assembly, which holds properties by name. Two sources are the
+  same when their digests are equal and their LLVM versions have the same
+  major and minor: bytecode from a writer built with another patch release
+  of the same LLVM minor and the same dialect files is read, and a stated
+  source that cannot be read as a version and a digest is refused. Assembly
+  states no source, and bytecode that states none is read as before. A writer outside
+  this repository states the source the same way: it runs
+  `cmake -DROOT=<checkout> -DLLVM_VERSION=<version> -DOUTPUT=<file> -P
+  cmake/write_dialect_source.cmake` on the checkout it is built from, with
+  the version of the LLVM it is built with (`LLVM_PACKAGE_VERSION`), which
+  writes the source as a C++ string, and puts
+  `cudaq-pulse-dialects=<source>` in the producer string of its
+  `mlir::BytecodeWriterConfig`, after its own name and a space.
 - **Broadcast drive lines.** A drive line whose one tone reaches several
   qudits at once, as one antenna or beam over several, is declared on the line:
   `DriveLine([0, 1, 2], broadcast=True)`. A kernel gets it with
@@ -342,9 +382,31 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   levels that ascend, which every shipped model's do, nothing changes; where
   frequencies are offsets, a qudit's 1-2 tone is its anharmonicity below
   its 0-1 tone, as it must be, and no longer above.
+- **`controller.shape_known`.** `shape_known(waveform)` says whether every
+  shape parameter of an exported waveform is known while the program
+  compiles: what `shape_key(waveform) is not None` says, without building
+  the key. A backend that refuses a waveform known only at run time asks it
+  of each event. A list of samples that are all floats is not read one by one, so
+  4,096 of them cost what 16 do, where the key takes the magnitude of each,
+  divides each and rounds each. A waveform that has a key, or that is known
+  only at run time, never costs more than its key in bytecodes, Python
+  calls or calls of built-in functions. The answer, and the error for a
+  waveform that is not well formed, are the key's.
 
 ### Changed
 
+- **A readout resonator without a stated frequency sits at the tone its
+  line starts at.** The IQ points of a readout whose `DispersiveReadout`
+  gives no `frequency_hz` were drawn with the resonator at whatever tone the
+  readout played, so a `shift_frequency` of the readout line's tone never
+  detuned it. The resonator now sits at the tone the line starts the
+  program at (on a system whose qudits give no frequencies, its carrier),
+  and a later frequency change detunes the readout as it does one with a
+  stated frequency. A program that never changes its readout tone's
+  frequency draws the same points. A readout whose tone the readout model
+  cannot compute, on a line whose starting tone it can, or the other way
+  round, is now an error, as an unknown tone is for a resonator with a
+  stated frequency.
 - **A run-time expression of the controller export names a term that
   several terms use, and no expression is too deep to export.** A value the
   program computes at run time from a term it uses twice, forty times over,
@@ -455,6 +517,14 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 - **Faster compiles of branches beside long lists of lines.** Tracing a
   measurement-conditioned `if` in a kernel that keeps many lines or tones
   in a list costs less; the programs compiled are unchanged.
+- **A kernel of many comprehensions and no `try` or `with` block is
+  decoded in linear time.** Reading a kernel's bytecode looked, for the
+  exception-table entry of each inlined comprehension, through every entry
+  of the kernel, so a kernel with a thousand comprehensions ran 16 million
+  bytecodes there the first time it was compiled, most of that compile's
+  Python work. A kernel without a `try` or `with` block no longer looks:
+  it has no handler to find. One with such a block is read as before. The
+  programs compiled are unchanged.
 - **A list of lines held under several names costs a branch once.** A
   measurement-conditioned `if` kept a record of a list of lines or tones for
   every local name that held it (a further variable, or a called kernel
@@ -648,6 +718,11 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   `**kwargs` on to it. Calls that worked still work; a type checker now
   accepts a `Path` and rejects another keyword, such as `dpi=300`, which
   type-checked and then raised `TypeError` inside `plot_schedule`.
+- **The exports list a segment without `dataclasses.asdict`.**
+  `export_to_emulator` and the controller exports, which carry the
+  program's segments, made each segment's entry with `dataclasses.asdict`,
+  which took about 30 calls a segment; an entry is now written directly,
+  in one call. The exports are unchanged.
 - **The emulator export of one controller builds the schedule once.** On a
   control system of several controllers, `export_to_emulator` built the
   program's schedule twice, once to check it against the controller's part
@@ -667,8 +742,239 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   and the simulation goes from 7,915 ms to 7,895 ms (NVIDIA RTX A6000,
   driver 570.211.01, CUDA runtime 12.9.79, cuDensityMat 0.7.1). Which
   intervals are split, and every result, are as before.
+- **The amplitude check reads a waveform that events share once.** Where
+  the native check does not count a controller's limits (several clocks,
+  lines a call holds, a count of pulses on a controller that runs loops),
+  `check` and the export find each event's peak by the text of its waveform,
+  and wrote that text for every event. The events of one op share one
+  waveform, and its text is now written when the waveform changes from one
+  event of a line to the next, not for each: 256 drives of one envelope
+  write it once. Equal waveforms that are not one object are still sampled
+  once. An event whose waveform is not the one before it runs one bytecode
+  more and one call of a built-in function fewer than it did, and each
+  line's check two bytecodes more. Every violation and its text are as
+  before.
+- **The exports of a program's parts scan its events once for the
+  controllers that take each answer.** On a control system of several
+  controllers, `export_to_controller(controller=...)` splits the program
+  into each controller's part and checks it against the whole system. Both
+  need to know which controllers play a pulse that uses each answer of a
+  classical call, and each found it by its own scan of every event. The
+  check now reads the scan the parts were made from, where it checks those
+  same events; a check that counts in a controller's own cycles converts
+  copies of the events, and scans those as before. On two controllers that
+  state what they support, the exports of a loop of 1,000 rounds that each
+  branch on an answer go from about 13.0 million bytecodes of Python work
+  to 11.2 million. The search that tells a program with no answer from one
+  with answers no longer runs Python code per event, so a program that
+  makes no call, or only submits, does less too. Every exported program
+  and every violation is as before.
+- **`controller.unroll` carries the time of rolled loops to their events.**
+  Every event of a format /2 program added up the periods of the loops
+  around it, and every iteration of a loop copied the list of those loops.
+  A loop now adds its period once per iteration and hands the time to the
+  events inside, and one list of loops serves the whole program. A program
+  of two nested loops and 10,240 events unrolls in 4,013,694 bytecodes
+  where it took 4,380,299, with 20,500 Python calls for 30,742 and 10,243
+  fewer calls of built-in functions (Python 3.12); an event outside every
+  loop saves the same sum. A period that is not an integer, which only an
+  export written elsewhere holds, is still added up at each event, to the
+  same rounding. The format /1 program, its branch numbers and every error
+  are as before.
+- **`controller.sample_waveform` writes a square's samples into its array.**
+  The samples of every waveform were built as two lists of floats, one per
+  part, and copied into the array. A square with numeric parameters is one
+  complex number repeated, and is now written into the array directly:
+  sampling 4,096 cycles allocates 66,384 bytes where it allocated 131,992
+  (`tracemalloc`), the array and little more. A square inside a sum, a
+  product or a scale, every other waveform, and the lists a sampled export
+  writes are sampled as before, with a little less work around each: the
+  table of the simulator's envelope kinds is no longer built for each one.
+  The samples, the array a caller owns, the check of a fractional rate and
+  every error are as before.
+- **`pulse.load` counts a program's events without making them.** The
+  number `load` records as the program's operations (`metrics.op_count`,
+  shown in its `repr`) is the length of its schedule, and `load` read
+  `schedule` to take it: for a program of up to 10,000 events that built
+  the list of every event and one Python object per event, only to count
+  them. The events are now counted in the module, once per operation with
+  each loop's iterations multiplied in. For a loop of 4,096 rounds of a
+  drive and a readout (8,192 events), the Python work of a `load` goes from
+  about 356,000 bytecodes to under 4,000 and its peak traced allocation
+  from 2.3 MB to 26 KB, the same as for a loop of 16 rounds. The count,
+  the schedule a later read gives and every error are as before: a readout
+  in a mode the exports do not take yet is still refused at `load` in a
+  program of up to 10,000 events, where the list refused it, and a longer
+  program loads as it did.
+- **A readout in a program with classical calls or a readout model weighs
+  each outcome once.** `pulse.simulate` took the weight of each state a readout projects
+  on, then took it again for the probability of each outcome and for the
+  outcome a sampled shot follows. It keeps the first. Results are
+  unchanged.
+- **RK4 on the GPU uploads its step factors once per interval.** With
+  `backend="gpu"` and the default `integrator="rk4"`, each step adds states
+  into one another eleven times, each time scaled by a factor that the
+  runtime first copied from the host to the device. The factors of a step
+  are the same for every step of an interval, so the runtime now uploads
+  the five of them once and every step reads them on the device. One
+  interval of 200 steps of a driven qubit made 2,214 host-to-device copies
+  and now makes 17, with the same 3,802 kernel launches (Nsight Systems,
+  NVIDIA RTX A6000, driver 570.211.01, CUDA runtime 12.9.79, cuDensityMat
+  0.7.1). Results are the same bit for bit, for one state and for a batch;
+  the other integrators run as before.
+- **A report of classical calls whose answers are unused makes none of
+  the program's events.** `classical_report()`, which every controller and
+  emulator export of a program with calls runs, lists the program's events
+  (up to the larger of 10,000 and 1,000 per call) to find how long the
+  first use of each answer waits (`exposed_cycles`). Only a call whose
+  answer is used asks that, and a program that only submits (a readout
+  sent to a decoder whose answer no pulse waits for) listed every event
+  all the same. For a loop of 8,192 rounds that each submit one call
+  (24,576 events), the Python work of the report goes from about 1,590,000
+  bytecodes to 492,000 and its peak traced allocation from 12.7 MB to
+  5.4 MB. Every report, every exported program in format /1 and /2, and
+  every error are as before, and a program in which any answer is used
+  is read as it was.
 
 ### Fixed
+
+- The schedule passes no longer take the square of the number of drives on
+  waveforms computed from one another (`w = wf_scale(w, 0.5)` before each
+  drive, or sums and products of earlier waveforms): they keep the length
+  each such waveform has instead of following it back to its first operand
+  every time they ask. The schedules are the same. Building such a kernel
+  and `pulse-verify` still follow each waveform back.
+- Scheduling a program on a control system of which several controllers
+  declare `max_program_duration` walks the program once for all of them,
+  where it walked it once per controller with a limit. The lengths compared
+  and the errors are the same, and the first controller in the control
+  system's order whose limit the program exceeds is still the one named.
+- **`pulse.load` no longer takes answers, or a length that is not an
+  answer's, from a module's attributes.** `load` kept two attributes the
+  compiler uses for its own programs wherever a module wrote them.
+  `classical.answers` on a `classical.wait` is what a simulation binds to
+  a call on its own copy of a program: stated in a module, it made every
+  value computed from that answer a constant, so the export played an
+  amplitude the module chose where the program computes it from the answer
+  as it runs. `classical.variable` marks a wait whose length is an answer,
+  which the verifier therefore does not hold to the length it takes: on a
+  drive it let a 16-cycle waveform state one cycle and the next drive start
+  inside it. `load` now drops `classical.answers`, and keeps
+  `classical.variable` only on a `pulse.wait` whose length is computed from
+  an answer; anywhere else it is dropped like any attribute of another
+  compiler, and a drive, a readout or a wait of constant length is then
+  verified for the length it has. A wait that keeps the mark states its
+  lowest length (`pulse.min_cycles`) and reserves exactly that in
+  `duration_cycles`, as `compile` schedules it; another reservation raises
+  `CompilationError`. A module `compile` wrote loads as before.
+- **`pulse.load` refuses a function whose branches or loops switch a line.**
+  A module could give the lines of two qudits as one result of an `scf.if`,
+  carry one line into an `scf.for` and yield another in its place, or pick
+  a line, or the qudit a line is acquired from, with `arith.select`. What
+  reads a loaded program follows such a value to the line of the first arm,
+  or to the one the loop starts with, so the export gave every drive after
+  it to that one qudit while the function plays on the other in the other
+  arm or in the later trips. `load` now compares, at every `scf.if` and
+  `scf.for` that gives a line, a tone or a link, where the value starts on
+  each path (a line acquired from a qudit the function takes, a
+  `pulse.tone`, a `classical.get_link`), and raises `CompilationError` for
+  a branch whose arms give two as one result, for a loop that yields
+  another than it takes in, for a line, tone or link made by anything but
+  a Pulse or classical operation, `scf.if` or `scf.for`, and for a qudit
+  picked by another operation or passed through a branch or a loop. A
+  branch or a loop that passes one line on through both arms and every
+  trip loads as before, and so does every module `compile` writes: a
+  kernel cannot leave a name on two lines after an `if` on a measurement.
+- **A frame update in a measured branch of a rolled loop waits for its
+  readout.** A phase or frequency change in an arm of an `if` on a
+  measurement is made once the measurement is in. In a rolled loop that
+  carries the tone through the branch (the loop's iterations do not drive
+  the tone, or drive it only after the branch), the change was placed at
+  the start of the iteration instead: for
+  `for _ in range(3): if readout(r, square(200, 0.05)): shift_phase(d.tone, 0.25)`
+  the exported frame updates were at cycles 0, 200 and 400, each on the
+  condition of a readout that completes 200 cycles later, where the same
+  loop written out gives 200, 400 and 600. Such a change, one that no
+  drive or readout plays with on a tone whose free time is not one pattern
+  over the iterations, is now placed when the readouts its branches test
+  complete, and where two of them move differently from one iteration to
+  the next, once both have. Only the start of such a change moves: drives,
+  readouts and waits are scheduled as before, and unrolled programs and
+  programs without a frame change in a measured branch of a rolled loop
+  compile to the IR, schedule and exports they had. A change in a loop
+  that drives its tone before the branch, and a branch in a loop on a
+  measurement from before the loop, are placed as before.
+- **Compiling loops of classical calls inside loops no longer slows with
+  the trips of any of them.** Of the loops around a call, the classical
+  check took one from a single copy of its body and walked the others
+  iteration by iteration, so rounds around repeats cost the trips of one
+  of the two, and in 100 rounds around 100,000 repeats twice the repeats
+  once took four times as long. Every loop of 64 or more trips is now
+  taken from one copy of its body: a call is one run with a period and a
+  count for each loop around it, and how many requests a link holds at
+  once, and whether they go out in program order, are worked out from
+  those. 800 rounds of 16,000 repeats are the work of 100 rounds of
+  2,000. The check's verdicts are the same, and so are its messages for
+  times within what the check counts in. Still counted
+  with one loop taken from one copy and those inside it walked, as
+  before: a loop whose calls do not all move by the same period, a loop
+  whose iterations start closer together than the loops inside it take
+  to start, and a call held for a negative time, none of which a
+  schedule the compiler makes has. A loop of fewer
+  than 64 trips is written out, which is less work than taking it from
+  one copy. In a function with a branch, the order of calls is still
+  checked at the first two iterations and the last of each loop, one
+  inside the other.
+- **A module given to `pulse.load` exports the frame changes that nothing
+  takes.** A phase or frequency change that no later drive or readout on
+  its tone takes (one after the last pulse, in a loop whose last iteration
+  leaves it, before a branch that only one arm plays, on a tone nothing
+  plays) is a `"frame_update"` event of the controller export. For a
+  compiled kernel the compiler finds those changes; a loaded program took
+  them from marks in the module's text (`pulse.unconsumed`,
+  `pulse.carried` and the lists on loops and branches), which only the
+  compiler's own text carries. A module of another compiler therefore
+  exported no frame update at all, and its export left out the frame its
+  tone ends in. `load` now finds them from the function's operations, with
+  the code the compiler uses, so a loaded module exports the frame updates
+  of the compiled kernel it is the text of; with `Controller(
+  persistent_frames=True)` it gives `frame_state` and no frame update, as
+  a compile does.
+  Each change stays at the start the module gives it. The marks in a
+  module's text are no longer read: one on a change that a pulse takes
+  gave a frame update the program does not have.
+- **`pulse.load` keeps a phase folded into a drive.** The compiler folds a
+  constant `shift_phase` into the drive after it, as `frame_phase_offset` on
+  that drive, and the export and the simulator read it there. `load` kept
+  only an operation's own attributes and those named `pulse.`, so the
+  scheduled module of a compiled kernel lost every folded phase when it was
+  loaded: `shift_phase(d.tone, 0.3)` before a drive played at phase 0.3
+  compiled and at phase 0 loaded, in both controller formats, with no
+  error. `load` now keeps `frame_phase_offset` and `phase_offset` (the
+  phase of one drive alone, read the same way) on a `pulse.drive`, each as
+  a finite `f64`; under those names on another operation, or with another
+  type, they are dropped as before, like every other attribute of another
+  compiler.
+- **`pulse-verify` checks a schedule's times in loops nested to any depth.**
+  The check of each drive, readout and wait (not before time zero, not
+  before the measurements its branches wait for, not before the operation
+  before it on its line ends) walked every loop at its first two
+  iterations and its last, one inside the other: three to the power of
+  the loops' depth. Twelve nested loops took half a million walks of the
+  innermost body, and a module given to `pulse.load` may nest far deeper.
+  It now takes the operations times the depth, and reports what it
+  reported: the same operations, messages and times, each operation once
+  and in the same order.
+
+- **Compiling a loop with very many classical calls in its body no longer
+  slows with the square of the calls.** To count the requests a link
+  holds at once, the classical check compared each call of the loop with
+  every other, twice: to find from which iteration the loop repeats
+  itself, and to count the requests in flight at each time it looks at.
+  Both are now taken from the calls in order, with the same counts, so
+  the work grows in step with the calls. (A loop whose calls start, or
+  end, in very many different periods of the loop is still counted call
+  by call.)
 
 - **`simulate` finds its default end without listing a long loop's events.**
   Without `t_end`, a simulation runs to the latest end of the program's
@@ -709,6 +1015,26 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   fault. The walks of select lowering, of the schedule passes, of
   `pulse-verify` and of the calls' timing now keep what is still to follow
   on a stack of their own, in the order they visited it before.
+- **The classical check reports a call whose times run past what it
+  counts in, and no longer writes a long loop of calls out one entry per
+  iteration in two cases.** The check counts and orders the calls of a
+  function from their starts in each iteration. A start that did not fit
+  64 bits was computed anyway (a signed overflow), and a call in a long
+  loop whose last execution did not fit was written out per iteration,
+  which ran out of memory at very many iterations. A call whose start in
+  some iteration, or whose length, is past 2^61 cycles either way is now
+  reported (`the call of 'f' starts, or lasts, past the cycles a schedule
+  counts in`) and left out of the count and the order; a long loop of
+  calls whose last execution is past it is reported with its start, period
+  and count, and its link's calls are then not counted or ordered. Another
+  operation the order of calls depends on (a readout or an answer a call
+  sends, an operation in a branch on an answer) with such a time is
+  reported as well. The bounds on when an answer is taken and on a
+  reaction deadline compare such times as they are. And a call that does
+  not move from one iteration to the next was
+  written out per iteration to count the requests in flight; its
+  executions are now counted together, with the same result.
+
 - **`pulse.load` holds a module's calls and loops to the bounds it states.**
   Several of the bounds the guide gives for a loaded module could be passed.
   Calls nest at most 256 deep, but a function already counted for an
@@ -960,6 +1286,10 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   does the work it did; a number of another type (an int, a numpy scalar)
   is made a plain float where it is bound. `bind()` refuses a numpy bool
   (`np.True_`) as it refuses a `bool`; it was taken as `1.0`.
+- `pulse.simulate` now names the value it rejected in its `dt_ns` error and
+  the qudit and its level count in the error for fewer than two levels, also
+  when a per-qudit `levels` mapping is used.
+
 - Binding the values of a call with a long `list[float]` parameter crashed
   the process (a segmentation fault) from about 65,500 values on, when the
   kernel was compiled with `fold_phases` or `fuse_pulses` (both are default
@@ -1031,6 +1361,26 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   its line (`t = a; drive(a, w); if m: lines[0] = t`) holds the line, as
   outside an `if`, instead of failing to compile; and a helper that binds a
   parameter to another value (`x = y`) no longer rebinds the caller's name.
+- On a control system of several controllers, an operation after a branch on
+  a readout no longer waits for the outcome to reach every controller, under
+  every schedule. A line the branch played on is there once the outcome
+  reaches the line's own controller (after the feedback latency alone when
+  that is the reader), a tone once it reaches every controller that plays a
+  pulse on it, and any other value once it reaches the controllers of the
+  pulses that use it (every controller, as before, where a call, a branch, a
+  loop bound or a block takes it). A measurement that a loop carries or an
+  `if` yields counts as read on the controller of the readouts it may be,
+  not on any controller, so a branch on it waits for the outcome to reach
+  only the controllers its arms play on. With 200 ns of feedback and 200 ns
+  of peer latency, the round after an active reset started at 1424 ns
+  instead of 1248 ns, as on one controller. The schedules and exported
+  timing of such programs move earlier by up to the peer latency and start
+  uncertainty after each such branch. A program that calls a kernel with its
+  own `schedule=` still waits for every controller, as before. Under `alap`
+  and `alap_rcp`, operations that no longer have to precede such a branch
+  may move later, as those schedules place them as late as the program
+  allows. Programs on one controller, or on controllers with no latency
+  between them, schedule as before.
 - The schedule passes and `Pass.SIMPLIFY_CONTROL_FLOW` no longer crash on
   two inputs. A schedule block that yields one of its own arguments, passing
   an input through, is inlined with that input as its result; the passes
@@ -1101,6 +1451,11 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   pulse that plays with it. The frame runs at its old frequency until then.
   Phase changes play as before; their frame updates' `start_cycles` move to
   the end of such a wait or readout.
+- The errors for a `ControlSystem`'s `max_concurrent_drives`,
+  `max_concurrent_readouts`, readout latency and
+  `line_switch_penalty_cycles`, and for a drive's
+  `amplitude_scale_rad_per_ns`, end with the value that was checked
+  (`ControlSystem.max_concurrent_drives must be positive, got 0`).
 - After a wait whose length a `float` argument sets, `classical_report()`
   and the `"calls"` of `export_to_controller()` (formats /1 and /2, and
   `unroll`) and of `export_to_emulator()` gave each call's times with the
@@ -1260,6 +1615,20 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   to anything but a builtin, `math`, `cmath`, NumPy outside `numpy.random`
   or cudaq-pulse itself, such as a helper that runs as plain Python, now
   unrolls the loop too, since it may change state the next iteration reads.
+- **A call of a method whose object reaches many others no longer takes
+  time that grows with the square of their number to trace.** To tell
+  whether a method is a pulse helper, the tracer goes through the objects
+  its object holds, and it compared each one it found with all it had
+  found. It now keeps their identities in a set. The objects are gone
+  through in the same order, and the program traced is the same.
+- **A NumPy number times a unit is a time.** `np.float64(4) * pulse.ns`,
+  which every value of an `np.linspace` sweep gives, was a bare
+  `np.float64(4.0)`: NumPy took the time as the float it subclasses, so a
+  swept `sigma` or DRAG `beta` was read as that many clock cycles, half the
+  width meant on a 2 GHz clock, with no error. NumPy numbers now follow the
+  same rules as Python's on either side of a time, and a NumPy array times
+  a unit is a `TypeError` that says to multiply its elements, rather than
+  an array that lost its unit.
 
 ## [0.1.0] - 2026-11-13
 

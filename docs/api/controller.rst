@@ -53,6 +53,8 @@ Export and limits
 
 .. autofunction:: cudaq_pulse.controller.shape_key
 
+.. autofunction:: cudaq_pulse.controller.shape_known
+
 What classical functions cost
 -----------------------------
 

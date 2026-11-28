@@ -57,6 +57,10 @@ Couplings
    :members:
    :undoc-members:
 
+.. autoclass:: cudaq_pulse.quantum_systems.ReadoutCrosstalk
+   :members:
+   :undoc-members:
+
 Gate calibrations
 -----------------
 

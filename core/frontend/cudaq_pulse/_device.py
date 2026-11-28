@@ -42,7 +42,6 @@ from .quantum_systems._registry import (
 )
 from .quantum_systems.base import (
     _DESCRIPTION_FIELDS,
-    _DESCRIPTIONS,
     _DRIVE_FRAMES,
     _TRANSMON,
     _Description,
@@ -67,6 +66,7 @@ if TYPE_CHECKING:
         Coupling,
         DragPulse,
         PhysicalQudit,
+        ReadoutCrosstalk,
         ReadoutPulse,
         ResidualZZ,
         VirtualZ,
@@ -112,7 +112,10 @@ _CONFIG_KEYS = (
     "control_system",
     "clock_ghz",
     "frames",
+    "readout_crosstalk",
 )
+# What QuantumSystem.replace changes on the description besides its fields.
+_REPLACED_TOO = frozenset({"frames", "readout_crosstalk"})
 # The keys that build a quantum system rather than name a registered one.
 _BUILT_KEYS = ("qudits", "couplings", "residual_zz", "model", "attribution")
 # Reserved for a model of where carriers are and how they move.
@@ -156,8 +159,9 @@ def _fingerprint(target: _Description, layout: tuple[int, ...], calibration: Any
         residual_zz,
         layout,
     )
-    # Dressed frames are the default and add nothing; bare ones do.
-    content += target._frames_content
+    # Dressed frames and no readout crosstalk are the default and add
+    # nothing; bare frames and crosstalk entries do.
+    content += target._fingerprint_extra
     # Uncalibrated quantum systems keep their fingerprints.
     if calibration is not None:
         content += (calibration._identity,)
@@ -258,7 +262,28 @@ class Qudit:
 
 
 class Register(Sequence[Qudit]):
-    """An ordered selection of qudit handles of one quantum system."""
+    """An ordered selection of qudit handles of one quantum system.
+
+    Make one from a system's qudits: ``qs.qudits[0:4]`` takes the first
+    four, ``qs.qudits[[0, 2]]`` takes qudits 0 and 2. A kernel parameter
+    annotated ``pulse.Register`` is a runtime value: the kernel compiles
+    once for each register length and then runs on any qudits of the
+    system. A register supports ``len()``, indexing, slicing and
+    iteration: indexing with an ``int`` gives a ``Qudit``, while a slice
+    or a list of indexes gives another ``Register``.
+
+    Example::
+
+        qs = pulse.quantum_system("transmon_surface17")
+        reg = qs.qudits[0:4]
+        len(reg)                    # 4
+        reg[1::2]                   # Register([1, 3])
+        [q.logical for q in reg]    # [0, 1, 2, 3]
+
+    See "Quantum systems" for how a system names its qudits, and
+    "Arguments" in "Calling and Compiling Kernels" for how a register
+    parameter is compiled.
+    """
 
     __slots__ = ("_qudits",)
 
@@ -700,6 +725,8 @@ class QuantumSystem:
         @property
         def residual_zz(self) -> Sequence[ResidualZZ]: ...
         @property
+        def readout_crosstalk(self) -> Sequence[ReadoutCrosstalk]: ...
+        @property
         def model(self) -> SimulationModel | type[SimulationModel] | None: ...
         @property
         def attribution(self) -> str: ...
@@ -734,8 +761,8 @@ class QuantumSystem:
         """The description's fields, properties and methods, read from the
         description the quantum system was built from when asked for:
         ``physical_qudits`` (its ``qudits``; ``qudits`` are the handles),
-        ``couplings``, ``residual_zz``, ``model``, ``attribution``,
-        ``anharmonicities``, ``t1_times``, ``t2_times``, ``t2_echo_times``,
+        ``couplings``, ``residual_zz``, ``readout_crosstalk``, ``model``,
+        ``attribution``, ``anharmonicities``, ``t1_times``, ``t2_times``, ``t2_echo_times``,
         ``thermal_populations``, ``coupling_map``, ``connectivity_graph()`` and
         ``drive_amplitude_scale(i)``."""
         if name == "physical_qudits":
@@ -749,6 +776,7 @@ class QuantumSystem:
         if name in {
             "couplings",
             "residual_zz",
+            "readout_crosstalk",
             "model",
             "attribution",
             "anharmonicities",
@@ -787,7 +815,8 @@ class QuantumSystem:
         the quantum system ``pulse.quantum_system(name=..., qudits=...)`` builds
         from this one's ``name``, ``qudits`` (its ``physical_qudits``),
         ``couplings``, ``residual_zz``, ``model``, ``attribution``, ``frames``,
-        ``layout``, ``control_system`` and ``clock_ghz``, with *changes* in their place:
+        ``readout_crosstalk``, ``layout``, ``control_system`` and ``clock_ghz``,
+        with *changes* in their place:
         ``qs.replace(qudits={**qs.physical_qudits, 0: qudit})`` changes one
         qudit. The values are the calibrated ones, so the variant has no
         ``calibration`` of its own.
@@ -809,12 +838,12 @@ class QuantumSystem:
         clock_ghz = changes.pop(
             "clock_ghz", None if self.clock_ghz == described.clock_ghz else self.clock_ghz
         )
-        unknown = sorted(changes.keys() - _DESCRIPTION_FIELDS - {"frames"})
+        unknown = sorted(changes.keys() - _DESCRIPTION_FIELDS - _REPLACED_TOO)
         if unknown:
             raise InvalidTypeError(
                 f"QuantumSystem.replace() got an unexpected keyword argument {unknown[0]!r}; "
-                f"it takes {', '.join(_DESCRIPTION_FIELDS[:-1])}, frames, layout, "
-                "control_system, clock_ghz, parameter_drift and parameter_drift_seed"
+                f"it takes {', '.join(_DESCRIPTION_FIELDS[:-1])}, frames, readout_crosstalk, "
+                "layout, control_system, clock_ghz, parameter_drift and parameter_drift_seed"
             )
         return QuantumSystem(
             described.replace(**changes),
@@ -1139,7 +1168,7 @@ def _checked(config: Mapping[str, Any], source: str, problems: list[Problem]) ->
             )
         )
     spec = config.get("name")
-    described = spec if spec.__class__ in _DESCRIPTIONS else None
+    described = spec if isinstance(spec, _Description) else None
     built = described is not None or "qudits" in config
     if not built and config.keys() & _BUILT_KEYS:
         for key in sorted(config.keys() & _BUILT_KEYS):
@@ -1187,6 +1216,9 @@ def _checked(config: Mapping[str, Any], source: str, problems: list[Problem]) ->
                     path="frames",
                 )
             )
+    crosstalk = config.get("readout_crosstalk")
+    if target is not None and crosstalk is not None:
+        target = _with_crosstalk(target, crosstalk, problems)
     if problems or target is None:
         return None
     try:
@@ -1449,6 +1481,58 @@ def quantum_system(
         drift = {"parameter_drift": parameter_drift, "parameter_drift_seed": parameter_drift_seed}
         found = _replaced(found, drift)
     return found
+
+
+# *target* with the readout crosstalk entries of a system file, *given*
+# (``readout_crosstalk``), each an object of resonator_of, qudit and
+# chi_hz; or *target* itself, with the problems found added to *problems*.
+def _with_crosstalk(target: _Description, given: Any, problems: list[Problem]) -> _Description:
+    from .quantum_systems.base import ReadoutCrosstalk
+
+    fields = ("resonator_of", "qudit", "chi_hz")
+    if isinstance(given, (str, bytes)) or not isinstance(given, Sequence):
+        problems.append(
+            Problem(
+                f"must be a list of entries, got {type(given).__name__}",
+                path="readout_crosstalk",
+                fix='give each as {"resonator_of": 14, "qudit": 4, "chi_hz": -20000.0}',
+            )
+        )
+        return target
+    entries = []
+    found = len(problems)
+    for i, item in enumerate(given):
+        where = f"readout_crosstalk[{i}]"
+        if not isinstance(item, Mapping):
+            problems.append(
+                Problem(
+                    "must be an object of resonator_of, qudit and chi_hz, got "
+                    + type(item).__name__,
+                    path=where,
+                )
+            )
+            continue
+        unknown = sorted(set(item) - set(fields))
+        missing = [k for k in fields if k not in item]
+        for key in unknown:
+            problems.append(
+                Problem(
+                    f"{key!r} is not a field of a readout crosstalk entry",
+                    path=f"{where}.{key}",
+                    fix="its fields are resonator_of, qudit and chi_hz",
+                )
+            )
+        for key in missing:
+            problems.append(Problem(f"{key} is missing", path=where))
+        if not unknown and not missing:
+            entries.append(ReadoutCrosstalk(**item))
+    if len(problems) > found:
+        return target
+    try:
+        return target.replace(readout_crosstalk=entries)
+    except QuantumSystemDefinitionError as error:
+        problems.extend(error.problems)
+        return target
 
 
 # Raise for a QuantumSystem given where ``pulse.quantum_system`` takes a name.

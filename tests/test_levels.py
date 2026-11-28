@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from tests import _levels
+from tests import _levels, _sources
 
 _TESTS = Path(__file__).resolve().parent
 _TABLE = _TESTS / "levels.toml"
@@ -70,7 +70,11 @@ def test_every_table_entry_is_a_test_file_with_a_reason():
 @pytest.mark.level0
 def test_every_table_entry_names_a_collected_test(suite):
     tests, skipped_files = suite
-    stale = _levels.stale_entries(_levels.load_table(_TABLE), tests, skipped_files)
+    # A wheel's tests have a few of the examples: the entries for the others
+    # name parameters that are not collected there, and are told in a checkout.
+    stale = _levels.stale_entries(
+        _levels.load_table(_TABLE), tests, skipped_files, whole_tree=_sources.whole_tree()
+    )
     assert not stale, f"tests/levels.toml names no collected test with: {stale}"
 
 
@@ -354,6 +358,19 @@ def test_the_guards_find_a_stale_entry_and_a_test_levelled_twice(project):
     assert _levels.levelled_twice(tests) == ["test_marked.py::test_marked"]
     # The marker still gives the level.
     assert {t.test: t.level for t in tests}["test_marked.py::test_marked"] == 3
+
+    # Where a part of the source tree is, a test may be collected with a part
+    # of its parameters: an entry for the others is stale in the whole tree
+    # alone, and one for a test that does not exist is stale everywhere.
+    table.write_text(table.read_text() + '"test_table.py::test_swept[absent-*]" = "not here"\n')
+    entries = _levels.load_table(table)
+    assert _levels.stale_entries(entries, tests, skipped) == [
+        "test_table.py::test_renamed",
+        "test_table.py::test_swept[absent-*]",
+    ]
+    assert _levels.stale_entries(entries, tests, skipped, whole_tree=False) == [
+        "test_table.py::test_renamed"
+    ]
 
 
 @pytest.mark.slow

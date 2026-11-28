@@ -181,7 +181,7 @@ BUILTIN_RAISES = {
     "_loops.py": 1,
     "_waits.py": 6,
     "compiler.py": 14,
-    "controller.py": 4,
+    "controller.py": 5,
     "kernel/_kernel.py": 6,
 }
 

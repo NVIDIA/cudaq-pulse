@@ -4,8 +4,10 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import math
+import sys
 import warnings
 
 import cudaq_pulse as pulse
@@ -796,3 +798,133 @@ def test_an_amplitude_over_the_limit_in_a_rolled_loop_is_reported_for_each_itera
     )
     assert found[-1] == found[0].replace("at 0 peaks", "at 31968 peaks")
     assert check(lowered, Controller(max_amplitude=1.0)) == []
+
+
+@pulse.kernel
+def _loop_of_loops(q):
+    d = get_drive_line(q)
+    for _ in range(6):
+        for _ in range(4):
+            drive(d, gaussian(16, 0.1, 4.0))
+            shift_phase(d.tone, 0.125)
+            wait(d, 8)
+        drive(d, square(16, 0.1))
+        wait(d, 8)
+
+
+def _calls_of(target, fn):
+    """The calls of *target* that Python code makes while *fn* runs."""
+    monitoring = sys.monitoring
+    tool = next((i for i in range(6) if monitoring.get_tool(i) is None), None)
+    if tool is None:
+        pytest.skip("every sys.monitoring tool id is in use")
+    calls = 0
+
+    def call(code, offset, called, first):
+        nonlocal calls
+        calls += called is target
+
+    monitoring.use_tool_id(tool, "cudaq-pulse tests")
+    try:
+        monitoring.register_callback(tool, monitoring.events.CALL, call)
+        monitoring.set_events(tool, monitoring.events.CALL)
+        fn()
+    finally:
+        monitoring.set_events(tool, monitoring.events.NO_EVENTS)
+        monitoring.register_callback(tool, monitoring.events.CALL, None)
+        monitoring.free_tool_id(tool)
+    return calls
+
+
+def _shifted(structured, by):
+    """*structured* as another exporter may write it: *by* more cycles in
+    every loop period."""
+    program = copy.deepcopy(structured)
+    for loop in _loops(program["events"]):
+        loop["period_cycles"] += by
+    return program
+
+
+def test_unrolling_carries_the_time_of_whole_periods_from_loop_to_event():
+    lowered = pulse.compile(_loop_of_loops, unroll_threshold=0).lower(Q[0])
+    structured = lowered.export_to_controller(version=2)
+    outer, inner = _loops(structured["events"])
+    assert inner in outer["body"] and (outer["trips"], inner["trips"]) == (6, 4)
+    flat = unroll(structured)
+    assert _differences(_canonical(lowered.export_to_controller()), _canonical(flat)) == []
+    assert all(type(e["start_cycles"]) is int for e in flat["events"])
+    # An event's segment, and a tone's phase, are sums over the loops around
+    # it; its time is the loops' own, added up once per iteration.
+    toned = sum(e["kind"] in ("drive", "readout", "frame_update") for e in flat["events"])
+    assert _calls_of(sum, lambda: unroll(structured)) <= len(flat["events"]) + toned
+
+
+@pytest.mark.parametrize("by", [0.25, 0.1, 1.0])
+def test_unrolling_adds_up_periods_that_are_not_integers_as_they_are_written(by):
+    lowered = pulse.compile(_loop_of_loops, unroll_threshold=0).lower(Q[0])
+    structured = lowered.export_to_controller(version=2)
+    flat = unroll(structured)
+    moved = unroll(_shifted(structured, by))
+    whole = [loop["period_cycles"] for loop in _loops(structured["events"])]
+    periods = [period + by for period in whole]
+    assert [e["iteration"] for e in moved["events"]] == [e["iteration"] for e in flat["events"]]
+    for was, event in zip(flat["events"], moved["events"], strict=True):
+        # The first iteration's time, plus one sum of the loops' periods.
+        j = event["iteration"]
+        first = was["start_cycles"] - sum(k * p for k, p in zip(j, whole, strict=False))
+        start = first + sum(k * p for k, p in zip(j, periods, strict=False))
+        assert type(event["start_cycles"]) is float
+        assert event["start_cycles"] == start
+        assert event["end_cycles"] == start + event["duration_cycles"]
+    # Only the times move: branches, references and frames are as they were.
+    assert [{**e, "start_cycles": 0, "end_cycles": 0} for e in moved["events"]] == [
+        {**e, "start_cycles": 0, "end_cycles": 0} for e in flat["events"]
+    ]
+
+
+@pytest.mark.parametrize("moved", ["outer", "inner"])
+def test_unrolling_one_loop_whose_period_is_not_an_integer_keeps_the_others_whole(moved):
+    lowered = pulse.compile(_loop_of_loops, unroll_threshold=0).lower(Q[0])
+    structured = lowered.export_to_controller(version=2)
+    flat = unroll(structured)
+    program = copy.deepcopy(structured)
+    outer, inner = _loops(program["events"])
+    (outer if moved == "outer" else inner)["period_cycles"] += 0.5
+    periods = [outer["period_cycles"], inner["period_cycles"]]
+    whole = [round(period - 0.25) for period in periods]
+    for was, event in zip(flat["events"], unroll(program)["events"], strict=True):
+        j = event["iteration"]
+        first = was["start_cycles"] - sum(k * p for k, p in zip(j, whole, strict=False))
+        start = first + sum(k * p for k, p in zip(j, periods, strict=False))
+        # Outside the inner loop, an event after whole periods keeps a whole time.
+        assert type(event["start_cycles"]) is (int if moved == "inner" and len(j) == 1 else float)
+        assert event["start_cycles"] == start
+
+
+def test_unrolling_reads_a_loop_it_cannot_add_up_as_it_did():
+    structured = (
+        pulse.compile(_loop_of_loops, unroll_threshold=0)
+        .lower(Q[0])
+        .export_to_controller(version=2)
+    )
+
+    def edited(edit):
+        program = copy.deepcopy(structured)
+        for loop in _loops(program["events"]):
+            edit(loop)
+        return program
+
+    # A period that is no number stops the first event inside the loop.
+    with pytest.raises(TypeError, match="unsupported operand"):
+        unroll(edited(lambda loop: loop.update(period_cycles=None)))
+    with pytest.raises(KeyError, match="period_cycles"):
+        unroll(edited(lambda loop: loop.pop("period_cycles")))
+    # A loop that runs nothing is not read for its period.
+    assert unroll(edited(lambda loop: loop.update(period_cycles=None, body=[])))["events"] == []
+    assert (
+        unroll(edited(lambda loop: (loop.pop("period_cycles"), loop.update(trips=0))))["events"]
+        == []
+    )
+    # True is one cycle, though no integer by type: added up at each event.
+    one = unroll(edited(lambda loop: loop.update(period_cycles=True)))
+    assert one["events"] == unroll(edited(lambda loop: loop.update(period_cycles=1)))["events"]

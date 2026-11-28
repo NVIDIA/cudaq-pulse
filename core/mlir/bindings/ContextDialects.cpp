@@ -52,7 +52,7 @@ copyForLowering(mlir::ModuleOp module,
   std::string bytes;
   llvm::raw_string_ostream os(bytes);
   if (mlir::failed(mlir::writeBytecodeToFile(
-          module, os, mlir::BytecodeWriterConfig("cudaq-pulse"))))
+          module, os, mlir::BytecodeWriterConfig(kBytecodeProducer))))
     throw std::runtime_error("cannot write the module as bytecode");
 
   // The defaults of a shared context: 256 modules, 2^20 packed words, a

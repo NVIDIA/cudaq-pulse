@@ -16,6 +16,8 @@ from cudaq_pulse.classical.loop import EstimateLog, ParameterStore
 from cudaq_pulse.quantum_systems import PhysicalQudit
 from cudaq_pulse.quantum_systems.drift import ParameterDrift, TelegraphT1
 
+from tests import _tools
+
 PI_AMP = math.pi / 20
 
 
@@ -115,7 +117,8 @@ def test_ten_thousand_iterations_run_without_compiling_again():
         STORE.set("amplitude", PI_AMP * (1 + 0.001 * (i % 7)), iteration=i)
     per_iteration_us = (time.perf_counter() - start) / 10_000 * 1e6
     assert compiled.cache_info().compiled == 1
-    assert per_iteration_us < 200  # a cache hit and a bind, no compiling
+    # A cache hit and a bind, no compiling; the time is the uninstrumented build's.
+    assert _tools.under_sanitizers() or per_iteration_us < 200
     # The wait is read when the program runs: simulating after changing the
     # store gives the new wait's decay, from the same compiled kernel.
     STORE.set("amplitude", PI_AMP)

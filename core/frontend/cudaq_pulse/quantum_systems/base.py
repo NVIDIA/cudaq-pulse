@@ -1254,6 +1254,43 @@ class ResidualZZ:
             object.__setattr__(self, "qudits", tuple(qudits))
 
 
+@_dataclass_when_used(frozen=True)
+class ReadoutCrosstalk:
+    """The shift a readout of qudit ``resonator_of`` gives qudit ``qudit``
+    (each by the system's qudit index) through the photons in its resonator.
+
+    ``chi_hz`` is the shift in Hz per photon: while the resonator holds n
+    photons, level j of ``qudit`` moves by j times ``chi_hz`` times n. A
+    tuple gives it by the level of ``resonator_of``, a higher level taking
+    the last value, as ``(-20e3, -26e3)`` for its levels 0 and 1; values for
+    levels a simulation does not keep are not used. The
+    photons follow the readout as played, its tone, amplitude, ring-up
+    and ring-down, from the qudit's ``DispersiveReadout``.
+    """
+
+    resonator_of: int
+    qudit: int
+    chi_hz: float | tuple[float, ...]
+
+    def __post_init__(self) -> None:
+        # Floats, so that equal shifts print and fingerprint alike; a value
+        # that is no number stays for the system's checks to name.
+        chi = self.chi_hz
+        if isinstance(chi, Sequence) and not isinstance(chi, (str, bytes)):
+            chi = tuple(_as_float(c) for c in chi)
+        else:
+            chi = _as_float(chi)
+        object.__setattr__(self, "chi_hz", chi)
+
+
+# *value* as a float if it is a real number other than a bool or an Offset
+# (which the checks refuse as a shift), else itself.
+def _as_float(value: Any) -> Any:
+    if value.__class__ not in (bool, Offset) and isinstance(value, numbers.Real):
+        return float(value)
+    return value
+
+
 # The operator a coupling stands for, by the simulation model of its system:
 # the entry of the model's class or of its nearest base class here.
 _COUPLING_OPERATORS: Mapping[type[SimulationModel], str] = MappingProxyType(
@@ -1841,8 +1878,11 @@ class _Description:
     # field, so that the default costs a description nothing to build; a
     # description with bare frames is a _BareDescription.
     frames = "dressed"
+    # Its ReadoutCrosstalk entries: not a field either, so that a system
+    # without any builds as before; one with some is a _CrosstalkDescription.
+    readout_crosstalk: tuple[ReadoutCrosstalk, ...] = ()
     # What it adds to a quantum system's fingerprint (_device._fingerprint).
-    _frames_content: tuple[str, ...] = ()
+    _fingerprint_extra: tuple[Any, ...] = ()
 
     def __init__(
         self,
@@ -1912,6 +1952,8 @@ class _Description:
                 'qudit of a system with couplings at its dressed frequency, "bare" at its '
                 "frequency_hz"
             )
+        if "readout_crosstalk" in changes:
+            return _crossed(values, changes, frames)
         values.update(changes)
         described = _Description(**values)
         # Without a coupling that dresses, the frames are the same: the
@@ -2037,7 +2079,8 @@ class _Description:
         if explicit is not None:
             if explicit <= 0:
                 raise InvalidValueError(
-                    f"amplitude_scale_rad_per_ns must be positive for qudit {qudit_index}"
+                    f"amplitude_scale_rad_per_ns must be positive for qudit {qudit_index}, "
+                    f"got {explicit!r}"
                 )
             return float(explicit)
         qudit = self.qudits[qudit_index]
@@ -2053,7 +2096,90 @@ class _BareDescription(_Description):
 
     __slots__ = ()
     frames = "bare"
-    _frames_content = ("bare",)
+    _fingerprint_extra: tuple[Any, ...] = ("bare",)
+
+
+class _CrosstalkDescription(_Description):
+    """A description with ``ReadoutCrosstalk`` entries (``readout_crosstalk``),
+    checked when it is built."""
+
+    __slots__ = ("readout_crosstalk", "_fingerprint_extra")
+
+    def __init__(self, *args: Any, readout_crosstalk: Sequence[Any], **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        if isinstance(readout_crosstalk, (str, bytes)) or not isinstance(
+            readout_crosstalk, Sequence
+        ):
+            raise InvalidTypeError(
+                "readout_crosstalk must be a list of ReadoutCrosstalk entries, got "
+                f"{type(readout_crosstalk).__name__}"
+            )
+        entries = tuple(readout_crosstalk)
+        problems = _crosstalk_problems(entries, self.qudits)
+        if problems:
+            raise QuantumSystemDefinitionError(
+                f"{_count(len(problems), 'problem')} in the quantum system {self.name!r}",
+                problems=problems,
+            )
+        set_ = object.__setattr__
+        set_(self, "readout_crosstalk", entries)
+        content = tuple((x.resonator_of, x.qudit, x.chi_hz) for x in entries)
+        frames = ("bare",) if self.frames == "bare" else ()
+        set_(self, "_fingerprint_extra", (*frames, content))
+
+    def replace(self, **changes: Any) -> _Description:
+        # A variant keeps the entries unless *changes* give others.
+        changes.setdefault("readout_crosstalk", self.readout_crosstalk)
+        return super().replace(**changes)
+
+    def __repr__(self) -> str:
+        return f"{super().__repr__()[:-1]}, readout_crosstalk={self.readout_crosstalk!r})"
+
+    def __eq__(self, other: object) -> bool:
+        same = super().__eq__(other)
+        if same is not True:
+            return same
+        return bool(self.readout_crosstalk == other.readout_crosstalk)  # type: ignore[attr-defined]
+
+    def __hash__(self) -> int:
+        return super().__hash__()
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        # By the plain class: one that _description_class makes is not
+        # importable by name, and the qudits' frequencies give the frame.
+        from .._pickling import _plain
+
+        inputs = {f: _plain(getattr(self, f)) for f in _DESCRIPTION_FIELDS}
+        return (_rebuilt_crossed, (inputs, self.frames, self.readout_crosstalk))
+
+
+class _BareCrosstalkDescription(_CrosstalkDescription, _BareDescription):
+    """A description with ``ReadoutCrosstalk`` entries and bare frames."""
+
+    __slots__ = ()
+
+
+# A pickled _CrosstalkDescription: the description of *inputs* with
+# *frames* and the readout crosstalk entries *crosstalk*.
+def _rebuilt_crossed(inputs: dict[str, Any], frames: str, crosstalk: Any) -> _Description:
+    return _Description(**inputs).replace(frames=frames, readout_crosstalk=crosstalk)
+
+
+# _Description.replace to *values* with *changes*, which give the readout
+# crosstalk entries, and *frames*.
+def _crossed(values: dict[str, Any], changes: dict[str, Any], frames: str) -> _Description:
+    crosstalk = changes.pop("readout_crosstalk")
+    if isinstance(crosstalk, (str, bytes)) or not isinstance(crosstalk, Sequence):
+        raise InvalidTypeError(
+            "readout_crosstalk must be a list of ReadoutCrosstalk entries, got "
+            f"{type(crosstalk).__name__}"
+        )
+    values.update(changes)
+    if not crosstalk:
+        return _Description(**values).replace(frames=frames)
+    bare = frames == "bare" and _exchange_pairs(_Description(**values))
+    cls = _BareCrosstalkDescription if bare else _CrosstalkDescription
+    return cls(**values, readout_crosstalk=crosstalk)
 
 
 class _BareSharedReferenceDescription(_BareDescription):
@@ -2147,14 +2273,40 @@ class _SharedReferenceDescription(_Description):
         return {q.index: float(q.frequency_hz) for q in self.qudits.values()}
 
 
-# The classes a description has.
-_DESCRIPTIONS = (
-    _Description,
-    _OwnCarrierDescription,
-    _SharedReferenceDescription,
-    _BareDescription,
-    _BareSharedReferenceDescription,
-)
+# The class of a description by what its qudits' frequencies are measured
+# from (frequency_frame), whether it has bare drive frames and whether it
+# has readout crosstalk entries; one with crosstalk in another frame than
+# the absolute one is made when first needed. A system without couplings
+# has nothing to dress, so its frames are never bare.
+_CLASSES: dict[tuple[str, bool, bool], type[_Description]] = {}
+
+
+def _description_class(frame: str, bare: bool, crosstalk: bool) -> type[_Description]:
+    if not _CLASSES:
+        _CLASSES.update(
+            {
+                ("absolute", False, False): _Description,
+                ("absolute", True, False): _BareDescription,
+                ("absolute", False, True): _CrosstalkDescription,
+                ("absolute", True, True): _BareCrosstalkDescription,
+                ("shared_reference", False, False): _SharedReferenceDescription,
+                ("shared_reference", True, False): _BareSharedReferenceDescription,
+                ("own_carrier", False, False): _OwnCarrierDescription,
+            }
+        )
+    bare = bare and frame != "own_carrier"
+    found = _CLASSES.get((frame, bare, crosstalk))
+    if found is None:
+        base = _CLASSES[frame, bare, False]
+        made = type(
+            f"_Crosstalk{base.__name__.lstrip('_')}",
+            (_CrosstalkDescription, base),
+            {"__slots__": (), "__module__": __name__},
+        )
+        # One class per key whichever thread makes it first.
+        found = _CLASSES.setdefault((frame, bare, crosstalk), made)
+    return found
+
 
 # What the checks read of every qudit at once.
 _QUDIT_VALUES = attrgetter(
@@ -2259,11 +2411,11 @@ def _unstated(description: _Description, problems: list[Problem]) -> list[Proble
         set_(
             description,
             "__class__",
-            _OwnCarrierDescription
-            if own_carrier
-            else _BareSharedReferenceDescription
-            if description.frames == "bare"
-            else _SharedReferenceDescription,
+            _description_class(
+                "own_carrier" if own_carrier else "shared_reference",
+                description.frames == "bare",
+                isinstance(description, _CrosstalkDescription),
+            ),
         )
     return problems
 
@@ -2571,6 +2723,97 @@ def _qudit_problems(
             )
         ]
     return []
+
+
+# Every problem with *entries*, a system's ReadoutCrosstalk entries, each
+# at its path in the system; *known* are its qudits by index.
+def _crosstalk_problems(entries: Sequence[Any], known: Mapping[int, Any]) -> list[Problem]:
+    from .._errors import _ranges
+
+    problems: list[Problem] = []
+    seen: dict[tuple[int, int], int] = {}
+    for i, entry in enumerate(entries):
+        where = f"readout_crosstalk[{i}]"
+        if not isinstance(entry, ReadoutCrosstalk):
+            problems.append(
+                Problem(
+                    f"must be a ReadoutCrosstalk, got {type(entry).__name__}",
+                    path=where,
+                    value=entry,
+                )
+            )
+            continue
+        found = len(problems)
+        for field in ("resonator_of", "qudit"):
+            q = getattr(entry, field)
+            if q.__class__ is bool or not isinstance(q, int):
+                problems.append(
+                    Problem(
+                        f"must be a qudit index (an int), got {type(q).__name__}",
+                        path=f"{where}.{field}",
+                        value=q,
+                    )
+                )
+            elif q not in known:
+                problems.append(
+                    Problem(
+                        f"{q} is not a qudit of the quantum system",
+                        path=f"{where}.{field}",
+                        value=q,
+                        fix=f"its qudits are {_ranges(known)}" if known else "it has no qudits",
+                    )
+                )
+        if len(problems) == found:
+            pair = (entry.resonator_of, entry.qudit)
+            if pair[0] == pair[1]:
+                problems.append(
+                    Problem(
+                        f"names qudit {pair[0]} as both the qudit read out and the one shifted",
+                        path=where,
+                        value=entry,
+                        fix="a qudit's own shift from its resonator is its DispersiveReadout's "
+                        "dispersive_shift_hz",
+                    )
+                )
+            elif pair in seen:
+                problems.append(
+                    Problem(
+                        f"names the same qudits as readout_crosstalk[{seen[pair]}]",
+                        path=where,
+                        value=entry,
+                        fix="give one entry for each qudit read out and qudit shifted, with a "
+                        "tuple of shifts by the level of the qudit read out",
+                    )
+                )
+            else:
+                seen[pair] = i
+        chi = entry.chi_hz
+        fix = "give the shift in Hz per photon, or a tuple of them by the level of resonator_of"
+        if chi.__class__ is tuple:
+            if not chi:
+                problems.append(
+                    Problem("is an empty tuple", path=f"{where}.chi_hz", value=chi, fix=fix)
+                )
+            for j, value in enumerate(chi):
+                if not _finite(value):
+                    problems.append(
+                        Problem(
+                            f"{value!r} is not a finite number of Hz per photon",
+                            path=f"{where}.chi_hz[{j}]",
+                            value=value,
+                            fix=fix,
+                        )
+                    )
+        elif not _finite(chi):
+            problems.append(
+                Problem(
+                    f"{chi!r} is not a finite number of Hz per photon",
+                    path=f"{where}.chi_hz",
+                    value=chi,
+                    fix=fix,
+                )
+            )
+    return problems
 
 
 # A calibration's key as a problem's path names it.

@@ -19,7 +19,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from .._errors import InvalidTypeError, InvalidValueError, NotFoundError, PulseError, _closest
-from .base import _DESCRIPTIONS, _Description
+from .base import _Description
 
 if TYPE_CHECKING:
     from .._device import QuantumSystem
@@ -136,7 +136,7 @@ def make_quantum_system(spec: str) -> _Description:
             f"{', '.join(names)}"
         )
     target = factory(arg if colon else None)
-    if target.__class__ in _DESCRIPTIONS:
+    if isinstance(target, _Description):
         return target
     if hasattr(target, "to_quantum_system"):
         target = target.to_quantum_system()

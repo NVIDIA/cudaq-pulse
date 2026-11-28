@@ -137,8 +137,10 @@ class IQModel:
     one with every field left out if it publishes none); a qudit without a
     readout, or with another, is ``UnsupportedError``.
 
-    The resonator, at its ``frequency_hz`` (else at the readout tone, so the
-    tone sits midway between the pulled frequencies), is pulled by
+    The resonator, at its ``frequency_hz`` (else at the tone its readout
+    line starts the program at, so that tone sits midway between the pulled
+    frequencies and a ``shift_frequency`` of it detunes the readout), is
+    pulled by
     ``chi_k = (2k - 1) chi`` for qudit level ``k`` (``dispersive_shift_hz``).
     Driven at the readout tone's frequency ``f`` with field rate ``epsilon``
     it settles at
@@ -219,9 +221,18 @@ class IQModel:
         return math.log(100.0) / self._params[qudit]["kappa"]
 
     def center(
-        self, qudit: int, level: int, frequency_hz: float, amplitude: float, duration_ns: float
+        self,
+        qudit: int,
+        level: int,
+        frequency_hz: float,
+        amplitude: float,
+        duration_ns: float,
+        start_hz: float | None = None,
     ) -> complex:
-        """The noiseless integrated IQ point of *level*."""
+        """The noiseless integrated IQ point of *level*, read out at the tone
+        *frequency_hz* on a line whose tone started the program at
+        *start_hz*, where a resonator without a ``frequency_hz`` sits (None:
+        at the tone). NaN is a value that is not a number."""
         p = self._params[qudit]
         kappa, chi = p["kappa"], p["chi"]
         f_r = p["f_r"]
@@ -235,9 +246,31 @@ class IQModel:
                     "model computes it from constants, float arguments and the answers of "
                     "earlier calls; its DispersiveReadout's frequency_hz needs it"
                 )
+            if start_hz is not None and math.isfinite(start_hz):
+                from .._errors import UnsupportedError
+
+                raise UnsupportedError(
+                    f"the IQ points of a readout of qudit {qudit} depend on its tone's "
+                    "frequency, which is not a number where the readout plays: the readout "
+                    "model computes it from constants, float arguments and the answers of "
+                    "earlier calls; its resonator sits at the tone its line starts the program "
+                    f"at, {start_hz:g} Hz, and the readout's detuning from it needs it"
+                )
             frequency_hz = f_r = 0.0
         elif not math.isfinite(f_r):
-            f_r = frequency_hz
+            if start_hz is None:
+                f_r = frequency_hz
+            elif math.isfinite(start_hz):
+                f_r = start_hz
+            else:
+                from .._errors import UnsupportedError
+
+                raise UnsupportedError(
+                    f"the IQ points of a readout of qudit {qudit} depend on the frequency its "
+                    "line's tone starts the program at, where its resonator sits without a "
+                    "DispersiveReadout frequency_hz; that frequency is not a number: the "
+                    "readout model computes it from constants"
+                )
         reference = p["amp"]
         if not math.isfinite(amplitude):
             if math.isfinite(reference):
@@ -267,14 +300,15 @@ class IQModel:
         frequency_hz: float,
         amplitude: float,
         duration_ns: float,
+        start_hz: float | None = None,
     ) -> tuple[float, float]:
-        point = self.center(qudit, level, frequency_hz, amplitude, duration_ns)
+        point = self.center(qudit, level, frequency_hz, amplitude, duration_ns, start_hz)
         p = self._params[qudit]
         if self.decay and level == 1 and p["t1"] > 0:
             tau = p["tau"] if math.isfinite(p["tau"]) else duration_ns
             t = rng.exponential(p["t1"])
             if t < tau:
-                ground = self.center(qudit, 0, frequency_hz, amplitude, duration_ns)
+                ground = self.center(qudit, 0, frequency_hz, amplitude, duration_ns, start_hz)
                 point = (t * point + (tau - t) * ground) / tau
         noise = rng.normal(0.0, math.sqrt(0.5), 2)
         return (point.real + noise[0], point.imag + noise[1])

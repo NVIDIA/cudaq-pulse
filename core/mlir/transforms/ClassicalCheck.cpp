@@ -70,14 +70,56 @@ namespace {
 /// body.
 constexpr int64_t kSummarizedTrips = 64;
 
-/// The executions of a submission over the iterations of one loop, or its
-/// one execution: in iteration k of `count` it starts at start + k *
-/// period, holds its link for `duration` and a slot for `busy`. The runs of
-/// one loop's body share a `group`; a single execution has none (-1).
+/// The times the calls of a function are counted and ordered at: starts,
+/// and the lengths added to them, of at most this many cycles either way,
+/// so that the sums and differences of a few of them fit 64 bits. A call
+/// with a time outside it is reported, not computed with. (A loaded
+/// module's times are within 2^50.)
+constexpr int64_t kMostCycles = int64_t(1) << 61;
+
+static bool withinCycles(int64_t cycles) {
+  return cycles >= -kMostCycles && cycles <= kMostCycles;
+}
+
+/// pulse::scheduledStart within kMostCycles: none when `op` has no start,
+/// or its start in `iteration` is outside it or does not fit 64 bits. An
+/// op outside loops needs no periods.
+static std::optional<int64_t> startWithin(mlir::Operation *op,
+                                          llvm::ArrayRef<int64_t> iteration) {
+  std::optional<int64_t> start = pulse::startCycles(op);
+  if (!start)
+    return std::nullopt;
+  int64_t time = *start;
+  if (!iteration.empty())
+    for (auto [k, period] : llvm::zip(iteration, pulse::periodCycles(op))) {
+      int64_t moved;
+      if (__builtin_mul_overflow(k, period, &moved))
+        return std::nullopt;
+      if (__builtin_add_overflow(time, moved, &time))
+        return std::nullopt;
+    }
+  return withinCycles(time) ? std::optional<int64_t>(time) : std::nullopt;
+}
+
+/// The executions of a submission over the iterations of the loops kept
+/// around it, or its one execution. With one loop, in iteration k of
+/// `count` it starts at start + k * period, holds its link for `duration`
+/// and a slot for `busy`. The runs of one loop's body share a `group`; a
+/// single execution has none (-1). With more loops kept, `period`, `count`
+/// and `group` are the innermost's, and those of the `around` loops outside
+/// it are in the function's list of levels from `outer` on, outermost
+/// first: the start moves by each loop's period per iteration of it.
 struct Run {
   int64_t start, period, count, duration, busy;
   int64_t group;
   mlir::Operation *op;
+  uint32_t outer = 0, around = 0;
+};
+
+/// A loop kept around a run that is not its innermost: what the run's start
+/// moves by per iteration, the trips, and the loop's group.
+struct Level {
+  int64_t period, count, group;
 };
 
 /// A link, its instance on one controller (-1: the link shared), and one
@@ -127,9 +169,10 @@ static void sentValues(mlir::ValueRange values,
 
 /// Every execution of every submission, per link, in program order. Both
 /// arms of a branch are listed, so capacity is checked for the worst case.
-/// The first loop around a submission with at least `summarizeFrom` trips
-/// (none when 0) is kept as runs; every other loop is walked iteration by
-/// iteration.
+/// A loop of at least `summarizeFrom` trips (none when 0) is kept: its body
+/// is listed once, each submission in it as a run over the loop's
+/// iterations, and over those of every loop kept around it. A shorter loop
+/// is walked iteration by iteration.
 ///
 /// With `Ordering` (a function with a branch), the walk also checks the
 /// order of the calls a branch on an answer relies on: the scheduler bounds
@@ -144,12 +187,14 @@ static void sentValues(mlir::ValueRange values,
 /// S9 checks S11 outside branches. Starts are affine in the iteration, so
 /// these are checked at each loop's first two iterations and its last, as
 /// pulse-verify checks lines: a loop kept as runs is walked again at the
-/// other two, recording nothing.
+/// other two, recording nothing, and a loop kept inside it at all three.
 struct Submissions {
   explicit Submissions(int64_t summarizeFrom) : summarizeFrom(summarizeFrom) {}
 
   int64_t summarizeFrom;
   std::map<LinkKey, std::vector<Run>> perLink, ordered;
+  /// The loops kept outside the innermost of the runs that have any.
+  std::vector<Level> levels;
   bool failed = false;
 
   /// Collect the submissions of `block`, checking their order with
@@ -159,24 +204,36 @@ struct Submissions {
                bool inBranch) {
     for (mlir::Operation &op : block) {
       if (auto submit = mlir::dyn_cast<classical::SubmitOp>(op)) {
-        auto start = pulse::scheduledStart(&op, iteration);
-        if (!start)
+        auto start = startWithin(&op, iteration);
+        int64_t duration = pulse::scheduledDuration(&op).value_or(1);
+        int64_t budget = classical::intAttr(&op, "classical.budget_cycles");
+        if (!start || !withinCycles(duration) || !withinCycles(budget)) {
+          if (pulse::hasStart(&op))
+            past(submit);
           continue;
+        }
         LinkKey device{classical::intAttr(&op, "classical.device"),
                        classical::intAttr(&op, classical::kInstanceAttr, -1),
                        classical::intAttr(&op, classical::kTimelineAttr, -1)};
-        int64_t duration = pulse::scheduledDuration(&op).value_or(1);
         if (!Ordering || recording) {
           int64_t period = 0;
           if (level) {
             iteration[*level] = 1;
-            period = *pulse::scheduledStart(&op, iteration) - *start;
+            auto next = startWithin(&op, iteration);
             iteration[*level] = 0;
+            if (!next) {
+              past(submit);
+              continue;
+            }
+            period = *next - *start;
           }
-          int64_t budget = classical::intAttr(&op, "classical.budget_cycles");
           Run run{
               *start, period, level ? trips : 1, duration, duration + budget,
               group,  &op};
+          if (LLVM_UNLIKELY(!outers.empty()) && !around(run, iteration)) {
+            past(submit);
+            continue;
+          }
           perLink[device].push_back(run);
           if (!inBranch)
             ordered[device].push_back(run);
@@ -184,41 +241,7 @@ struct Submissions {
         if (Ordering && !skipped)
           orderSubmit(submit, *start, duration, device, inBranch, iteration);
       } else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
-        int64_t count = pulse::constantTripCount(loop).value_or(0);
-        iteration.push_back(0);
-        if ((!Ordering || recording) && !level && summarizeFrom > 0 &&
-            count >= summarizeFrom) {
-          level = iteration.size() - 1;
-          group = groups++;
-          trips = count;
-          collect<Ordering>(*loop.getBody(), iteration, inBranch);
-          level.reset();
-          group = -1;
-          if (Ordering && !skipped) {
-            recording = false;
-            for (int64_t k : {int64_t{1}, count - 1}) {
-              iteration.back() = k;
-              collect<Ordering>(*loop.getBody(), iteration, inBranch);
-            }
-            recording = true;
-          }
-        } else if (!Ordering) {
-          for (int64_t k = 0; k < count; ++k) {
-            iteration.back() = k;
-            collect<Ordering>(*loop.getBody(), iteration, inBranch);
-          }
-        } else {
-          for (int64_t k = 0; k < count; ++k) {
-            if (!recording && k == 2 && count > 3)
-              k = count - 1;
-            iteration.back() = k;
-            bool skip = k >= 2 && k != count - 1;
-            skipped += skip;
-            collect<Ordering>(*loop.getBody(), iteration, inBranch);
-            skipped -= skip;
-          }
-        }
-        iteration.pop_back();
+        collectLoop<Ordering>(loop, iteration, inBranch);
       } else if constexpr (!Ordering) {
         bool branch = inBranch || mlir::isa<mlir::scf::IfOp>(op);
         for (mlir::Region &region : op.getRegions())
@@ -260,18 +283,111 @@ private:
                     llvm::Twine(answered));
   }
 
-  /// pulse::scheduledStart, which an op outside loops needs no periods for.
-  static std::optional<int64_t> startIn(mlir::Operation *op,
-                                        llvm::ArrayRef<int64_t> iteration) {
-    if (!iteration.empty())
-      return pulse::scheduledStart(op, iteration);
-    return pulse::startCycles(op);
+  /// The periods of `run` in the loops kept outside its innermost, into
+  /// `levels`; false if its start in one's second iteration is a time the
+  /// check does not compute with.
+  LLVM_ATTRIBUTE_NOINLINE bool
+  around(Run &run, llvm::SmallVectorImpl<int64_t> &iteration) {
+    run.outer = static_cast<uint32_t>(levels.size());
+    for (const Kept &kept : outers) {
+      iteration[kept.level] = 1;
+      auto next = startWithin(run.op, iteration);
+      iteration[kept.level] = 0;
+      if (!next) {
+        levels.resize(run.outer);
+        return false;
+      }
+      levels.push_back({*next - run.start, kept.trips, kept.group});
+    }
+    run.around = static_cast<uint32_t>(outers.size());
+    return true;
+  }
+
+  /// The submissions of `loop`: kept as runs, or walked iteration by
+  /// iteration (see the comment above). Apart from collect, so that the
+  /// walk over a block's operations stays small.
+  template <bool Ordering>
+  LLVM_ATTRIBUTE_NOINLINE void
+  collectLoop(mlir::scf::ForOp loop, llvm::SmallVectorImpl<int64_t> &iteration,
+              bool inBranch) {
+    int64_t count = pulse::constantTripCount(loop).value_or(0);
+    iteration.push_back(0);
+    if ((!Ordering || recording) && summarizeFrom > 0 &&
+        count >= summarizeFrom) {
+      // The loop kept around this one, if any, becomes one of its runs'
+      // outer levels.
+      std::optional<size_t> outerLevel = level;
+      int64_t outerTrips = trips, outerGroup = group;
+      if (outerLevel)
+        outers.push_back({*outerLevel, outerTrips, outerGroup});
+      level = iteration.size() - 1;
+      group = groups++;
+      trips = count;
+      collect<Ordering>(*loop.getBody(), iteration, inBranch);
+      if (Ordering && !skipped) {
+        recording = false;
+        for (int64_t k : {int64_t{1}, count - 1}) {
+          // Each once, and only those the loop has.
+          if (k <= iteration.back() || k >= count)
+            continue;
+          iteration.back() = k;
+          collect<Ordering>(*loop.getBody(), iteration, inBranch);
+        }
+        recording = true;
+      }
+      if (outerLevel)
+        outers.pop_back();
+      level = outerLevel;
+      trips = outerTrips;
+      group = outerGroup;
+    } else {
+      walk<Ordering>(loop, count, iteration, inBranch);
+    }
+    iteration.pop_back();
+  }
+
+  /// Walks `loop`, of `count` trips, iteration by iteration.
+  template <bool Ordering>
+  void walk(mlir::scf::ForOp loop, int64_t count,
+            llvm::SmallVectorImpl<int64_t> &iteration, bool inBranch) {
+    for (int64_t k = 0; k < count; ++k) {
+      if (Ordering && !recording && k == 2 && count > 3)
+        k = count - 1;
+      iteration.back() = k;
+      bool skip = Ordering && k >= 2 && k != count - 1;
+      skipped += skip;
+      collect<Ordering>(*loop.getBody(), iteration, inBranch);
+      skipped -= skip;
+    }
+  }
+
+  /// A call with a time the check does not compute with.
+  void past(classical::SubmitOp submit) {
+    error(submit, "the call of '" + submit.getCallee() +
+                      "' starts, or lasts, past the cycles a schedule counts "
+                      "in");
+  }
+
+  /// The start of `op`, an operation the order of calls depends on, in the
+  /// iteration walked; one with a time the check does not compute with is
+  /// reported, not passed over.
+  std::optional<int64_t> startIn(mlir::Operation *op,
+                                 llvm::ArrayRef<int64_t> iteration) {
+    std::optional<int64_t> start = startWithin(op, iteration);
+    if (!start && pulse::hasStart(op))
+      pastOperation(op);
+    return start;
+  }
+
+  void pastOperation(mlir::Operation *op) {
+    error(op, "an operation the order of calls depends on starts, or lasts, "
+              "past the cycles a schedule counts in");
   }
 
   /// When `op`, a readout or an answer the op walked depends on, ends in the
   /// iteration walked: the loops around it are among those around the op.
-  static std::optional<int64_t> endOf(mlir::Operation *op,
-                                      llvm::ArrayRef<int64_t> iteration) {
+  std::optional<int64_t> endOf(mlir::Operation *op,
+                               llvm::ArrayRef<int64_t> iteration) {
     size_t depth = 0;
     for (mlir::Operation *parent = op->getParentOp(); parent;
          parent = parent->getParentOp())
@@ -281,7 +397,12 @@ private:
     std::optional<int64_t> start = startIn(op, iteration.take_front(depth));
     if (!start)
       return std::nullopt;
-    return *start + pulse::scheduledDuration(op).value_or(0);
+    int64_t duration = pulse::scheduledDuration(op).value_or(0);
+    if (!withinCycles(duration)) {
+      pastOperation(op);
+      return std::nullopt;
+    }
+    return *start + duration;
   }
 
   void orderSubmit(classical::SubmitOp submit, int64_t start, int64_t duration,
@@ -357,10 +478,16 @@ private:
   /// How many loops around the op walked are at an iteration the order is
   /// not checked at.
   int skipped = 0;
-  /// The level of `iteration` of the loop being kept as runs, its trips and
-  /// its runs' group.
+  /// The level of `iteration` of the innermost loop being kept as runs, its
+  /// trips and its runs' group; and those of the loops kept around it,
+  /// outermost first.
   std::optional<size_t> level;
   int64_t trips = 0, group = -1, groups = 0;
+  struct Kept {
+    size_t level;
+    int64_t trips, group;
+  };
+  llvm::SmallVector<Kept, 2> outers;
   /// The end of the latest submission on each link, on the path walked.
   llvm::SmallVector<std::pair<LinkKey, int64_t>, 4> linkEnds;
   /// The latest answer a branch around the op walked is on.
@@ -375,33 +502,44 @@ static int64_t floorDiv(int64_t a, int64_t b) {
 
 static int64_t ceilDiv(int64_t a, int64_t b) { return -floorDiv(-a, b); }
 
-/// Whether a run's last execution ends without overflow.
+/// Whether a run's last execution starts within kMostCycles, as its first
+/// does: every execution then starts within it, and ends within three
+/// times it.
 static bool fits(const Run &run) {
-  int64_t span, last, end;
+  int64_t span, last;
   if (__builtin_mul_overflow(run.count - 1, run.period, &span))
     return false;
   if (__builtin_add_overflow(run.start, span, &last))
     return false;
-  if (__builtin_add_overflow(last, run.busy, &end))
-    return false;
-  return true;
+  return withinCycles(last);
 }
 
 /// The most requests `runs` hold at once and the earliest time they do (0
 /// when none is ever held), from every execution: a sweep over interval
-/// ends, each half-open (a slot freed at t can be reused at t).
+/// ends, each half-open (a slot freed at t can be reused at t). The
+/// executions of a run that does not move from one iteration to the next
+/// are all at one time, and counted there together.
 static std::pair<int64_t, int64_t> sweepInFlight(llvm::ArrayRef<Run> runs) {
-  std::vector<std::pair<int64_t, int>> events;
-  for (const Run &run : runs)
+  std::vector<std::pair<int64_t, int64_t>> events;
+  for (const Run &run : runs) {
+    if (run.period == 0) {
+      events.push_back({run.start, +run.count});
+      events.push_back({run.start + run.busy, -run.count});
+      continue;
+    }
     for (int64_t k = 0; k < run.count; ++k) {
       int64_t start = run.start + k * run.period;
       events.push_back({start, +1});
       events.push_back({start + run.busy, -1});
     }
+  }
   std::sort(events.begin(), events.end());
   int64_t inFlight = 0, worst = 0, when = 0;
   for (auto [time, delta] : events) {
-    inFlight += delta;
+    // The counts of runs that do not move can add up past 64 bits.
+    if (__builtin_add_overflow(inFlight, delta, &inFlight))
+      inFlight = delta > 0 ? std::numeric_limits<int64_t>::max()
+                           : std::numeric_limits<int64_t>::min();
     if (inFlight > worst) {
       worst = inFlight;
       when = time;
@@ -409,6 +547,117 @@ static std::pair<int64_t, int64_t> sweepInFlight(llvm::ArrayRef<Run> runs) {
   }
   return {worst, when};
 }
+
+/// How many runs a loop has for them to be put in order (GroupInFlight).
+constexpr size_t kSortedFrom = 8;
+
+/// The runs of one loop, which share its period and count, as the count of
+/// requests in flight asks of them. A loop of very many submissions makes
+/// as many runs, so neither question compares each run with every other.
+struct GroupInFlight {
+  /// Times of the runs' iteration 0 (their starts, or their ends), in
+  /// order, and where each whole period after the first of them begins
+  /// among them: (periods after the first, index of its first time).
+  struct Times {
+    std::vector<int64_t> at;
+    std::vector<std::pair<int64_t, size_t>> periods;
+
+    void order(int64_t period) {
+      std::sort(at.begin(), at.end());
+      for (size_t i = 0; i < at.size(); ++i) {
+        int64_t after = (at[i] - at.front()) / period;
+        if (periods.empty() || periods.back().first != after)
+          periods.push_back({after, i});
+      }
+    }
+
+    /// How many of the times have come by `time`, over `trips` iterations
+    /// a `period` apart. Of the times within one period of each other,
+    /// those no later in it than `time` is have come once more.
+    int64_t come(int64_t time, int64_t period, int64_t trips) const {
+      int64_t since = time - at.front();
+      int64_t whole = floorDiv(since, period);
+      int64_t within = since - whole * period;
+      int64_t total = 0;
+      for (size_t i = 0; i < periods.size(); ++i) {
+        auto [after, begin] = periods[i];
+        size_t end = i + 1 < periods.size() ? periods[i + 1].second : at.size();
+        auto sooner = static_cast<int64_t>(
+            std::upper_bound(at.begin() + begin, at.begin() + end,
+                             at.front() + after * period + within) -
+            (at.begin() + begin));
+        auto later = static_cast<int64_t>(end - begin) - sooner;
+        total += sooner * std::clamp<int64_t>(whole - after + 1, 0, trips) +
+                 later * std::clamp<int64_t>(whole - after, 0, trips);
+      }
+      return total;
+    }
+  };
+
+  /// Where a request of iteration 0 is in flight: the runs' [start, start
+  /// + busy), those that overlap or touch joined, in order.
+  std::vector<std::pair<int64_t, int64_t>> held;
+  Times starts, ends;
+  /// Whether the count at a time is taken from the starts and the ends in
+  /// order: every run holds its slot for a time that is not negative, and
+  /// the starts and the ends lie in few enough periods for that to be less
+  /// work than a look at every run.
+  bool ordered = true;
+  int64_t period = 0, trips = 0;
+
+  explicit GroupInFlight(llvm::ArrayRef<const Run *> group)
+      : period(group.front()->period), trips(group.front()->count) {
+    std::vector<std::pair<int64_t, int64_t>> each;
+    starts.at.reserve(group.size());
+    ends.at.reserve(group.size());
+    each.reserve(group.size());
+    for (const Run *run : group) {
+      starts.at.push_back(run->start);
+      ends.at.push_back(run->start + run->busy);
+      ordered &= run->busy >= 0;
+      if (run->busy > 0)
+        each.push_back({run->start, run->start + run->busy});
+    }
+    starts.order(period);
+    ends.order(period);
+    // A look per period the times lie in, each a search, against one per
+    // run.
+    ordered &= 8 * (starts.periods.size() + ends.periods.size()) <=
+               std::max<size_t>(group.size(), 16);
+    std::sort(each.begin(), each.end());
+    for (auto [begin, end] : each) {
+      if (!held.empty() && begin <= held.back().second)
+        held.back().second = std::max(held.back().second, end);
+      else
+        held.push_back({begin, end});
+    }
+  }
+
+  /// The iteration from which the requests of the loop in flight at a
+  /// start of a run that starts at `start` are those at the start a period
+  /// before, moved by a period: the most periods after `start` at which a
+  /// request of iteration 0 is still in flight, and no more than the
+  /// trips. (For each run that is in flight at start + m periods for some
+  /// m, the largest such m; the most over the runs.)
+  int64_t steadyFrom(int64_t start) const {
+    // Only what is held past a period after `start` gives one or more.
+    for (size_t i = held.size(); i-- > 0;) {
+      auto [begin, end] = held[i];
+      if (end - 1 < start + period)
+        break;
+      int64_t periods = floorDiv(end - 1 - start, period);
+      if (start + periods * period >= begin)
+        return std::min(periods, trips);
+    }
+    return 0;
+  }
+
+  /// The requests of the loop in flight at `time`: those started less
+  /// those ended.
+  int64_t inFlight(int64_t time) const {
+    return starts.come(time, period, trips) - ends.come(time, period, trips);
+  }
+};
 
 /// sweepInFlight from each loop's runs rather than every execution, or none
 /// when that would not be cheaper. The count only rises where a request
@@ -464,20 +713,34 @@ summarizedInFlight(llvm::ArrayRef<Run> runs) {
   int64_t loopRuns = static_cast<int64_t>(runs.size() - singleStarts.size());
   int64_t budget = 4 * executions / (loopRuns + 1) + 64;
   std::vector<int64_t> starts(singleStarts);
+  // The runs of a loop of many submissions are taken in order; those of a
+  // loop of a few, one against the other, which is less work than putting
+  // them in order.
+  std::map<int64_t, GroupInFlight> sorted;
+  for (auto &[id, group] : groups)
+    if (group.size() >= kSortedFrom)
+      sorted.try_emplace(id, group);
   for (auto &[id, group] : groups) {
     int64_t period = group.front()->period, trips = group.front()->count;
+    auto found = sorted.find(id);
+    const GroupInFlight *loop =
+        found == sorted.end() ? nullptr : &found->second;
     for (const Run *run : group) {
       // From `first` on, the loop's requests in flight at each start of the
       // run are those at the start before, moved by a period, but those of
       // iterations past the last.
       int64_t first = 0;
-      for (const Run *other : group) {
-        int64_t lo =
-            floorDiv(run->start - other->start - other->busy, period) + 1;
-        if (lo <= floorDiv(run->start - other->start, period))
-          first = std::max(first, -lo);
+      if (loop) {
+        first = loop->steadyFrom(run->start);
+      } else {
+        for (const Run *other : group) {
+          int64_t lo =
+              floorDiv(run->start - other->start - other->busy, period) + 1;
+          if (lo <= floorDiv(run->start - other->start, period))
+            first = std::max(first, -lo);
+        }
+        first = std::min(first, trips);
       }
-      first = std::min(first, trips);
       std::vector<std::pair<int64_t, int64_t>> ranges;
       if (first > 0)
         ranges.push_back({0, first - 1});
@@ -520,7 +783,14 @@ summarizedInFlight(llvm::ArrayRef<Run> runs) {
          singleStarts.begin()) -
         (std::upper_bound(singleEnds.begin(), singleEnds.end(), t) -
          singleEnds.begin());
-    for (auto &[id, group] : groups)
+    for (auto &[id, group] : groups) {
+      if (group.size() >= kSortedFrom) {
+        const GroupInFlight &loop = sorted.at(id);
+        if (loop.ordered) {
+          count += loop.inFlight(t);
+          continue;
+        }
+      }
       for (const Run *run : group) {
         int64_t hi =
             std::min(floorDiv(t - run->start, run->period), run->count - 1);
@@ -528,6 +798,7 @@ summarizedInFlight(llvm::ArrayRef<Run> runs) {
             floorDiv(t - run->start - run->busy, run->period) + 1, 0);
         count += std::max<int64_t>(0, hi - lo + 1);
       }
+    }
     if (count > worst || (count == worst && count > 0 && t < when)) {
       worst = count;
       when = t;
@@ -859,6 +1130,664 @@ static bool checkReaction(classical::SubmitOp submit,
   return false;
 }
 
+/// How many loops are kept around `run`.
+static size_t depthOf(const Run &run) { return run.around + (run.group >= 0); }
+
+/// The loop kept around `run` at `depth`, outermost first.
+static Level levelOf(const Run &run, llvm::ArrayRef<Level> levels,
+                     size_t depth) {
+  if (depth < run.around)
+    return levels[run.outer + depth];
+  return {run.period, run.count, run.group};
+}
+
+/// Whether every execution of `run` starts within kMostCycles: its first
+/// does, and the starts are affine in the iterations, so the earliest and
+/// the latest are at an end of each loop.
+static bool fitsAll(const Run &run, llvm::ArrayRef<Level> levels) {
+  Wide low = run.start, high = run.start;
+  for (size_t depth = 0; depth < depthOf(run); ++depth) {
+    Level level = levelOf(run, levels, depth);
+    Wide span = Wide(level.count - 1) * Wide(level.period);
+    (span < 0 ? low : high) += span;
+  }
+  return low >= -Wide(kMostCycles) && high <= Wide(kMostCycles);
+}
+
+static Wide wideFloorDiv(Wide a, Wide b) {
+  // Nearly always within 64 bits, where a division is much less work.
+  if (a >= std::numeric_limits<int64_t>::min() &&
+      a <= std::numeric_limits<int64_t>::max() &&
+      b >= std::numeric_limits<int64_t>::min() &&
+      b <= std::numeric_limits<int64_t>::max() && b != -1)
+    return floorDiv(static_cast<int64_t>(a), static_cast<int64_t>(b));
+  Wide q = a / b;
+  return a % b != 0 && a < 0 ? q - 1 : q;
+}
+
+static Wide wideCeilDiv(Wide a, Wide b) { return -wideFloorDiv(-a, b); }
+
+/// The runs of `runs`, which share their loops down to `depth`, once per
+/// iteration of the loops inside those, in the order a walk of the loops
+/// lists them; `starts`: where each run starts in the iteration reached.
+static void listInside(llvm::ArrayRef<Run> runs, llvm::ArrayRef<Level> levels,
+                       size_t depth, llvm::MutableArrayRef<int64_t> starts,
+                       std::vector<Run> &flat) {
+  for (size_t i = 0; i < runs.size();) {
+    const Run &run = runs[i];
+    if (depthOf(run) == depth) {
+      Level kept = levelOf(run, levels, 0);
+      flat.push_back({starts[i], kept.period, kept.count, run.duration,
+                      run.busy, kept.group, run.op});
+      ++i;
+      continue;
+    }
+    Level own = levelOf(run, levels, depth);
+    size_t j = i + 1;
+    while (j < runs.size() && depthOf(runs[j]) > depth &&
+           levelOf(runs[j], levels, depth).group == own.group)
+      ++j;
+    for (int64_t k = 0; k < own.count; ++k) {
+      listInside(runs.slice(i, j - i), levels, depth + 1,
+                 starts.slice(i, j - i), flat);
+      for (size_t r = i; r < j; ++r)
+        starts[r] += levelOf(runs[r], levels, depth).period;
+    }
+    // Back by the last step, then by those between executions, each of
+    // which fits.
+    for (size_t r = i; r < j; ++r) {
+      int64_t period = levelOf(runs[r], levels, depth).period;
+      starts[r] -= period;
+      starts[r] -= (own.count - 1) * period;
+    }
+    i = j;
+  }
+}
+
+/// The runs of a link with runs over several loops as they were listed
+/// when one loop was kept around a call: each run over its outermost loop,
+/// once per iteration of the loops inside that.
+static std::vector<Run> outermostKept(llvm::ArrayRef<Run> runs,
+                                      llvm::ArrayRef<Level> levels) {
+  std::vector<Run> flat;
+  std::vector<int64_t> starts;
+  for (size_t i = 0; i < runs.size();) {
+    if (depthOf(runs[i]) == 0) {
+      flat.push_back(runs[i++]);
+      continue;
+    }
+    int64_t group = levelOf(runs[i], levels, 0).group;
+    size_t j = i + 1;
+    while (j < runs.size() && depthOf(runs[j]) > 0 &&
+           levelOf(runs[j], levels, 0).group == group)
+      ++j;
+    starts.clear();
+    for (size_t r = i; r < j; ++r)
+      starts.push_back(runs[r].start);
+    listInside(runs.slice(i, j - i), levels, 1, starts, flat);
+    i = j;
+  }
+  return flat;
+}
+
+/// The runs of one link as the loops kept around them, for the count of
+/// requests in flight (nestedInFlight). Every loop here has one period,
+/// above zero, for all the calls in it: a loop whose calls all move back is
+/// taken from its last iteration to its first, and one whose calls do not
+/// move, or of one trip, is no loop but as many requests at each of its
+/// calls.
+struct Nest {
+  struct Leaf {
+    int64_t start, busy, weight;
+    /// (period, trips) of the loops around it, the longest period first,
+    /// and how many executions the loops after each have.
+    llvm::SmallVector<std::pair<int64_t, int64_t>, 4> levels;
+    llvm::SmallVector<int64_t, 4> inner;
+  };
+  struct Node {
+    int leaf = -1;
+    int64_t count = 0, period = 0;
+    std::vector<unsigned> body;
+    /// Of one iteration (a leaf: its execution): the earliest start, the
+    /// latest start and the latest end; and the first and the last over
+    /// every iteration.
+    int64_t first = 0, latest = 0, end = 0;
+    int64_t from = 0, to = 0, last = 0;
+  };
+  /// Where requests are in flight outside a loop: one execution, or a
+  /// loop's from its first start to its last end.
+  struct Span {
+    int64_t begin, end;
+    bool single;
+  };
+
+  /// The calls that share their loops' periods and trips, and their
+  /// weight: their starts, and their ends, in order. Of a loop of very many
+  /// calls the count at a time is taken from these, not call by call.
+  struct Alike {
+    size_t first;
+    std::vector<int64_t> starts, ends;
+  };
+
+  std::vector<Leaf> leaves;
+  std::vector<Node> nodes;
+  std::vector<unsigned> top;
+  std::vector<Alike> alike;
+  /// The leaves counted one by one.
+  std::vector<unsigned> apart;
+  /// Whether the runs are loops as above, of calls that hold their slots
+  /// for a time that is not negative, each loop's iterations as far apart
+  /// as the loops inside it take to start.
+  bool ok = true;
+  /// How many executions there are, and how many runs when only the
+  /// outermost loop around each call is kept.
+  Wide executions = 0, listed = 0;
+
+  Nest(llvm::ArrayRef<Run> runs, llvm::ArrayRef<Level> levels) {
+    llvm::SmallVector<std::pair<int64_t, int64_t>, 4> kept;
+    top = build(runs, levels, 0, 0, 1, kept);
+    if (!ok)
+      return;
+    for (unsigned id : top)
+      extent(id);
+    // Calls of one loop come one after the other.
+    for (size_t i = 0; i < leaves.size();) {
+      size_t j = i + 1;
+      while (j < leaves.size() && leaves[j].weight == leaves[i].weight &&
+             leaves[j].levels == leaves[i].levels)
+        ++j;
+      if (j - i >= kSortedFrom) {
+        Alike group{i, {}, {}};
+        for (size_t k = i; k < j; ++k) {
+          group.starts.push_back(leaves[k].start);
+          group.ends.push_back(leaves[k].start + leaves[k].busy);
+        }
+        std::sort(group.starts.begin(), group.starts.end());
+        std::sort(group.ends.begin(), group.ends.end());
+        alike.push_back(std::move(group));
+      } else {
+        for (size_t k = i; k < j; ++k)
+          apart.push_back(static_cast<unsigned>(k));
+      }
+      i = j;
+    }
+  }
+
+  std::vector<unsigned>
+  build(llvm::ArrayRef<Run> runs, llvm::ArrayRef<Level> levels, size_t depth,
+        Wide shift, int64_t weight,
+        llvm::SmallVectorImpl<std::pair<int64_t, int64_t>> &kept) {
+    std::vector<unsigned> out;
+    for (size_t i = 0; i < runs.size() && ok;) {
+      const Run &run = runs[i];
+      if (depthOf(run) == depth) {
+        leaf(run, levels, shift, weight, kept, out);
+        ++i;
+        continue;
+      }
+      Level own = levelOf(run, levels, depth);
+      size_t j = i + 1;
+      while (j < runs.size() && depthOf(runs[j]) > depth &&
+             levelOf(runs[j], levels, depth).group == own.group) {
+        // One period for the loop's calls.
+        if (levelOf(runs[j], levels, depth).period != own.period) {
+          ok = false;
+          return out;
+        }
+        ++j;
+      }
+      llvm::ArrayRef<Run> inner = runs.slice(i, j - i);
+      i = j;
+      if (own.count == 1 || own.period == 0) {
+        int64_t each = weight;
+        if (__builtin_mul_overflow(each, own.count, &each))
+          each = std::numeric_limits<int64_t>::max();
+        std::vector<unsigned> body =
+            build(inner, levels, depth + 1, shift, each, kept);
+        out.insert(out.end(), body.begin(), body.end());
+        continue;
+      }
+      int64_t period = own.period;
+      Wide moved = shift;
+      if (period < 0) {
+        moved += Wide(own.count - 1) * Wide(period);
+        period = -period;
+      }
+      kept.push_back({period, own.count});
+      std::vector<unsigned> body =
+          build(inner, levels, depth + 1, moved, weight, kept);
+      kept.pop_back();
+      if (!ok)
+        return out;
+      Node node;
+      node.count = own.count;
+      node.period = period;
+      node.body = std::move(body);
+      out.push_back(static_cast<unsigned>(nodes.size()));
+      nodes.push_back(std::move(node));
+    }
+    return out;
+  }
+
+  void leaf(const Run &run, llvm::ArrayRef<Level> levels, Wide shift,
+            int64_t weight, llvm::ArrayRef<std::pair<int64_t, int64_t>> kept,
+            std::vector<unsigned> &out) {
+    if (run.busy < 0) {
+      ok = false;
+      return;
+    }
+    Leaf leaf{static_cast<int64_t>(Wide(run.start) + shift),
+              run.busy,
+              weight,
+              {},
+              {}};
+    leaf.levels.assign(kept.begin(), kept.end());
+    llvm::sort(leaf.levels, std::greater<>());
+    leaf.inner.assign(leaf.levels.size(), 1);
+    // From the shortest period: each as long as the loops of shorter
+    // periods take to start, so that the starts are in the order of the
+    // iterations.
+    Wide span = 0;
+    int64_t product = 1;
+    for (size_t i = leaf.levels.size(); i-- > 0;) {
+      auto [period, count] = leaf.levels[i];
+      if (Wide(period) < span) {
+        ok = false;
+        return;
+      }
+      leaf.inner[i] = product;
+      if (__builtin_mul_overflow(product, count, &product)) {
+        ok = false;
+        return;
+      }
+      span += Wide(count - 1) * Wide(period);
+    }
+    executions = wideAdd(executions, wideMul(Wide(weight), Wide(product)));
+    Wide inside = 1;
+    for (size_t depth = 1; depth < depthOf(run); ++depth)
+      inside = wideMul(inside, Wide(levelOf(run, levels, depth).count));
+    listed = wideAdd(listed, inside);
+    Node node;
+    node.leaf = static_cast<int>(leaves.size());
+    leaves.push_back(std::move(leaf));
+    out.push_back(static_cast<unsigned>(nodes.size()));
+    nodes.push_back(std::move(node));
+  }
+
+  void extent(unsigned id) {
+    if (nodes[id].leaf >= 0) {
+      Node &node = nodes[id];
+      const Leaf &leaf = leaves[node.leaf];
+      node.first = node.latest = node.from = node.to = leaf.start;
+      node.end = node.last = leaf.start + leaf.busy;
+      return;
+    }
+    int64_t first = std::numeric_limits<int64_t>::max();
+    int64_t latest = std::numeric_limits<int64_t>::min(), end = latest;
+    for (size_t i = 0; i < nodes[id].body.size(); ++i) {
+      unsigned child = nodes[id].body[i];
+      extent(child);
+      first = std::min(first, nodes[child].from);
+      latest = std::max(latest, nodes[child].to);
+      end = std::max(end, nodes[child].last);
+    }
+    Node &node = nodes[id];
+    int64_t span = (node.count - 1) * node.period;
+    node.first = node.from = first;
+    node.latest = latest;
+    node.end = end;
+    node.to = latest + span;
+    node.last = end + span;
+  }
+
+  /// How many executions of `leaf` have started by `time` (ended, with
+  /// `time` less its hold): its loops in the order of their periods, as
+  /// many whole periods of each as fit in what is left.
+  static int64_t come(const Leaf &leaf, Wide time) {
+    return within(leaf, time - leaf.start);
+  }
+
+  /// How many iterations of the loops around `leaf` begin within `left`
+  /// of their first.
+  static int64_t within(const Leaf &leaf, Wide left) {
+    if (left < 0)
+      return 0;
+    // Between two times of the link's executions: within 64 bits.
+    auto rest = static_cast<uint64_t>(left);
+    int64_t total = 0;
+    for (size_t i = 0; i < leaf.levels.size(); ++i) {
+      auto [period, count] = leaf.levels[i];
+      uint64_t whole = rest / static_cast<uint64_t>(period);
+      if (whole >= static_cast<uint64_t>(count))
+        return total + count * leaf.inner[i];
+      total += static_cast<int64_t>(whole) * leaf.inner[i];
+      rest -= whole * static_cast<uint64_t>(period);
+    }
+    return total + 1;
+  }
+
+  /// How many executions of the calls of a loop, whose iteration 0 is at
+  /// `times` in order, have come by `time`. The iterations of the loops
+  /// around them are in the order of their times: all the calls have come
+  /// in those that began the latest call's time ago or longer, none in
+  /// those that begin after the earliest's, and each of the few between is
+  /// looked up. None when those are too many for that to be less work than
+  /// a look at each call.
+  static std::optional<Wide>
+  come(const Leaf &like, const std::vector<int64_t> &times, int64_t time) {
+    int64_t whole = within(like, Wide(time) - times.back());
+    int64_t some = within(like, Wide(time) - times.front());
+    if (Wide(some - whole) * 8 > Wide(times.size()) + 64)
+      return std::nullopt;
+    Wide total = Wide(whole) * Wide(times.size());
+    for (int64_t iteration = whole; iteration < some; ++iteration) {
+      // When the iteration begins, from its place among them.
+      Wide begins = 0;
+      int64_t place = iteration;
+      for (size_t i = 0; i < like.levels.size(); ++i) {
+        begins += Wide(place / like.inner[i]) * like.levels[i].first;
+        place %= like.inner[i];
+      }
+      Wide by = Wide(time) - begins;
+      if (by >= times.back())
+        total += times.size();
+      else if (by >= times.front())
+        total += std::upper_bound(times.begin(), times.end(),
+                                  static_cast<int64_t>(by)) -
+                 times.begin();
+    }
+    return total;
+  }
+
+  /// The requests in flight at `time`.
+  int64_t inFlight(int64_t time) const {
+    Wide total = 0;
+    auto one = [&](const Leaf &leaf) {
+      total = wideAdd(total, wideMul(Wide(leaf.weight),
+                                     Wide(come(leaf, time) -
+                                          come(leaf, Wide(time) - leaf.busy))));
+    };
+    for (unsigned leaf : apart)
+      one(leaves[leaf]);
+    for (const Alike &group : alike) {
+      const Leaf &like = leaves[group.first];
+      auto started = come(like, group.starts, time);
+      auto ended = started ? come(like, group.ends, time) : started;
+      if (started && ended) {
+        total = wideAdd(total, wideMul(Wide(like.weight), *started - *ended));
+        continue;
+      }
+      // Call by call: the group's are those from its first on.
+      for (size_t leaf = group.first; leaf < group.first + group.starts.size();
+           ++leaf)
+        one(leaves[leaf]);
+    }
+    return total > Wide(std::numeric_limits<int64_t>::max())
+               ? std::numeric_limits<int64_t>::max()
+               : static_cast<int64_t>(total);
+  }
+
+  Span spanOf(unsigned id, int64_t moved) const {
+    const Node &node = nodes[id];
+    return {node.from + moved, node.last + moved, node.leaf >= 0};
+  }
+
+  /// The starts to count at among those of `id` with the loops around it
+  /// at iterations that move it by `moved`, into `starts`; false when they
+  /// are more than `budget`. `outside`: where the requests of everything
+  /// else can be in flight.
+  ///
+  /// Past the iterations a request of a loop's first is still held in, the
+  /// loop's own requests in flight at a start are no more than at the same
+  /// start one iteration earlier. So a start is left out when it is past
+  /// those and no request outside the loop can come into flight between
+  /// the same start one iteration earlier and it: the count there is no
+  /// more than at that earlier start.
+  bool visit(unsigned id, int64_t moved, const std::vector<Span> &outside,
+             std::vector<int64_t> &starts, size_t budget, size_t &work) const {
+    const Node &node = nodes[id];
+    if (node.leaf >= 0) {
+      starts.push_back(node.first + moved);
+      return starts.size() <= budget;
+    }
+    // The spans looked at count as work, as the starts do.
+    if (outside.size() > work)
+      return false;
+    work -= outside.size();
+    Wide period = node.period, trips = node.count;
+    Wide first = Wide(node.first) + moved, latest = Wide(node.latest) + moved;
+    Wide end = Wide(node.end) + moved;
+    std::vector<std::pair<int64_t, int64_t>> ranges;
+    Wide held = std::max<Wide>(wideCeilDiv(end - first, period) - 1, 0);
+    ranges.push_back({0, static_cast<int64_t>(std::min(held, trips - 1))});
+    for (const Span &span : outside) {
+      Wide lo = std::max<Wide>(wideCeilDiv(span.begin - latest, period), 0);
+      Wide hi =
+          std::min(span.single ? wideCeilDiv(span.begin - first, period)
+                               : wideCeilDiv(span.end - first, period) - 1,
+                   trips - 1);
+      if (lo <= hi)
+        ranges.push_back({static_cast<int64_t>(lo), static_cast<int64_t>(hi)});
+    }
+    std::sort(ranges.begin(), ranges.end());
+    int64_t done = -1;
+    std::vector<Span> around;
+    for (auto [lo, hi] : ranges) {
+      lo = std::max(lo, done + 1);
+      if (lo > hi)
+        continue;
+      if (Wide(hi) - lo >= Wide(budget) - Wide(starts.size()))
+        return false;
+      done = hi;
+      for (int64_t k = lo; k <= hi; ++k) {
+        int64_t at = moved + k * node.period;
+        for (unsigned child : node.body) {
+          const Node &inner = nodes[child];
+          if (inner.leaf >= 0) {
+            starts.push_back(inner.first + at);
+            continue;
+          }
+          // Outside the loop inside: what is outside this one, the rest of
+          // this iteration, and the other iterations whose requests can
+          // come into flight among its starts.
+          // Only those that reach its starts: after a period before its
+          // first, and no later than its last.
+          Wide from = Wide(inner.from) + at - inner.period;
+          Wide to = Wide(inner.to) + at;
+          around.clear();
+          auto reaches = [&](const Span &span) {
+            if (Wide(span.begin) <= to && Wide(span.end) > from)
+              around.push_back(span);
+          };
+          if (outside.size() + node.body.size() > work)
+            return false;
+          work -= outside.size() + node.body.size();
+          for (const Span &span : outside)
+            reaches(span);
+          for (unsigned other : node.body)
+            if (other != child)
+              reaches(spanOf(other, at));
+          Wide early = std::max<Wide>(wideCeilDiv(from - end + 1, period), 0);
+          Wide late = std::min(wideFloorDiv(to - first, period), trips - 1);
+          if (late >= early &&
+              wideMul(late - early + 1, Wide(node.body.size())) > Wide(work))
+            return false;
+          for (Wide other = early; other <= late; ++other) {
+            work -= node.body.size();
+            if (other != k)
+              for (unsigned item : node.body)
+                reaches(spanOf(item, moved + static_cast<int64_t>(other) *
+                                                 node.period));
+          }
+          if (!visit(child, at, around, starts, budget, work))
+            return false;
+        }
+        if (starts.size() > budget)
+          return false;
+      }
+    }
+    return true;
+  }
+};
+
+/// sweepInFlight for runs over several loops, from the runs rather than
+/// every execution; none when the runs are not what Nest takes, or that
+/// would not be cheaper.
+static std::optional<std::pair<int64_t, int64_t>>
+nestedInFlight(llvm::ArrayRef<Run> runs, llvm::ArrayRef<Level> levels) {
+  Nest nest(runs, levels);
+  if (!nest.ok)
+    return std::nullopt;
+  // The starts counted at: one per call, and as many more as keep the
+  // work within what sweeping every execution would take. And the spans
+  // looked at to choose them, within a few times the runs listed when only
+  // the outermost loop was kept.
+  auto within = [](Wide most) {
+    return most > Wide(1) << 40 ? size_t(1) << 40 : static_cast<size_t>(most);
+  };
+  size_t calls = nest.leaves.size();
+  size_t budget = within(
+      wideAdd(wideMul(4, nest.executions) / Wide(calls + 1), Wide(calls) + 64));
+  size_t work =
+      within(wideAdd(wideMul(4, nest.listed), wideMul(64, Wide(calls + 1))));
+  std::vector<int64_t> starts;
+  std::vector<Nest::Span> outside;
+  for (unsigned id : nest.top) {
+    const Nest::Node &node = nest.nodes[id];
+    outside.clear();
+    // What can be in flight among its starts, a period before the first
+    // or later.
+    if (node.leaf < 0)
+      for (unsigned other : nest.top) {
+        Nest::Span span = nest.spanOf(other, 0);
+        if (other != id && span.begin <= node.to &&
+            Wide(span.end) > Wide(node.from) - node.period)
+          outside.push_back(span);
+      }
+    if (!nest.visit(id, 0, outside, starts, budget, work))
+      return std::nullopt;
+  }
+  std::sort(starts.begin(), starts.end());
+  starts.erase(std::unique(starts.begin(), starts.end()), starts.end());
+  int64_t worst = 0, when = 0;
+  for (int64_t time : starts) {
+    int64_t count = nest.inFlight(time);
+    if (count > worst) {
+      worst = count;
+      when = time;
+    }
+  }
+  return std::pair<int64_t, int64_t>{worst, when};
+}
+
+/// The first k in [0, last] where a + k * d < 0.
+static std::optional<Wide> wideFirstNegative(Wide a, Wide d, Wide last) {
+  if (last < 0 || (a >= 0 && d >= 0))
+    return std::nullopt;
+  Wide k = a < 0 ? 0 : a / -d + 1;
+  return k <= last ? std::optional<Wide>(k) : std::nullopt;
+}
+
+/// firstOutOfOrder for runs over several loops. Two executions follow one
+/// another in program order as two runs next to each other (the first at
+/// the last iteration of the loops only it is in, the second at the first
+/// of its own), or as the last run of a loop's body and the first, an
+/// iteration later. In each case the time between them is affine in the
+/// iterations of the loops they share: the first iterations at which it is
+/// negative are found a loop at a time from the outermost, each the
+/// earliest from which the loops inside can still make it negative. The
+/// first execution out of order is the earliest of those in program order.
+static std::optional<OutOfOrder>
+nestedOutOfOrder(llvm::ArrayRef<Run> runs, llvm::ArrayRef<Level> levels) {
+  // The first and the last run of each loop.
+  llvm::DenseMap<int64_t, std::pair<size_t, size_t>> ends;
+  for (size_t r = 0; r < runs.size(); ++r)
+    for (size_t depth = 0; depth < depthOf(runs[r]); ++depth) {
+      auto [it, inserted] =
+          ends.try_emplace(levelOf(runs[r], levels, depth).group, r, r);
+      it->second.second = r;
+    }
+  std::optional<OutOfOrder> found;
+  // Where the execution found is in program order: the place of each loop
+  // around it and the loop's iteration, then its own place.
+  llvm::SmallVector<int64_t, 8> best, key;
+  llvm::SmallVector<Wide, 4> moves, lasts, least, ks;
+
+  // `a` then `b`, which share their outer `shared` loops; with `wrap`, the
+  // innermost of those an iteration apart.
+  auto consider = [&](size_t ai, size_t bi, size_t shared, bool wrap) {
+    const Run &a = runs[ai], &b = runs[bi];
+    Wide aEnd = Wide(a.start) + a.duration;
+    for (size_t depth = shared; depth < depthOf(a); ++depth) {
+      Level level = levelOf(a, levels, depth);
+      aEnd += Wide(level.count - 1) * Wide(level.period);
+    }
+    moves.assign(shared, 0);
+    lasts.assign(shared, 0);
+    for (size_t depth = 0; depth < shared; ++depth) {
+      Level mine = levelOf(b, levels, depth);
+      moves[depth] = Wide(mine.period) - levelOf(a, levels, depth).period;
+      lasts[depth] = mine.count - 1;
+    }
+    Wide between = Wide(b.start) - aEnd;
+    if (wrap) {
+      between += levelOf(b, levels, shared - 1).period;
+      lasts[shared - 1] -= 1;
+    }
+    least.assign(shared + 1, 0);
+    for (size_t depth = shared; depth-- > 0;) {
+      if (lasts[depth] < 0)
+        return;
+      least[depth] =
+          least[depth + 1] + std::min<Wide>(0, moves[depth] * lasts[depth]);
+    }
+    if (between + least[0] >= 0)
+      return;
+    ks.assign(shared, 0);
+    for (size_t depth = 0; depth < shared; ++depth) {
+      ks[depth] = *wideFirstNegative(between + least[depth + 1], moves[depth],
+                                     lasts[depth]);
+      between += ks[depth] * moves[depth];
+    }
+    Wide start = b.start, end = aEnd;
+    key.clear();
+    for (size_t depth = 0; depth < depthOf(b); ++depth) {
+      Level mine = levelOf(b, levels, depth);
+      Wide k = 0;
+      if (depth < shared) {
+        k = ks[depth] + (wrap && depth + 1 == shared);
+        start += k * mine.period;
+        end += ks[depth] * levelOf(a, levels, depth).period;
+      }
+      key.push_back(static_cast<int64_t>(ends.lookup(mine.group).first));
+      key.push_back(static_cast<int64_t>(k));
+    }
+    key.push_back(static_cast<int64_t>(bi));
+    if (found && !std::lexicographical_compare(key.begin(), key.end(),
+                                               best.begin(), best.end()))
+      return;
+    best = key;
+    found = OutOfOrder{b.op, static_cast<int64_t>(start),
+                       static_cast<int64_t>(end)};
+  };
+
+  for (size_t r = 1; r < runs.size(); ++r) {
+    const Run &a = runs[r - 1], &b = runs[r];
+    size_t shared = 0;
+    while (shared < depthOf(a) && shared < depthOf(b) &&
+           levelOf(a, levels, shared).group == levelOf(b, levels, shared).group)
+      ++shared;
+    consider(r - 1, r, shared, false);
+  }
+  for (size_t r = 0; r < runs.size(); ++r)
+    for (size_t depth = 0; depth < depthOf(runs[r]); ++depth) {
+      auto [first, last] = ends.lookup(levelOf(runs[r], levels, depth).group);
+      if (first == r)
+        consider(last, first, depth + 1, true);
+    }
+  return found;
+}
+
 /// Check the classical calls of `module` (see the file comment), loops of
 /// at least `summarizeFrom` trips (none when 0) from one copy of their
 /// body; `latency`: the feedback latency its schedule waits after readouts.
@@ -1042,15 +1971,65 @@ static mlir::LogicalResult checkClassicalCalls(mlir::ModuleOp module,
     else
       submissions.collect<false>(body, iteration, false);
     failed |= submissions.failed;
+    // A call whose last execution in a loop would start or end past what
+    // 64 bits count is no schedule: it is reported, and its link's calls
+    // are not counted or ordered from times that do not exist.
+    llvm::ArrayRef<Level> levels = submissions.levels;
+    auto nested = [](const Run &run) { return run.around != 0; };
+    auto fitsIn = [&](const Run &run) {
+      return LLVM_UNLIKELY(nested(run)) ? fitsAll(run, levels) : fits(run);
+    };
+    // Per link, in the order of perLink: whether its runs all fit, and
+    // whether one is over several loops.
+    llvm::SmallVector<std::pair<bool, bool>, 4> links;
+    for (auto &[key, runs] : submissions.perLink) {
+      auto &[fit, several] = links.emplace_back(true, false);
+      for (const Run &run : runs) {
+        several |= nested(run);
+        if (!fitsIn(run)) {
+          auto diag = run.op->emitError("the call of '");
+          diag << mlir::cast<classical::SubmitOp>(run.op).getCallee()
+               << "' starts at " << run.start;
+          if (nested(run))
+            diag << " and moves with each of the " << depthOf(run)
+                 << " loops around it: in their last iterations it is past "
+                    "the cycles a schedule counts in";
+          else
+            diag << " and " << run.period << " cycles later in each of "
+                 << run.count
+                 << " iterations: the last is past the cycles a schedule "
+                    "counts in";
+          failed = true;
+          fit = false;
+          break;
+        }
+      }
+    }
     // S8: requests in flight at once.
+    size_t link = 0;
     for (auto &[key, runs] : submissions.perLink) {
       auto [device, instance, timeline] = key;
-      if (runs.empty())
+      auto [fit, several] = links[link++];
+      if (runs.empty() || !fit)
         continue;
       int64_t capacity =
           classical::intAttr(runs.front().op, "classical.slots", 64);
-      auto summarized = summarizedInFlight(runs);
-      auto [worst, when] = summarized ? *summarized : sweepInFlight(runs);
+      // Runs over several loops are counted apart, so that those over one
+      // are counted as they always were; and where they cannot be, as they
+      // were when only the outermost loop was kept.
+      std::optional<std::pair<int64_t, int64_t>> summarized;
+      std::vector<Run> listed;
+      llvm::ArrayRef<Run> counted = runs;
+      if (several) {
+        summarized = nestedInFlight(runs, levels);
+        if (!summarized) {
+          listed = outermostKept(runs, levels);
+          counted = listed;
+        }
+      }
+      if (!summarized)
+        summarized = summarizedInFlight(counted);
+      auto [worst, when] = summarized ? *summarized : sweepInFlight(counted);
       if (worst > capacity) {
         auto diag = runs.front().op->emitError("link ");
         diag << device;
@@ -1069,17 +2048,12 @@ static mlir::LogicalResult checkClassicalCalls(mlir::ModuleOp module,
     }
     // S9: one submission at a time on a link, in program order.
     for (auto &[key, runs] : submissions.ordered) {
-      std::optional<OutOfOrder> found;
-      if (llvm::all_of(runs, fits)) {
-        found = firstOutOfOrder(runs);
-      } else {
-        std::vector<Run> each;
-        for (const Run &run : runs)
-          for (int64_t k = 0; k < run.count; ++k)
-            each.push_back({run.start + k * run.period, 0, 1, run.duration,
-                            run.busy, -1, run.op});
-        found = firstOutOfOrder(each);
-      }
+      // With no loop kept inside another, as it always was.
+      bool several = !levels.empty() && llvm::any_of(runs, nested);
+      if (several ? !llvm::all_of(runs, fitsIn) : !llvm::all_of(runs, fits))
+        continue;
+      std::optional<OutOfOrder> found =
+          several ? nestedOutOfOrder(runs, levels) : firstOutOfOrder(runs);
       if (found) {
         found->op->emitError("submission on link ")
             << std::get<0>(key) << " starts at " << found->start

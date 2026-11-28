@@ -124,6 +124,100 @@ def test_the_exports_refuse_a_readout_mode_they_do_not_support_yet():
         module.controller_events([], [])
 
 
+def _listed(module, limit):
+    """How many events ``event_tree(limit)`` lists or stands for."""
+    from cudaq_pulse._loops import Schedule
+
+    events = module.event_tree(limit)
+    return len(events) if type(events) is list else len(Schedule(events[0], tuple))
+
+
+def test_the_event_count_is_what_the_event_tree_lists_or_stands_for():
+    @pulse.kernel
+    def nested(q):
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        drive(d, square(16, 0.1))
+        for _ in range(7):
+            for _ in range(5):
+                drive(d, square(16, 0.1))
+            if readout(r, square(400, 0.05)):
+                drive(d, square(16, 0.2))
+            else:
+                wait(d, 16)
+        for _ in range(0):
+            drive(d, square(16, 0.3))
+
+    for options in ({"unroll_threshold": 0}, {}):
+        module = pulse.compile(nested, **options).lower(Q[0])._module
+        assert len(module.events()) == 1 + 7 * (5 + 3)
+        for limit in (-1, 0, 56, 57, 10_000):
+            assert module.event_count(limit) == _listed(module, limit) == 57
+
+
+def test_the_event_count_refuses_the_readout_the_listed_events_refuse():
+    @pulse.kernel
+    def rounds(q):
+        r = get_readout_line(q)
+        for _ in range(3):
+            readout(r, square(400, 0.05))
+
+    text = pulse.compile(rounds, unroll_threshold=0).lower(Q[0]).mlir()
+    assert text.count(", iq <{") == 1 and "scf.for" in text
+    module = native.MLIRPipeline().parse_to_module(text.replace(", iq <{", ", trace <{"))
+    message = "readout mode trace is not supported by the exports yet; only iq is"
+    # event_tree(limit) is events() up to limit events, and refuses with it.
+    for limit in (3, 10_000):
+        with pytest.raises(NotImplementedError, match=message):
+            module.event_tree(limit)
+        with pytest.raises(NotImplementedError, match=message):
+            module.event_count(limit)
+    for limit in (-1, 0, 2):
+        assert module.event_count(limit) == _listed(module, limit) == 3
+    # A loop of no iteration lists nothing, so nothing of it is refused.
+    none = native.MLIRPipeline().parse_to_module(
+        text.replace(", iq <{", ", trace <{").replace("constant 3 : index", "constant 0 : index")
+    )
+    assert none.events() == [] and none.event_count(10_000) == 0
+
+
+def test_an_event_count_past_the_length_of_a_sequence_is_none():
+    line = "!pulse.drive_line, !pulse.tone"
+
+    def squared(trips):
+        """A drive in two nested loops of *trips* iterations each."""
+        return f"""func.func @main() {{
+  %q = pulse.qudit_alloc {{qudit = 0 : i64}} : !pulse.qudit
+  %d, %t = pulse.get_drive_line %q : (!pulse.qudit) -> ({line})
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %trips = arith.constant {trips} : index
+  %n = arith.constant 8 : i64
+  %amp = arith.constant 0.1 : f64
+  %w = pulse.square %n, %amp, %amp : i64, f64, f64 -> !pulse.waveform
+  %out:2 = scf.for %i = %c0 to %trips step %c1 iter_args(%l = %d, %lt = %t) -> ({line}) {{
+    %in:2 = scf.for %j = %c0 to %trips step %c1 iter_args(%m = %l, %mt = %lt) -> ({line}) {{
+      %m1, %mt1 = pulse.drive %m, %w, %mt : !pulse.drive_line, !pulse.waveform, !pulse.tone
+          -> {line}
+      scf.yield %m1, %mt1 : {line}
+    }}
+    scf.yield %in#0, %in#1 : {line}
+  }}
+  return
+}}
+"""
+
+    parse = native.MLIRPipeline().parse_to_module
+    module = parse(squared(2**31))
+    assert module.event_count(10_000) == _listed(module, 10_000) == 2**62
+    # len() of the sequence that stands for more events than that fails.
+    for trips in (2**32, 2**33):
+        module = parse(squared(trips))
+        assert module.event_count(10_000) is None
+        with pytest.raises(OverflowError):
+            _listed(module, 10_000)
+
+
 # ── The decoder creates constants in the order of the operands ───────
 
 

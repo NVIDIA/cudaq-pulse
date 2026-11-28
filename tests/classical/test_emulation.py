@@ -82,6 +82,16 @@ def test_a_call_exports_its_fields_in_order():
     assert list(wire._call_data(placed).items()) == list({**fields, "controller": 1}.items())
 
 
+@pytest.mark.level0
+def test_a_segment_exports_its_fields_in_order():
+    low = pulse.compile(adaptive).lower(Q[0])
+    segments = low.segments()
+    assert [s.opened_by for s in segments] == ["start", "wait"]
+    fields = [list(dataclasses.asdict(s).items()) for s in segments]
+    assert [list(wire._segment_data(s).items()) for s in segments] == fields
+    assert [list(e.items()) for e in low.export_to_emulator()["segments"]] == fields
+
+
 def test_variable_waits_take_their_emulated_lengths():
     low = pulse.compile(adaptive).lower(Q[0])
     result = emulation.emulate(

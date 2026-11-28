@@ -243,6 +243,19 @@ Transmon Quantum System Examples
      - One readout feedline shared by the four X-check ancillas: the tones it plays at
        once, and each readout's tone slot in the controller export
 
+Challenges
+----------
+
+The `challenges/ folder <https://github.com/NVIDIA/cudaq-pulse/tree/main/challenges>`_
+has starter problems you can solve and score locally:
+
+- **Find the pi pulse:** Halve the length of a calibrated X pulse.
+- **Mystery qubit:** Measure the T1 of a qubit from shots alone.
+- **Benchmark it yourself:** Find a pulse's error by randomized benchmarking.
+- **Schedule golf:** Make a five-qubit program finish sooner without changing what it does.
+- **Fix the kernel:** Find the five mistakes in a kernel, by what it plays.
+- **Reset one qubit:** Bring a qubit in an unknown state to its ground state, in time.
+
 Running Examples
 ----------------
 

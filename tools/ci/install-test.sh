@@ -118,12 +118,11 @@ run_pytest() {
   local markers="$1" dir
   dir="${work}/tests-$(basename "$venv")"
   mkdir -p "$dir"
-  cp -R "${repo_root}/tests" "${repo_root}/pyproject.toml" "$dir/"
-  # tests/test_frontend_features.py and tests/classical/test_no_call_identity.py
-  # check the canonical workloads and their baselined op counts.
-  mkdir -p "$dir/benchmarks/compiler" "$dir/benchmarks/baselines"
-  cp "${repo_root}/benchmarks/compiler/compile_time.py" "$dir/benchmarks/compiler/"
-  cp "${repo_root}/benchmarks/baselines/compile_time.json" "$dir/benchmarks/baselines/"
+  # The files cibuildwheel gives a wheel's tests: test-sources of
+  # [tool.cibuildwheel] in pyproject.toml, the one list of them. The check
+  # fails here, before the long run, if the copy lacks one.
+  "${venv}/bin/python" "${repo_root}/tests/_sources.py" copy "$dir"
+  (cd "$dir" && "${venv}/bin/python" tests/_sources.py check)
   # A user's environment: no type checkers or matplotlib, and the slim images
   # have no C compiler. Without these, their tests skip here instead of failing.
   (cd "$dir" && PATH="${venv}/bin:${PATH}" VIRTUAL_ENV="$venv" \

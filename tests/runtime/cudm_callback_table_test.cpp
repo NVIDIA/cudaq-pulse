@@ -6,7 +6,9 @@
 // envelopes, the capacity is per run, a callback evaluated outside its
 // run's evolution fails instead of reading another run's parameters, the
 // members of a batched run evolve as their own runs do, a workspace serves
-// more than one evolution, and a sum callback adds its envelopes.
+// more than one evolution, and a sum callback adds its envelopes. Also the
+// traffic of an evolution: RK4 uploads its factors once, and an evolution
+// that fails frees what it allocated.
 
 #include "cudm_runtime.h"
 #include "cudaq-pulse/Runtime/WaveformCallback.h"
@@ -365,6 +367,83 @@ void aWorkspaceServesASecondEvolution() {
         "the second evolution ends where the first one did");
 }
 
+// The host-to-device copies of an RK4 evolution of `batch` states in `steps`
+// steps.
+int64_t rk4Copies(int64_t batch, int64_t steps) {
+  const std::string name = "rk4 copies, batch " + std::to_string(batch) + ", " +
+                           std::to_string(steps) + " steps";
+  const std::vector<double> initial(4 * static_cast<size_t>(batch), 0.5);
+  check(cudm_set_initial_state(initial.data(), initial.size() * sizeof(double),
+                               batch) == CUDM_SUCCESS,
+        name + ": set initial states");
+  Run run(name);
+  check(run.appendEnvelope(0.25) == CUDM_SUCCESS &&
+            cudm_operator_append(run.handle, run.op, run.term, 0, 1.0, 0.0) ==
+                CUDM_SUCCESS,
+        name + ": building the operator");
+  const int64_t before = fakeCudaHostToDeviceCopies();
+  check(cudm_evolve(run.handle, run.op, run.in, run.out, run.workspace, 0.0,
+                    durationNs, steps, 4) == CUDM_SUCCESS,
+        name + ": evolution failed: " + cudm_last_error_message());
+  return fakeCudaHostToDeviceCopies() - before;
+}
+
+// The factors of an RK4 step are the same for every step of an evolution,
+// so the evolution uploads them once: its host-to-device copies do not grow
+// with its steps, for one state and for a batch.
+void rk4UploadsItsFactorsOnce() {
+  for (int64_t batch : {1, 3}) {
+    const int64_t few = rk4Copies(batch, 5);
+    const int64_t many = rk4Copies(batch, 400);
+    check(few == many, "an RK4 evolution of batch " + std::to_string(batch) +
+                           " made " + std::to_string(few) +
+                           " host-to-device copies in 5 steps and " +
+                           std::to_string(many) + " in 400");
+  }
+}
+
+// Whichever host-to-device copy of an evolution fails, the evolution reports
+// a CUDA error and frees every allocation it made, for each integrator.
+void aFailedCopyFreesTheEvolution() {
+  for (int32_t integrator = 2; integrator <= 6; ++integrator) {
+    const std::string name =
+        "failed copy, integrator " + std::to_string(integrator);
+    Run run(name);
+    check(run.appendEnvelope(0.25) == CUDM_SUCCESS &&
+              cudm_operator_append(run.handle, run.op, run.term, 0, 1.0, 0.0) ==
+                  CUDM_SUCCESS,
+          name + ": building the operator");
+    const auto evolve = [&run, integrator] {
+      return cudm_evolve(run.handle, run.op, run.in, run.out, run.workspace,
+                         0.0, durationNs, 3, integrator);
+    };
+    // The first evolution allocates the workspace's buffer, which stays.
+    check(evolve() == CUDM_SUCCESS, name + ": evolution failed");
+    const int64_t live = fakeCudaLiveAllocations();
+    bool factorFailed = false;
+    int64_t failures = 0;
+    for (;; ++failures) {
+      fakeCudaFailHostToDeviceCopy(failures);
+      const CudmStatus status = evolve();
+      fakeCudaFailHostToDeviceCopy(-1);
+      check(fakeCudaLiveAllocations() == live,
+            name + ": allocations left after copy " + std::to_string(failures));
+      if (status == CUDM_SUCCESS)
+        break;
+      check(status == CUDM_ERROR_CUDA,
+            name + ": status of a failed copy " + std::to_string(failures));
+      factorFailed |= std::strstr(cudm_last_error_message(),
+                                  "cudaMemcpy(state factor)") != nullptr;
+      if (failures > 10000) {
+        check(false, name + ": every evolution fails");
+        break;
+      }
+    }
+    check(failures > 0 && factorFailed,
+          name + ": no copy of a factor was made to fail");
+  }
+}
+
 } // namespace
 
 int main() {
@@ -376,6 +455,8 @@ int main() {
   multidiagonalOperatorsAreChecked();
   aWorkspaceServesASecondEvolution();
   aSumCallbackAddsItsEnvelopes();
+  rk4UploadsItsFactorsOnce();
+  aFailedCopyFreesTheEvolution();
   if (failures != 0) {
     std::fprintf(stderr, "%d check(s) failed\n", failures.load());
     return 1;

@@ -36,6 +36,7 @@ from cudaq_pulse.quantum_systems import (
     MicrowaveDrive,
     PhysicalQudit,
     Readout,
+    ReadoutCrosstalk,
     ReadoutPulse,
     ResidualZZ,
     VirtualZ,
@@ -217,6 +218,8 @@ assert_type(
 )
 assert_type(pulse.controller.sample_waveform({}, 40).real, npt.NDArray[np.float64])
 assert_type(pulse.controller.export(lowered, version=2), dict[str, Any])
+assert_type(pulse.controller.shape_known({}), bool)
+assert_type(pulse.controller.shape_known(None), bool)
 assert_type(pulse.controller.WaveformMemoryScope("program"), WaveformMemoryScope)
 pulse.controller.sample_waveform({}, 40, samples_per_cycles=2)  # type: ignore[call-arg]
 # The module is what checkers take pulse.controller to be, but for the call.
@@ -332,6 +335,9 @@ Coupling((0, 1), 5.7e6, gate=cz)  # type: ignore[call-arg]
 zz = ResidualZZ((0, 1), 1.5e4)
 assert_type(zz.rate_hz, float)
 ResidualZZ((0, 1), 1.5e4, zz_coupling=0.5)  # type: ignore[call-arg]
+crosstalk = ReadoutCrosstalk(resonator_of=14, qudit=4, chi_hz=-20e3)
+assert_type(crosstalk.chi_hz, float | tuple[float, ...])
+ReadoutCrosstalk(14, 4, (-20e3, -26e3))
 pair = pulse.quantum_system(
     name="pair",
     qudits={0: PhysicalQudit(0, 5.0e9, 50.0, 30.0, anharmonicity_hz=-2.5e8)},

@@ -1284,14 +1284,24 @@ def _cycles_text(cycles: Fraction) -> str:
     return str(cycles.numerator) if cycles.denominator == 1 else f"{float(cycles):g}"
 
 
+# What a scan found, with what it scanned: the events, each line's
+# controller, and the controllers that take each answer (``_takers`` of the
+# two). It serves a check only of the same list of events (``is``) with the
+# same controller for each line: a list made from the events, such as their
+# copies converted to a controller's cycles, is scanned as it is.
+_Scanned = tuple[Sequence[Mapping[str, Any]], Sequence[int | None], Mapping[int, set[int]]]
+# An event's kind, for a search of the events that runs no bytecode per event.
+_KIND = itemgetter("kind")
+
+
 def _takers(
     events: Sequence[Mapping[str, Any]], owners: Sequence[int | None]
 ) -> dict[int, set[int]]:
     """The controllers that take each answer: those playing a line event
     that tests it or computes a value from it at run time."""
+    if "answer" not in map(_KIND, events):
+        return {}
     takers: dict[int, set[int]] = {}
-    if not any(event["kind"] == "answer" for event in events):
-        return takers
     for event in events:
         if event["kind"] not in _NEEDS:
             continue
@@ -2114,11 +2124,16 @@ class ControlSystem:
         waveforms: bool,
         unresolved: list[str] | None,
         natives: Sequence[int] | None,
+        scanned: _Scanned | None = None,
     ) -> list[str]:
         """What the program needs of the system that it does not have: a
         controller for each line, each controller's limits on what it plays,
         its capabilities and the reach of the links. *clocks*, *off* and
-        *run_time* are as ``controller._violations`` takes them."""
+        *run_time* are as ``controller._violations`` takes them. *scanned*
+        is what ``_parts`` found in the events it was given; a check that
+        reads the answers' takers uses it if these are those events, with
+        the same controller for each line, and finds them in *events*
+        otherwise."""
         from . import _clocks
         from .controller import _computes_at_run_time, _violations
 
@@ -2142,13 +2157,13 @@ class ControlSystem:
             )
             found.extend(self._needs(lowered, events, owners, unresolved))
         else:
-            needs = self._needs(lowered, events, owners, unresolved)
+            needs = self._needs(lowered, events, owners, unresolved, scanned)
             needs.extend(self._forwarding(events, owners, clocks, _computes_at_run_time(lowered)))
             needs.extend(
                 self._alignment(lines, events, owners, clocks, lowered.quantum_system.clock_ghz)
             )
             if self._blocking:
-                needs.extend(self._held(lowered, events, owners))
+                needs.extend(self._held(lowered, events, owners, scanned))
             if clocks is not None and clocks.owners is not None:
                 # Each event in its controller's cycles, once for them all.
                 found.extend(
@@ -2203,17 +2218,23 @@ class ControlSystem:
         lowered: ScheduledKernel,
         events: Sequence[Mapping[str, Any]],
         owners: Sequence[int | None],
+        scanned: _Scanned | None = None,
     ) -> list[str]:
         """The pulses a controller that blocks on calls plays while a call
         that holds it is out (*events* in program cycles): a call holds each
         that issues it (``_callers``), reads a measurement it sends or plays a
-        line event that uses its answer."""
+        line event that uses its answer. *scanned* is as ``_violations``
+        takes it."""
         from .controller import _held_text, _played_while_out
 
         if not lowered.classical or not lowered.scheduled:
             return []
         blocking = set(self._blocking)
-        takers = _takers(events, owners)
+        takers = (
+            scanned[2]
+            if scanned is not None and scanned[0] is events and scanned[1] == owners
+            else _takers(events, owners)
+        )
         answers: dict[tuple[Any, ...], list[int]] = {}
         for event in events:
             if event["kind"] == "answer":
@@ -2423,11 +2444,13 @@ class ControlSystem:
         events: Sequence[Mapping[str, Any]],
         owners: Sequence[int | None],
         unresolved: list[str] | None = None,
+        scanned: _Scanned | None = None,
     ) -> list[str]:
         """The capabilities the program needs that its controllers lack, and
         the calls whose link does not reach the controllers taking part. With
         *unresolved*, a tone or phase a call's values may set is noted there
-        instead, to be checked with them."""
+        instead, to be checked with them. *scanned* is as ``_violations``
+        takes it."""
         checks_capabilities = any(c.supports is not None for c in self.controllers)
         checks_reach = any(
             link.controllers is not None or link.per_controller for link in self.links.values()
@@ -2436,7 +2459,11 @@ class ControlSystem:
             return []
         found: list[str] = []
         used = _known(owners)
-        users = _takers(events, owners)
+        users = (
+            scanned[2]
+            if scanned is not None and scanned[0] is events and scanned[1] == owners
+            else _takers(events, owners)
+        )
 
         def owner(event: Mapping[str, Any]) -> int | None:
             found: int | None = owners[event["line"]]
@@ -2504,9 +2531,12 @@ class ControlSystem:
 
     def _parts(
         self, events: Sequence[Mapping[str, Any]], owners: Sequence[int | None]
-    ) -> list[list[int]]:
+    ) -> tuple[list[list[int]], _Scanned]:
         """The controllers that take part in each event, as ``_needs`` counts
-        them: a line event's, a sync's lines', and a call's (``_callers``)."""
+        them: a line event's, a sync's lines', and a call's (``_callers``);
+        and, with *events* and *owners*, the controllers found to take each
+        answer (``_takers``), for a check of these very events
+        (``_violations``)."""
         used = _known(owners)
         takers = _takers(events, owners)
         parts: list[list[int]] = []
@@ -2521,7 +2551,7 @@ class ControlSystem:
                 parts.append(self._callers(event, events, owners, used, takers))
             else:
                 parts.append(used)
-        return parts
+        return parts, (events, owners, takers)
 
     def _callers(
         self,
@@ -3143,6 +3173,15 @@ def _device_data(quantum_system: QuantumSystem) -> dict[str, Any]:
     data["layout"] = list(quantum_system.layout)
     if base.frames != "dressed":
         data["frames"] = base.frames
+    if base.readout_crosstalk:
+        data["readout_crosstalk"] = [
+            {
+                "resonator_of": x.resonator_of,
+                "qudit": x.qudit,
+                "chi_hz": list(x.chi_hz) if x.chi_hz.__class__ is tuple else x.chi_hz,
+            }
+            for x in base.readout_crosstalk
+        ]
     if spec is None or quantum_system.clock_ghz != base.clock_ghz:
         data["clock_ghz"] = quantum_system.clock_ghz
     calibration = quantum_system.calibration

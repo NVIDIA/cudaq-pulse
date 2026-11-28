@@ -3,6 +3,7 @@
 
 add_mlir_conversion_library(CudaqPulsePulseToQOp
   PulseToQOp.cpp
+  ReadoutPhotons.cpp
 
   DEPENDS
   CudaqPulsePulseIncGen

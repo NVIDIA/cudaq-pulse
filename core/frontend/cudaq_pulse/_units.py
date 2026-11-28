@@ -100,6 +100,9 @@ class Time(float):
     __slots__ = ("_n", "_d")
     _n: int
     _d: int
+    # NumPy numbers and arrays leave the arithmetic and comparisons to the
+    # methods below, instead of taking a time as the float it subclasses.
+    __array_ufunc__ = None
 
     def __new__(cls, nanoseconds: Fraction | int | float) -> Time:
         numerator, denominator = _exact(nanoseconds)
@@ -144,6 +147,12 @@ class Time(float):
             a, b = self._n, self._d
             g, h = math.gcd(a, d), math.gcd(n, b)
             return _make((a // g) * (n // h), (b // h) * (d // g))
+        numpy = sys.modules.get("numpy")
+        if numpy is not None and isinstance(other, numpy.ndarray):
+            raise UnitError(
+                f"a NumPy array times {self} would hold bare numbers, not times; multiply "
+                "its elements instead: [x * pulse.ns for x in array]"
+            )
         return NotImplemented
 
     # Not an alias of __mul__: editors would type 100 * pulse.ns as float.

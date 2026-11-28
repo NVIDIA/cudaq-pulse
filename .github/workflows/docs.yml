@@ -38,9 +38,13 @@ jobs:
       - id: kind
         uses: ./.github/actions/changes
 
+  # Skipped only when the classifier succeeded and answered that the change
+  # cannot reach the pages. When it failed or did not answer, the job runs
+  # and its first step fails (tools/ci-ok.py), so that a skipped run of this
+  # check means the pages were not needed, unless the run was cancelled.
   build:
     name: docs (build)
-    if: ${{ needs.changes.outputs.docs == 'true' }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.docs != 'false') }}
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -49,7 +53,11 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - name: The classifier succeeded and answered
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: python3 tools/ci-ok.py classifier docs
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           python-version: "3.12"
       - run: uv sync --locked

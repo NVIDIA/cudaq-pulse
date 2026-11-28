@@ -23,6 +23,7 @@ from cudaq_pulse.quantum_systems import MicrowaveDrive, PhysicalQudit
 from cudaq_pulse.runtime import _propagate
 from cudaq_pulse.runtime import simulate as simulate_module
 
+from tests import _tools
 from tests._handles import Q
 from tests.runtime._lowering import on
 
@@ -110,8 +111,9 @@ def test_a_long_idle_decays_exactly_and_quickly():
     elapsed = time.perf_counter() - start
     # 100 us more of pure decay.
     assert long[1, 1].real / short[1, 1].real == pytest.approx(math.exp(-100.0 / 30.0), rel=1e-9)
-    # Stepping 0.05 ns at a time would take minutes.
-    assert elapsed < 2.0
+    # Stepping 0.05 ns at a time would take minutes; the time is the
+    # uninstrumented build's.
+    assert _tools.under_sanitizers() or elapsed < 2.0
 
 
 def test_a_detuned_system_is_propagated_like_stepping(monkeypatch):

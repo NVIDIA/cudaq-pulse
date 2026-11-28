@@ -190,6 +190,9 @@ model, operations, compilation, custom passes, and GPU execution.
 [`examples/custom_passes/`](https://github.com/NVIDIA/cudaq-pulse/tree/main/examples/custom_passes) shows how to write
 passes in Python and as C++ plugins.
 
+[`challenges/`](https://github.com/NVIDIA/cudaq-pulse/tree/main/challenges) has
+hands-on problems to solve and score locally.
+
 Kernels can also call classical functions while the QPU runs
 (`@pulse.classical`, `fn.submit(...).result()`): decoders, estimators or
 calibration updates whose answers the same shot uses, scheduled with their

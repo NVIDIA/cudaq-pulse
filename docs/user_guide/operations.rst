@@ -191,11 +191,26 @@ an ``int`` number of clock cycles or a time such as ``20 * pulse.ns``;
        anharmonicity ``alpha`` in radians per clock cycle (``2 pi f_alpha /
        f_clock``, negative for a transmon).
    * - ``cosine(duration, amplitude)``
-     - Raised-cosine envelope
+     - Raised-cosine envelope:
+       ``amplitude * (1 - cos(2 * pi * t / duration)) / 2`` at time ``t``
+       from the start of the pulse. It starts at 0, peaks at *amplitude*
+       in the middle, and returns to 0 at the end.
    * - ``tanh_ramp(duration, amplitude, sigma)``
-     - Hyperbolic tangent ramp from zero to the requested amplitude
+     - Hyperbolic tangent ramp:
+       ``amplitude * (1 + tanh((t - duration / 2) / sigma)) / 2`` at time
+       ``t`` from the start of the pulse. It passes *amplitude* / 2 at the
+       midpoint ``t = duration / 2``, rising from
+       ``amplitude * (1 - tanh(duration / (2 * sigma))) / 2`` at the start
+       to ``amplitude * (1 + tanh(duration / (2 * sigma))) / 2`` at the end:
+       with ``duration = 4 * sigma``, about 2% and 98% of *amplitude*.
    * - ``gaussian_square(duration, amplitude, sigma, width)``
-     - Flat-top pulse with Gaussian rise/fall edges
+     - Flat-top pulse with Gaussian rise/fall edges: with
+       ``edge = (duration - width) / 2`` the length of each edge, the
+       envelope is ``amplitude * exp(-(t - edge)**2 / (2 * sigma**2))``
+       while it rises, *amplitude* on the flat top, and
+       ``amplitude * exp(-(t - (duration - edge))**2 / (2 * sigma**2))``
+       while it falls. It starts and ends at
+       ``amplitude * exp(-edge**2 / (2 * sigma**2))``.
    * - ``custom(duration, envelope_fn)``
      - A Python function ``f(t)`` of the time in clock cycles, sampled while
        tracing (below)

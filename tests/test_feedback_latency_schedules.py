@@ -852,3 +852,414 @@ def test_a_round_that_cannot_be_written_under_the_last_end_is_scheduled_without_
     ).lower(qpu.qudits[0:4])
     assert round(float(lowered.duration) * 2) == cycles
     assert pulse.controller.check(lowered) == []
+
+
+# What a branch on a readout yields waits for the outcome to reach the
+# controllers that play with it, and no other: a line its own, a tone every
+# one that plays a pulse on it, anything else every controller.
+
+
+def _peers(feedline=False):
+    """qudit 0 (and 2) on controllers[0], qudit 1 on controllers[1]; an
+    outcome is usable on its reader 100 cycles after its readout ends and on
+    the other controller 1100 after."""
+    first = Controller(
+        clock_ghz=2.0,
+        drive_lines=[0, 2] if feedline else [0],
+        readout_lines=[ReadoutLine([0, 2], max_concurrent_tones=1)] if feedline else [0],
+        max_amplitude=1.0,
+        feedback_latency_cycles=100,
+        peer_latency_cycles=1000,
+    )
+    second = Controller(
+        clock_ghz=2.0,
+        drive_lines=[1],
+        readout_lines=[1],
+        max_amplitude=1.0,
+        feedback_latency_cycles=100,
+        peer_latency_cycles={0: 1000},
+    )
+    qudits = {
+        i: PhysicalQudit(i, 4.5e9 + 1.0e5 * i, 37.7, 9.2, anharmonicity_hz=-215e6) for i in range(3)
+    }
+    return pulse.quantum_system(
+        name=f"peers_{feedline}",
+        qudits=qudits,
+        control_system=ControlSystem(controllers=[first, second], reference_clock_ghz=2.0),
+    )
+
+
+def _options(policy):
+    return {"schedule": policy} if policy else {}
+
+
+def _system_check(lowered):
+    """What compiling checks a program against: every controller of its
+    control system (``controller.check`` checks one controller's limits)."""
+    machine = lowered.options.machine
+    return list(pulse.controller._compile_check(lowered, machine.controller, machine._system)[0])
+
+
+def _events(lowered, kinds=("drive", "readout")):
+    return sorted((e.start_cycles, e.kind, e.line) for e in lowered.schedule if e.kind in kinds)
+
+
+@pulse.kernel
+def reset_rounds(qs):
+    d = get_drive_line(qs[0])
+    r = get_readout_line(qs[0])
+    for _ in range(2):
+        drive(d, square(40, 0.3))
+        sync(d, r)
+        if readout(r, square(400, 0.05)):
+            drive(d, square(40, 0.5))
+
+
+@pytest.mark.parametrize("policy", POLICIES)
+def test_a_pulse_after_a_branch_on_its_controller_s_readout_waits_its_feedback_only(policy):
+    # Active reset, then the next round, all on controllers[0]: the reset
+    # pulse starts at 540 (readout end 440 + 100) and the next round at 580,
+    # as on one controller. Before, the next round waited for the outcome to
+    # reach controllers[1] too and started at 1540.
+    lowered = _lowered(reset_rounds, _peers(), policy)
+    assert _starts(lowered, "drive") == [0, 540, 580, 1120]
+    assert _starts(lowered, "readout") == [40, 620]
+    assert _system_check(lowered) == []
+
+
+@pytest.mark.parametrize("policy", POLICIES)
+def test_a_rolled_loop_of_branches_repeats_at_its_controller_s_pace(policy):
+    @pulse.kernel(unroll_threshold=0)
+    def rounds(qs):
+        d = get_drive_line(qs[0])
+        r = get_readout_line(qs[0])
+        for _ in range(8):
+            drive(d, square(40, 0.3))
+            sync(d, r)
+            if readout(r, square(400, 0.05)):
+                drive(d, square(40, 0.5))
+
+    lowered = _lowered(rounds, _peers(), policy)
+    assert _starts(lowered, "drive") == sorted(
+        [580 * k for k in range(8)] + [580 * k + 540 for k in range(8)]
+    )
+    assert _system_check(lowered) == []
+
+
+@pulse.kernel
+def arms_on_both(qs):
+    d0 = get_drive_line(qs[0])
+    d1 = get_drive_line(qs[1])
+    if readout(get_readout_line(qs[0]), square(400, 0.05)):
+        drive(d0, square(40, 0.5))
+        drive(d1, square(40, 0.5))
+    drive(d0, square(40, 0.3))
+    drive(d1, square(40, 0.3))
+
+
+@pytest.mark.parametrize("policy", POLICIES)
+def test_a_line_of_another_controller_still_waits_for_the_outcome_to_reach_it(policy):
+    # The arm plays on both controllers: qudit 0's line after the if waits
+    # until 500, qudit 1's until 1500, never less.
+    lowered = _lowered(arms_on_both, _peers(), policy)
+    by_line = {}
+    for start, _, line in _events(lowered, ("drive",)):
+        by_line.setdefault(line, []).append(start)
+    first, second = sorted(by_line.values(), key=lambda starts: starts[-1])
+    assert first[0] >= 500 and first[1] >= first[0] + 40
+    assert second == [1500, 1540]
+    if policy in ("asap", "rcp"):
+        assert first == [500, 540]
+    assert _system_check(lowered) == []
+
+
+@pulse.kernel
+def synced_after(qs):
+    d0 = get_drive_line(qs[0])
+    d1 = get_drive_line(qs[1])
+    if readout(get_readout_line(qs[0]), square(400, 0.05)):
+        drive(d0, square(40, 0.5))
+    sync(d0, d1)
+    drive(d0, square(40, 0.3))
+    drive(d1, square(40, 0.3))
+
+
+@pulse.kernel
+def synced_after_both(qs):
+    d0 = get_drive_line(qs[0])
+    d1 = get_drive_line(qs[1])
+    if readout(get_readout_line(qs[0]), square(400, 0.05)):
+        drive(d0, square(40, 0.5))
+        drive(d1, square(40, 0.5))
+    sync(d0, d1)
+    drive(d0, square(40, 0.3))
+    drive(d1, square(40, 0.3))
+
+
+@pytest.mark.parametrize("policy", POLICIES)
+@pytest.mark.parametrize(("kernel", "after"), [(synced_after, 540), (synced_after_both, 1540)])
+def test_a_sync_holds_both_lines_to_the_later_of_their_floors(kernel, after, policy):
+    # A line of controllers[1] synced with qudit 0's line after the if starts
+    # with it (no pulse of controllers[1] depends on the outcome); once the
+    # arm plays on controllers[1] too, the sync waits for its floor.
+    lowered = _lowered(kernel, _peers(), policy)
+    assert _starts(lowered, "drive")[-2:] == [after, after]
+    assert _system_check(lowered) == []
+
+
+@pulse.kernel
+def phase_then_own(qs):
+    d0 = get_drive_line(qs[0])
+    if readout(get_readout_line(qs[0]), square(400, 0.05)):
+        shift_phase(d0.tone, 3.14)
+    drive(d0, square(40, 0.3))
+
+
+@pulse.kernel
+def phase_then_both(qs):
+    d0 = get_drive_line(qs[0])
+    d1 = get_drive_line(qs[1])
+    if readout(get_readout_line(qs[0]), square(400, 0.05)):
+        shift_phase(d0.tone, 3.14)
+    drive(d0, square(40, 0.3))
+    drive(d1, square(40, 0.3), tone=d0.tone)
+
+
+@pytest.mark.parametrize("policy", POLICIES)
+@pytest.mark.parametrize(
+    ("kernel", "starts"), [(phase_then_own, [500]), (phase_then_both, [1500, 1540])]
+)
+def test_a_tone_a_branch_changed_waits_for_every_controller_that_plays_it(kernel, starts, policy):
+    # Played only on controllers[0], the tone is there at 500; played on
+    # controllers[1] too (qudit 1's line at qudit 0's tone), at 1500.
+    lowered = _lowered(kernel, _peers(), policy)
+    assert _starts(lowered, "drive") == starts
+    assert _system_check(lowered) == []
+
+
+@pulse.kernel
+def remeasure_then_branch(qs):
+    d0 = get_drive_line(qs[0])
+    r0 = get_readout_line(qs[0])
+    m = readout(r0, square(48, 0.05))
+    if m:
+        wait(r0, 2000)
+        m = readout(r0, square(400, 0.05))
+    if m:
+        drive(d0, square(40, 0.5))
+
+
+@pytest.mark.parametrize("policy", POLICIES)
+def test_a_measurement_out_of_an_if_is_read_where_its_readouts_are(policy):
+    # Either readout it may be is on controllers[0]: the branch on it plays
+    # there once the second outcome (readout ending at 2548) does, at 2648,
+    # not when it reaches controllers[1] too (3648).
+    lowered = _lowered(remeasure_then_branch, _peers(), policy)
+    assert _starts(lowered, "drive") == [2648]
+    assert _system_check(lowered) == []
+
+
+@pulse.kernel
+def nested_across(qs):
+    d0 = get_drive_line(qs[0])
+    m0 = readout(get_readout_line(qs[0]), square(400, 0.05))
+    m1 = readout(get_readout_line(qs[1]), square(400, 0.05))
+    if m0:
+        drive(d0, square(40, 0.5))
+        if m1:
+            drive(d0, square(40, 0.5))
+    drive(d0, square(40, 0.3))
+
+
+@pulse.kernel
+def nested_own(qs):
+    d0 = get_drive_line(qs[0])
+    r0 = get_readout_line(qs[0])
+    if readout(r0, square(400, 0.05)):
+        drive(d0, square(40, 0.5))
+        if readout(r0, square(400, 0.05)):
+            drive(d0, square(40, 0.5))
+    drive(d0, square(40, 0.3))
+
+
+@pytest.mark.parametrize("policy", POLICIES)
+@pytest.mark.parametrize(("kernel", "last"), [(nested_across, 1540), (nested_own, 1040)])
+def test_nested_branches_wait_for_every_outcome_they_are_on(kernel, last, policy):
+    # The inner branch on controllers[1]'s readout reaches qudit 0's line at
+    # 1500; on controllers[0]'s second readout (ending at 900), at 1000.
+    lowered = _lowered(kernel, _peers(), policy)
+    assert _starts(lowered, "drive")[-1] == last
+    assert _system_check(lowered) == []
+
+
+@pulse.kernel
+def feedline_turns(qs):
+    r0 = get_readout_line(qs[0])
+    r2 = get_readout_line(qs[2])
+    if readout(r0, square(400, 0.05)):
+        readout(r2, square(400, 0.05))
+    readout(r2, square(400, 0.05))
+
+
+@pytest.mark.parametrize("policy", POLICIES)
+def test_a_shared_line_after_a_branch_waits_for_its_controller(policy):
+    # Qudits 0 and 2 share controllers[0]'s feedline: the readout after the
+    # if starts once the one in the arm ends, not when the outcome reaches
+    # controllers[1].
+    qpu = _peers(feedline=True)
+    lowered = pulse.compile(feedline_turns, quantum_system=qpu, **_options(policy)).lower(
+        qpu.qudits[0:3]
+    )
+    starts = _starts(lowered, "readout")
+    assert starts[-1] == starts[-2] + 400 + (100 if policy in ("rcp", "alap_rcp") else 0)
+    assert starts[-1] < 1500
+    assert _system_check(lowered) == []
+
+
+@pytest.mark.parametrize("caller", ["asap", "alap", None])
+@pytest.mark.parametrize("callee", ["asap", "alap"])
+@pytest.mark.parametrize("across", [False, True])
+def test_a_program_with_a_block_still_waits_for_every_controller(across, callee, caller):
+    # A kernel called with its own schedule= does not tell which controllers
+    # use what it hands out, so a program with one keeps waiting for the
+    # outcome to reach every controller (1500), as before; flattened, the
+    # line and its tone wait for qudit 0's controller only (540), unless the
+    # tone is played on controllers[1] too.
+    @pulse.kernel(schedule=callee)
+    def reset(d, r):
+        if readout(r, square(400, 0.05)):
+            drive(d, square(40, 0.5))
+
+    @pulse.kernel
+    def reset_then_drive(qs):
+        d = get_drive_line(qs[0])
+        reset(d, get_readout_line(qs[0]))
+        if across:
+            drive(get_drive_line(qs[1]), square(40, 0.3), tone=d.tone)
+        else:
+            drive(d, square(40, 0.3))
+
+    qpu = _peers()
+    options = _options(caller)
+    lowered = pulse.compile(reset_then_drive, quantum_system=qpu, **options).lower(qpu.qudits[0:2])
+    flat = pulse.compile(
+        reset_then_drive, quantum_system=qpu, flatten_schedules=True, **options
+    ).lower(qpu.qudits[0:2])
+    assert _starts(lowered, "drive")[-1] == 1500
+    assert _starts(flat, "drive")[-1] == (1500 if across else 540)
+    assert _system_check(lowered) == _system_check(flat) == []
+
+
+@pytest.mark.parametrize("policy", POLICIES)
+def test_a_measurement_a_rolled_loop_carries_is_read_where_its_readouts_are(policy):
+    # The bit a loop carries is always read out on controllers[0], so the
+    # readout in the first trip's arm starts at 140 (40 + 100), not when the
+    # outcome reaches controllers[1] too (1140); the drive on controllers[1]
+    # waits for that.
+    @pulse.kernel(unroll_threshold=0)
+    def carried(qs):
+        d1 = get_drive_line(qs[1])
+        r0 = get_readout_line(qs[0])
+        m = readout(r0, square(40, 0.05))
+        for _ in range(4):
+            if m:
+                drive(d1, square(24, 0.2))
+            else:
+                m = readout(r0, square(40, 0.05))
+
+    lowered = _lowered(carried, _peers(), policy)
+    assert min(_starts(lowered, "drive")) >= 1140
+    if policy in ("asap", "rcp"):
+        assert _starts(lowered, "readout") == [0, 140, 1140, 2140, 3140]
+        assert _starts(lowered, "drive") == [1140, 2140, 3140, 4140]
+    assert _system_check(lowered) == []
+
+
+def _surface17(groups):
+    controllers = [
+        Controller(
+            clock_ghz=2.0,
+            drive_lines=group,
+            readout_lines=[ReadoutLine(group, max_concurrent_tones=len(group))],
+            feedback_latency_cycles=400,
+            **({"peer_latency_cycles": 200} if len(groups) > 1 else {}),
+        )
+        for group in groups
+    ]
+    return pulse.quantum_system(
+        "transmon_surface17",
+        control_system=ControlSystem(controllers=controllers, reference_clock_ghz=2.0),
+    )
+
+
+def _syndrome_rounds(rounds):
+    from cudaq_pulse.quantum_systems.transmon import CZ_LAYERS
+
+    auxiliaries = range(9, 17)
+
+    @pulse.kernel(unroll_threshold=0)
+    def memory(*qudits):
+        d = [get_drive_line(q) for q in qudits]
+        r = [get_readout_line(q) for q in qudits]
+        half = drag(24 * pulse.ns, 0.25, 6 * pulse.ns, 0.5)
+        flip = drag(24 * pulse.ns, 0.5, 6 * pulse.ns, 0.5)
+        for _ in range(rounds):
+            for a in auxiliaries:
+                drive(d[a], half)
+            for layer in CZ_LAYERS:
+                for a, q in layer:
+                    sync(d[a], d[q])
+                    wait(d[a], 40 * pulse.ns)
+                    wait(d[q], 40 * pulse.ns)
+            for a in auxiliaries:
+                drive(d[a], half)
+            for a in auxiliaries:
+                sync(d[a], r[a])
+                if readout(r[a], square(500 * pulse.ns, 0.05)):
+                    drive(d[a], flip)
+            sync(*d, *r)
+
+    return memory
+
+
+@pytest.mark.parametrize("policy", ["asap", "alap", "rcp", "alap_rcp"])
+def test_syndrome_rounds_with_resets_take_one_controller_s_time_on_several(policy):
+    # Each auxiliary qudit is read out and reset on its own controller: a
+    # round of the rolled loop takes on three controllers, 100 ns apart, what
+    # it takes on one. Before, every round waited for each outcome to reach
+    # the other controllers, 76 ns more.
+    one = _surface17([list(range(17))])
+    three = _surface17([list(range(7)), list(range(7, 14)), list(range(14, 17))])
+    took = {}
+    for name, qpu in (("one", one), ("three", three)):
+        for rounds in (4, 8):
+            lowered = pulse.compile(
+                _syndrome_rounds(rounds), quantum_system=qpu, schedule=policy
+            ).lower(*qpu.qudits)
+            assert lowered.mlir().count("scf.for") == 1
+            took[name, rounds] = lowered.duration
+    assert took["three", 4] == took["one", 4]
+    assert took["three", 8] == took["one", 8]
+
+
+def test_a_long_chain_of_measurements_out_of_ifs_is_read_where_its_readouts_are():
+    # 300 branches written out, each on the measurement the one before
+    # yields. What an if hands to a later branch waits for the outcome to
+    # reach every controller (1100 after the readout), as before; the branch
+    # on it then plays on controllers[0] with no further wait, since every
+    # readout it may be is there: one drive every 1000 cycles. Read on any
+    # controller, each would wait 1000 more.
+    @pulse.kernel(unroll_threshold=10**6)
+    def chained(qs):
+        d0 = get_drive_line(qs[0])
+        r0 = get_readout_line(qs[0])
+        m = readout(r0, square(40, 0.05))
+        for _ in range(300):
+            if m:
+                drive(d0, square(24, 0.2))
+            else:
+                m = readout(r0, square(40, 0.05))
+
+    lowered = _lowered(chained, _peers(), "asap")
+    assert _starts(lowered, "drive") == [140 + 1000 * trip for trip in range(300)]
+    assert _system_check(lowered) == []

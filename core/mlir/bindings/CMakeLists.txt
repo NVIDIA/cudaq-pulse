@@ -66,6 +66,9 @@ nanobind_add_module(
   $<TARGET_OBJECTS:CudaqPulseBroadcastLines>
 )
 
+# The bytecode the extension writes states the dialect source.
+add_dependencies(_cudaq_pulse_native CudaqPulseDialectSourceInc)
+
 target_link_libraries(_cudaq_pulse_native PRIVATE
   CudaqPulsePulse
   CudaqPulseClassical

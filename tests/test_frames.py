@@ -682,3 +682,100 @@ def test_a_frame_change_after_a_run_of_branches_as_long_as_the_program_is_placed
     )
     assert out.returncode == 0, f"the child exited {out.returncode}: {out.stderr[-2000:]}"
     assert int(out.stdout.split()[-1]) > 100_000
+
+
+# ── A frame update in a measured arm of a rolled loop ──────────────────────
+
+
+@pulse.kernel
+def _update_in_an_arm_of_a_loop(q, r):
+    d = get_drive_line(q)
+    ro = get_readout_line(r)
+    for _ in range(3):
+        if readout(ro, square(200, 0.05)):
+            shift_phase(d.tone, 0.25)
+
+
+@pulse.kernel
+def _updates_in_both_arms_of_a_loop(q, r):
+    d = get_drive_line(q)
+    e = get_drive_line(r)
+    ro = get_readout_line(r)
+    for _ in range(3):
+        drive(e, square(300, 0.1))
+        if readout(ro, square(200, 0.05)):
+            shift_phase(d.tone, 0.25)
+        else:
+            set_frequency(d.tone, 5.0e9)
+
+
+_TWO_CONTROLLERS = ControlSystem(
+    controllers=[
+        Controller(
+            drive_lines=[1],
+            readout_lines=[1],
+            feedback_latency_cycles=30,
+            peer_latency_cycles={1: 20},
+        ),
+        Controller(
+            drive_lines=[0],
+            readout_lines=[0],
+            feedback_latency_cycles=10,
+            peer_latency_cycles={0: 20},
+        ),
+    ]
+)
+
+
+def _conditional_updates(kernel, **options):
+    """The readout windows and the (qudit, start) of each frame update on
+    a condition, from the flat export."""
+    lowered = pulse.compile(kernel, quantum_system=_DEV, **options).lower(*_DEV.qudits[:2])
+    if "control_system" in options:
+        # Both controllers' programs, one after the other.
+        events = [
+            e for index in (0, 1) for e in lowered.export_to_controller(controller=index)["events"]
+        ]
+    else:
+        events = lowered.export_to_controller()["events"]
+    readouts = [
+        (e["start_cycles"], e["start_cycles"] + e["duration_cycles"])
+        for e in events
+        if e["kind"] == "readout"
+    ]
+    updates = sorted(
+        (e["qudit"], e["start_cycles"])
+        for e in events
+        if e["kind"] == "frame_update" and e["conditions"]
+    )
+    return readouts, updates
+
+
+@pytest.mark.level0
+def test_a_frame_update_in_an_arm_of_a_rolled_loop_waits_for_its_readout():
+    """The loop carries the tone through the branch; the update was made
+    at the start of the iteration, a readout before its outcome is in."""
+    readouts, updates = _conditional_updates(_update_in_an_arm_of_a_loop, unroll_threshold=0)
+    assert readouts == [(0, 200), (200, 400), (400, 600)]
+    assert updates == [(0, 200), (0, 400), (0, 600)]
+
+
+@pytest.mark.parametrize("schedule", ["asap", "alap", "rcp", "alap_rcp"])
+@pytest.mark.parametrize("machine", [None, _TWO_CONTROLLERS], ids=["one", "two"])
+@pytest.mark.parametrize(
+    "kernel", [_update_in_an_arm_of_a_loop, _updates_in_both_arms_of_a_loop], ids=["one", "both"]
+)
+def test_a_rolled_loop_makes_its_conditional_frame_updates_where_the_written_out_loop_does(
+    kernel, machine, schedule
+):
+    options = {"schedule": schedule}
+    if machine is not None:
+        options["control_system"] = machine
+    rolled = _conditional_updates(kernel, unroll_threshold=0, **options)
+    unrolled = _conditional_updates(kernel, unroll_threshold=10**6, **options)
+    assert rolled == unrolled
+    # Each trip's updates are made once its readout has completed.
+    readouts, updates = rolled
+    per_trip = len(updates) // len(readouts)
+    for trip, (_, end) in enumerate(readouts):
+        assert all(start >= end for _, start in updates[trip * per_trip : (trip + 1) * per_trip])

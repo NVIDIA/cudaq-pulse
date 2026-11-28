@@ -513,6 +513,133 @@ def test_a_rolled_loop_whose_answers_move_apart_is_checked_as_every_iteration(
             assert compiled == _outcome(lambda li=limits: controller._compile_check(lowered, li)[0])
 
 
+def _unread(n: int, more: int) -> Any:
+    """A loop of *n* rounds that sends a readout to a classical function and
+    never takes its answer, with *more* drives in each round."""
+
+    @pulse.kernel
+    def unread(q, p, t):
+        d = get_drive_line(q)
+        e = get_drive_line(t)
+        ro = get_readout_line(q)
+        for _ in range(n):
+            m = readout(ro, square(100, 0.05))
+            check_bit.submit([m])
+            drive(d, square(20, 0.3))
+            for _ in range(more):
+                drive(e, square(20, 0.2))
+
+    return _lowered(unread, "asap")
+
+
+def test_a_report_of_calls_whose_answers_are_unused_makes_no_event():
+    """Only a call whose answer is used asks about the program's events
+    (``exposed_cycles``). A report in which none is used makes none of them:
+    what it does and what it allocates grows with the calls, not with the
+    events."""
+    import tracemalloc
+
+    from tests._work import python_work
+
+    short, long = _unread(64, 0), _unread(64, 40)
+    assert (len(short.schedule), len(long.schedule)) == (192, 2752)
+    report = long.classical_report()
+    assert len(report) == 64
+    assert {(c.first_use_cycles, c.exposed_cycles, c.hidden_cycles) for c in report} == {
+        (None, None, None)
+    }
+    assert python_work(long.classical_report) == python_work(short.classical_report)
+    peaks = []
+    for program in (short, long):
+        tracemalloc.start()
+        try:
+            program.classical_report()
+            peaks.append(tracemalloc.get_traced_memory()[1])
+        finally:
+            tracemalloc.stop()
+    # 2,752 listed events are over 400 kB.
+    assert peaks[1] < peaks[0] + 20_000, peaks
+
+
+def test_the_events_of_calls_are_the_event_tree_unless_no_answer_is_used():
+    kernels = _calls(40)
+    used = _lowered(kernels["valued"], "asap")._module
+    calls = used.classical_calls()
+    assert len(calls) == 40 and all(call[7] is not None for call in calls)
+    # The larger of the events listed and of the events per call.
+    assert used.call_events(10_000, 1000) == used.event_tree(40_000) == used.events()
+    assert used.call_events(10_000, 2) == used.event_tree(10_000) == used.events()
+    assert used.call_events(50, 2) == used.event_tree(80)
+    assert type(used.event_tree(80)) is tuple
+    assert used.call_events(100, 2) == used.event_tree(100)
+    unused = _lowered(kernels["unused"], "asap")._module
+    calls = unused.classical_calls()
+    assert len(calls) == 40 and all(call[7] is None for call in calls)
+    assert len(unused.events()) == 120
+    # A readout of each qudit read out stands for the events: the exposure
+    # takes its depletion time from them, and nothing asks about any other.
+    for listed, per_call in ((10_000, 1000), (50, 2), (0, 0)):
+        assert unused.call_events(listed, per_call) == [("readout", -1, 0, 0, 0)]
+    # An answer that is taken and not used asks about no event either.
+    taken = _lowered(kernels["answered"], "asap")._module
+    assert {call[6] is None for call in taken.classical_calls()} == {False}
+    assert taken.call_events(50, 2) == [("readout", -1, 0, 0, 0)]
+
+
+def test_the_events_of_calls_are_of_the_module_as_it_is():
+    """The module notes how many calls it has and whether an answer is used
+    when its calls are listed. The events are of the module as it is: one
+    whose calls were never listed, and one rewritten since they were."""
+    import re
+
+    from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline
+
+    text = _lowered(_calls(40)["valued"], "asap").mlir()
+    # Never listed.
+    fresh = MLIRPipeline().parse_to_module(text)
+    assert fresh.call_events(50, 2) == fresh.event_tree(80)
+
+    # A module that calls no classical function has no call to ask.
+    @pulse.kernel
+    def driven(q):
+        drive(get_drive_line(q), square(20, 0.3))
+
+    plain = pulse.compile(driven).lower(Q[0])._module
+    assert plain.classical_calls() == []
+    assert plain.call_events(50, 2) == []
+    # Listed before it is scheduled, when no call has a start: it has no
+    # call to list. Scheduling rewrites it in place.
+    unscheduled, starts = re.subn(r", start_cycles = \d+ : i64", "", text)
+    assert starts and "start_cycles" not in unscheduled
+    module = MLIRPipeline().parse_to_module(unscheduled)
+    assert module.classical_calls() == []
+    assert module.call_events(50, 2) == []
+    module.schedule("asap")
+    events = module.call_events(50, 2)
+    assert len(module.classical_calls()) == 40
+    assert events == module.event_tree(80) and type(events) is tuple
+
+
+def test_a_report_takes_the_depletion_time_of_a_qudit_read_out_when_no_answer_is_used():
+    """The exposure of an answer counts from the depletion time of each
+    qudit read out, and a report computes it for every readout. A
+    description whose depletion time is no number of cycles fails the
+    report whether or not an answer is used."""
+    from cudaq_pulse.quantum_systems.base import DispersiveReadout
+
+    plain = ladder_target(4)
+    qudits = dict(plain.physical_qudits)
+    qudits[0] = qudits[0].replace(readout=DispersiveReadout(depletion_ns=float("inf")))
+    target = pulse.quantum_system(name="never-depleted", qudits=qudits)
+    kernels = _calls(4)
+    for name in ("unused", "valued"):
+        lowered = pulse.compile(
+            kernels[name], quantum_system=target, schedule="asap", unroll_threshold=0
+        ).lower(*target.qudits[:3])
+        with pytest.raises(OverflowError, match="cannot convert float infinity to integer"):
+            lowered.classical_report()
+
+
 def test_answers_on_one_link_moving_by_different_periods_are_summarized():
     # Under alap the branched answer moves with its drive, the value's with
     # the other line's: the walk keeps a period for each.

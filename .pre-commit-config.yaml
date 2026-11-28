@@ -18,7 +18,7 @@ repos:
 
   # Keep in step with the ruff version in uv.lock (tests/test_release_tools.py).
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.17.4
+    rev: v0.17.6
     hooks:
       # The tutorial scripts are written from the pages, as the pages show
       # the code (tools/tutorial-scripts.py).

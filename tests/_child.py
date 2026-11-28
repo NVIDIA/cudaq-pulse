@@ -3,6 +3,8 @@
 """The limits of a child process that proves a lowering's time and memory
 bounded: the code a test's child runs first."""
 
+from tests import _tools
+
 # Linux's ru_maxrss carries the parent's peak across fork and exec, which a
 # long test run takes past any of these caps; VmHWM is this process's own.
 # An exit callback stops the watcher and joins it, after a last look at the
@@ -44,5 +46,9 @@ os.register_at_fork(after_in_child=lambda: atexit.unregister(_stop))
 def limits(cpu_s: int, rss_mb: int) -> str:
     """Code that stops the process it runs in past *cpu_s* seconds of CPU,
     twice that of wall time, or a peak resident size of *rss_mb* MB, the
-    last with exit status 3 and the peak on stderr."""
+    last with exit status 3 and the peak on stderr.
+
+    Under a sanitizer runtime the test that asks is skipped: the limits are
+    sized for the uninstrumented build."""
+    _tools.skip_raw_limit("a child's CPU and memory limit")
     return _LIMITS.format(wall=2 * cpu_s, cpu=cpu_s, mb=rss_mb)

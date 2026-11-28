@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """What a call does in Python, counted rather than timed.
 
-The lines a call runs and the calls it makes, counted with sys.monitoring,
-are the same on any machine and at any load, so a test that compares two
+The lines a call runs and the calls it makes, counted with sys.monitoring
+(python_work; bytecodes counts its instructions), are the same on any
+machine and at any load, so a test that compares two
 sizes of one program can require them equal, or in proportion, where their
 times are only close. Work done in native code is not counted: a test that
 bounds it as well times it, in CPU time and the best of several: all of a
@@ -22,6 +23,8 @@ from collections.abc import Callable, Hashable
 
 import pytest
 from cudaq_pulse._native._cudaq_pulse_native import PulseModule
+
+from tests import _tools
 
 
 def python_work(fn: Callable[[], object]) -> dict[str, int]:
@@ -60,6 +63,40 @@ def python_work(fn: Callable[[], object]) -> dict[str, int]:
     return work
 
 
+def bytecodes(fn: Callable[[], object]) -> int:
+    """The bytecode instructions a call of *fn* runs, after a first,
+    uncounted one. They show the work one line hides, a generator consumed
+    where it is written, which python_work counts as one line; counting
+    them calls back at each, so this is for calls of a few million."""
+    fn()
+    monitoring = sys.monitoring
+    tool = next((i for i in range(6) if monitoring.get_tool(i) is None), None)
+    if tool is None:
+        pytest.skip("every sys.monitoring tool id is in use")
+    count = 0
+
+    def instruction(*_: object) -> None:
+        nonlocal count
+        count += 1
+
+    events = monitoring.events
+    monitoring.use_tool_id(tool, "cudaq-pulse tests")
+    collecting = gc.isenabled()
+    try:
+        monitoring.register_callback(tool, events.INSTRUCTION, instruction)
+        gc.collect()
+        gc.disable()
+        monitoring.set_events(tool, events.INSTRUCTION)
+        fn()
+    finally:
+        monitoring.set_events(tool, events.NO_EVENTS)
+        if collecting:
+            gc.enable()
+        monitoring.register_callback(tool, events.INSTRUCTION, None)
+        monitoring.free_tool_id(tool)
+    return count
+
+
 def _least[K: Hashable](
     runs: dict[K, Callable[[], float]], repeats: int, run_s: float = 0.5
 ) -> dict[K, float]:
@@ -72,7 +109,11 @@ def _least[K: Hashable](
     a hundred rounds at most. The garbage collector runs before each round
     and is held off through it; as a collection leaves the caches cold, each
     round starts with the next run in turn, so that every run is also timed
-    after another rather than after a collection."""
+    after another rather than after a collection.
+
+    Under a sanitizer runtime the test that asks is skipped: no test there
+    asserts a time."""
+    _tools.skip_raw_limit("a timing")
     for run in runs.values():
         run()
     best = dict.fromkeys(runs, float("inf"))

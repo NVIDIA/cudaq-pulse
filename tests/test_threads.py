@@ -1,6 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Native calls release the GIL and are safe to make from several threads."""
+"""Native calls release the GIL and are safe to make from several threads.
+
+Three of these tests are at level 0, so that every pull request runs them,
+on the free-threaded build too: compiles that run at once, and the two
+caches that threads share, a kernel's compiled forms and the built targets.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +14,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import cudaq_pulse as pulse
+import pytest
 
 from tests._handles import Q
 from tests.kernel.ir_corpus import active_reset, dd_loop, feedback_in_loop, parametric
@@ -28,6 +34,7 @@ def _compile(kernel, schedule="alap"):
     return pulse.compile(kernel, schedule=schedule, unroll_threshold=0).lower(Q[0])
 
 
+@pytest.mark.level0
 def test_concurrent_compiles_match_sequential_ones():
     jobs = [(k, s) for k in (dd_loop(8), active_reset, feedback_in_loop) for s in ("asap", "alap")]
     expected = [_compile(k, s).mlir() for k, s in jobs]
@@ -46,6 +53,7 @@ def test_concurrent_specializations_of_one_kernel():
     assert got == expected
 
 
+@pytest.mark.level0
 def test_concurrent_first_calls_compile_once():
     kernel = _many_drives(50)
     with ThreadPoolExecutor(max_workers=8) as pool:
@@ -117,6 +125,7 @@ def _together(n, work):
         return list(pool.map(run, range(n)))
 
 
+@pytest.mark.level0
 def test_concurrent_first_loads_build_each_target_and_calibration_once(monkeypatch):
     from cudaq_pulse.quantum_systems import calibration, transmon
 

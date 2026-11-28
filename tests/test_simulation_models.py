@@ -112,6 +112,29 @@ def test_qudits_a_program_leaves_out_keep_the_levels_they_would_have(model, leve
     assert f"level_counts = [{expected}]" in lowered.mlir()
 
 
+@pulse.kernel
+def _drive_two(q, r):
+    drive(get_drive_line(q), square(8, 0.1))
+    drive(get_drive_line(r), square(8, 0.1))
+
+
+@pytest.mark.parametrize(
+    ("levels", "message"),
+    [
+        (1, r"qudit 0 has 1 level; every qudit needs at least two"),
+        ({0: 3, 1: 1}, r"qudit 1 has 1 level; every qudit needs at least two"),
+        (0, r"qudit 0 has 0 levels; every qudit needs at least two"),
+    ],
+)
+def test_simulate_names_the_qudit_with_too_few_levels(levels, message):
+    quantum_system = _target()
+    lowered = pulse.compile(_drive_two, quantum_system=quantum_system).lower(
+        quantum_system.qudits[0], quantum_system.qudits[1]
+    )
+    with pytest.raises(pulse.InvalidValueError, match=message):
+        pulse.simulate(lowered, levels=levels)
+
+
 def test_qudit_property_tables_keyed_by_qudit_index():
     expected_t1 = {0: 45.0, 1: 60.0, 2: 80.0}
     expected_t2 = {0: 30.0, 1: 20.0, 2: 50.0}

@@ -81,6 +81,46 @@ work, run ``python -m cudaq_pulse.doctor`` first. Without a CUDA extra it
 ends with ``Result: OK, compilation and CPU simulation work; GPU simulation
 is not set up.`` and names the extra and driver that enable GPU simulation.
 
+The doctor takes at most one of ``--allow-no-gpu``, ``--expect-no-device``,
+``--setup-editor`` or ``--system``, and none is needed for the check above.
+``--json`` goes with ``--system``; ``--project`` and ``--yes`` go with
+``--setup-editor``.
+
+.. list-table:: Doctor options
+   :header-rows: 1
+
+   * - Option
+     - What it does
+     - See
+   * - ``--allow-no-gpu``
+     - Succeed when compilation and CPU simulation work, even if GPU
+       simulation is set up but unavailable because the build has no GPU
+       runtime or no usable device or driver exists.
+     - :doc:`user_guide/gpu_execution`
+   * - ``--expect-no-device``
+     - Succeed only if every GPU library loads and the sole problem is
+       that no usable GPU device exists.
+     - :doc:`user_guide/gpu_execution`
+   * - ``--setup-editor``
+     - Show the mypy and ruff configuration the kernel language needs,
+       and write it when confirmed (pyright-based editors need none).
+     - :doc:`user_guide/editors`
+   * - ``--system FILE``
+     - Check the system file ``FILE`` as ``pulse.QuantumSystem.load(FILE)``
+       does: every problem, its controllers and links, and whether their
+       backends are installed.
+     - :doc:`user_guide/quantum_systems`
+   * - ``--json``
+     - With ``--system``, print the report as JSON.
+     - :doc:`user_guide/quantum_systems`
+   * - ``--project PROJECT``
+     - Project directory for ``--setup-editor`` (default: the current
+       directory).
+     - :doc:`user_guide/editors`
+   * - ``--yes``
+     - With ``--setup-editor``, write without asking.
+     - :doc:`user_guide/editors`
+
 Hello World
 -----------
 

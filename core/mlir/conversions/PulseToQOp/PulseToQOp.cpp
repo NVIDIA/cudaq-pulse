@@ -56,6 +56,11 @@
 #include "cudaq-pulse/Analysis/LineGrid.h"
 #include "cudaq-pulse/Runtime/WaveformCallback.h"
 
+#include "ReadoutPhotons.h"
+
+#include <complex>
+#include <map>
+
 #include <algorithm>
 #include <cmath>
 #include <complex>
@@ -497,6 +502,42 @@ public:
         b, loc, qop::ProductType::get(b.getContext()), scalar, leaves);
   }
 
+  /// The projector |level><level| of `ancilla` times the number operator
+  /// of `qudit`, with the coefficient of `callback`, whose parameters are
+  /// constants (a readout crosstalk term).
+  Value projectedNumber(int64_t ancilla, int64_t level, int64_t qudit,
+                        StringRef callbackName,
+                        const WaveformCallbackData &callback) {
+    auto scalar = qop::CallbackScalarOp::create(
+        b, loc, qop::ScalarType::get(b.getContext()),
+        FlatSymbolRefAttr::get(b.getContext(), callbackName));
+    scalar->setAttr("cudm.callback_kind", b.getI32IntegerAttr(callback.kind));
+    SmallVector<double> constants;
+    for (const Affine &parameter : callback.parameters)
+      constants.push_back(parameter.constant);
+    scalar->setAttr("cudm.callback_params", b.getDenseF64ArrayAttr(constants));
+    // The projector, as a d x d matrix like leaf's.
+    const int64_t d = levelsOf(ancilla);
+    int64_t mode = ancilla;
+    if (!modeOf.empty()) {
+      auto it = modeOf.find(ancilla);
+      mode = it == modeOf.end() ? 0 : it->second;
+      if (it == modeOf.end())
+        outside = ancilla;
+    }
+    SmallVector<double> data(2 * d * d, 0.0);
+    data[2 * (level * d + level)] = 1.0;
+    auto type = RankedTensorType::get({d, d, 2}, b.getF64Type());
+    auto tensor = arith::ConstantOp::create(
+        b, loc, DenseFPElementsAttr::get(type, ArrayRef<double>(data)));
+    Value projector = qop::MatrixLeafOp::create(
+        b, loc, qop::HandlerType::get(b.getContext()),
+        b.getDenseI64ArrayAttr({mode}), tensor, b.getDenseI64ArrayAttr({d}));
+    SmallVector<Value> leaves{projector, leaf(qudit, "number")};
+    return qop::MakeProductOp::create(
+        b, loc, qop::ProductType::get(b.getContext()), scalar, leaves);
+  }
+
 private:
   OpBuilder &b;
   Location loc;
@@ -504,6 +545,172 @@ private:
   const DenseMap<int64_t, int64_t> &modeOf;
   std::optional<int64_t> outside;
 };
+
+/// The readout crosstalk terms of the program's readouts on this path
+/// (module attributes `pulse.crosstalk_pairs`, `pulse.crosstalk_chi_hz` and
+/// `pulse.readout_resonators`): for each readout of a qudit z that an entry
+/// names and each level k of z, |k><k|_z n_d times 2 pi chi_k n_k(t), with
+/// n_k the photons of z's resonator (ReadoutPhotons.h) while the readout
+/// plays and as it rings down. Out of line, so that a program without
+/// readout crosstalk lowers as before.
+LLVM_ATTRIBUTE_NOINLINE static LogicalResult
+appendReadoutCrosstalk(ModuleOp module, func::FuncOp mainFunc,
+                       DenseI64ArrayAttr pairs, const pulse::Path &path,
+                       double clockGHz, std::optional<double> windowStart,
+                       std::optional<double> windowEnd, QuditOperators &ops,
+                       SmallVector<Value> &products) {
+  auto chis =
+      module->getAttrOfType<DenseF64ArrayAttr>("pulse.crosstalk_chi_hz");
+  auto resonators =
+      module->getAttrOfType<DenseF64ArrayAttr>("pulse.readout_resonators");
+  if (!chis || !resonators || pairs.size() % 3 != 0 ||
+      resonators.size() % 7 != 0) {
+    module.emitError("pulse.crosstalk_pairs needs pulse.crosstalk_chi_hz and "
+                     "pulse.readout_resonators");
+    return failure();
+  }
+  // Each entry: the qudit read out, the qudit shifted, and the shift per
+  // photon by the level of the qudit read out (a higher level takes the
+  // last).
+  struct Entry {
+    int64_t readOut, shifted;
+    ArrayRef<double> chiHz;
+  };
+  SmallVector<Entry> entries;
+  size_t at = 0;
+  for (size_t i = 0; i < pairs.size(); i += 3) {
+    const int64_t count = pairs[i + 2];
+    if (count < 1 || at + static_cast<size_t>(count) > chis.size()) {
+      module.emitError("pulse.crosstalk_chi_hz is shorter than "
+                       "pulse.crosstalk_pairs says");
+      return failure();
+    }
+    entries.push_back(
+        {pairs[i], pairs[i + 1], chis.asArrayRef().slice(at, count)});
+    at += count;
+  }
+  // Each resonator: [qudit, chi Hz, linewidth Hz, f_r Hz, 1 if f_r is
+  // given (else at the tone), photon number, reference amplitude (0: the
+  // peak played)].
+  std::map<int64_t, std::pair<cudaq_pulse::ReadoutResonator, double>> byQudit;
+  ArrayRef<double> r = resonators.asArrayRef();
+  for (size_t i = 0; i < r.size(); i += 7)
+    byQudit[static_cast<int64_t>(r[i])] = {
+        {r[i + 3], r[i + 4] == 0.0, r[i + 1], r[i + 2], r[i + 5]}, r[i + 6]};
+
+  pulse::AllocationTracer trace;
+  SmallVector<std::pair<pulse::Occurrence, int64_t>> found;
+  pulse::ExecutionWalker walker(clockGHz, path);
+  walker.readoutTones = true;
+  walker.onReadout = [&](const pulse::Occurrence &occurrence,
+                         const pulse::MeasurementKey &) {
+    if (auto readout = dyn_cast<pulse::ReadoutOp>(occurrence.op)) {
+      Operation *allocation = trace(readout.getLine());
+      const int64_t qudit = allocation ? pulse::quditOf(allocation) : -1;
+      if (byQudit.count(qudit))
+        found.push_back({occurrence, qudit});
+    }
+    return false;
+  };
+  if (!walker.run(mainFunc)) {
+    walker.errorOp->emitError(walker.error);
+    return failure();
+  }
+
+  const double stepNs = 1.0 / clockGHz;
+  int index = 0;
+  for (auto &[occurrence, readOut] : found) {
+    auto readout = cast<pulse::ReadoutOp>(occurrence.op);
+    // Clang < 16 cannot capture a structured binding by name.
+    const int64_t readQudit = readOut;
+    if (!ops.simulated(readQudit) ||
+        llvm::none_of(entries, [&](const Entry &entry) {
+          return entry.readOut == readQudit && ops.simulated(entry.shifted);
+        }))
+      continue;
+    // Only a readout whose photons can reach into the window: its
+    // drive and the most its resonator rings down after.
+    {
+      const double startNs = occurrence.startCycles / clockGHz;
+      const double mostNs =
+          occurrence.durationCycles / clockGHz +
+          cudaq_pulse::readoutRingDownSteps(byQudit[readOut].first, stepNs) *
+              stepNs;
+      if ((windowEnd && startNs >= *windowEnd) ||
+          (windowStart && startNs + mostNs <= *windowStart))
+        continue;
+    }
+    if (!occurrence.tone.frequencyHz.isConstant()) {
+      readout->emitError("readout crosstalk needs this readout's tone "
+                         "frequency as a number where it plays; it depends "
+                         "on the program's float arguments");
+      return failure();
+    }
+    const double toneHz = occurrence.tone.frequencyHz.constant;
+    const double startNs = occurrence.startCycles / clockGHz;
+    const double durationNs = occurrence.durationCycles / clockGHz;
+    std::vector<std::complex<double>> drive;
+    double peak = 0.0;
+    for (int64_t k = 0; k < occurrence.durationCycles; ++k) {
+      auto value = envelopeAt(readout.getPulse(), (k + 0.5) * stepNs,
+                              durationNs, clockGHz);
+      if (!value) {
+        readout->emitError("readout crosstalk needs this readout's envelope; "
+                           "use built-in or custom_samples waveforms with "
+                           "constant parameters");
+        return failure();
+      }
+      drive.push_back(*value);
+      peak = std::max(peak, std::abs(*value));
+    }
+    auto [resonator, reference] = byQudit[readOut];
+    // A resonator without a stated frequency sits at the tone its line
+    // started the program at, so that a later frequency change detunes it.
+    if (resonator.atTone) {
+      if (!occurrence.tone.frameFrequencyHz.isConstant()) {
+        readout->emitError(
+            "readout crosstalk needs the frequency this readout's line starts "
+            "the program at, where a resonator without a stated frequency_hz "
+            "sits, as a number; it depends on the program's float arguments");
+        return failure();
+      }
+      resonator.frequencyHz = occurrence.tone.frameFrequencyHz.constant;
+      resonator.atTone = false;
+    }
+    const double scale = reference > 0.0 ? reference : peak;
+    if (scale > 0.0)
+      for (auto &u : drive)
+        u /= scale;
+    // The photons by level of the qudit read out, worked out once.
+    std::map<int64_t, std::vector<double>> photons;
+    for (const Entry &entry : entries) {
+      if (entry.readOut != readOut || !ops.simulated(entry.shifted))
+        continue;
+      for (int64_t level = 0; level < ops.levelsOf(readOut); ++level) {
+        auto &levelPhotons = photons[level];
+        if (levelPhotons.empty())
+          levelPhotons = cudaq_pulse::readoutPhotons(
+              resonator, static_cast<int>(level), toneHz, drive, stepNs);
+        const double spanNs = static_cast<double>(levelPhotons.size()) * stepNs;
+        if ((windowEnd && startNs >= *windowEnd) ||
+            (windowStart && startNs + spanNs <= *windowStart))
+          continue;
+        const double chiHz =
+            entry.chiHz[std::min<size_t>(level, entry.chiHz.size() - 1)];
+        WaveformCallbackData callback{
+            7, {startNs, spanNs, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}};
+        // A sampled callback's value is half its sample (WaveformCallback.h).
+        for (double n : levelPhotons)
+          callback.parameters.push_back(2.0 * (2.0 * M_PI * chiHz * 1.0e-9) *
+                                        n);
+        products.push_back(ops.projectedNumber(
+            readOut, level, entry.shifted,
+            "readout_crosstalk_" + std::to_string(index++), callback));
+      }
+    }
+  }
+  return success();
+}
 
 /// One callback for every occurrence of a drive op, when each occurrence
 /// differs from the first only by a fixed start period and phase step per
@@ -968,6 +1175,14 @@ struct PulseToQOpPass
         }
       }
     }
+
+    // Readout crosstalk, only for a module that declares some.
+    if (auto pairs =
+            module->getAttrOfType<DenseI64ArrayAttr>("pulse.crosstalk_pairs"))
+      if (failed(appendReadoutCrosstalk(module, mainFunc, pairs, path, clockGHz,
+                                        windowStart, windowEnd, ops,
+                                        allProducts)))
+        return signalPassFailure();
 
     // A multilevel transmon's anharmonicity, (alpha / 2) n (n - 1).
     if (auto anharmonicity =

@@ -22,6 +22,7 @@ calibrated gates.
    coherence
    measure_and_react
    several_qubits
+   idle_replacement
    own_quantum_system
 
 .. toctree::

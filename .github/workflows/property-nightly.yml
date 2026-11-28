@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# The nightly run: what a pull request and a push to main leave out.
+#
 # Randomized property tests: every test file that imports hypothesis. Pull
 # requests run the same tests derandomized (the `ci` hypothesis profile),
 # so their results don't depend on the run; this job explores new inputs
@@ -10,7 +12,17 @@
 # manual dispatch tests the branch it is dispatched on. It also
 # runs the slow physics checks (marked `nightly`), checks that a new float
 # value on a compiled kernel stays far cheaper than a compile, and runs the
-# perf guard. A second job runs check-pulse on macOS with Python 3.15.
+# perf guard.
+#
+# The test jobs run check-pulse at every test level (CONTRIBUTING.md, Test
+# levels) on the legs of ci.yml, where a pull request runs level 0
+# and a push to main levels 0 to 2, and on macOS with Python 3.15. Two more
+# jobs run the suite under a hash seed each, drawn for the run and logged.
+# The coverage job reports the coverage of the Python package.
+#
+# A scheduled run that fails opens the issue "The nightly run fails", or
+# comments on it while it is open, and the next scheduled run that passes
+# closes it: one issue, not one per failure.
 
 name: property-nightly
 
@@ -36,7 +48,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           python-version: ${{ matrix.python }}
       - run: uv sync --locked
@@ -112,12 +124,26 @@ jobs:
           path: .hypothesis
           include-hidden-files: true
 
-  # Pushes test macOS on 3.12 to 3.14 (ci.yml); the newest Python runs on
-  # macOS here, once a night.
-  macos-newest:
-    name: check-pulse (macos-aarch64, py3.15)
-    runs-on: macos-15
+  # check-pulse at every test level, on the legs of ci.yml's test job and on
+  # macOS with the newest Python, which ci.yml leaves to this run.
+  test:
+    name: test (${{ matrix.platform }}, py${{ matrix.python }})
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux-x86_64, runner: ubuntu-24.04, python: "3.12" }
+          - { platform: linux-x86_64, runner: ubuntu-24.04, python: "3.13" }
+          - { platform: linux-x86_64, runner: ubuntu-24.04, python: "3.14" }
+          - { platform: linux-x86_64, runner: ubuntu-24.04, python: "3.15" }
+          - { platform: linux-aarch64, runner: ubuntu-24.04-arm, python: "3.12" }
+          - { platform: linux-aarch64, runner: ubuntu-24.04-arm, python: "3.15" }
+          - { platform: macos-aarch64, runner: macos-15, python: "3.12" }
+          - { platform: macos-aarch64, runner: macos-15, python: "3.13" }
+          - { platform: macos-aarch64, runner: macos-15, python: "3.14" }
+          - { platform: macos-aarch64, runner: macos-15, python: "3.15" }
     env:
       MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
@@ -125,16 +151,231 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
-          python-version: "3.15"
+          python-version: ${{ matrix.python }}
       - run: uv sync --locked
       - uses: ./.github/actions/mlir-toolchain
 
       - name: Configure
         run: uv run --no-sync cmake --preset dev
 
-      - name: check-pulse (lit + pytest)
+      # Without --level every level runs.
+      - name: check-pulse (lit + pytest, every level)
         env:
           PYTEST_ADDOPTS: --durations=30
         run: uv run --no-sync cmake --build build/dev --target check-pulse
+
+  # Python randomizes str hashes in every run (PYTHONHASHSEED=random is the
+  # default), but a failure that depends on the seed can't be replayed
+  # without it. Two seeds are drawn here for the run, different ones every
+  # night, and logged: in this job's notice, in the run's summary, in the
+  # name of the job that runs the suite under each (hash-seeds), and in the
+  # nightly issue. Replay one with PYTHONHASHSEED=<seed>.
+  seeds:
+    name: hash seeds (drawn for the run)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      first: ${{ steps.draw.outputs.first }}
+      second: ${{ steps.draw.outputs.second }}
+    steps:
+      - name: Draw and log two hash seeds
+        id: draw
+        run: |
+          mapfile -t seeds < <(shuf -i 1-4294967295 -n 2)
+          if [ "${#seeds[@]}" -ne 2 ]; then
+            echo "::error title=PYTHONHASHSEED::no two seeds were drawn"
+            exit 1
+          fi
+          {
+            echo "first=${seeds[0]}"
+            echo "second=${seeds[1]}"
+          } >> "$GITHUB_OUTPUT"
+          echo "::notice title=PYTHONHASHSEED::hash seeds of this run: ${seeds[0]} and ${seeds[1]}"
+          {
+            echo "### Hash seeds: \`${seeds[0]}\` and \`${seeds[1]}\`"
+            echo
+            echo "Replay one locally with \`PYTHONHASHSEED=<seed> pytest tests -m \"not gpu\"\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # The suite once under each seed, on Linux x86-64 with Python 3.13, each
+  # in a job of its own beside the test jobs: the leg that ran both after
+  # its own pass took three times half an hour.
+  hash-seeds:
+    name: test (linux-x86_64, py3.13, PYTHONHASHSEED=${{ matrix.seed }})
+    needs: seeds
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        seed:
+          - ${{ needs.seeds.outputs.first }}
+          - ${{ needs.seeds.outputs.second }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.13"
+      - run: uv sync --locked
+      - uses: ./.github/actions/mlir-toolchain
+
+      - name: Build
+        run: |
+          uv run --no-sync cmake --preset dev
+          uv run --no-sync cmake --build --preset dev
+
+      # An empty seed would leave the hashes random and the run not
+      # replayable; Python itself refuses one that is not a number in range.
+      - name: pytest under the logged hash seed
+        env:
+          PYTHONPATH: build/dev/python
+          PYTHONHASHSEED: ${{ matrix.seed }}
+        run: |
+          if [ -z "$PYTHONHASHSEED" ]; then
+            echo "::error title=PYTHONHASHSEED::no seed was drawn for this job"
+            exit 1
+          fi
+          echo "::notice title=PYTHONHASHSEED::pytest with PYTHONHASHSEED=$PYTHONHASHSEED"
+          if ! uv run --no-sync python -m pytest tests -q -m "not gpu" -p no:cacheprovider; then
+            echo "::error title=PYTHONHASHSEED::the suite failed with PYTHONHASHSEED=$PYTHONHASHSEED"
+            exit 1
+          fi
+
+  # Free-threaded CPython, as ci.yml's test-free-threaded, at every level.
+  test-free-threaded:
+    name: test (linux-x86_64, py3.14t)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      PYTHONWARNINGS: "error:The global interpreter lock (GIL) has been enabled:RuntimeWarning"
+      # The type checkers' tests run in the test job (tests/_tools.py).
+      CUDAQ_PULSE_OPTIONAL_TOOLS: pyright,mypy
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.14t"
+      - run: uv sync --locked --no-default-groups --group build --group test --group bench
+      - uses: ./.github/actions/mlir-toolchain
+
+      - name: Configure and build
+        run: |
+          uv run --no-sync cmake -S . -B build/dev -G Ninja \
+            -DCUDAQ_PULSE_BUILD_TESTS=ON \
+            -DCUDAQ_PULSE_FREE_THREADED=ON \
+            -DPython3_EXECUTABLE="$PWD/.venv/bin/python"
+          uv run --no-sync cmake --build build/dev
+
+      - name: check-pulse (lit + pytest, every level)
+        env:
+          PYTEST_ADDOPTS: --durations=30
+        run: uv run --no-sync cmake --build build/dev --target check-pulse
+
+  # Line and branch coverage of the Python package by the CPU suite, at
+  # every level. It is a report only: there is no threshold, and a failure
+  # here is not part of the nightly issue. Code that runs only in a
+  # subprocess the tests start is not measured.
+  coverage:
+    name: coverage (report only, linux-x86_64, py3.12)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked --group coverage
+      - uses: ./.github/actions/mlir-toolchain
+
+      - name: Build
+        run: |
+          uv run --no-sync cmake --preset dev
+          uv run --no-sync cmake --build --preset dev
+
+      - name: pytest under coverage
+        env:
+          PYTHONPATH: build/dev/python
+        run: >
+          uv run --no-sync coverage run --branch --source=cudaq_pulse
+          -m pytest tests -q -m "not gpu" -p no:cacheprovider
+
+      - name: Report
+        if: ${{ !cancelled() }}
+        run: |
+          uv run --no-sync coverage xml -o coverage/coverage.xml
+          uv run --no-sync coverage html -d coverage/html
+          {
+            echo "### Python coverage (report only, no threshold)"
+            echo
+            uv run --no-sync coverage report --format=markdown --sort=cover
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: coverage
+          path: coverage
+          if-no-files-found: warn
+          retention-days: 14
+
+  # One issue for the nightly run, found by its title. A scheduled run in
+  # which a job failed or was cancelled opens it, or comments on it while it
+  # is open, with the jobs and a link to the run; the next scheduled run
+  # that passes closes it. The hash-seed jobs count as the test jobs do,
+  # and the issue names the run's seeds. A manual run tests a branch and
+  # leaves the issue alone, as does a fork. A failure of level 0 to 2 is
+  # fixed before other work; a failure of level 3 alone does not block a
+  # merge (CONTRIBUTING.md, Test levels).
+  nightly-issue:
+    name: nightly issue
+    if: ${{ always() && github.event_name == 'schedule' && github.repository == 'NVIDIA/cudaq-pulse' }}
+    needs: [hypothesis, test, seeds, hash-seeds, test-free-threaded]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open, update or close the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          NEEDS: ${{ toJSON(needs) }}
+          FIRST_SEED: ${{ needs.seeds.outputs.first }}
+          SECOND_SEED: ${{ needs.seeds.outputs.second }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TITLE: The nightly run fails
+        run: |
+          failed="$(jq -r 'to_entries[] | select(.value.result != "success" and .value.result != "skipped")
+            | "- `\(.key)`: \(.value.result)"' <<<"$NEEDS")"
+          issue="$(gh issue list --state open --limit 1000 --json number,title \
+            --jq "map(select(.title == \"$TITLE\")) | .[0].number // empty")"
+          seeds="No hash seeds were drawn, so the \`hash-seeds\` jobs did not run."
+          if [ -n "$FIRST_SEED" ] && [ -n "$SECOND_SEED" ]; then
+            seeds="The \`hash-seeds\` jobs were given the hash seeds $FIRST_SEED and $SECOND_SEED; replay one with \`PYTHONHASHSEED=<seed>\`."
+          fi
+          if [ -n "$failed" ]; then
+            body="$(printf '%s\n\n%s\n\n%s\n\n%s\n' \
+              "The nightly run failed on \`main\` at $GITHUB_SHA: $RUN_URL" \
+              "$failed" \
+              "$seeds" \
+              "A failure of test level 0 to 2 is fixed before other work; a failure of level 3 alone does not block a merge. The next nightly run that passes closes this issue.")"
+            if [ -n "$issue" ]; then
+              gh issue comment "$issue" --body "$body"
+            else
+              gh issue create --title "$TITLE" --body "$body"
+            fi
+          elif [ -n "$issue" ]; then
+            gh issue close "$issue" --comment "The nightly run passed on \`main\` at $GITHUB_SHA: $RUN_URL"
+          fi

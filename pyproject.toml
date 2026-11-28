@@ -101,7 +101,7 @@ lint = [
     "ruff>=0.6",
     "mypy>=1.11",
     "pre-commit>=3.7",
-    # The editor-types CI job runs this version; keep the two in step.
+    # ci.yml's editor-types steps run this version; keep the two in step.
     "pyright==1.1.414",
     # mypy checks cudaq_pulse.viz against matplotlib's own annotations.
     "matplotlib>=3.9",
@@ -112,7 +112,7 @@ docs = [
     "nvidia-sphinx-theme==0.0.9.post1",
 ]
 bench = ["matplotlib>=3.9"]
-# The coverage job in ci.yml only; not part of dev.
+# The coverage job in property-nightly.yml only; not part of dev.
 coverage = ["coverage>=7.10"]
 dev = [
     { include-group = "build" },
@@ -222,13 +222,23 @@ before-test = "python -m pip install --no-index --find-links {project}/tools-whe
 test-extras = ["cu12", "viz"]
 test-groups = ["test"]
 test-environment = { CUDAQ_PULSE_OPTIONAL_TOOLS = "pyright,mypy" }
+# What the tests get of the source tree: they run from a copy of these, so
+# that the installed wheel is the package imported. tools/ci/install-test.sh
+# copies the same list (tests/_sources.py), and a test takes a file outside
+# tests/ from it with tests._sources.source_file. The examples listed are
+# those a test loads by name; every example runs in ci.yml's test job.
 test-sources = [
     "tests",
     "pyproject.toml",
     "benchmarks/compiler/compile_time.py",
     "benchmarks/baselines/compile_time.json",
+    "benchmarks/perf_gate/cases.py",
+    "benchmarks/classical/classical_calls.py",
+    "examples/transmon/transmon_surface17_surface_code_cycle.py",
 ]
 test-command = [
+    # In a second, before the long run: the copy holds every file listed.
+    "python tests/_sources.py check",
     "python -c \"import cudaq_pulse._build_config as c; assert sorted(c.GPU_RUNTIME_LIBRARIES) == [12, 13], 'release wheels must include the CUDA 12 and CUDA 13 GPU runtimes'\"",
     "python -c \"import sys, sysconfig, cudaq_pulse; assert not sysconfig.get_config_var('Py_GIL_DISABLED') or not sys._is_gil_enabled(), 'importing cudaq_pulse enabled the GIL'\"",
     "cudaq-pulse-opt --version",
@@ -253,6 +263,7 @@ archs = ["arm64"]
 environment = { MACOSX_DEPLOYMENT_TARGET = "11.0" }
 test-extras = ["viz"]
 test-command = [
+    "python tests/_sources.py check",
     "python -c \"import cudaq_pulse._build_config as c; assert not c.GPU_RUNTIME_ENABLED, 'macOS wheels must be compiler-only'\"",
     "python -c \"import sys, sysconfig, cudaq_pulse; assert not sysconfig.get_config_var('Py_GIL_DISABLED') or not sys._is_gil_enabled(), 'importing cudaq_pulse enabled the GIL'\"",
     "cudaq-pulse-opt --version",
@@ -309,7 +320,7 @@ markers = [
     "scaling: benchmark that compares two sizes in one process, so holds on any machine",
     "physics: physics verification against reference values (tests/physics)",
     "nightly: slow physics check, skipped unless --run-nightly is given",
-    "slow: spends seconds in native code or child processes; the sanitizer job leaves it out",
+    "slow: spends seconds in native code or child processes; the sanitizers' Python sweep leaves it out",
     "level0: contract test, run first and everywhere (--level 0); see CONTRIBUTING.md",
     "level1: behaviour test, the level of a test without a level marker (--level 1)",
     "level2: exhaustive test: a sweep, a property test or a large program (--level 2)",

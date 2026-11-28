@@ -8,6 +8,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
+from ._dialect_source import DIALECT_SOURCE
+
 if TYPE_CHECKING:
     from ._device import Qudit
     from ._system import Controller, ControlSystem
@@ -55,6 +57,21 @@ def load(
     (``pulse.control_system`` with ``clock_period_fs``) must state the
     quantum system's.
 
+    Bytecode holds an operation's properties by position, in the shape of
+    the writer's copy of the dialects, so it is read only with the dialect
+    source that wrote it. A writer states that source in the bytecode's
+    producer string, as ``cudaq-pulse-dialects=<source>``, as this package
+    and ``cudaq-pulse-opt`` do, and bytecode that
+    states another source than this build's is refused
+    (``CompilationError``): give the module as assembly, which holds
+    properties by name. Two sources are the same when their digests and the
+    major and minor of their LLVM versions are: a writer built with another
+    patch release of the same LLVM minor writes bytecode this build reads. A
+    stated source that is not such a version, a hyphen and a digest is
+    refused.
+    Assembly states no source, and bytecode that states none is read as it
+    is given.
+
     *qudits* gives, for each argument in order, the qudit of the quantum
     system it plays on; their quantum system is the program's. The lines get
     that system's frequencies. *control_system* is as for ``compile``; without
@@ -83,10 +100,29 @@ def load(
     controller with ``max_instructions`` or ``max_program_duration``, is
     refused: ``load`` does not apply or check those yet. The function and
     the functions it calls play on the qudits the entry takes and allocate
-    none. What the function returns is dropped: read a record from its
+    none. A line, a tone and a link stay one from where they start: a
+    branch whose arms give two as one result, a loop that yields another
+    than it takes in, one made by anything but a Pulse or classical
+    operation, ``scf.if`` or ``scf.for``, and a qudit picked by another
+    operation or passed through a branch or a loop are refused. What the
+    function returns is dropped: read a record from its
     readout in the export. Attributes another compiler put on the function
     or on its operations are not part of the program: an operation keeps its
-    own attributes and those named ``pulse.``.
+    own attributes and those named ``pulse.``, a ``pulse.wait`` whose length
+    is computed from the answer of a classical call its
+    ``classical.variable`` (it then reserves its lowest length:
+    ``duration_cycles`` is its ``pulse.min_cycles``), and a ``pulse.drive``
+    its two phases, each a finite ``f64``: ``frame_phase_offset``, a phase shift
+    folded into the drive, as ``compile`` writes it, and ``phase_offset``,
+    the phase of that drive alone, which ``compile`` does not write and
+    the export and the simulator read.
+
+    A frame change keeps the start the module gives it. Which changes no
+    drive or readout takes on some path, and so are frame updates in the
+    export, is decided from the function's operations as ``compile`` decides
+    it: the module does not have to say, and what it says of that (the
+    marks ``compile`` writes on such changes, loops and branches) is not
+    read.
 
     The result is what ``kernel.lower(...)`` returns: ``schedule``,
     ``timeline()``, ``export_to_controller()`` and the backends take it.
@@ -95,6 +131,7 @@ def load(
     from ._errors import CompilationError, InvalidTypeError, InvalidValueError, UnsupportedError
     from ._native import _cudaq_pulse_native as native
     from .compiler import (
+        _LISTED_EVENTS,
         CompileMetrics,
         CompileOptions,
         _check_controller,
@@ -106,6 +143,10 @@ def load(
         text = module.encode()
     elif isinstance(module, (bytes, bytearray, memoryview)):
         text = bytes(module)
+        # The package's own bytecode states this build's dialect source in
+        # a producer string known here; any other bytecode is held to it.
+        if text[:4] == b"ML\xefR" and not text.startswith(_OWN_PRODUCER, 5):
+            _check_dialect_source(text)
     else:
         raise InvalidTypeError(
             "load() takes a module's assembly (str) or bytecode (bytes), "
@@ -223,6 +264,10 @@ def load(
         submissions = cast("list[Any]", builder.load_submissions(bound.serialize()[0]))
         _check_submissions(submissions)
         _check_messages(submissions, stated)
+    # Which frame changes no drive or readout takes is decided here from the
+    # function's operations, as for a compiled program, and not read from the
+    # module: the export gives each as a frame update.
+    bound.mark_frame_updates()
     metrics = CompileMetrics(quantum_system=target.name)
     program = _lowered(
         bound,
@@ -239,8 +284,133 @@ def load(
         called.routes = routes
         program.classical = called
     program = _check_controller(program)
-    program.metrics.op_count = len(program.schedule)
+    # The schedule's length, counted in the module: no event is made for it.
+    # A schedule of up to _LISTED_EVENTS events is a list of them, and the
+    # count refuses the readout that list would.
+    scheduled = program._concrete() if program.rescheduled or program.carriers else program._module
+    with program._lock:
+        count = scheduled.event_count(_LISTED_EVENTS)
+    program.metrics.op_count = len(program.schedule) if count is None else count
     return program
+
+
+# What a writer puts before its dialect source in the producer string of the
+# bytecode it writes: "<tool> cudaq-pulse-dialects=22.1.8-0123456789abcdef".
+# The first one in the string counts, and the source is what follows it up
+# to white space or the string's end.
+_DIALECT_SOURCE_KEY = b"cudaq-pulse-dialects="
+
+# The key and this build's dialect source, and the whole producer string of
+# the bytecode the package writes, with the zero byte that ends it. That
+# string follows the four magic bytes and the format's version, one byte
+# today; after a longer version what is left of it still states the source.
+_STATED_HERE = _DIALECT_SOURCE_KEY + DIALECT_SOURCE.encode()
+_OWN_PRODUCER = b"cudaq-pulse " + _STATED_HERE + b"\0"
+
+
+def _compared(source: str) -> tuple[str, str, str] | None:
+    """What two dialect sources are compared by: the major and the minor of
+    the LLVM version and the digest, or None for a source that is not an
+    LLVM version, a hyphen and a digest. The digest is what follows the
+    last hyphen (``23.0.0-rc1-0123456789abcdef``). The major and the minor
+    are the version's first two components, each ASCII digits and compared
+    as written; what follows the second dot is not compared
+    (``22.1.4``, ``22.1.8git`` and ``22.1`` are the same ``22.1``). Patch
+    releases of one LLVM minor write the same bytecode for the same dialect
+    files; a writer knows only its own LLVM, so the rule is the reader's."""
+    llvm, hyphen, digest = source.rpartition("-")
+    parts = llvm.split(".")
+    if not hyphen or len(parts) < 2:
+        return None
+    major, minor = parts[0], parts[1]
+    if not (major.isascii() and major.isdigit() and minor.isascii() and minor.isdigit()):
+        return None
+    return major, minor, digest
+
+
+_COMPARED_HERE = _compared(DIALECT_SOURCE)
+
+
+def _stated_dialect_source(module: bytes) -> tuple[str, str] | None:
+    """The dialect source the bytecode *module* states and its producer
+    string, or None for a module that states none: assembly, or bytecode
+    whose producer string does not name one. MLIR bytecode starts with four
+    magic bytes, the format's version as a variable-length integer (the low
+    bits of its first byte say how many bytes follow) and the producer
+    string, which a zero byte ends; nothing else of the module is read."""
+    if module[:4] != b"ML\xefR" or len(module) < 5:
+        return None
+    first = module[4]
+    start = 4 + (9 if first == 0 else (first & -first).bit_length())
+    end = module.find(b"\0", start)
+    at = module.find(_DIALECT_SOURCE_KEY, start, end) if end >= 0 else -1
+    if at < 0:
+        return None
+    rest = module[at + len(_DIALECT_SOURCE_KEY) : end]
+    stated = rest.split(None, 1)[0] if rest and not rest[:1].isspace() else b""
+    return stated.decode(errors="replace"), module[start:end][:120].decode(errors="replace")
+
+
+def _check_dialect_source(module: bytes) -> None:
+    """Refuse bytecode that states another dialect source than this
+    build's (cmake/write_dialect_source.cmake), before anything after its
+    producer string is read: bytecode holds an operation's properties by
+    position, in the shape of the writer's dialects, and read with dialects
+    of another shape a value lands in another property without an error.
+    Two sources are the same when their digests and the major and minor of
+    their LLVM versions are (``_compared``)."""
+    # The producer string starts within 13 bytes of the module's start and a
+    # zero byte ends it: a module without the key there states no source.
+    at = module.find(_DIALECT_SOURCE_KEY, 5, module.find(b"\0", 13))
+    if at < 0:
+        return
+    # This build's own source, ended by white space or the string's end, in
+    # a module whose format version is one byte, so that the string starts
+    # at byte 5: what cudaq-pulse-opt and a writer built from this build's
+    # dialects write.
+    end = at + len(_STATED_HERE)
+    if (
+        module[4] & 1
+        and module.startswith(_STATED_HERE, at)
+        and module[end : end + 1] in b"\0 \t\n\r\x0b\x0c"
+    ):
+        return
+    found = _stated_dialect_source(module)
+    if found is None:
+        return
+    from ._errors import CompilationError
+
+    stated, producer = found
+    compared = _compared(stated)
+    if stated == DIALECT_SOURCE or (compared is not None and compared == _COMPARED_HERE):
+        return
+    # The module is another compiler's: what the message shows of it is
+    # bounded and printable.
+    shown = stated[:64]
+    if not shown.isprintable():
+        shown = repr(shown)
+    # This build's own source is an LLVM version and a digest: the script
+    # that writes it refuses another.
+    here = _COMPARED_HERE or ("", "", "")
+    if compared is None:
+        differs = "the stated source is not an LLVM version, a hyphen and a digest"
+    elif compared[2] == here[2]:
+        differs = "the LLVM versions differ in their major.minor"
+    elif compared[:2] == here[:2]:
+        differs = "the digests of the dialects' definition files differ"
+    else:
+        differs = (
+            "the digests of the dialects' definition files and the LLVM versions' "
+            "major.minor differ"
+        )
+    raise CompilationError(
+        f"load: this bytecode states the dialect source {shown or 'with no value'} "
+        f"(its producer is {producer!r}), and this cudaq-pulse's is {DIALECT_SOURCE}: "
+        f"{differs}; bytecode holds an operation's properties by position and is read "
+        "only with the dialect source that wrote it: give the module as assembly, or "
+        "write its bytecode with this source",
+        code="wrong_argument",
+    )
 
 
 def _target_links(

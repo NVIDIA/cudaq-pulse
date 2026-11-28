@@ -20,6 +20,9 @@ file(CONFIGURE
   @ONLY)
 target_include_directories(cudaq-pulse-opt PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/include")
 
+# --emit-bytecode states the dialect source.
+add_dependencies(cudaq-pulse-opt CudaqPulseDialectSourceInc)
+
 target_link_libraries(cudaq-pulse-opt PRIVATE
   CudaqPulsePulse
   CudaqPulseClassical

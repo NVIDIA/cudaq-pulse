@@ -116,6 +116,12 @@ std::unique_ptr<mlir::Pass> createPulseFrameChangesPass();
 /// Whether pulse-frame-changes would change `op`: it holds a frame change,
 /// or a loop or branch the pass marked.
 bool hasFrameChangeWork(mlir::Operation *op);
+/// The marks of pulse-frame-changes alone, on a module whose frame changes
+/// have their place: one another compiler scheduled. The marks its frame
+/// changes, loops and branches carry are replaced by those the code gives;
+/// no change moves. Returns whether the module may have changed: it holds a
+/// frame change, or a loop or branch with a mark.
+bool markFrameUpdates(mlir::ModuleOp module);
 std::unique_ptr<mlir::Pass> createPulseUnrollClassicalLoopsPass();
 /// pulse-lower-selects with no parameter taken at run time, for
 /// cudaq-pulse-opt (where the `runtime` option sets them).

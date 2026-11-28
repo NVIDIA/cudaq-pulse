@@ -88,11 +88,21 @@ one, a count of zero or one too small for its case, or a heavier case not
 measuring well above a lighter one (``implausible``). Such counts are never
 written as a baseline; ``--dumps DIR`` keeps the dumps for inspection.
 
+Without Valgrind, or on another platform than Linux x86-64, only the
+program sizes are compared; where ``setarch -R`` is refused the counts are
+measured with address randomization on; and bootstrap mode passes without
+gating a count. Each is right for a run at a desk and wrong for a run that
+a merge waits for, which would pass having gated nothing. ``--strict``,
+which CI passes on every run but the one that takes a baseline, fails such
+a run: unless instruction counts were measured, with address randomization
+off, against a measured baseline (``strict_errors``).
+
 Usage:
     python tools/perf-gate.py                 # compare with the baseline
     python tools/perf-gate.py --update        # rewrite the baseline from this run
     python tools/perf-gate.py --processes 5   # also show the spread of 5 runs
     python tools/perf-gate.py --base-commit SHA   # in CI: compare with the base
+    python tools/perf-gate.py --strict        # in CI: fail unless counts were gated
 
 ``--out FILE`` writes this run's measurements in the baseline's format;
 CI uploads it, so a baseline can be taken from a CI run (CONTRIBUTING.md).
@@ -172,7 +182,7 @@ PYTHON_OR_TEXT = (
     "pyrightconfig.json",
     ".clang-format",
     "tools/check-*.py",
-    "tools/ci-changes.py",
+    "tools/ci-*.py",
     "tools/stubtest-allowlist.txt",
     "tools/tutorial-scripts.py",
     "benchmarks/baselines/*",
@@ -1675,6 +1685,61 @@ def baseline_error(baseline: dict[str, Any], frozen: bool = False) -> str | None
     return None
 
 
+def unmeasured_baseline(baseline: dict[str, Any]) -> str | None:
+    """Why the baseline is not a measured one, or None: it is in bootstrap
+    mode, a case has no instruction count, or it does not record the
+    environment and the CI run its counts were measured in."""
+    if "bootstrap" in baseline:
+        return 'it has a "bootstrap" field, which a measured baseline does not'
+    cases = baseline.get("cases", {})
+    missing = sorted(n for n, c in cases.items() if "instructions" not in c)
+    if not cases or missing:
+        return "it has no instruction count" + (
+            f" for {', '.join(missing[:3])}{', ...' if len(missing) > 3 else ''}"
+            if missing
+            else "s"
+        )
+    if not baseline.get("environment"):
+        return "it does not record the environment its counts were measured in"
+    source = baseline.get("source")
+    if not (isinstance(source, dict) and source.get("run") and source.get("commit")):
+        return "it does not name the CI run its counts were measured in"
+    return None
+
+
+def strict_errors(
+    baseline: dict[str, Any],
+    measured: bool,
+    no_aslr: bool,
+    why_not: str = "",
+    name: str = BASELINE.name,
+) -> list[str]:
+    """Why a run is not one a merge may wait for (``--strict``), or []: no
+    instruction counts were *measured* (*why_not* says why), they were
+    measured with address randomization on (not *no_aslr*), or the baseline
+    is not a measured one (*name* is its file's). A run that fails here
+    gated no count, or gated counts that do not repeat."""
+    errors = []
+    why_not = why_not.removeprefix("instruction counts ").removeprefix("not measured")
+    if not measured:
+        errors.append(
+            "--strict: no instruction counts were measured"
+            + (f" ({why_not})" if why_not else "")
+            + ", so only the program sizes were compared"
+        )
+    elif not no_aslr:
+        errors.append(
+            "--strict: the counts were measured with address randomization on "
+            "(setarch -R is missing or not permitted here), so they do not repeat"
+        )
+    unmeasured = unmeasured_baseline(baseline)
+    if unmeasured:
+        errors.append(
+            f"--strict: {name} is not a measured baseline: {unmeasured} (--help, taking a baseline)"
+        )
+    return errors
+
+
 def _pct(x: float | None) -> str:
     return "" if x is None else f"{100 * x:+.2f}%"
 
@@ -1828,7 +1893,10 @@ def _update_command() -> str:
     repo = os.environ.get("GITHUB_REPOSITORY")
     if run and repo:
         return f"gh run download {run} -R {repo} -n perf-gate-baseline -D benchmarks/baselines"
-    return "python tools/perf-gate.py --update   (on Linux x86-64, in CI's environment)"
+    return (
+        "python tools/perf-gate.py --update   (the program sizes; the instruction counts "
+        "come from a CI run: --help, taking a baseline)"
+    )
 
 
 _REGENERATE = """\
@@ -2013,6 +2081,12 @@ def main() -> int:
         "--sizes-only", action="store_true", help="skip the instruction counts (no Valgrind)"
     )
     parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="fail unless instruction counts were measured, with address randomization off, "
+        "against a measured baseline: for a run that a merge waits for",
+    )
+    parser.add_argument(
         "--dumps", type=Path, help="keep Callgrind's dumps and logs in this new directory"
     )
     parser.add_argument(
@@ -2028,6 +2102,8 @@ def main() -> int:
         return 0
     if args.dumps and args.dumps.exists() and any(args.dumps.iterdir()):
         parser.error(f"--dumps {args.dumps} is not empty")
+    if args.strict and (args.sizes_only or args.update):
+        parser.error("--strict gates a run on its counts: not with --sizes-only or --update")
 
     pythonpath = str((ROOT / args.pythonpath).resolve())
     baseline = json.loads(args.baseline.read_text()) if args.baseline.exists() else {}
@@ -2048,6 +2124,7 @@ def main() -> int:
         tree_calls: dict[str, Calls] | None = None
         base_calls: dict[str, Calls] | None = None
         scope = None
+        no_aslr = False
         note = work_note = ""
         if args.sizes_only:
             note = "instruction counts skipped (--sizes-only)"
@@ -2241,7 +2318,7 @@ def main() -> int:
         print("\nLayout:\n" + "".join(f"  {line}\n" for line in notes) + f"  ({why})")
     if keyed:
         print("\nAddress-keyed:\n" + "".join(f"  {line}\n" for line in keyed) + f"  ({AS_KEYED})")
-    if bootstrapped and not problems:
+    if bootstrapped and not problems and not args.strict:
         print(
             "\nBOOTSTRAP MODE: the baseline has no instruction counts for "
             f"{len(bootstrapped)} case(s); they are measured and reported, not gated."
@@ -2277,6 +2354,13 @@ def main() -> int:
         lines.append(f"{args.baseline.name}: {stale}")
     if env_diff and gated:
         lines.append(f"{args.baseline.name}: {env_diff}")
+    # A run a merge waits for must have gated its counts.
+    strict: list[str] = []
+    if args.strict:
+        strict = strict_errors(
+            baseline, instructions is not None, no_aslr, note, args.baseline.name
+        )
+    lines += strict
     if os.environ.get("GITHUB_ACTIONS"):
         dumps_hint = "the perf-gate-callgrind-dumps artifact has each run's dumps and Valgrind log"
     elif args.dumps:
@@ -2297,7 +2381,7 @@ def main() -> int:
                     + " ".join(f"{line}." for line in problems)
                     + f" To inspect: {dumps_hint}.\n\n"
                 )
-            elif bootstrapped:
+            elif bootstrapped and not args.strict:
                 f.write(
                     "> [!WARNING]\n"
                     f"> **Bootstrap mode.** {len(bootstrapped)} case(s) have no instruction "
@@ -2377,7 +2461,13 @@ def main() -> int:
                     + "".join(f"- {line}\n" for line in lines)
                     + "\n"
                 )
-                if not problems:
+                if strict:
+                    f.write(
+                        "A run that a merge waits for passes `--strict`: it must measure "
+                        "its instruction counts, with address randomization off, against a "
+                        "measured baseline.\n"
+                    )
+                elif not problems:
                     f.write(
                         "If the change is intended, take this run as the baseline and "
                         f"commit it:\n\n```\n{_update_command()}\n```\n"
@@ -2388,6 +2478,11 @@ def main() -> int:
             print(f"  {line}")
         if problems:
             print(f"\nThe instruction counts are not valid; {dumps_hint}.")
+        elif strict:
+            print(
+                "\n--strict: a run that a merge waits for must measure its instruction "
+                "counts, with address randomization off, against a measured baseline."
+            )
         else:
             print(f"\nIf the change is intended, update the baseline:\n  {_update_command()}")
         return 1

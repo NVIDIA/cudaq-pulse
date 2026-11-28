@@ -191,6 +191,38 @@ def test_a_readout_the_model_cannot_evaluate_is_an_error():
         model.center(0, 0, math.nan, 0.1, 500)
 
 
+def test_an_unstated_resonator_sits_at_the_tone_its_readout_line_starts_at():
+    # The readout line starts at the qudit's 5 GHz; the kernel moves its
+    # tone 3 MHz up, which detunes the readout from a resonator without a
+    # stated frequency as from one stated at 5 GHz.
+    from cudaq_pulse.classical import emulation
+
+    dev = _device()
+    seen: list[complex] = []
+
+    @pulse.classical(max_latency_ns=0, name="record")
+    def record(point: complex) -> bool:
+        seen.append(point)
+        return False
+
+    @pulse.kernel
+    def probe(q):
+        r = get_readout_line(q)
+        shift_frequency(r.tone, 3e6)
+        record.submit(readout(r, square(1000, 0.05))).result()
+
+    lowered = pulse.compile(probe, quantum_system=dev).lower(dev.qudits[0])
+    emulation.emulate(lowered, shots_count=400, outcomes=lambda q, _, rng: 0, seed=2)
+    pulse.simulate(lowered, initial_state=[1, 0], shots_count=400, seed=2, levels=2)
+    tau = 1000 / dev.clock_ghz
+    stated = IQModel(_device(frequency_hz=5e9)._description, (0,), decay=False)
+    expected = stated.center(0, 0, 5e9 + 3e6, 0.05, tau)
+    at_tone = _centers(dev)[0]
+    assert abs(expected - at_tone) > 0.5
+    assert abs(np.mean(seen[:400]) - expected) < 0.15
+    assert abs(np.mean(seen[400:]) - expected) < 0.15
+
+
 def test_the_centers_follow_the_readout_frequency():
     dev = _device(frequency_hz=7e9)
     model = IQModel(dev._description, (0,), decay=False)

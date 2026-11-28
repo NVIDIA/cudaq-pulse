@@ -4,11 +4,14 @@
 # cudaq-pulse's C++ (dialects, passes, bindings and the cuDensityMat runtime,
 # the last against its host fake) built with sanitizers. The prebuilt MLIR
 # toolchain is not instrumented. address+undefined runs the lit suite, the
-# runtime host test and the Python suite but its slow tests; thread runs the
-# runtime host test, whose runs evolve concurrently. Under address+undefined,
-# lit and the runtime host test block a merge; the Python suite, which runs
-# the uninstrumented MLIR through the extension, is informational, and so is
-# the thread row.
+# runtime host test and a short check of the Python bindings; thread runs
+# the runtime host test, whose runs evolve concurrently. All of
+# address+undefined blocks a merge; the thread row is informational.
+#
+# The Python suite but its slow tests runs under address+undefined in a job
+# of its own, python-sweep, on a push to main and a manual run, not on a
+# pull request. It is advisory: it runs the uninstrumented MLIR through the
+# extension, it is stopped after 40 minutes, and nothing waits for it.
 #
 # TODO: build the MLIR toolchain with ASan too, make the Python suite
 # blocking, and drop the options below that only make room for the
@@ -29,6 +32,17 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # Leaks are not checked: Python and MLIR keep process-lifetime state,
+  # and a forked child abandons its shared MLIR context on purpose. The
+  # prebuilt MLIR is not instrumented: its allocators poison memory that
+  # our instrumented code then reads through inline MLIR headers
+  # (allow_user_poisoning=0), and its containers are not annotated
+  # (detect_container_overflow=0).
+  ASAN_OPTIONS: detect_leaks=0:abort_on_error=1:strict_string_checks=1:allow_user_poisoning=0:detect_container_overflow=0
+  UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+  TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+
 jobs:
   # Which jobs the change needs (tools/ci-changes.py): the sanitizers run for
   # a change that can reach the compiler, the runtime or the Python suite
@@ -47,9 +61,14 @@ jobs:
       - id: kind
         uses: ./.github/actions/changes
 
+  # Skipped only when the classifier succeeded and answered that the change
+  # cannot reach what the sanitizers run. When it failed or did not answer,
+  # the job runs and its first step fails (tools/ci-ok.py), so that a skipped
+  # run of this check means the sanitizers were not needed, unless the run
+  # was cancelled.
   sanitizers:
     name: sanitizers (${{ matrix.name }})
-    if: ${{ needs.changes.outputs.python == 'true' }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.python != 'false') }}
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -60,22 +79,16 @@ jobs:
         include:
           - { name: address+undefined, sanitizers: "address;undefined" }
           - { name: thread, sanitizers: "thread" }
-    env:
-      # Leaks are not checked: Python and MLIR keep process-lifetime state,
-      # and a forked child abandons its shared MLIR context on purpose. The
-      # prebuilt MLIR is not instrumented: its allocators poison memory that
-      # our instrumented code then reads through inline MLIR headers
-      # (allow_user_poisoning=0), and its containers are not annotated
-      # (detect_container_overflow=0).
-      ASAN_OPTIONS: detect_leaks=0:abort_on_error=1:strict_string_checks=1:allow_user_poisoning=0:detect_container_overflow=0
-      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
-      TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - name: The classifier succeeded and answered
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: python3 tools/ci-ok.py classifier python
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           python-version: "3.12"
       - run: uv sync --locked
@@ -101,25 +114,92 @@ jobs:
         if: matrix.sanitizers != 'thread'
         run: uv run --no-sync cmake --build build/san --target check-pulse-mlir
 
+      # The bindings under the sanitizers, in a few tests that block a merge
+      # with the rest of this job: a module is made from a kernel, checked,
+      # specialized, scheduled and lowered to the LLVM dialect; one is parsed
+      # from text and lowered to qop and cudm; a pass and a parse fail with
+      # their diagnostics, and a loaded module fails its verification; a child
+      # interpreter imports the package, compiles, lowers and exits, and so
+      # does this one, which is what tears the extension down.
+      # tests/test_ci_changes.py holds the list against the tests.
+      #
       # The interpreter is not instrumented, so the sanitizer runtimes are
-      # preloaded for the extension module; child interpreters and
-      # cudaq-pulse-opt inherit them, while the tests run other tools, such
-      # as pyright's node, without them (tool_env in tests/_tools.py). Output
-      # is captured at the Python level only, so a sanitizer or LLVM report
-      # that aborts the process reaches the log. Tests marked slow, which
-      # spend seconds in native code each and run in the other jobs, are left
-      # out: under the sanitizers one took over an hour. The suite is stopped
-      # after 40 minutes as a failure of this step, which does not fail the
-      # job, so it can never run into the job's limit and cancel it.
-      - name: Python suite
+      # preloaded for the extension module, and a child interpreter inherits
+      # them. Output is captured at the Python level only, so a sanitizer or
+      # LLVM report that aborts the process reaches the log.
+      - name: Python binding smoke check
         if: matrix.sanitizers != 'thread'
-        continue-on-error: true
-        timeout-minutes: 50
+        timeout-minutes: 15
         env:
-          PYTEST_ADDOPTS: --durations=30
+          PYTEST_ADDOPTS: --durations=10
         run: |
           uv run --no-sync cmake --build build/san --target pulse
           LD_PRELOAD="$(gcc -print-file-name=libasan.so):$(gcc -print-file-name=libubsan.so)" \
           PYTHONPATH=build/san/python \
+            .venv/bin/python -m pytest \
+            tests/test_native_bindings.py::test_pulse_module_methods \
+            tests/test_native_bindings.py::test_pipeline_methods_return_results \
+            tests/test_native_bindings.py::test_pass_failures_carry_the_diagnostics \
+            tests/test_load.py::test_overlap_on_a_line_fails_verification \
+            tests/test_import.py::test_import_and_compile_do_not_load_numpy_or_the_gpu_runtime \
+            -q -p no:cacheprovider --capture=sys
+
+  # The Python suite under address+undefined, but its slow tests (marked
+  # slow: seconds in native code each, an hour for one here) and the tests
+  # of raw time and memory limits, which skip themselves under a sanitizer
+  # runtime (tests/_tools.py, skip_raw_limit) and stay with the unsanitized
+  # jobs. Advisory: no job waits for it, its name is not one to require, and
+  # a failure here does not fail the workflow's run. The suite is stopped
+  # after 40 minutes, as a failure, so it never runs into the job's limit.
+  #
+  # The interpreter is not instrumented, so the sanitizer runtimes are
+  # preloaded for the extension module; child interpreters and
+  # cudaq-pulse-opt inherit them, while the tests run other tools, such as
+  # pyright's node, without them (tool_env in tests/_tools.py). Output is
+  # captured at the Python level only, so a sanitizer or LLVM report that
+  # aborts the process reaches the log.
+  python-sweep:
+    name: sanitizers (python sweep, advisory)
+    if: ${{ needs.changes.outputs.python == 'true' && github.event_name != 'pull_request' }}
+    needs: changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked
+      - uses: ./.github/actions/mlir-toolchain
+
+      # As in the sanitizers job.
+      - name: Narrow mmap randomization
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
+
+      - name: Configure and build
+        run: |
+          uv run --no-sync cmake -S . -B build/san -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCUDAQ_PULSE_BUILD_TESTS=ON \
+            "-DCUDAQ_PULSE_SANITIZERS=address;undefined" \
+            -DPython3_EXECUTABLE="$PWD/.venv/bin/python"
+          uv run --no-sync cmake --build build/san
+
+      - name: Python suite
+        env:
+          PYTEST_ADDOPTS: --durations=30
+        run: |
+          status=0
+          LD_PRELOAD="$(gcc -print-file-name=libasan.so):$(gcc -print-file-name=libubsan.so)" \
+          PYTHONPATH=build/san/python \
             timeout --signal=INT --kill-after=2m 40m \
-            .venv/bin/python -m pytest tests -q -m "not gpu and not slow" -p no:cacheprovider --capture=sys
+            .venv/bin/python -m pytest tests -q -m "not gpu and not slow" -p no:cacheprovider --capture=sys \
+            || status=$?
+          if [ "$status" = 124 ] || [ "$status" = 137 ]; then
+            echo "::error title=Python sweep::stopped after 40 minutes, before the suite ended"
+          fi
+          exit "$status"

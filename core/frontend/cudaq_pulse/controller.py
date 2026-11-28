@@ -98,7 +98,7 @@ if TYPE_CHECKING:
     from ._op_classes import OpClass as OpClass
     from ._op_tables import OpCounts as OpCounts
     from ._op_tables import OpCycles as OpCycles
-    from ._system import Controller, ControlSystem
+    from ._system import Controller, ControlSystem, _Scanned
     from ._system import DriveLine as DriveLine
     from ._system import ReadoutLine as ReadoutLine
     from ._system import UpdateBus as UpdateBus
@@ -131,6 +131,7 @@ __all__ = [
     "export",
     "sample_waveform",
     "shape_key",
+    "shape_known",
     "usage",
     "unroll",
 ]
@@ -370,12 +371,54 @@ def shape_key(node: Mapping[str, Any] | None) -> tuple[Any, ...] | None:
     return (shape, node.get("name"), kept)
 
 
-def _exact(value: float) -> Fraction:
-    """*value* as the decimal it is written as, so that rates such as 2.4
-    samples per cycle divide exactly."""
-    from fractions import Fraction
+def shape_known(node: Mapping[str, Any] | None) -> bool:
+    """Whether ``shape_key(node)`` is not ``None``, without building the key.
 
-    return Fraction(repr(float(value)))
+    A backend that refuses a waveform known only at run time asks this of
+    each drive and readout of a format /1 program before it emits anything::
+
+        refused = [
+            f"event {event['index']} has a waveform known only at run time"
+            for event in program["events"]
+            if event["kind"] in ("drive", "readout") and not shape_known(event["waveform"])
+        ]
+
+    The answer, and the error for a waveform that is not well formed, are
+    those of ``shape_key``; a list of samples that are all floats is not
+    read one by one.
+    """
+    if node is None:
+        return False
+    shape = node["shape"]
+    if shape in ("scale", "neg"):
+        return shape_known(node["of"][0])
+    if shape == "custom_samples":
+        samples = node.get("samples", [])
+        peak = max(map(abs, samples), default=0.0) or 1.0
+        # Floats alone have a quotient by their largest magnitude and a
+        # rounding each: nothing a key would stop at.
+        if samples.__class__ is list and (not samples or {*map(type, samples)} <= {float}):
+            return True
+        for v in samples:
+            round(v / peak, 12)
+        return True
+    params = node.get("params")
+    if params is None:
+        known = True
+        for child in node.get("of", ()):
+            if not shape_known(child):
+                known = False
+        if known:
+            tuple(node.get("values", ()))
+        return known
+    skip = _AMPLITUDE_NAMES.get(shape, frozenset())
+    known = True
+    for k, v in params.items():
+        if k not in skip and known and (v is None or isinstance(v, dict)):
+            known = False
+    if known:
+        node.get("name")
+    return known
 
 
 # The terms of the expressions of run-time values; see evaluate_expression.
@@ -611,38 +654,39 @@ def sample_waveform(
     evaluate: a ``pulse.custom`` op of hand-written IR, whose samples the
     runtime computes, or one whose parameters are not numbers.
     """
+    from fractions import Fraction
+
     import numpy as np
 
-    real, imag = _sample(node, duration_cycles, _exact(samples_per_cycle))
-    samples = np.empty(len(real), complex)
-    samples.real = real
-    samples.imag = imag
-    return samples
+    # The rate as the decimal it is written as, so that rates such as 2.4
+    # samples per cycle divide exactly.
+    return _sample(  # type: ignore[no-any-return]
+        node, duration_cycles, Fraction(repr(float(samples_per_cycle))), np.empty
+    )
 
 
-def _sample(node: Mapping[str, Any], duration_cycles: int, ratio: Fraction | int) -> _Samples:
-    """``sample_waveform``'s samples at *ratio* samples per cycle, as the
-    lists of floats the export writes: the simulator's own envelopes,
-    sampled natively, without NumPy."""
+# The kinds of the simulator's waveform callbacks (WaveformCallback.h) that
+# take an envelope's parameters; custom samples are kind 7.
+_ENVELOPE_KINDS = {"gaussian": 2, "drag": 3, "cosine": 4, "tanh_ramp": 5, "gaussian_square": 6}
+
+
+def _sample(node: Mapping[str, Any], duration_cycles: int, ratio: Any, new: Any = None) -> Any:
+    """``sample_waveform``'s samples at *ratio* samples per cycle (a whole
+    number or a ``Fraction``), as the lists of floats the export writes: the
+    simulator's own envelopes, sampled natively, without NumPy. With *new*,
+    ``numpy.empty``, they are the complex array ``sample_waveform`` returns
+    instead."""
     # Absolute, so that the import costs no relative name's resolution.
     from cudaq_pulse._native._cudaq_pulse_native import sample_envelope
 
-    # The kinds of the simulator's waveform callbacks (WaveformCallback.h).
-    kinds = {
-        "gaussian": 2,
-        "drag": 3,
-        "cosine": 4,
-        "tanh_ramp": 5,
-        "gaussian_square": 6,
-        "custom_samples": 7,
-    }
     per, over = ratio.numerator, ratio.denominator
-    if int(duration_cycles) * per % over:
+    total = int(duration_cycles) * per
+    if total % over:
         raise InvalidValueError(
             f"{duration_cycles} cycles at {per / over:g} samples per cycle is "
-            f"{int(duration_cycles) * per / over:g} samples, not a whole number"
+            f"{total / over:g} samples, not a whole number"
         )
-    count = int(duration_cycles) * per // over
+    count = total // over
     rate = per if over == 1 else per / over
 
     def evaluate(node: Mapping[str, Any]) -> _Samples:
@@ -672,7 +716,7 @@ def _sample(node: Mapping[str, Any], duration_cycles: int, ratio: Fraction | int
         # rotation an envelope leaves at 0, then any samples.
         if shape == "custom_samples":
             held = (0.0, max(duration_cycles, 1), *[0.0] * 8, *node["samples"])
-            return sample_envelope(kinds[shape], held, count, rate)
+            return sample_envelope(7, held, count, rate)
         if shape not in _AMPLITUDES or any(
             not isinstance(v, (int, float)) for v in params.values()
         ):
@@ -682,9 +726,35 @@ def _sample(node: Mapping[str, Any], duration_cycles: int, ratio: Fraction | int
         get = params.get
         shaped = (get("sigma", 0.0), get("beta", 0.0), get("risefall", 0.0))
         envelope = (0.0, get("duration"), get("amplitude"), 0.0, *shaped, 0.0, 0.0, 0.0)
-        return sample_envelope(kinds[shape], envelope, count, rate)
+        return sample_envelope(_ENVELOPE_KINDS[shape], envelope, count, rate)
 
-    return evaluate(node)
+    if new is None:
+        return evaluate(node)
+    # The parts of the samples: a number each for a square, else a list each.
+    real: Any
+    imag: Any
+    if (
+        node.__class__ is dict
+        and node["shape"] == "square"
+        and node["shape"].__class__ is str
+        and -1 < count < 1 << 24
+    ):
+        # ``evaluate`` of a square, written out: its two numbers fill the
+        # array, without a list of floats for each part. (A longer square
+        # is listed as before, and so fails as before where it must.)
+        for child in node.get("of", ()):
+            evaluate(child)
+        params = node.get("params", {})
+        if any(not isinstance(v, (int, float)) for v in params.values()):
+            raise ValueError("cannot sample a 'square' waveform without numeric parameters")
+        real, imag = float(params["amplitude"]), float(params["amplitude_imag"])
+        samples = new(count, complex)
+    else:
+        real, imag = evaluate(node)
+        samples = new(len(real), complex)
+    samples.real = real
+    samples.imag = imag
+    return samples
 
 
 # ── Export ───────────────────────────────────────────────────────────────────
@@ -1392,6 +1462,13 @@ def unroll(program: Mapping[str, Any]) -> dict[str, Any]:
     events: list[dict[str, Any]] = []
     latest: dict[int, int] = {}
     branches: dict[tuple[Any, ...], int] = {}
+    # (depth, iteration, iterations since the first, period, the branches
+    # around the loop) for each rolled loop around the event being written.
+    loops: list[Any] = []
+
+    def branch(condition: Mapping[str, Any]) -> int:
+        inner = tuple(j for _, _, j, _, outer in loops if condition["branch"] not in outer)
+        return branches.setdefault((condition["branch"], inner), len(branches))
 
     def place_of(leaf: Any) -> Any:
         if not isinstance(leaf, dict):
@@ -1436,31 +1513,44 @@ def unroll(program: Mapping[str, Any]) -> dict[str, Any]:
             for update in updates
         ]
 
-    def expand(items: Sequence[Mapping[str, Any]], loops: list[tuple[Any, ...]]) -> None:
-        # loops: (depth, iteration, iterations since the first, period, the
-        # branches around the loop) for each rolled loop around *items*.
+    def expand(items: Sequence[Mapping[str, Any]], whole: int | None) -> None:
+        # whole: the cycles the iterations of ``loops`` start after their
+        # first ones, while every period is a whole number of cycles.
+        nonlocal loops
         for item in items:
-            kind = _FLAT_KINDS.get(item["kind"], item["kind"])
+            kind = item["kind"]
             if kind == "loop":
                 outer = {c["branch"] for c in item.get("conditions", ())}
                 depth = len(item.get("iteration", ()))
                 first = item.get("first_iteration", 0)
-                for j in range(item["trips"]):
-                    loop = (depth, first + j, j, item["period_cycles"], outer)
-                    expand(item["body"], [*loops, loop])
+                period = item.get("period_cycles")
+                # One more loop on the stack, in place and without a call.
+                loops += (None,)
+                if whole is not None and period.__class__ is int:
+                    at = whole
+                    for j in range(item["trips"]):
+                        loops[-1] = (depth, first + j, j, period, outer)
+                        expand(item["body"], at)
+                        at += period
+                else:
+                    for j in range(item["trips"]):
+                        loops[-1] = (depth, first + j, j, item["period_cycles"], outer)
+                        expand(item["body"], None)
+                del loops[-1]
                 continue
-            shift = sum(j * period for _, _, j, period, _ in loops)
+            kind = _FLAT_KINDS.get(kind, kind)
+            if whole is None:
+                # A period of an export written elsewhere that is not an
+                # integer: summed as written, to the same rounding.
+                shift = sum(j * period for _, _, j, period, _ in loops)
+            else:
+                shift = whole
             start, duration = item["start_cycles"], item["duration_cycles"]
             if start is not None:
                 start += shift
             iteration = list(item.get("iteration", ()))
             for depth, k, _, _, _ in loops:
                 iteration[depth] = k
-
-            def branch(condition: Mapping[str, Any]) -> int:
-                inner = tuple(j for _, _, j, _, outer in loops if condition["branch"] not in outer)
-                return branches.setdefault((condition["branch"], inner), len(branches))
-
             conditions = [
                 {
                     "branch": branch(condition),
@@ -1571,7 +1661,7 @@ def unroll(program: Mapping[str, Any]) -> dict[str, Any]:
             latest[place[id(item)]] = event["index"]
             events.append(event)
 
-    expand(program["events"], [])
+    expand(program["events"], 0)
     frame_state = [
         {
             **frame,
@@ -1585,15 +1675,16 @@ def unroll(program: Mapping[str, Any]) -> dict[str, Any]:
         for frame in program.get("frame_state", ())
     ]
     flat_keys = {"controller": "limits"}
-    from . import _clocks
-
     # Format /1 states the rate after the schedule, and only when sampled.
     rate = program["sample_rate_ghz"] if "samples" in program else None
-    if rate is not None and _clocks.made_for(rate, program["clock_ghz"])[1] != 1:
-        raise InvalidValueError(
-            f"format /1 samples at a whole multiple of the clock; this program samples "
-            f"at {rate} GHz on a {program['clock_ghz']} GHz clock"
-        )
+    if rate is not None:
+        from . import _clocks
+
+        if _clocks.made_for(rate, program["clock_ghz"])[1] != 1:
+            raise InvalidValueError(
+                f"format /1 samples at a whole multiple of the clock; this program samples "
+                f"at {rate} GHz on a {program['clock_ghz']} GHz clock"
+            )
     flat: dict[str, Any] = {}
     for k, v in program.items():
         if k in ("programs", "bindings", "waveforms", "samples", "parameters", "sample_rate_ghz"):
@@ -1817,7 +1908,7 @@ def _part(
     assert system is not None
     lines, events, frames, _, _ = _walk(lowered, slots=None)
     owners, _ = system._owners(lines)
-    parts = system._parts(events, owners)
+    parts, _ = system._parts(events, owners)
     index = _part_index(
         controller,
         len(system.controllers),
@@ -1879,6 +1970,7 @@ class _Parts:
         "frames",
         "owners",
         "parts",
+        "scanned",
         "used",
         "calling",
         "violations",
@@ -1897,7 +1989,9 @@ class _Parts:
         self.key = _parts_key(lowered)
         self.lines, self.events, self.frames, _, _ = _walk(lowered, slots=None)
         self.owners, _ = system._owners(self.lines)
-        self.parts: list[list[int]] | None = system._parts(self.events, self.owners)
+        self.parts: list[list[int]] | None
+        self.scanned: _Scanned | None
+        self.parts, self.scanned = system._parts(self.events, self.owners)
         self.used = _known_owners(self.owners)
         self.calling: list[int] | None = None
         self.violations: list[str] | None = None
@@ -1951,9 +2045,14 @@ class _Parts:
                 {**e, **{k: copy.deepcopy(e[k], memo) for k in _CONVERTED if k in e}}
                 for e in events
             ]
+        # The parts were made from a scan of the events for the controllers
+        # that take each answer: the check reads it instead of scanning them
+        # again, where it is given those events and not copies of them. It
+        # is not kept past the check: a check made again scans.
         violations: list[str] = system._violations(
-            lowered, self.lines, checked, clocks, (), (), True, None, None
+            lowered, self.lines, checked, clocks, (), (), True, None, None, self.scanned
         )
+        self.scanned = None
         if violations:
             self.calls()
             self.lines, self.events, self.frames, self.owners, self.parts = [], [], {}, [], []
@@ -2991,19 +3090,24 @@ def _over_amplitude(
     *unresolved*, an envelope whose peak needs the call's values is noted
     there, to be checked with them. Each distinct envelope is sampled once,
     once for all the lines that share *peaks*."""
-    found = []
+    found: list[str] = []
     if peaks is None:
         peaks = {}
+    # The waveform of the event before, for as long as this check runs: the
+    # events of one op share theirs, and its peak stands without its text.
+    # (No event's waveform is the list of what is found.)
+    tree: Any = found
     for event in events:
-        tree = event.get("waveform")
-        key = repr(tree)
-        if key not in peaks:
-            peaks[key] = _peak_amplitude(tree)
-        peak = peaks[key]
-        if peak is None and tree is not None and unresolved is not None:
-            unresolved.append(f"line {line['line']}: amplitude")
-            unresolved = None
-        if peak is not None and peak > most:
+        if tree is not (tree := event.get("waveform")):
+            key = f"{tree!r}"
+            if key not in peaks:
+                peaks[key] = _peak_amplitude(tree)
+            peak = peaks[key]
+        if peak is None:
+            if tree is not None and unresolved is not None:
+                unresolved.append(f"line {line['line']}: amplitude")
+                unresolved = None
+        elif peak > most:
             found.append(
                 f"line {line['line']} ({line['role']} of qudit {line['qudit']}): the "
                 f"{event['kind']} at {event['start_cycles']} peaks at amplitude {peak:.6g}; "
@@ -3484,6 +3588,7 @@ class ControllerNames(Protocol):
         self, node: Mapping[str, Any], duration_cycles: int, samples_per_cycle: float = 1
     ) -> npt.NDArray[np.complex128]: ...
     def shape_key(self, node: Mapping[str, Any] | None) -> tuple[Any, ...] | None: ...
+    def shape_known(self, node: Mapping[str, Any] | None) -> bool: ...
     def unroll(self, program: Mapping[str, Any]) -> dict[str, Any]: ...
     def usage(self, lowered: ScheduledKernel) -> _Usage: ...
 

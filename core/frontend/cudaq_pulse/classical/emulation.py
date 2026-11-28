@@ -546,13 +546,19 @@ def emulate(
                 if iq_model is not None and takes_iq(fn):
                     model = iq_model
                     drives = {
-                        (i, tuple(it)): (f, a) for i, it, f, a in module.readout_drives(entries)
+                        (i, tuple(it)): (f, a, s)
+                        for i, it, f, a, s in module.readout_drives(entries)
                     }
 
                     def point(key: tuple[int, tuple[int, ...]]) -> tuple[float, float]:
                         qudit, duration = seen[key]  # noqa: B023
-                        frequency, amplitude = drives.get(key, (math.nan, math.nan))  # noqa: B023
-                        return model.sample(rng, qudit, known[key], frequency, amplitude, duration)  # noqa: B023
+                        frequency, amplitude, line_start = drives.get(  # noqa: B023
+                            key, (math.nan, math.nan, math.nan)
+                        )
+                        level = known[key]  # noqa: B023
+                        return model.sample(  # noqa: B023
+                            rng, qudit, level, frequency, amplitude, duration, line_start
+                        )
 
                 inputs = _call_inputs(fn, arguments, known, point)
                 if fn.uniform is not None:

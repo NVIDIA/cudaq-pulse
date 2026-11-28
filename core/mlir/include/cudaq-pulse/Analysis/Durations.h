@@ -17,8 +17,13 @@ namespace pulse {
 
 /// The length of a waveform in cycles, when it is known: none for a
 /// waveform that is an argument, or whose duration is computed from one.
-/// Waveform arithmetic has the length of its (first) operand.
-inline std::optional<int64_t> waveformCycles(mlir::Value waveform) {
+/// Waveform arithmetic has the length of its (first) operand, which
+/// `Arithmetic::of(definition)` gives for the arithmetic op `definition`: a
+/// caller that asks for many waveforms computed from each other can keep
+/// what it found. The other waveforms are looked up by the same code
+/// whatever `Arithmetic` is.
+template <typename Arithmetic>
+inline std::optional<int64_t> waveformCyclesWith(mlir::Value waveform) {
   mlir::Operation *definition = waveform.getDefiningOp();
   if (!definition)
     return std::nullopt;
@@ -41,10 +46,25 @@ inline std::optional<int64_t> waveformCycles(mlir::Value waveform) {
     return op.getDurationCycles();
   else if (mlir::isa<PulseAddOp, PulseSubOp, PulseMulOp, PulseScaleOp,
                      PulseNegOp>(definition))
-    return waveformCycles(definition->getOperand(0));
+    return Arithmetic::of(definition);
   else
     return std::nullopt;
   return constantInteger(duration);
+}
+
+inline std::optional<int64_t> waveformCycles(mlir::Value waveform);
+
+/// Follows waveform arithmetic to its first operand each time it is asked.
+struct FollowedArithmetic {
+  static std::optional<int64_t> of(mlir::Operation *definition) {
+    return waveformCycles(definition->getOperand(0));
+  }
+};
+
+/// The length of a waveform in cycles, when it is known (see
+/// waveformCyclesWith).
+inline std::optional<int64_t> waveformCycles(mlir::Value waveform) {
+  return waveformCyclesWith<FollowedArithmetic>(waveform);
 }
 
 /// The length of a wait in cycles: its constant length, or a variable

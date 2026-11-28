@@ -127,6 +127,45 @@ def test_a_method_traces_like_the_op_written_out(kernel, n, amp):
     assert [e.kind for e in pulse.compile(kernel).lower(Q[0]).schedule] == ["drive"]
 
 
+def test_a_method_reaches_a_pulse_helper_through_objects_that_hold_each_other():
+    class Node:
+        def wf(self):
+            return self.peer.gates.x90_wf()
+
+    first, second = Node(), Node()
+    first.peer, second.peer = second, first
+    second.gates = Gates(0.2)
+
+    @pulse.kernel
+    def k(q):
+        d = get_drive_line(q)
+        drive(d, first.wf())
+
+    assert _program(k) == _program(_written_out(40, 0.2))
+
+
+def test_a_method_of_objects_that_hold_each_other_and_no_pulse_helper_runs_as_python():
+    class Node:
+        def __init__(self):
+            self.calls = 0
+
+        def amp(self):
+            self.calls += 1
+            return self.peer.peer.peer.value
+
+    ring = [Node() for _ in range(12)]
+    for node, peer in zip(ring, ring[1:] + ring[:1], strict=True):
+        node.peer, node.value = peer, 0.2
+
+    @pulse.kernel
+    def k(q):
+        d = get_drive_line(q)
+        drive(d, square(40, ring[0].amp()))
+
+    assert _program(k) == _program(_written_out(40, 0.2))
+    assert ring[0].calls == 1
+
+
 def test_a_method_that_uses_no_pulse_op_runs_as_python():
     class Calibration:
         def __init__(self):

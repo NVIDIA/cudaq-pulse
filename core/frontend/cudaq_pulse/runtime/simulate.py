@@ -576,7 +576,7 @@ def _step(
     if given is None:
         step = _default_step(lowered, target, levels)
     elif given <= 0:
-        raise InvalidValueError("dt_ns must be positive")
+        raise InvalidValueError(f"dt_ns must be positive, got {given}")
     else:
         step = given
         # A step of fewer than 20 per period of what the simulation holds
@@ -972,7 +972,12 @@ def _simulate_compiled(
     mode = {q: i for i, q in enumerate(qudits)}
     dims, level_fields = _level_attributes(target, qudits, levels)
     base = _target_attributes(
-        target, qudits, integrator=integrator, dephasing=dephasing, levels=level_fields
+        target,
+        qudits,
+        integrator=integrator,
+        dephasing=dephasing,
+        levels=level_fields,
+        module=module,
     )
 
     path_end = t_end is None and bool(functions)

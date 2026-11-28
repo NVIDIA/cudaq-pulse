@@ -517,14 +517,15 @@ def fake_gate(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(gate.platform, "machine", lambda: "x86_64")
     environment = gate._environment(sys.executable)
 
-    def run(instructions, work, baseline_work=_WORK, form=2, base_commit=None):
+    def run(instructions, work, baseline_work=_WORK, form=2, base_commit=None, args=(), edit=None):
         case = {"op_count": 15, "instructions": 1_000_000}
         if baseline_work is not None:
             case["python_work"] = baseline_work
         baseline = tmp_path / "perf_gate.json"
-        baseline.write_text(
-            json.dumps({"format": form, "environment": environment, "cases": {"c": case}})
-        )
+        content = {"format": form, "environment": environment, "cases": {"c": case}}
+        if edit is not None:
+            edit(content)
+        baseline.write_text(json.dumps(content))
         (bin_dir / "instructions.json").write_text(json.dumps({"c": instructions}))
         (tmp_path / "python_work.json").write_text(json.dumps({"c": work}))
         summary, out = tmp_path / "summary.md", tmp_path / "out.json"
@@ -532,6 +533,7 @@ def fake_gate(tmp_path, monkeypatch, capsys):
         argv = ["perf-gate.py", "--baseline", str(baseline), "--python", sys.executable]
         argv += ["--pythonpath", str(tmp_path), "--summary", str(summary), "--out", str(out)]
         argv += ["--base-commit", base_commit] if base_commit else []
+        argv += args
         monkeypatch.setattr(sys, "argv", argv)
         code = gate.main()
         return code, capsys.readouterr().out, summary.read_text(), json.loads(out.read_text())
@@ -600,6 +602,179 @@ def test_python_work_that_differs_between_identical_runs_labels_nothing(fake_gat
     assert "two identical runs counted it differently (c)" in log
     assert "  c: regression, +0.50% instructions (limit +0.4%)\n" in log
     assert "python_work" not in taken["cases"]["c"]
+
+
+# A run that a merge waits for (--strict). Each case below passes without
+# the flag, having gated no count or counts that do not repeat, which is
+# right at a desk; with it, the run fails and says why.
+_RUN = {"repository": "o/r", "run": 1, "attempt": 1, "commit": "c" * 40, "processes": 5}
+
+
+def _measured(baseline):
+    baseline["source"] = _RUN
+
+
+def _bootstrapping(baseline):
+    baseline["bootstrap"] = True
+    del baseline["cases"]["c"]["instructions"]
+
+
+@pytest.fixture
+def strict_gate(fake_gate, monkeypatch):
+    """The fake gate where ``setarch -R`` works (``env`` stands for it) and
+    the baseline is a measured one, unless the test says otherwise."""
+    monkeypatch.setattr(gate, "_no_aslr", lambda: ["env"])
+
+    def run(strict, edit=_measured, instructions=1_000_000, args=()):
+        return fake_gate(instructions, _WORK, args=["--strict"] * strict + [*args], edit=edit)
+
+    return run
+
+
+def test_a_strict_run_passes_on_measured_counts_without_randomization(strict_gate):
+    for strict in (False, True):
+        code, log, _, _ = strict_gate(strict)
+        assert code == 0 and "Perf gate passed." in log, log
+        assert "address randomization off (setarch -R)" in log
+
+
+def test_a_strict_run_still_fails_a_regression_as_any_run_does(strict_gate):
+    code, log, _, _ = strict_gate(True, instructions=1_005_000)
+    assert code == 1 and "c: layout only, +0.50% instructions" in log
+    assert "--strict" not in log
+
+
+def _without_valgrind(monkeypatch):
+    which = gate.shutil.which
+    monkeypatch.setattr(
+        gate.shutil, "which", lambda name, *a, **k: None if name == "valgrind" else which(name)
+    )
+
+
+def test_without_valgrind_only_a_strict_run_fails(strict_gate, monkeypatch):
+    _without_valgrind(monkeypatch)
+    code, log, _, _ = strict_gate(False)
+    assert code == 0 and "instruction counts skipped: valgrind is not installed" in log
+    code, log, summary, _ = strict_gate(True)
+    assert code == 1
+    refusal = (
+        "--strict: no instruction counts were measured (skipped: valgrind is not installed), "
+        "so only the program sizes were compared"
+    )
+    assert f"  {refusal}\n" in log and f"- {refusal}\n" in summary
+    assert "If the change is intended" not in log + summary
+
+
+@pytest.mark.parametrize(("system", "machine"), [("Linux", "aarch64"), ("Darwin", "arm64")])
+def test_on_another_platform_only_a_strict_run_fails(strict_gate, monkeypatch, system, machine):
+    monkeypatch.setattr(gate.platform, "system", lambda: system)
+    monkeypatch.setattr(gate.platform, "machine", lambda: machine)
+    assert strict_gate(False)[0] == 0
+    code, log, _, _ = strict_gate(True)
+    assert code == 1
+    assert "no instruction counts were measured (skipped: the baseline is for Linux x86-64)" in log
+
+
+def test_with_address_randomization_on_only_a_strict_run_fails(strict_gate, monkeypatch):
+    """The counts happen to match here; they would not repeat."""
+    monkeypatch.setattr(gate, "_no_aslr", list)
+    code, log, _, _ = strict_gate(False)
+    assert code == 0 and "address randomization on: setarch -R is not permitted here" in log
+    code, log, summary, _ = strict_gate(True)
+    assert code == 1
+    refusal = "--strict: the counts were measured with address randomization on"
+    assert refusal in log and refusal in summary
+
+
+def test_with_a_bootstrap_baseline_only_a_strict_run_fails(strict_gate, monkeypatch):
+    """On a pull request: main refuses the field in every run."""
+    monkeypatch.setenv("GITHUB_REF", "refs/pull/1/merge")
+    code, log, _, _ = strict_gate(False, edit=_bootstrapping)
+    assert code == 0 and "Perf gate passed in bootstrap mode" in log
+    code, log, summary, _ = strict_gate(True, edit=_bootstrapping)
+    assert code == 1
+    refusal = (
+        '--strict: perf_gate.json is not a measured baseline: it has a "bootstrap" field, '
+        "which a measured baseline does not"
+    )
+    assert refusal in log and refusal in summary
+    # It fails: it does not also say that the counts pass without a gate.
+    assert "BOOTSTRAP MODE" not in log and "Bootstrap mode" not in summary
+
+
+def test_a_strict_run_needs_a_baseline_that_names_its_run(strict_gate):
+    assert strict_gate(False, edit=None)[0] == 0
+    code, log, _, _ = strict_gate(True, edit=None)
+    assert code == 1
+    assert "is not a measured baseline: it does not name the CI run its counts were" in log
+
+
+def test_a_strict_run_fails_on_each_thing_it_lacks(strict_gate, monkeypatch):
+    _without_valgrind(monkeypatch)
+    code, log, _, _ = strict_gate(True, edit=_bootstrapping)
+    assert code == 1 and log.count("  --strict: ") == 2
+
+
+@pytest.mark.parametrize("other", ["--sizes-only", "--update"])
+def test_a_strict_run_takes_no_flag_that_skips_or_rewrites_the_counts(strict_gate, capsys, other):
+    with pytest.raises(SystemExit) as error:
+        strict_gate(True, args=[other])
+    assert error.value.code == 2
+    assert "--strict gates a run on its counts" in capsys.readouterr().err
+
+
+def test_a_measured_baseline_has_every_count_its_environment_and_its_run():
+    measured = {"environment": {"python": "3.12.15"}, "source": _RUN, **_baseline()}
+    assert gate.unmeasured_baseline(measured) is None
+    assert "bootstrap" in gate.unmeasured_baseline({**measured, "bootstrap": False})
+    assert "bootstrap" in gate.unmeasured_baseline({"bootstrap": True, "cases": {"c": {}}})
+    two = {**measured, "cases": {**measured["cases"], "d": {"op_count": 1}}}
+    assert gate.unmeasured_baseline(two) == "it has no instruction count for d"
+    assert gate.unmeasured_baseline({}) == "it has no instruction counts"
+    assert "environment" in gate.unmeasured_baseline({**measured, "environment": {}})
+    for source in (None, {}, {"run": 1}, {"commit": "c" * 40}, "a run"):
+        assert "CI run" in gate.unmeasured_baseline({**measured, "source": source})
+
+
+def test_strict_errors_name_what_is_missing():
+    measured = {"environment": {"python": "3.12.15"}, "source": _RUN, **_baseline()}
+    assert gate.strict_errors(measured, measured=True, no_aslr=True) == []
+    assert len(gate.strict_errors(measured, measured=False, no_aslr=False)) == 1
+    assert len(gate.strict_errors(measured, measured=True, no_aslr=False)) == 1
+    assert len(gate.strict_errors({}, measured=False, no_aslr=True)) == 2
+    (unmeasured,) = gate.strict_errors({}, True, True, name="other.json")
+    assert unmeasured.startswith("--strict: other.json is not a measured baseline")
+    (failed,) = gate.strict_errors(measured, False, False, "instruction counts not measured")
+    assert failed == (
+        "--strict: no instruction counts were measured, so only the program sizes were compared"
+    )
+
+
+def test_the_checked_in_baseline_is_one_a_strict_run_accepts():
+    assert gate.unmeasured_baseline(json.loads(gate.BASELINE.read_text())) is None
+
+
+def test_ci_gates_strictly_in_every_run_but_the_one_that_takes_a_baseline():
+    """The flag is on unless the manual perf_baseline input is true, which no
+    pull request and no push can set, and nothing else in the step drops it."""
+    job = (_ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    step = job[job.index("- name: Perf gate") :]
+    step = step[: step.index("\n\n")]
+    assert "PERF_BASELINE: ${{ inputs.perf_baseline }}" in step
+    lines = [line.strip() for line in step.splitlines()]
+    assert lines.count("strict=yes") == 1
+    assert [line for line in lines if "strict=" in line and line != "strict=yes"] == [
+        'if [ "$PERF_BASELINE" = true ]; then strict=; fi'
+    ]
+    assert lines.index("strict=yes") < lines.index(
+        'if [ "$PERF_BASELINE" = true ]; then strict=; fi'
+    )
+    assert "tools/perf-gate.py" in step and step.count("perf-gate.py") == 1
+    assert "${strict:+--strict}" in step[step.index("tools/perf-gate.py") :]
+    assert "--sizes-only" not in step and "--update" not in step and "--baseline" not in step
+    # The step fails the job.
+    gate_job = job[job.index("\n  perf-gate:\n") :]
+    assert "continue-on-error" not in gate_job[: gate_job.index("\n\n  # ")]
 
 
 def test_in_bootstrap_mode_a_case_without_a_count_is_reported_and_passes():
@@ -1063,6 +1238,7 @@ def test_python_sources_and_files_the_job_never_reads_keep_the_measured_code(rep
             ".github__workflows__docs.yml": "",
             "tools__check-k.py": "",
             "tools__ci-changes.py": "",
+            "tools__ci-ok.py": "",
             "challenges__k__score.py": "",
             "benchmarks__baselines__perf_gate.json": '{"a": 1}\n',
             # Dev dependencies, tool settings and the sdist's contents are not built.

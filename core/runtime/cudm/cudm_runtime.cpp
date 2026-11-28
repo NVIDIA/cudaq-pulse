@@ -234,15 +234,22 @@ CudmStatus setFactor(void *deviceFactor, cuDoubleComplex value, int64_t batch) {
                    "cudaMemcpy(state factor)");
 }
 
+// destination += factor * source, the factor (one per batch member) already
+// on the device.
+CudmStatus accumulateUploaded(StateData *source, StateData *destination,
+                              const void *deviceFactor) {
+  return checkCudm(cudensitymatStateComputeAccumulation(
+                       source->owner->native, source->native,
+                       destination->native, deviceFactor, nullptr),
+                   "cudensitymatStateComputeAccumulation");
+}
+
 CudmStatus accumulate(StateData *source, StateData *destination,
                       void *deviceFactor, cuDoubleComplex factor) {
   auto status = setFactor(deviceFactor, factor, source->owner->batch);
   if (status != CUDM_SUCCESS)
     return status;
-  return checkCudm(cudensitymatStateComputeAccumulation(
-                       source->owner->native, source->native,
-                       destination->native, deviceFactor, nullptr),
-                   "cudensitymatStateComputeAccumulation");
+  return accumulateUploaded(source, destination, deviceFactor);
 }
 
 CudmStatus copyState(StateData *source, StateData *destination,
@@ -252,6 +259,41 @@ CudmStatus copyState(StateData *source, StateData *destination,
     return status;
   return accumulate(source, destination, deviceFactor,
                     make_cuDoubleComplex(1.0, 0.0));
+}
+
+// copyState with the factor one (per batch member) already on the device.
+CudmStatus copyStateUploaded(StateData *source, StateData *destination,
+                             const void *deviceOne) {
+  auto status = setZero(destination);
+  if (status != CUDM_SUCCESS)
+    return status;
+  return accumulateUploaded(source, destination, deviceOne);
+}
+
+// The factors of an RK4 step. Over an interval of equal steps they do not
+// change, so cudm_evolve uploads them once, each as one value per batch
+// member and one after another in this order, and every step reads them on
+// the device.
+enum Rk4Factor : size_t {
+  kOne,
+  kHalfStep,
+  kStep,
+  kSixthStep,
+  kThirdStep,
+  kRk4FactorCount
+};
+// cudm_evolve hands the start of the factors to its copies as the factor one.
+static_assert(kOne == 0);
+
+CudmStatus setRk4Factors(void *deviceFactors, double dt, int64_t batch) {
+  const std::array<double, kRk4FactorCount> factors = {1.0, 0.5 * dt, dt,
+                                                       dt / 6.0, dt / 3.0};
+  auto *slot = static_cast<cuDoubleComplex *>(deviceFactors);
+  CudmStatus status = CUDM_SUCCESS;
+  for (size_t i = 0; status == CUDM_SUCCESS && i < factors.size(); ++i)
+    status = setFactor(slot + i * static_cast<size_t>(batch),
+                       make_cuDoubleComplex(factors[i], 0.0), batch);
+  return status;
 }
 
 CudmStatus prepareWorkspace(HandleData *handle, OperatorData *op,
@@ -336,6 +378,8 @@ StateData *allocateLike(HandleData *handle, StateData *prototype) {
   return result;
 }
 
+// One step of rk1, rk2 or rk4. For rk4, deviceFactor holds the factors that
+// setRk4Factors uploaded; for the others it is the storage of one factor.
 CudmStatus integrateStep(HandleData *handle, OperatorData *op,
                          StateData *current, StateData *next,
                          StateData *temporary, StateData *k1, StateData *k2,
@@ -354,35 +398,45 @@ CudmStatus integrateStep(HandleData *handle, OperatorData *op,
     return status;
   }
 
-  // RK2 midpoint, or the first half of RK4.
-  status = copyState(current, temporary, deviceFactor);
-  if (status == CUDM_SUCCESS)
-    status = accumulate(k1, temporary, deviceFactor,
-                        make_cuDoubleComplex(0.5 * dt, 0.0));
-  if (status == CUDM_SUCCESS)
-    status = rhs(handle, op, temporary, k2, workspace, time + 0.5 * dt);
-  if (status != CUDM_SUCCESS)
-    return status;
-
   if (integrator == 3) {
-    status = copyState(current, next, deviceFactor);
+    // RK2 midpoint.
+    status = copyState(current, temporary, deviceFactor);
+    if (status == CUDM_SUCCESS)
+      status = accumulate(k1, temporary, deviceFactor,
+                          make_cuDoubleComplex(0.5 * dt, 0.0));
+    if (status == CUDM_SUCCESS)
+      status = rhs(handle, op, temporary, k2, workspace, time + 0.5 * dt);
+    if (status == CUDM_SUCCESS)
+      status = copyState(current, next, deviceFactor);
     if (status == CUDM_SUCCESS)
       status =
           accumulate(k2, next, deviceFactor, make_cuDoubleComplex(dt, 0.0));
     return status;
   }
 
-  status = copyState(current, temporary, deviceFactor);
+  const auto *factors = static_cast<const cuDoubleComplex *>(deviceFactor);
+  const auto batch = static_cast<size_t>(handle->batch);
+  const void *one = factors + kOne * batch;
+  const void *halfStep = factors + kHalfStep * batch;
+  const void *step = factors + kStep * batch;
+  const void *sixthStep = factors + kSixthStep * batch;
+  const void *thirdStep = factors + kThirdStep * batch;
+
+  status = copyStateUploaded(current, temporary, one);
   if (status == CUDM_SUCCESS)
-    status = accumulate(k2, temporary, deviceFactor,
-                        make_cuDoubleComplex(0.5 * dt, 0.0));
+    status = accumulateUploaded(k1, temporary, halfStep);
+  if (status == CUDM_SUCCESS)
+    status = rhs(handle, op, temporary, k2, workspace, time + 0.5 * dt);
+  if (status == CUDM_SUCCESS)
+    status = copyStateUploaded(current, temporary, one);
+  if (status == CUDM_SUCCESS)
+    status = accumulateUploaded(k2, temporary, halfStep);
   if (status == CUDM_SUCCESS)
     status = rhs(handle, op, temporary, k3, workspace, time + 0.5 * dt);
   if (status == CUDM_SUCCESS)
-    status = copyState(current, temporary, deviceFactor);
+    status = copyStateUploaded(current, temporary, one);
   if (status == CUDM_SUCCESS)
-    status =
-        accumulate(k3, temporary, deviceFactor, make_cuDoubleComplex(dt, 0.0));
+    status = accumulateUploaded(k3, temporary, step);
   // Sample the final RK stage from inside the current interval so a
   // discontinuity at the next pulse boundary does not shorten this interval by
   // dt / 6 (see boundarySafeSampleTime).
@@ -390,19 +444,15 @@ CudmStatus integrateStep(HandleData *handle, OperatorData *op,
     status = rhs(handle, op, temporary, k4, workspace,
                  boundarySafeSampleTime(time, dt));
   if (status == CUDM_SUCCESS)
-    status = copyState(current, next, deviceFactor);
+    status = copyStateUploaded(current, next, one);
   if (status == CUDM_SUCCESS)
-    status =
-        accumulate(k1, next, deviceFactor, make_cuDoubleComplex(dt / 6.0, 0.0));
+    status = accumulateUploaded(k1, next, sixthStep);
   if (status == CUDM_SUCCESS)
-    status =
-        accumulate(k2, next, deviceFactor, make_cuDoubleComplex(dt / 3.0, 0.0));
+    status = accumulateUploaded(k2, next, thirdStep);
   if (status == CUDM_SUCCESS)
-    status =
-        accumulate(k3, next, deviceFactor, make_cuDoubleComplex(dt / 3.0, 0.0));
+    status = accumulateUploaded(k3, next, thirdStep);
   if (status == CUDM_SUCCESS)
-    status =
-        accumulate(k4, next, deviceFactor, make_cuDoubleComplex(dt / 6.0, 0.0));
+    status = accumulateUploaded(k4, next, sixthStep);
   return status;
 }
 
@@ -999,16 +1049,25 @@ CudmStatus cudm_evolve(CudmHandle handle, CudmOperator op, CudmState stateIn,
   auto *k3 = scratch[5];
   auto *k4 = scratch[6];
 
+  const double dt = (timeEnd - timeStart) / static_cast<double>(numSteps);
+  // rk4 reads its factors from the device, where setRk4Factors puts them
+  // once: deviceFactor then starts with the factor one, which a copy takes.
+  // The other integrators upload each factor as they use it.
+  const bool rk4 = integrator == 4;
+  const size_t factorCount = rk4 ? kRk4FactorCount : 1;
+  const size_t factorBytes =
+      factorCount * static_cast<size_t>(owner->batch) * sizeof(cuDoubleComplex);
   void *deviceFactor = nullptr;
-  auto status = checkCuda(
-      cudaMalloc(&deviceFactor, owner->batch * sizeof(cuDoubleComplex)),
-      "cudaMalloc(integration factor)");
+  auto status = checkCuda(cudaMalloc(&deviceFactor, factorBytes),
+                          "cudaMalloc(integration factor)");
+  if (status == CUDM_SUCCESS && rk4)
+    status = setRk4Factors(deviceFactor, dt, owner->batch);
   if (status == CUDM_SUCCESS)
-    status = copyState(input, current, deviceFactor);
+    status = rk4 ? copyStateUploaded(input, current, deviceFactor)
+                 : copyState(input, current, deviceFactor);
   if (status == CUDM_SUCCESS)
     status = prepareWorkspace(owner, operatorData, current, k1, workspaceData);
 
-  const double dt = (timeEnd - timeStart) / static_cast<double>(numSteps);
   for (int64_t step = 0; status == CUDM_SUCCESS && step < numSteps; ++step) {
     const double stepTime = timeStart + static_cast<double>(step) * dt;
     if (integrator == 5) {
@@ -1029,7 +1088,8 @@ CudmStatus cudm_evolve(CudmHandle handle, CudmOperator op, CudmState stateIn,
     std::swap(current, next);
   }
   if (status == CUDM_SUCCESS)
-    status = copyState(current, output, deviceFactor);
+    status = rk4 ? copyStateUploaded(current, output, deviceFactor)
+                 : copyState(current, output, deviceFactor);
   if (deviceFactor)
     cudaFree(deviceFactor);
   for (auto *allocated : scratch)

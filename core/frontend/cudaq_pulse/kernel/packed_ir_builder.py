@@ -757,19 +757,12 @@ class PackedIRBuilder:
                             code="invalid_duration",
                         )
             if symbolic:
-                pvid = self._get_numeric_vid(dur_raw, "i64")
-                self._ensure(4)
-                self._w(_header(_WAIT, 3, 1 << 2))
-                self._w(lv)
-                self._w(rlv)
-                self._w(pvid)
+                header = _header(_WAIT, 3, 1 << 2)
+                word = self._get_numeric_vid(dur_raw, "i64")
             else:
-                dur = _as_i64(dur_raw, "wait duration")
-                self._ensure(4)
-                self._w(_header(_WAIT, 3))
-                self._w(lv)
-                self._w(rlv)
-                self._w(dur)
+                header = _WAIT_HEADER
+                word = _as_i64(dur_raw, "wait duration")
+            self._put((header, lv, rlv, word))
             return results
 
         # --- shift_phase ---
@@ -1263,7 +1256,6 @@ class PackedIRBuilder:
         for key in [k for k, vid in self._numeric_vids.items() if vid >= live]:
             del self._numeric_vids[key]
 
-    # Get a block-argument reference and infer its storage type.
     def _get_parameter_base_vid(self, param: Parameter, expected_dtype: str) -> int:
         if param.dtype == "unknown":
             param.dtype = expected_dtype
@@ -1583,11 +1575,7 @@ class PackedIRBuilder:
         what = ("duration", "amplitude", "sigma", "beta")[slot]
         return cycles(_WF_NAMES[wf_code], what, value, False, "", self.clock_ghz)
 
-    # Emit a waveform record, handling mixed Parameter/concrete values.
-    #
-    # For each value slot, if the value is a Parameter, emit a PARAM record
-    # first and encode the param vid. A param_mask bit flags parametric slots
-    # so the C++ decoder can distinguish vids from literals.
+    # The decoder uses the parameter mask to tell value ids from literals.
     def _emit_wf(self, wf_code: int, rv: int, vals: list[Any], dtypes: list[str]) -> None:
         encoded: list[int] = []
         param_mask = 0

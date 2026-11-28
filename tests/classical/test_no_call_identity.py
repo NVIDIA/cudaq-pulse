@@ -8,19 +8,17 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
-from pathlib import Path
 
 import cudaq_pulse as pulse
 import pytest
 
 from tests._handles import Q
-
-_ROOT = Path(__file__).resolve().parents[2]
+from tests._sources import source_file
 
 
 def _workloads():
     spec = importlib.util.spec_from_file_location(
-        "compile_time", _ROOT / "benchmarks" / "compiler" / "compile_time.py"
+        "compile_time", source_file("benchmarks/compiler/compile_time.py")
     )
     module = importlib.util.module_from_spec(spec)
     sys.modules.setdefault(spec.name, module)
@@ -29,7 +27,7 @@ def _workloads():
 
 
 WORKLOADS = _workloads()
-BASELINE = json.loads((_ROOT / "benchmarks" / "baselines" / "compile_time.json").read_text())
+BASELINE = json.loads(source_file("benchmarks/baselines/compile_time.json").read_text())
 
 
 @pytest.mark.parametrize("name", sorted(WORKLOADS))

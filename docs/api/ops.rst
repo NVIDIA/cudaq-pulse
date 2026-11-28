@@ -5,6 +5,12 @@
 Pulse Operations API
 ====================
 
+These are the operations a kernel calls: channel access, scheduling,
+phase and frequency changes, and waveform constructors and arithmetic.
+They are used as bare names inside a ``@pulse.kernel`` function, without
+importing them. See :doc:`../user_guide/operations` for what each
+operation does.
+
 Channel Access
 --------------
 

@@ -120,7 +120,18 @@ def available() -> list[str]:
 
 def register(name: str, factory: Callable[[], Backend]) -> None:
     """Make *factory* the backend *name* in this process; it takes precedence
-    over an installed backend of the same name."""
+    over an installed backend of the same name.
+
+    *factory* is called with no arguments when the backend is first used,
+    and must return a ``Backend`` (a class is called to make one).
+    Registering again replaces the earlier factory. Raises
+    ``InvalidValueError`` when *name* is not an identifier.
+
+    Example::
+
+        backends.register("text", TextBackend)
+        backend = backends.get("text")
+    """
     if not name or not name.isidentifier():
         raise InvalidValueError(f"a backend name is an identifier, got {name!r}")
     with _lock:
@@ -129,7 +140,11 @@ def register(name: str, factory: Callable[[], Backend]) -> None:
 
 
 def unregister(name: str) -> None:
-    """Remove a backend ``register`` added."""
+    """Remove a backend ``register`` added.
+
+    Does nothing when *name* was never registered. An installed backend
+    of the same name is unaffected, and ``get`` finds it again.
+    """
     with _lock:
         _registered.pop(name, None)
         _loaded.pop((name, "registered"), None)
@@ -167,7 +182,21 @@ def _load(name: str, found: EntryPoint) -> Any:
 
 
 def get(name: str) -> Backend:
-    """The backend *name*, loaded on first use and kept."""
+    """The backend *name*, loaded on first use and kept.
+
+    A registered backend takes precedence over an installed one of the
+    same name. Raises ``BackendNotFoundError`` when no backend of that
+    name is installed or registered, and ``IncompatibleBackendError``
+    when an installed backend fails to load, or when the backend is not
+    a ``Backend`` or reads none of the formats this cudaq-pulse exports.
+    An error a registered factory raises is passed on as it is.
+
+    Example::
+
+        backends.register("text", TextBackend)
+        backend = backends.get("text")
+        backends.get("text") is backend    # True
+    """
     with _lock:
         factory = _registered.get(name)
         key = (name, "registered")

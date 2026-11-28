@@ -294,3 +294,39 @@ func.func @played_on_another_line() {
   %e1, %t3 = pulse.drive %e, %wf, %t2 <{duration_cycles = 16 : i64, start_cycles = 16 : i64}> : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
   return
 }
+
+// -----
+
+// In a loop that carries the tone through the branch, when the tone is free
+// is no one pattern over the iterations: a change in an arm that no pulse
+// plays with is still made once the measurement the branch tests is in, in
+// every iteration, as in the loop written out.
+
+// CHECK-LABEL: func.func @in_an_arm_in_a_loop
+func.func @in_an_arm_in_a_loop() {
+  %qa = pulse.qudit_alloc {qudit = 0 : i64} : !pulse.qudit
+  %qb = pulse.qudit_alloc {qudit = 1 : i64} : !pulse.qudit
+  %d, %t = pulse.get_drive_line %qa : (!pulse.qudit) -> (!pulse.drive_line, !pulse.tone)
+  %r, %rt = pulse.get_readout_line %qb : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
+  %ph = arith.constant 2.500000e-01 : f64
+  %ro_duration = arith.constant 200 : i64
+  %amplitude = arith.constant 5.000000e-02 : f64
+  %ro = pulse.gaussian %ro_duration, %amplitude, %amplitude : i64, f64, f64 -> !pulse.waveform
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c3 = arith.constant 3 : index
+  %res:3 = scf.for %i = %c0 to %c3 step %c1 iter_args(%tone = %t, %l = %r, %lt = %rt) -> (!pulse.tone, !pulse.readout_line, !pulse.tone) {
+    %l1, %lt1, %m = pulse.readout %l, %ro, %lt, iq <{duration_cycles = 200 : i64, period_cycles = array<i64: 200>, start_cycles = 0 : i64}> : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %c = pulse.is_set %m : !pulse.measurement -> i1
+    %t2 = scf.if %c -> (!pulse.tone) {
+      // CHECK: pulse.shift_phase
+      // CHECK-SAME: <{duration_cycles = 0 : i64, period_cycles = array<i64: 200>, start_cycles = 200 : i64}> {pulse.unconsumed}
+      %t1 = pulse.shift_phase %tone, %ph : !pulse.tone, f64 -> !pulse.tone
+      scf.yield %t1 : !pulse.tone
+    } else {
+      scf.yield %tone : !pulse.tone
+    }
+    scf.yield %t2, %l1, %lt1 : !pulse.tone, !pulse.readout_line, !pulse.tone
+  }
+  return
+}

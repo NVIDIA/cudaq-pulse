@@ -13,6 +13,7 @@ import pytest
 from cudaq_pulse import ControlSystem, _classical_report
 from cudaq_pulse.classical import Link
 
+from tests import _tools
 from tests._handles import Q
 
 MACHINE = ControlSystem(links={"host": Link(fixed_ns=4, slots=4)})
@@ -108,5 +109,6 @@ def test_a_call_before_a_loop_of_10_7_iterations_is_reported_without_them():
     lowered = lowered.lower(Q[0], Q[1])
     began = time.process_time()
     (call,) = lowered.classical_report()
-    assert time.process_time() - began < 5
+    # The time is the uninstrumented build's.
+    assert _tools.under_sanitizers() or time.process_time() - began < 5
     assert call.exposed_cycles is not None

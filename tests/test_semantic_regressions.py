@@ -14,6 +14,7 @@ from cudaq_pulse._native._cudaq_pulse_native import PulseModuleBuilder
 from cudaq_pulse.kernel.ir_builder import CompilationError
 
 from tests._handles import Q
+from tests._sources import source_file
 
 
 def _drive_timings(mlir: str) -> list[tuple[int, int]]:
@@ -295,9 +296,8 @@ def test_virtual_time_arguments_are_not_silently_truncated():
 def test_alap_rcp_never_schedules_before_time_zero():
     import importlib.util
     import sys
-    from pathlib import Path
 
-    path = Path(__file__).resolve().parents[1] / "benchmarks" / "compiler" / "compile_time.py"
+    path = source_file("benchmarks/compiler/compile_time.py")
     spec = importlib.util.spec_from_file_location("compile_time", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules.setdefault(spec.name, module)

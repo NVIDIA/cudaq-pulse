@@ -41,6 +41,15 @@ namespace cudaq_pulse {
 /// in it, rather than loading that dialect under the threads using it.
 mlir::DialectRegistry sharedContextDialects();
 
+/// The producer string of the bytecode this extension writes, a pickled
+/// module's and a copy's: it states the source of the Pulse and Classical
+/// dialects the bytecode is written with (cmake/write_dialect_source.cmake),
+/// which load() holds a bytecode module to. Bytecode holds an operation's
+/// properties by position, in the shape of the writer's dialects.
+inline constexpr char kBytecodeProducer[] = "cudaq-pulse cudaq-pulse-dialects="
+#include "cudaq-pulse/Dialect/DialectSource.inc"
+    ;
+
 /// `module` copied, through bytecode as a pickled module is, into a context
 /// with every dialect of `registry()` loaded that the calling thread keeps
 /// for its lowerings: no other thread reaches that context, so nothing in it

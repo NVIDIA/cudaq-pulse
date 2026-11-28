@@ -168,7 +168,8 @@ after it so runs shifted through the wait, and the drives after it have
 the phase gained. The next drive or readout on
 its tone takes it in its ``frequency_hz`` and ``phase_rad``; in a loop, the
 next iteration's do. In a loop whose iterations do not play its tone, a
-change is at the start of each iteration. A change takes no time: every
+change is at the start of each iteration, or, where it depends on
+readouts, once they complete. A change takes no time: every
 drive, readout, wait and loop, and the program, starts and lasts as it does
 without it.
 

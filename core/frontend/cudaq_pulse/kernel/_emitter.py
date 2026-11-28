@@ -295,6 +295,9 @@ def _uses_pulse_ops(
     if owner is None:
         return False
     owners = [owner]
+    # The ids of the objects in *owners*, which keeps them alive; made
+    # when the first object *owner* holds is found.
+    known: set[int] | None = None
     for holder in owners:
         for name in fn.__code__.co_names:
             attr = _static_attr(holder, name)
@@ -305,8 +308,12 @@ def _uses_pulse_ops(
             if isinstance(attr, types.FunctionType):
                 if _uses_pulse_ops(attr, seen, holder, strict=True):
                     return True
-            elif _may_own_helpers(attr) and all(attr is not o for o in owners):
-                owners.append(attr)
+            elif _may_own_helpers(attr):
+                if known is None:
+                    known = {id(owner)}
+                if id(attr) not in known:
+                    known.add(id(attr))
+                    owners.append(attr)
     return False
 
 
@@ -863,7 +870,6 @@ _UNBOUND = object()
 # The tag of ("__unresolved__", name), a name nothing in scope defines.
 _UNRESOLVED = "__unresolved__"
 
-_LINE_OPS = frozenset({"get_drive_line", "get_readout_line"})
 # Ops that play a waveform on a line, at its tone or at the keyword tone.
 _PLAYS = frozenset({"drive", "readout"})
 _first = operator.itemgetter(0)
@@ -4153,7 +4159,7 @@ class PulseIREmitter:
             self.stack.append(results[-1])
         elif fname in {"drive", "wait", "sync"}:
             self.stack.append(None)
-        elif fname in _LINE_OPS:
+        elif fname in _ACQUIRES:
             self.stack.append(results[0])
         elif len(results) == 1:
             self.stack.append(results[0])
@@ -4211,10 +4217,9 @@ class PulseIREmitter:
             raise CompilationError(f"unknown pulse op: {fname}", code="unknown_name")
 
         value_count, attr_names, rtypes, operand_types = entry
-        acquires = fname in _ACQUIRES
         line_op = False
-        if acquires:
-            if fname in _LINE_OPS and call_args and call_args[0].__class__ is IRValue:
+        if fname in _ACQUIRES:
+            if call_args and call_args[0].__class__ is IRValue:
                 lines = self._lines
                 held = lines.held.get((call_args[0].vid, fname))
                 if held is not None:
@@ -4469,7 +4474,6 @@ class PulseIREmitter:
             del slots[id(old)]
             slots[id(new)] = (slot[0], slot[1], new)
 
-    # Find the local variable name bound to a given IRValue.
     def _find_local_name(self, val: IRValue) -> str | None:
         for name, v in self.locals.items():
             if v is val:

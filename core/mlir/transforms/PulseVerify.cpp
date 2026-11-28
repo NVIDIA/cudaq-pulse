@@ -82,42 +82,130 @@ static void conditionMeasurements(mlir::Value value,
   }
 }
 
-/// Checks the schedule attributes of one function, walking the program in
-/// execution order. Loops are checked on their first two iterations and
-/// their last: with one period per line, those bound every iteration. An op
-/// is reported once, at the first iteration it is wrong in.
+/// Checks the schedule attributes of one function: every drive, readout
+/// and wait has its times, starts no earlier than time zero, than the
+/// measurements the branches around it wait for, and than the operation
+/// before it on its physical line ends, in every iteration of the loops
+/// around it.
+///
+/// What is reported is what a walk of the program in execution order
+/// reports, each loop at its first two iterations and its last, one inside
+/// the other: an operation once, at the first of those visits at which it
+/// is wrong, in the order of the visits. That walk takes three to the
+/// power of the loops' depth; this one takes the operations times the
+/// depth (times, for an operation in a branch inside loops, the readouts
+/// it waits for that move differently), from three facts. With one period per
+/// line per loop, which a loop is held to before it is walked (checkPeriods),
+/// and none negative:
+///
+/// - A start only grows with the iteration, so one before time zero is
+///   before it at the first visit.
+/// - The time from a measurement's end to a start is affine in the
+///   iteration, so the first visit at which it is negative is found a loop
+///   at a time (startsBeforeMeasured).
+/// - What a line's operations end at only grows along the walk (but for
+///   the arm of a branch that is walked second, which starts from where
+///   the first started), and by a line's period from one iteration to the
+///   next. So an operation that
+///   starts before the latest end on its line at any visit does so at the
+///   first visit, or at a visit with exactly one loop at its second
+///   iteration and the others at their first: any later visit repeats the
+///   comparisons of one of those, moved by whole periods, against ends
+///   that were already there.
+///
+/// So the walk makes one pass with every loop at its first iteration,
+/// and, at each loop it meets there, one more of that loop's body at its
+/// second iteration with the loops inside it at their first. When a loop
+/// is left, each line it touched ends where its operations end with the
+/// loop and those inside it at their last iterations, as after the walk
+/// of every visit.
 class TimingChecker {
   pulse::AllocationTracer trace;
 
 public:
   bool hadError = false;
 
-  void checkBlock(mlir::Block &block) {
-    for (mlir::Operation &op : block.without_terminator())
-      checkOp(&op);
-  }
-
   /// A timed or placed function (pulse.schedule_state) is scheduled as a
   /// whole: every timed op that runs has a schedule.
   void checkFunction(mlir::func::FuncOp function) {
     checkBlock(function.getBody().front());
+    // In the order of the visits.
+    llvm::stable_sort(reports, [](const Report &a, const Report &b) {
+      return std::lexicographical_compare(a.visit.begin(), a.visit.end(),
+                                          b.visit.begin(), b.visit.end());
+    });
+    for (const Report &found : reports)
+      found.op->emitError(found.message);
     pulse::ScheduleState state = pulse::scheduleStateOf(function);
-    if (state != pulse::ScheduleState::Unscheduled && unscheduled &&
-        report(unscheduled))
-      unscheduled->emitError("operation is not scheduled, but its function is ")
-          << pulse::stringifyScheduleState(state);
+    if (state != pulse::ScheduleState::Unscheduled && unscheduled) {
+      hadError = true;
+      if (!reportOf.count(unscheduled))
+        unscheduled->emitError(
+            "operation is not scheduled, but its function is ")
+            << pulse::stringifyScheduleState(state);
+    }
   }
 
 private:
-  /// Whether to report a fault of `op`: not if it has been reported.
-  bool report(mlir::Operation *op) {
+  /// The kinds of fault of an operation, in the order they are looked for
+  /// at one visit: the first found is the one reported.
+  enum Fault : int64_t {
+    NoStart,
+    NoDuration,
+    NoLength,
+    WrongDuration,
+    PeriodCount,
+    BeforeZero,
+    NoLine,
+    BeforeMeasured,
+    BeforeEnd,
+  };
+
+  /// A fault of `op` and where in the walk it is found: the place of each
+  /// block and operation around it among its siblings, the iteration rank
+  /// of each loop, and the kind of fault.
+  struct Report {
+    llvm::SmallVector<int64_t, 12> visit;
+    mlir::Operation *op;
+    std::string message;
+  };
+
+  /// Keeps the fault of `op` found at `visit` if it is its first in the
+  /// order of the visits.
+  void report(mlir::Operation *op, llvm::SmallVector<int64_t, 12> visit,
+              const llvm::Twine &message) {
     hadError = true;
-    return reported.insert(op).second;
+    auto [it, inserted] = reportOf.try_emplace(op, reports.size());
+    if (inserted) {
+      reports.push_back({std::move(visit), op, message.str()});
+      return;
+    }
+    Report &old = reports[it->second];
+    if (std::lexicographical_compare(visit.begin(), visit.end(),
+                                     old.visit.begin(), old.visit.end())) {
+      old.visit = std::move(visit);
+      old.message = message.str();
+    }
   }
 
-  void error(mlir::Operation *op, const llvm::Twine &message) {
-    if (report(op))
-      op->emitError(message);
+  /// The visit being made, for a fault of kind `fault`.
+  llvm::SmallVector<int64_t, 12> here(int64_t fault) const {
+    llvm::SmallVector<int64_t, 12> visit(place.begin(), place.end());
+    visit.push_back(fault);
+    return visit;
+  }
+
+  void error(mlir::Operation *op, Fault fault, const llvm::Twine &message) {
+    report(op, here(fault), message);
+  }
+
+  void checkBlock(mlir::Block &block) {
+    place.push_back(0);
+    for (mlir::Operation &op : block.without_terminator()) {
+      checkOp(&op);
+      ++place.back();
+    }
+    place.pop_back();
   }
 
   void checkOp(mlir::Operation *op) {
@@ -127,86 +215,243 @@ private:
       return checkLoop(loop);
     if (auto branch = mlir::dyn_cast<mlir::scf::IfOp>(op))
       return checkIf(branch);
+    if (op->getNumRegions() == 0)
+      return;
+    place.push_back(0);
     for (mlir::Region &region : op->getRegions())
-      for (mlir::Block &block : region)
+      for (mlir::Block &block : region) {
         checkBlock(block);
+        ++place.back();
+      }
+    place.pop_back();
+  }
+
+  /// Leaves `op` out of the second iteration of the loops around it.
+  void passOver(mlir::Operation *op) {
+    if (!around.empty())
+      untimed.insert(op);
   }
 
   void checkTimed(mlir::Operation *op) {
-    auto start = pulse::scheduledStart(op, iteration);
+    // The loop at its second iteration in this pass, if any; the others
+    // are at their first.
+    bool first = !second;
+    if (!first && !untimed.empty() && untimed.count(op))
+      return;
+    auto start = pulse::startCycles(op);
     auto duration = pulse::scheduledDuration(op);
     if (!start && !duration) {
-      if (!unscheduled)
+      if (first && !unscheduled)
         unscheduled = op;
       return;
     }
-    if (!start)
-      return error(op, "a scheduled operation needs start_cycles");
-    if (!duration)
-      return error(op, "a scheduled operation needs duration_cycles");
-    if (!op->hasAttr("classical.variable")) {
-      std::optional<int64_t> cycles = cyclesOf(op);
-      if (!cycles)
-        return error(op, "a scheduled operation needs a known length");
-      if (*cycles != *duration && report(op))
-        op->emitError("duration_cycles is ")
-            << *duration << ", but the operation takes " << *cycles
-            << " cycles";
+    if (first) {
+      if (!start) {
+        passOver(op);
+        return error(op, NoStart, "a scheduled operation needs start_cycles");
+      }
+      if (!duration) {
+        passOver(op);
+        return error(op, NoDuration,
+                     "a scheduled operation needs duration_cycles");
+      }
+      if (!op->hasAttr("classical.variable")) {
+        std::optional<int64_t> cycles = cyclesOf(op);
+        if (!cycles) {
+          passOver(op);
+          return error(op, NoLength,
+                       "a scheduled operation needs a known length");
+        }
+        if (*cycles != *duration)
+          error(op, WrongDuration,
+                "duration_cycles is " + llvm::Twine(*duration) +
+                    ", but the operation takes " + llvm::Twine(*cycles) +
+                    " cycles");
+      }
     }
-    if (pulse::periodCycles(op).size() != iteration.size()) {
-      error(op,
-            "scheduled operation needs one period_cycles entry per enclosing "
-            "scf.for");
-      return;
+    llvm::ArrayRef<int64_t> periods = pulse::periodCycles(op);
+    if (first && periods.size() != around.size()) {
+      passOver(op);
+      return error(op, PeriodCount,
+                   "scheduled operation needs one period_cycles entry per "
+                   "enclosing scf.for");
     }
-    if (*start < 0 && report(op))
-      op->emitError("operation is scheduled before time zero: start ")
-          << *start;
+    int64_t at = *start + (first ? 0 : periods[*second]);
+    if (first && at < 0)
+      error(op, BeforeZero,
+            "operation is scheduled before time zero: start " +
+                llvm::Twine(at));
     mlir::Operation *physicalLine = trace(op->getOperand(0));
     if (!physicalLine) {
-      error(op, "cannot trace timed operation to a physical line");
+      if (first) {
+        passOver(op);
+        error(op, NoLine, "cannot trace timed operation to a physical line");
+      }
       return;
     }
-    if (*start < measured && report(op))
-      op->emitError("operation in a measurement-conditioned branch starts at ")
-          << *start << ", before its measurement completes at " << measured;
-    auto it = lastEnd.find(physicalLine);
-    if (it != lastEnd.end() && *start < it->second && report(op))
-      op->emitError("operation overlaps or precedes its physical-line "
-                    "predecessor: start ")
-          << *start << " < prior end " << it->second;
-    lastEnd[physicalLine] =
-        std::max(lastEnd.lookup(physicalLine), *start + *duration);
+    if (around.empty()) {
+      if (at < measured)
+        error(op, BeforeMeasured,
+              "operation in a measurement-conditioned branch starts at " +
+                  llvm::Twine(at) + ", before its measurement completes at " +
+                  llvm::Twine(measured));
+    } else if (first && !readouts.empty()) {
+      startsBeforeMeasured(op, *start, periods);
+    }
+    int64_t end = at + *duration;
+    auto [it, inserted] = lastEnd.try_emplace(physicalLine, 0);
+    if (!inserted && at < it->second)
+      error(op, BeforeEnd,
+            "operation overlaps or precedes its physical-line predecessor: "
+            "start " +
+                llvm::Twine(at) + " < prior end " + llvm::Twine(it->second));
+    it->second = std::max(it->second, end);
+    if (!inside.empty()) {
+      auto [held, fresh] = inside.back().try_emplace(physicalLine, end, op);
+      if (!fresh && end > held->second.first)
+        held->second = {end, op};
+    }
+  }
+
+  /// The iterations of a loop of `trips` that the walk of every visit
+  /// makes, in its order: the first two and the last.
+  static llvm::SmallVector<int64_t, 3> visited(int64_t trips) {
+    llvm::SmallVector<int64_t, 3> iterations;
+    for (int64_t k = 0; k < trips; ++k) {
+      if (k == 2 && trips > 3)
+        k = trips - 1;
+      iterations.push_back(k);
+    }
+    return iterations;
+  }
+
+  /// Reports `op`, which starts at `start` in the first iteration of the
+  /// loops around it and moves by `periods`, at the first visit at which it
+  /// starts before a measurement the branches around it wait for
+  /// completes. The time between is affine in the iteration: per readout,
+  /// a loop at a time from the outermost, the earliest iteration is taken
+  /// from which the loops inside can still make it negative.
+  void startsBeforeMeasured(mlir::Operation *op, int64_t start,
+                            llvm::ArrayRef<int64_t> periods) {
+    size_t depth = around.size();
+    llvm::SmallVector<int64_t, 4> moves(depth), least(depth + 1, 0);
+    llvm::SmallVector<int64_t, 4> best, ranks(depth), chosen(depth);
+    for (const Waited &waited : readouts) {
+      llvm::ArrayRef<int64_t> its = waited.periods;
+      size_t shared = its.size();
+      int64_t between = start - waited.end;
+      for (size_t level = depth; level-- > 0;) {
+        moves[level] = periods[level] - (level < shared ? its[level] : 0);
+        int64_t low = 0;
+        for (int64_t k : around[level].iterations)
+          low = std::min(low, moves[level] * k);
+        least[level] = least[level + 1] + low;
+      }
+      if (between + least[0] >= 0)
+        continue;
+      for (size_t level = 0; level < depth; ++level) {
+        llvm::ArrayRef<int64_t> iterations = around[level].iterations;
+        for (size_t rank = 0; rank < iterations.size(); ++rank) {
+          int64_t next = between + moves[level] * iterations[rank];
+          if (next + least[level + 1] < 0) {
+            between = next;
+            ranks[level] = rank;
+            break;
+          }
+        }
+      }
+      if (best.empty() ||
+          std::lexicographical_compare(ranks.begin(), ranks.end(), best.begin(),
+                                       best.end()))
+        best.assign(ranks.begin(), ranks.end());
+    }
+    if (best.empty())
+      return;
+    for (size_t level = 0; level < depth; ++level)
+      chosen[level] = around[level].iterations[best[level]];
+    int64_t at = start;
+    for (size_t level = 0; level < depth; ++level)
+      at += chosen[level] * periods[level];
+    int64_t completes = std::numeric_limits<int64_t>::min();
+    for (const Waited &waited : readouts) {
+      int64_t end = waited.end;
+      for (size_t level = 0; level < waited.periods.size(); ++level)
+        end += chosen[level] * waited.periods[level];
+      completes = std::max(completes, end);
+    }
+    llvm::SmallVector<int64_t, 12> visit = here(BeforeMeasured);
+    for (size_t level = 0; level < depth; ++level)
+      visit[around[level].rank] = best[level];
+    report(op, std::move(visit),
+           "operation in a measurement-conditioned branch starts at " +
+               llvm::Twine(at) + ", before its measurement completes at " +
+               llvm::Twine(completes));
   }
 
   void checkLoop(mlir::scf::ForOp loop) {
+    bool first = !second;
+    if (!first && !unwalked.empty() && unwalked.count(loop))
+      return;
     auto trips = pulse::constantTripCount(loop);
     if (!trips) {
+      unwalked.insert(loop);
       for (mlir::Operation &inner : loop.getBody()->without_terminator())
         if (isTimedOp(&inner) && pulse::hasStart(&inner)) {
-          error(&inner, "a scheduled loop needs constant bounds");
+          place.push_back(-1);
+          error(&inner, NoStart, "a scheduled loop needs constant bounds");
+          place.pop_back();
           return;
         }
       return;
     }
     // Checking iterations relies on one period per line.
-    if (!checkPeriods(loop))
+    if (first && !checkPeriods(loop)) {
+      unwalked.insert(loop);
       return;
-    iteration.push_back(0);
-    for (int64_t k = 0; k < *trips; ++k) {
-      if (k == 2 && *trips > 3)
-        k = *trips - 1;
-      iteration.back() = k;
-      checkBlock(*loop.getBody());
     }
-    iteration.pop_back();
+    if (*trips == 0)
+      return;
+    size_t level = around.size();
+    around.push_back({visited(*trips), place.size()});
+    // The first iteration; what each line ends at in it, the loops inside
+    // at their last.
+    inside.emplace_back();
+    place.push_back(0);
+    checkBlock(*loop.getBody());
+    if (first && *trips > 1) {
+      // The second, with the loops inside at their first.
+      second = level;
+      inside.emplace_back();
+      place.back() = 1;
+      checkBlock(*loop.getBody());
+      inside.pop_back();
+      second.reset();
+    }
+    place.pop_back();
+    around.pop_back();
+    // Left: each line ends where it does with the loop at its last
+    // iteration, a whole number of its periods after the first.
+    LineEnds ends = std::move(inside.back());
+    inside.pop_back();
+    for (auto &[line, held] : ends) {
+      auto [end, op] = held;
+      end += (*trips - 1) * pulse::periodCycles(op)[level];
+      int64_t &last = lastEnd[line];
+      last = std::max(last, end);
+      if (!inside.empty()) {
+        auto [outer, fresh] = inside.back().try_emplace(line, end, op);
+        if (!fresh && end > outer->second.first)
+          outer->second = {end, op};
+      }
+    }
   }
 
   /// Within one iteration of `loop`, every op on a physical line must move
   /// by the same non-negative period from one iteration to the next.
   bool checkPeriods(mlir::scf::ForOp loop) {
-    size_t level = iteration.size();
+    size_t level = around.size();
     bool ok = true;
+    int64_t seen = 0;
     llvm::DenseMap<mlir::Operation *, int64_t> periodOf;
     loop.getBody()->walk([&](mlir::Operation *op) {
       if (!isTimedOp(op))
@@ -215,45 +460,82 @@ private:
       if (periods.size() <= level)
         return;
       int64_t period = periods[level];
-      if (period < 0) {
+      // Before the loop's own visits, in the order of its operations.
+      auto fault = [&](const char *message) {
         ok = false;
-        return error(op, "period_cycles must not be negative");
-      }
+        llvm::SmallVector<int64_t, 12> visit(place.begin(), place.end());
+        visit.push_back(-1);
+        visit.push_back(seen);
+        report(op, std::move(visit), message);
+      };
+      ++seen;
+      if (period < 0)
+        return fault("period_cycles must not be negative");
       mlir::Operation *line = trace(op->getOperand(0));
       auto [it, inserted] = periodOf.try_emplace(line, period);
-      if (!inserted && it->second != period) {
-        ok = false;
-        error(op, "operations on one line in a loop must share its period");
-      }
+      if (!inserted && it->second != period)
+        fault("operations on one line in a loop must share its period");
     });
     return ok;
   }
 
   void checkIf(mlir::scf::IfOp branch) {
     int64_t savedMeasured = measured;
+    size_t savedReadouts = readouts.size();
     llvm::SmallVector<mlir::Value> measurements;
     llvm::DenseSet<mlir::Value> seen;
     conditionMeasurements(branch.getCondition(), measurements, seen);
     for (mlir::Value measurement : measurements)
       if (auto readout = measurement.getDefiningOp<pulse::ReadoutOp>()) {
-        size_t depth = pulse::enclosingLoops(readout).size();
-        auto start = pulse::scheduledStart(
-            readout, llvm::ArrayRef(iteration).take_front(depth));
+        auto start = pulse::startCycles(readout);
         auto duration = pulse::scheduledDuration(readout);
-        if (start && duration)
+        if (!start || !duration)
+          continue;
+        if (around.empty())
           measured = std::max(measured, *start + *duration);
+        waitFor(readout, *start + *duration, savedReadouts);
       }
 
     auto before = lastEnd;
+    place.push_back(0);
     checkBlock(*branch.thenBlock());
     if (!branch.getElseRegion().empty()) {
       auto afterThen = std::move(lastEnd);
       lastEnd = std::move(before);
+      place.back() = 1;
       checkBlock(*branch.elseBlock());
       for (auto [line, end] : afterThen)
         lastEnd[line] = std::max(lastEnd.lookup(line), end);
     }
+    place.pop_back();
     measured = savedMeasured;
+    readouts.truncate(savedReadouts);
+  }
+
+  /// Adds `readout`, which ends at `end` in the first iteration of the
+  /// loops around it, to the readouts the operations visited wait for;
+  /// `own` is where those of the branch being entered begin. Of two that
+  /// move alike from one iteration to the next, the one that ends later is
+  /// the later at every visit: the other is not kept, or, if it is one of
+  /// this branch's, gives way.
+  void waitFor(mlir::Operation *readout, int64_t end, size_t own) {
+    // Outside every loop no readout moves.
+    llvm::ArrayRef<int64_t> its;
+    if (!around.empty())
+      its = pulse::periodCycles(readout).take_front(
+          std::min(pulse::enclosingLoops(readout).size(), around.size()));
+    for (size_t i = readouts.size(); i-- > 0;) {
+      Waited &other = readouts[i];
+      if (other.periods != its)
+        continue;
+      if (other.end >= end)
+        return;
+      if (i >= own) {
+        other.end = end;
+        return;
+      }
+    }
+    readouts.push_back({its, end});
   }
 
   /// The cycles a drive, readout or wait takes, as the scheduler places it.
@@ -265,11 +547,43 @@ private:
     return pulse::waitCycles(mlir::cast<pulse::WaitOp>(op));
   }
 
+  /// A loop around the operation visited: the iterations the walk of every
+  /// visit makes of it, and where its rank is in `place`.
+  struct Around {
+    llvm::SmallVector<int64_t, 3> iterations;
+    size_t rank;
+  };
+  /// Per physical line, the latest end of its operations and one of them.
+  using LineEnds =
+      llvm::SmallDenseMap<mlir::Operation *,
+                          std::pair<int64_t, mlir::Operation *>, 4>;
+
   llvm::DenseMap<mlir::Operation *, int64_t> lastEnd;
-  llvm::DenseSet<mlir::Operation *> reported;
+  std::vector<Report> reports;
+  llvm::DenseMap<mlir::Operation *, size_t> reportOf;
   /// The first timed op without a schedule, if any.
   mlir::Operation *unscheduled = nullptr;
-  llvm::SmallVector<int64_t, 2> iteration;
+  /// The loops around the operation visited, outermost first; the one at
+  /// its second iteration in this pass, if any; and, per loop being walked
+  /// at its first iteration, what its lines end at in it.
+  llvm::SmallVector<Around, 4> around;
+  std::optional<size_t> second;
+  llvm::SmallVector<LineEnds, 4> inside;
+  /// Where the walk is: see Report.
+  llvm::SmallVector<int64_t, 12> place;
+  /// Timed ops that end no line (a fault said why at their first visit),
+  /// and loops that are not walked.
+  llvm::DenseSet<mlir::Operation *> untimed, unwalked;
+  /// A readout the branches around the operation visited wait for: its
+  /// periods in the loops around it that are around the operation too, and
+  /// its end in their first iteration.
+  struct Waited {
+    llvm::ArrayRef<int64_t> periods;
+    int64_t end;
+  };
+  /// Those readouts, but the ones another is later than at every visit;
+  /// outside every loop, the latest of their ends.
+  llvm::SmallVector<Waited, 2> readouts;
   int64_t measured = std::numeric_limits<int64_t>::min();
 };
 

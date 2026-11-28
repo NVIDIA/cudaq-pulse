@@ -155,8 +155,6 @@ def test_the_drive_strength_comes_from_the_drive():
     scaled = _target(drive=MicrowaveDrive(amplitude_scale_rad_per_ns=2.0))
     assert scaled.drive_amplitude_scale(0) == 2.0
     assert _target().drive_amplitude_scale(0) == 1.0
-    with pytest.raises(pulse.InvalidValueError, match="must be positive"):
-        _target(drive=MicrowaveDrive(amplitude_scale_rad_per_ns=0.0)).drive_amplitude_scale(0)
     with pytest.raises(pulse.UnsupportedError, match="no drive model for _Optical"):
         _target(drive=_Optical()).drive_amplitude_scale(0)
 
@@ -222,6 +220,17 @@ def test_a_square_pulse_turns_the_qudit_by_its_scale(made):
     # 20 ns at pi / 20 with a scale of 0.5 is a quarter turn.
     result = pulse.simulate(turn, qs.qudits[0], quantum_system=qs)
     assert result.level_population(1) == pytest.approx(0.5, abs=1e-3)
+
+
+@pytest.mark.parametrize("made", [Drive, MicrowaveDrive])
+@pytest.mark.parametrize("value", [0.0, -0.5])
+def test_drive_amplitude_scale_error_includes_the_value(made, value):
+    target = _target(drive=made(amplitude_scale_rad_per_ns=value))
+    with pytest.raises(pulse.InvalidValueError) as error:
+        target.drive_amplitude_scale(0)
+    assert str(error.value) == (
+        f"amplitude_scale_rad_per_ns must be positive for qudit 0, got {value!r}"
+    )
 
 
 def test_a_readout_no_model_knows_is_refused():

@@ -7,7 +7,9 @@ Reads the changed paths, one per line, from standard input and prints three
 lines, ``native=``, ``python=`` and ``docs=``, each ``true`` or ``false``:
 
 * ``native``: the change can reach the compiler, the runtime, the build or
-  the workflows. Every job runs.
+  the workflows. Every job runs. An input of the native build is native
+  wherever it sits (``NATIVE_INPUTS``, and any C or C++ source and any CMake
+  file): it is looked for before the directories of the next class.
 * ``python``: it can reach the Python package, its tests, the examples, the challenges, the
   benchmarks or the tools. Every job but the old-compiler builds runs.
 * ``docs``: it can reach the built pages, or a file that tests read (the
@@ -51,6 +53,19 @@ DOCS = (
     "NOTICE",
     "THIRD_PARTY_NOTICES",
 )
+# What the native build reads from the directories of PYTHON: the pinned
+# MLIR toolchain and the script that fetches it, the cuDensityMat fake that
+# the runtime host tests compile, and the build's configuration and the
+# pinned versions of its tools (CMake, Ninja, lit, nanobind).
+NATIVE_INPUTS = (
+    "tools/mlir-toolchain.lock.json",
+    "tools/fetch-mlir-toolchain.py",
+    "tests/runtime/fake_cudensitymat/",
+    "pyproject.toml",
+    "uv.lock",
+)
+# A compiled source or a CMake file, in any directory.
+NATIVE_SUFFIXES = (".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".td", ".cmake")
 PYTHON = (
     "core/frontend/",
     "tests/",
@@ -58,9 +73,7 @@ PYTHON = (
     "challenges/",
     "benchmarks/",
     "tools/",
-    "pyproject.toml",
     "pyrightconfig.json",
-    "uv.lock",
     ".pre-commit-config.yaml",
 )
 
@@ -69,10 +82,17 @@ def _in(path: str, names: tuple[str, ...]) -> bool:
     return any(path.startswith(name) if name.endswith("/") else path == name for name in names)
 
 
+def _native_input(path: str) -> bool:
+    name = path.rsplit("/", 1)[-1]
+    return _in(path, NATIVE_INPUTS) or name == "CMakeLists.txt" or name.endswith(NATIVE_SUFFIXES)
+
+
 def classify(paths: list[str]) -> dict[str, bool]:
     """The three answers for *paths*; every path counts, the widest class wins."""
     paths = [path.strip() for path in paths if path.strip()]
-    native = not paths or any(not _in(path, META + DOCS + PYTHON) for path in paths)
+    native = not paths or any(
+        _native_input(path) or not _in(path, META + DOCS + PYTHON) for path in paths
+    )
     python = native or any(_in(path, PYTHON) for path in paths)
     docs = python or any(_in(path, DOCS) for path in paths)
     return {"native": native, "python": python, "docs": docs}

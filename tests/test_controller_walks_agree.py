@@ -62,9 +62,9 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from tests._handles import Q, ladder_target
+from tests._sources import source_file
 from tests.property_settings import examples
 
-_ROOT = Path(__file__).resolve().parents[1]
 POLICIES = ("asap", "alap", "rcp", "alap_rcp")
 # A controller's own clock as (its cycles, per program cycles, its grid in
 # program cycles): a 4-cycle timestep, half the program clock, two thirds of
@@ -453,8 +453,7 @@ def _argument_count(kernel: Any) -> int:
     return kernel.__wrapped__.__code__.co_argcount
 
 
-def _load(relative: str) -> Any:
-    path = _ROOT / relative
+def _load(path: Path) -> Any:
     spec = importlib.util.spec_from_file_location(path.stem, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -645,7 +644,7 @@ def _calls(root: str) -> Iterator[Program]:
 def _benchmarks() -> Iterator[Program]:
     """The perf gate's feedback and call programs and the compile
     benchmark's workloads."""
-    cases = _load("benchmarks/perf_gate/cases.py")
+    cases = _load(source_file("benchmarks/perf_gate/cases.py"))
     for trips in (2, 16, 64):
         yield f"feedback {trips}", lambda trips=trips: cases._feedback_program(trips)
     for rounds, calls in ((4, 2), (64, 4)):

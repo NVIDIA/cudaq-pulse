@@ -96,8 +96,8 @@ fails instead of skipping), `physics` (everything in `tests/physics`),
 `nightly` (slow physics checks, skipped without `--run-nightly`),
 `benchmark` (timing guards, skipped without `--run-benchmarks`),
 `scaling` (benchmarks that compare two sizes in one run) and `slow` (tests
-that spend seconds in native code or child processes, which the sanitizer job
-leaves out). `tests/conftest.py`
+that spend seconds in native code or child processes, which the sanitizers'
+Python sweep leaves out). `tests/conftest.py`
 sets `CUDAQ_PULSE_QUANTUM_SYSTEM=ladder:8192` for the whole session, and
 `CUDAQ_PULSE_VERIFY=1` unless it is set already. Tests run with
 the default unroll threshold; a test of a rolled loop of a few iterations
@@ -143,9 +143,71 @@ failure also gives its seed in the job summary, replayed with
 ### Test levels
 
 Every test in `tests/` has one level, 0 to 3. The level says how much a
-failure matters and how soon the test has to run. CI still runs every level
-on every change for now; the levels are in place so that it can later run
-the lower ones on every change and all of them less often.
+failure matters and how soon the test has to run:
+
+| When | Levels |
+|---|---|
+| A pull request | 0 in each `test (...)` job of `ci.yml`, and the test files the pull request adds or changes, up to level 2 |
+| A push to `main`, a manual run of `ci.yml` | 0 to 2 in each `test (...)` job |
+| Every night | all four, and the suite twice more under logged hash seeds, and under coverage |
+
+The jobs that run a part of the suite for another purpose take no level and
+run what they ran: `test-docs` (the tests that read the pages, for a change
+of the pages alone), the docs build, the sanitizers and the wheels' install
+tests.
+
+A pull request also runs the test files it touches, so that a test it adds
+or edits at level 1 or 2 runs on every platform and Python version before
+the merge, not first on `main`. In each `test (...)` job, beside level 0:
+
+- Every test file (`tests/**/test_*.py`) that the pull request adds or
+  edits runs up to level 2. A renamed file runs under its new name; a
+  removed one has nothing to run.
+- The tests of the workflows and of the scripts in `tools/` run when those
+  change: a change under `.github/` or of `tools/ci-changes.py` runs
+  `tests/test_ci_changes.py`, a change of `tools/perf-gate.py` runs
+  `tests/test_perf_gate.py`, and `WATCHES` in `tools/ci-changed-tests.py`
+  lists the others. A new test of a tool gets a line there.
+- These files add at most 1000 cases to the job. Level 1 of each file is
+  taken first, the smallest file first, then level 2; a file whose cases no
+  longer fit, a sweep of thousands of cases for one, stays at the level it
+  reached, and the rest of it runs on the push to `main`. Level 3 stays with
+  the nightly run.
+- A change to a file that many tests share (a helper, a `conftest.py`, a
+  data file, `tests/levels.toml`) does not select the tests that use it:
+  they run at level 0 on the pull request and at levels 0 to 2 on `main`.
+  Only the test files that watch it run: for `tests/conftest.py`,
+  `tests/_levels.py` and `tests/levels.toml`, the tests of the levels
+  themselves.
+
+The end of the pytest log, and its start, list each of these files with the
+cases that ran above level 0 and the ones that were left, and why:
+
+```
+test files of this change, run above level 0: to level 2, at most 1000 cases (tools/ci-changed-tests.py)
+  tests/classical/test_schedule_matrix.py  (changed) runs nothing above level 0; over 1000 cases, left for the push to main: 3667 of level 2
+  tests/test_controller.py                 (changed) runs 80 of level 1, 3 of level 2
+  changed, and shared by many tests, which run at their own level: tests/_handles.py
+```
+
+The job passes the paths the pull request changes to pytest, which reads
+them as data: `pytest tests --level 0 --changed-paths <file>`, the file
+holding one path per line. The same selection for a branch, before it is
+pushed:
+
+```bash
+git diff --name-only --no-renames origin/main... > /tmp/changed-paths.txt
+python tools/ci-changed-tests.py /tmp/changed-paths.txt                        # the files it selects
+pytest tests --level 0 --changed-paths /tmp/changed-paths.txt -m "not gpu"     # what the pull request runs
+```
+
+A nightly run that fails opens the issue "The nightly run fails", or
+comments on it while it is open, and the next one that passes closes it. A
+failure of level 0 to 2, found on the push to `main` or at night, is fixed
+before other work; a failure of level 3 alone does not block a merge. A
+change that touches what a level 1 or 2 test checks, without touching the
+test's file, runs that test before it is pushed:
+`pytest <its file> --level 2`.
 
 The levels are for the pytest suite only. The lit suite in `test/`, the C++
 runtime host tests and the perf gate have no level and are not selected by
@@ -206,9 +268,48 @@ pytest tests --level-report -m "not gpu"   # cases per level and per file; runs 
 
 `--level N` runs level N and every level below it, and holds together with
 `-m` and `-k`: `-m gpu --level 1` runs the GPU tests of levels 0 and 1.
+`--changed-paths` adds to `--level` and does nothing without it.
 Without `--level` every level runs. Select with `--level`, not with
 `-m level2`: `-m` sees only markers, not the table, and matches a marker on
 a file even for a test in it that is marked otherwise.
+
+### Tests of an installed wheel
+
+`wheels.yml` runs the suite against each built wheel and again against the
+wheels installed in clean images. Those tests run from a copy of `tests/`
+outside the checkout, so that the installed package is the one imported,
+and the copy has only the files that `test-sources` of `[tool.cibuildwheel]`
+in `pyproject.toml` lists. That list is the only one: cibuildwheel copies it,
+and `tools/ci/install-test.sh` copies it with `python tests/_sources.py copy`.
+
+A test that reads a file outside `tests/` does one of two things:
+
+- It runs against the wheels too: it takes the path from
+  `tests._sources.source_file("benchmarks/...")`, with the path written out,
+  and the file is added to `test-sources`. A listed Python file that loads
+  another file of the tree needs that one listed as well.
+- It needs the rest of the tree (`docs/`, `tools/`, every example): it skips
+  itself where the file is absent, with a reason that begins
+  `needs the source tree`.
+
+`python tests/_sources.py check` fails in a second when a listed file is
+absent, when a `source_file` call names a file that is not listed and, in a
+checkout, when a listed Python file names an unlisted one. It runs as
+`tests/test_sources.py` at level 0, so in each `test (...)` job of a pull
+request that runs the suite, in the `version` job of `wheels.yml` before any
+wheel is built, and
+first in each wheel's test command and in `install-test.sh`, on the copy
+itself, before the long run. A path built by hand instead
+(`_ROOT / "benchmarks" / ...`) is not seen by the check and fails only in
+`wheels.yml`, which does not run on pull requests.
+
+Only the examples a test loads by name are listed. `tests/test_examples.py`
+runs every example it finds, so all of them in a checkout and the listed
+ones against a wheel. Without the whole tree, `tests/test_levels.py` does
+not ask that a `tests/levels.toml` line for parameters of a collected test
+names a test, since such parameters may come from files that are not there;
+a line for a file or for a test is still checked, and a checkout checks the
+lines it always did.
 
 ## Writing passes
 
@@ -271,15 +372,30 @@ module-level dictionary; a kernel that reads module-level constants is fine.
 cudaq-pulse's own C++; the prebuilt MLIR toolchain stays uninstrumented. The
 `sanitizers` workflow builds both variants on Linux. The address and
 undefined-behavior build runs `check-pulse-mlir`, `check-pulse-runtime` and
-the Python suite; the thread build runs `check-pulse-runtime`, whose GPU
-runtime host test evolves runs concurrently. Under address and undefined
-behavior, `check-pulse-mlir` and `check-pulse-runtime` block a merge. The
-Python suite there and the thread build are informational until the MLIR
-toolchain is built with the sanitizers too; it leaves out the tests marked
-`slow` and stops after 40 minutes. For the Python suite, preload the runtimes
-into the uninstrumented interpreter; tests that run a tool other than Python
-or cudaq-pulse-opt (pyright, git, a C compiler) remove them from its
-environment with `tool_env` (`tests/_tools.py`):
+a smoke check of the Python bindings; the thread build runs
+`check-pulse-runtime`, whose GPU runtime host test evolves runs
+concurrently. Under address and undefined behavior all three block a merge.
+The smoke check is five tests, named in the workflow: a module made from a
+kernel is checked, specialized, scheduled and lowered to the LLVM dialect;
+one parsed from text is lowered to qop and cudm; a pass, a parse and the
+verification of a loaded module fail with their errors; and a child interpreter imports the package,
+compiles, lowers and exits.
+
+The Python suite runs under address and undefined behavior in a job of its
+own, `sanitizers (python sweep, advisory)`, on a push to `main` and on a
+manual run of the workflow (`gh workflow run sanitizers.yml --ref <branch>`),
+not on a pull request. It and the thread build are informational until the
+MLIR toolchain is built with the sanitizers too: a failure there fails
+neither the workflow's run nor a required check. The sweep leaves out the
+tests marked `slow` and stops after 40 minutes, as a failure. A test of a
+raw time or memory limit skips itself under a sanitizer runtime, which
+multiplies both (`skip_raw_limit` and `under_sanitizers` in
+`tests/_tools.py`; the child limits of `tests/_child.py` and the timings of
+`tests/_work.py` call it); the unsanitized jobs check those limits. For the
+Python suite, preload the runtimes into the uninstrumented interpreter;
+tests that run a tool other than Python or cudaq-pulse-opt (pyright, git, a
+C compiler) remove them from its environment with `tool_env`
+(`tests/_tools.py`):
 
 ```bash
 LD_PRELOAD="$(gcc -print-file-name=libasan.so):$(gcc -print-file-name=libubsan.so)" \
@@ -316,7 +432,13 @@ PYTHONPATH=build/dev/python python tools/perf-gate.py --update
 ```
 
 Without Valgrind (macOS, or Linux on another architecture), the tool
-compares and updates only the program sizes. The instruction counts depend
+compares and updates only the program sizes, and where `setarch -R` is
+refused it measures with address randomization on. Both pass at a desk. In
+CI the job passes `--strict` on every run but the one that takes a baseline:
+a strict run fails unless it measured instruction counts, with address
+randomization off, against a measured baseline (one with a count for every
+case, its environment and the CI run it came from, and no `bootstrap`
+field), so the job can't pass having gated nothing. The instruction counts depend
 on the toolchain, so they are taken in CI's environment, where the image,
 its packages, uv and Python are pinned. Once a change that moves them on
 purpose is on its pull request's branch in this repository, a manual run of
@@ -336,10 +458,12 @@ the branch, which must still be the commit the run measured (the file's
 `python tools/perf-gate.py --help` lists the same steps.
 
 **Bootstrap mode.** A baseline that says `"bootstrap": true` and holds no
-instruction counts is in bootstrap mode. The job still measures every case
+instruction counts is in bootstrap mode. The tool still measures every case
 twice and reports the counts and their spread, but they don't fail the run;
 program sizes block as always. The summary says so in a banner, together
-with the `gh run download` command for that run. Taking a run's
+with the `gh run download` command for that run. That holds for a run at a
+desk and for the manual `perf_baseline` run; a pull request's run is strict
+and fails on such a baseline until a measured one is committed. Taking a run's
 measurements as the baseline removes the field, and `"bootstrap": true`
 next to any instruction count is an
 error (in the job and in `tests/test_perf_gate.py`), so the gate can't stay
@@ -615,11 +739,14 @@ after its release. [zizmor](https://docs.zizmor.sh/) audits the workflows
 - `ci.yml`: ruff and pre-commit; build, lit, pytest, mypy, and the benchmark
   baseline on Linux x86_64 (Python 3.12 to 3.15), Linux aarch64 (3.12 and
   3.15), and macOS (3.12 to 3.14), and the lit and pytest suites on
-  free-threaded CPython 3.14t with the GIL off (configured with
+  free-threaded CPython 3.14t with the GIL off (level 0 holds three tests
+  of `tests/test_threads.py`, so every pull request runs threads there;
+  configured with
   `-DCUDAQ_PULSE_FREE_THREADED=ON`, which declares the extension safe
   without the GIL, as the free-threaded wheels do). `old-compilers` builds
   and runs lit with GCC 11 and Clang 14 on Ubuntu 22.04. The `gpu` job
   builds with GPU support and runs the GPU tests (see [GPU CI](#gpu-ci)).
+  The pytest suite runs at the [test levels](#test-levels) of the event.
 - `wheels.yml`: cibuildwheel for the `cudaq-pulse-tools` wheel (`py3-none`)
   first, then the `cudaq-pulse` wheels for `cp312-abi3` (3.12 and newer) and
   `cp314-cp314t` (free-threaded 3.14, which has no stable ABI), on
@@ -642,11 +769,18 @@ after its release. [zizmor](https://docs.zizmor.sh/) audits the workflows
   once Pages takes its source from GitHub Actions, and warns until then.
 - `property-nightly.yml`: the property tests (every test file that imports
   hypothesis) with random examples, the slow physics checks (`nightly`),
-  the perf guard and check-pulse on macOS with Python 3.15, every night and
+  the perf guard, and check-pulse at every test level on the platforms and
+  Python versions of `ci.yml` and on macOS with Python 3.15, every night and
   on manual dispatch, with the seed in the job summary and the example
-  database kept in the Actions cache. GitHub runs scheduled workflows from the default
-  branch, so the schedule tests `main`; a manual dispatch tests the branch it
-  is dispatched on.
+  database kept in the Actions cache. Two jobs run the suite once more each
+  under a hash seed drawn for the run, which the job's name, the run's
+  summary and the nightly issue give (replay one with
+  `PYTHONHASHSEED=<seed>`), and one reports the coverage of the Python
+  package, without a threshold. GitHub
+  runs scheduled workflows from the default branch, so the schedule tests
+  `main`; a manual dispatch tests the branch it is dispatched on. A scheduled
+  run that fails opens or updates the one nightly issue (see
+  [Test levels](#test-levels)).
 
 ### Which jobs a change runs
 
@@ -655,27 +789,39 @@ that classes the change by the paths it touches (`tools/ci-changes.py`):
 
 | The change touches | Class | What runs |
 | --- | --- | --- |
-| `core/mlir`, `core/runtime`, CMake files, `cmake/`, `packaging/`, `test/`, `.github/workflows` or `.github/actions`, or a path the tool does not name | native | every job |
-| `core/frontend`, `tests/`, `examples/`, `challenges/`, `benchmarks/`, `tools/`, `pyproject.toml`, `pyrightconfig.json`, `uv.lock`, `.pre-commit-config.yaml` | python | every job but `old-compilers` |
+| `core/mlir`, `core/runtime`, `cmake/`, `packaging/`, `test/`, `.github/workflows` or `.github/actions`; an input of the native build in any directory (a C or C++ source or header, a CMake file, `tools/mlir-toolchain.lock.json`, `tools/fetch-mlir-toolchain.py`, `tests/runtime/fake_cudensitymat/`, `pyproject.toml`, `uv.lock`); or a path the tool does not name | native | every job |
+| anything else in `core/frontend`, `tests/`, `examples/`, `challenges/`, `benchmarks/`, `tools/`; `pyrightconfig.json`, `.pre-commit-config.yaml` | python | every job but `old-compilers` |
 | `docs/`, `README.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md`, the license and notice files | docs | lint, the docs build and `test-docs`, one job with the tests that read these files |
 | only files no test reads (`CITATION.cff`, `CODE_OF_CONDUCT.md`, `SUPPORT.md`, issue templates) | none | lint |
 
 A change takes the widest class of its paths. A path the tool does not name
 runs every job, so a new directory is tested in full until it is placed in
-the tool. Only a pull request is classed: a push to `main`, a manual run
+the tool. `pyproject.toml` holds the build's configuration and `uv.lock` the
+versions of CMake, Ninja, lit and nanobind that the build jobs install, so
+a change of either, a dependency update included, also builds with the old
+compilers. Only a pull request is classed: a push to `main`, a manual run
 and a run whose base cannot be compared run every job. The perf gate runs
 for the native and python classes, which is every change that can move it.
 `tests/test_ci_changes.py` holds the classes, the condition on each job, the
 tests that `test-docs` runs and the summary.
 
-One gap: `editor-types` type-checks the Python code blocks of the pages and
-does not run for a change to the pages alone; it runs on `main` after the
-merge.
+One gap: the editor-types steps of `test (linux-x86_64, py3.12)` type-check
+the Python code blocks of the pages and do not run for a change to the pages
+alone; they run on `main` after the merge.
 
-`ci-ok` is the summary of `ci.yml`: it always runs, fails when a job that
-ran failed or was cancelled, and passes when the jobs a change does not need
-were skipped. Require it on `main`, with `docs (build)` and
-`sanitizers (address+undefined)`, whose skipped runs count as passed.
+`ci-ok` is the summary of `ci.yml`: it always runs and holds the run to the
+plan that the classifier's answers give (`tools/ci-ok.py`). It passes when
+every job the change needs succeeded and every other job was skipped. It
+fails when a job the change needs was skipped, was cancelled or failed, when
+a job the change does not need ran, and when the classifier did not succeed
+or its answers are not each `true` or `false`. A job's `if:` in `ci.yml` and
+its line in the tool's plan say the same condition, and
+`tests/test_ci_changes.py` fails when they differ: a new job, or a changed
+condition, is written in both. Require `ci-ok` on `main`, with `docs (build)`
+and `sanitizers (address+undefined)`, whose skipped runs count as passed:
+unless its run is cancelled, each is skipped only when the classifier
+succeeded and answered that the change cannot reach it, and otherwise runs,
+with a first step that fails unless the classifier succeeded and answered.
 
 ### GPU CI
 

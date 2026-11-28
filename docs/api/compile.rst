@@ -5,6 +5,12 @@
 Compilation API
 ===============
 
+This page documents ``pulse.compile`` and ``pulse.load`` and the objects
+they produce: the compiled and scheduled kernels, the passes that
+transform them, the idle windows and exposure a scheduled kernel reports,
+and the compile metrics. See :doc:`../user_guide/compilation`
+for how calling a kernel compiles it and reuses the compilation.
+
 .. autofunction:: cudaq_pulse.compile
 
 .. autofunction:: cudaq_pulse.load

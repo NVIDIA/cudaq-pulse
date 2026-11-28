@@ -8,7 +8,7 @@ import math
 import struct
 from itertools import compress
 from operator import attrgetter
-from typing import Any
+from typing import Any, NoReturn
 
 from .._errors import InvalidValueError
 from ..quantum_systems.base import _unmeasured, layout_anharmonicities, layout_frequencies
@@ -43,8 +43,10 @@ def _level_attributes(
         dims = tuple(levels[q] if q in levels else model.levels_of(q) for q in qudits)
     else:
         dims = (int(levels),) * len(qudits)
-    if any(d < 2 for d in dims):
-        raise InvalidValueError("every qudit needs at least two levels")
+    for q, d in zip(qudits, dims, strict=False):
+        if d < 2:
+            noun = "level" if d == 1 else "levels"
+            raise InvalidValueError(f"qudit {q} has {d} {noun}; every qudit needs at least two")
     # Qudits the program does not use are not simulated, and keep the levels
     # they would have.
     extent = _extent(qudits)
@@ -104,6 +106,7 @@ def _target_attributes(
     integrator: str,
     dephasing: str = "t2_star",
     levels: str = "",
+    module: Any = None,
 ) -> str:
     """Module attributes, in MLIR syntax and comma-separated, that the
     cuDensityMat lowering reads, but for the time window, which each interval
@@ -186,4 +189,123 @@ def _target_attributes(
             for x in residual
         )
         system += f", static_terms = [{terms}]"
+    if target.readout_crosstalk:
+        attrs += _crosstalk_attributes(target, active, module)
     return f"{', '.join(attrs)}, pulse.quantum_system = #pulse.quantum_system<{system}>"
+
+
+def _crosstalk_attributes(target: Any, active: set[int], module: Any = None) -> list[str]:
+    """The module attributes of *target*'s readout crosstalk between the
+    simulated qudits *active*: ``pulse.crosstalk_pairs`` (the qudit read
+    out, the one shifted, and how many shifts by level follow),
+    ``pulse.crosstalk_chi_hz`` and ``pulse.readout_resonators`` (per qudit
+    read out: index, dispersive shift, linewidth, resonator frequency, 1 if
+    it is given (else the resonator is at the tone), photon number,
+    reference amplitude or 0). A qudit whose resonator an entry names needs
+    a ``DispersiveReadout`` with its ``dispersive_shift_hz`` and
+    ``linewidth_hz`` when the program reads it out (a readout of it in
+    *module*, the program's module, in any branch); an entry of a qudit
+    without one that the program does not read out lowers nothing."""
+
+    pairs: list[int] = []
+    chis: list[float] = []
+    resonators: dict[int, list[float]] = {}
+    # The qudits the program reads out, when needed; and the qudits it does
+    # not read out, without a resonator to model.
+    read_out: set[int] | None = None
+    unread: set[int] = set()
+    for i, entry in enumerate(target.readout_crosstalk):
+        z, d = entry.resonator_of, entry.qudit
+        if z not in active or d not in active or z in unread:
+            continue
+        if z not in resonators:
+            resonator = _resonator(target, z)
+            if resonator is None:
+                if module is not None:
+                    if read_out is None:
+                        read_out = _read_out(module)
+                    if z not in read_out:
+                        unread.add(z)
+                        continue
+                _refuse_resonator(target, z, d, i)
+            resonators[z] = resonator
+        chi = entry.chi_hz if entry.chi_hz.__class__ is tuple else (entry.chi_hz,)
+        pairs += (z, d, len(chi))
+        chis += map(float, chi)
+    if not pairs:
+        return []
+    return [
+        f"pulse.crosstalk_pairs = array<i64: {', '.join(map(str, pairs))}>",
+        f"pulse.crosstalk_chi_hz = {_f64_array(chis)}",
+        f"pulse.readout_resonators = {_f64_array([v for r in resonators.values() for v in r])}",
+    ]
+
+
+def _resonator(target: Any, z: int) -> list[float] | None:
+    """The resonator values of qudit *z* that ``pulse.readout_resonators``
+    holds, or None if its readout gives no model of them."""
+    from ..quantum_systems.base import DispersiveReadout, ReadoutPulse
+
+    qudit = target.qudits[z]
+    readout = qudit.readout
+    # DispersiveReadout._fields and ReadoutPulse._fields, in their order.
+    values = readout._values if isinstance(readout, DispersiveReadout) else None
+    if values is None or values[1] is None or values[2] is None:
+        return None
+    pulse = qudit._calibrations.get("readout") or ReadoutPulse()
+    _, amplitude, _, _, photons = pulse._values
+    return [
+        float(z),
+        float(values[1]),
+        float(values[2]),
+        0.0 if values[0] is None else float(values[0]),
+        0.0 if values[0] is None else 1.0,
+        float(photons),
+        float(amplitude or 0.0),
+    ]
+
+
+def _read_out(module: Any) -> set[int]:
+    """The qudits *module* reads out: the qudits of the lines its readouts,
+    in any loop or branch, play on (every readout line's, for a readout
+    whose line is not known)."""
+    lines, nodes = module.site_tree()
+    found: set[int] = set()
+    stack = [nodes]
+    while stack:
+        for node in stack.pop():
+            kind = node[0]
+            if kind == "readout":
+                if node[2] >= 0:
+                    found.add(lines[node[2]][1])
+                else:
+                    found.update(q for role, q in lines if role == "readout")
+            elif kind == "for":
+                stack.append(node[2])
+            elif kind == "if":
+                stack += (node[1], node[2])
+    return found
+
+
+def _refuse_resonator(target: Any, z: int, d: int, i: int) -> NoReturn:
+    """Raise for entry *i*, which shifts qudit *d* by the photons of qudit
+    *z*, read out by the program without a model of its resonator."""
+    from .._errors import UnsupportedError
+    from ..quantum_systems.base import DispersiveReadout
+
+    readout = target.qudits[z].readout
+    values = readout._values if isinstance(readout, DispersiveReadout) else None
+    if values is None:
+        has = "has no readout" if readout is None else f"has a {type(readout).__name__}"
+    else:
+        missing = [
+            n
+            for n, v in zip(("dispersive_shift_hz", "linewidth_hz"), values[1:3], strict=True)
+            if v is None
+        ]
+        has = f"gives no {' and no '.join(missing)}"
+    raise UnsupportedError(
+        f"readout_crosstalk[{i}] shifts qudit {d} by the photons in qudit {z}'s "
+        "resonator, which simulating needs as a DispersiveReadout with its "
+        f"dispersive_shift_hz and linewidth_hz; qudit {z} {has}"
+    )

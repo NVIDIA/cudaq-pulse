@@ -541,11 +541,86 @@ get that system's frequencies.
 check it: on its qudits and control system the function is verified as every
 scheduled program is, and checked against what the controllers can play. A
 module that states its clock must state the quantum system's. Attributes
-another compiler put on the function or its operations are dropped. The
-function plays on the qudits it takes and allocates none. A control system
+another compiler put on the function or its operations are dropped. Two that
+``compile`` uses for its own programs are a module's to state only where
+they mean what they say: ``classical.variable``, the mark of a wait whose
+length is the answer of a classical call, is kept on a ``pulse.wait`` whose
+length is computed from an answer, which then reserves its lowest length
+(its ``duration_cycles`` is its ``pulse.min_cycles``), and dropped anywhere
+else, where a drive, a readout or a wait of constant length is verified for
+the length it has; and answers bound to a call (``classical.answers``, which
+a simulation writes on its own copy of a program) are dropped, so that a
+loaded program takes every answer while it runs. A phase
+or frequency change keeps the start the module gives it; which changes no
+later drive or readout takes, and so are frame updates in the export
+(:doc:`controller_backends`), ``load`` finds from the function's operations
+as ``compile`` does, and a module does not say. The
+function plays on the qudits it takes and allocates none. Each line, tone
+and link is one from where it starts (a line and its tone at
+``pulse.get_drive_line`` or ``pulse.get_readout_line`` of a qudit the
+function takes, a tone of its own at ``pulse.tone``, a link at
+``classical.get_link``) to its last use: Pulse and classical operations,
+``scf.if`` and ``scf.for`` pass it on, and nothing else makes one (a line
+picked by ``arith.select`` is refused). A branch whose arms give the
+lines or tones of two qudits, two tones made apart or two links as one
+result is refused, and so is a loop that yields another than it takes in:
+what follows would play on a line that depends on the path. A qudit picked
+by an operation such as ``arith.select``, or passed through a branch or a
+loop, is refused too. A control system
 with line delays, or a controller with ``max_instructions`` or
 ``max_program_duration``, is refused: ``load`` does not apply or check those
 yet.
+
+Assembly is the form to pass between different builds: it holds an
+operation's properties by name. Bytecode holds them by position, in the
+shape the writer's copy of the dialects gives them, so it is read only with
+the dialect source that wrote it. Bytecode states that source in its
+producer string, as ``cudaq-pulse-dialects=<source>``: the LLVM version and a
+digest of the definition files of the Pulse and Classical dialects
+(``22.1.8-cf2faa24b237fcb9``). The bytecode of a pickled program and of
+``cudaq-pulse-opt --emit-bytecode`` states it. ``load`` refuses bytecode that
+states another source than its own, naming both, before it reads anything
+else of the module. Two sources are the same when their digests are equal
+and their LLVM versions have the same major and minor: bytecode written with
+LLVM 22.1.4 and the same dialect files is read by a build with LLVM 22.1.8,
+and bytecode written with 22.2.0 or 23.1.8 is refused. Bytecode that states
+no source is read as it is given.
+
+A compiler built from a checkout of this repository states the source of
+that checkout. ``cmake/write_dialect_source.cmake`` computes it and writes it
+as a C++ string literal:
+
+.. code-block:: bash
+
+   cmake -DROOT=<checkout> -DLLVM_VERSION=<LLVM version> \
+         -DOUTPUT=dialect_source.inc -P <checkout>/cmake/write_dialect_source.cmake
+
+.. code-block:: cpp
+
+   mlir::BytecodeWriterConfig config("mycompiler 1.0 cudaq-pulse-dialects="
+   #include "dialect_source.inc"
+   );
+   mlir::writeBytecodeToFile(module, os, config);
+
+``LLVM_VERSION`` is the version of the LLVM the compiler is built with, in
+full, as LLVM's CMake package gives it (``LLVM_PACKAGE_VERSION``,
+``22.1.8``). ``load`` compares the digest, which is what follows the last
+hyphen of the source, and the version's first two numbers; what follows the
+second dot (a patch number, a suffix such as ``22.1.8git``) is not compared.
+A stated source that has no hyphen, or whose version does not start with two
+numbers and a dot between them, is refused. The producer string is the
+compiler's own name, then ``cudaq-pulse-dialects=`` and the source, set apart
+by spaces. The first ``cudaq-pulse-dialects=`` in the string counts, and the
+source ends at the next space or at the string's end.
+
+Two attributes that are neither an operation's own nor named ``pulse.`` are
+kept, on a ``pulse.drive`` and as a finite ``f64``: ``frame_phase_offset``, a
+constant phase shift that ``compile`` folds into the drive after it (the tone
+keeps it from that drive on), and ``phase_offset``, the phase of that drive
+alone, which ``compile`` does not write. With the first, the scheduled module
+of a compiled kernel loads to the program it was compiled to. On another
+operation, or of another type, they are dropped like any attribute of another
+compiler.
 
 A module given to ``load`` is another compiler's and is treated as untrusted
 input. Nested modules are refused; the entry and the functions it calls are

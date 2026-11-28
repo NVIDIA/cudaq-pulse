@@ -16,6 +16,7 @@ import pytest
 from cudaq_pulse.compiler import DEFAULT_PASSES, CompileOptions
 
 from tests._handles import Q
+from tests._sources import source_file
 
 _ROOT = str(Path(pulse.__file__).parent.parent)
 
@@ -993,9 +994,9 @@ def _surface_code_cycle():
     import importlib.util
     import io
 
-    path = Path(__file__).parent.parent / "examples/transmon"
     spec = importlib.util.spec_from_file_location(
-        "surface_code_cycle_example", path / "transmon_surface17_surface_code_cycle.py"
+        "surface_code_cycle_example",
+        source_file("examples/transmon/transmon_surface17_surface_code_cycle.py"),
     )
     example = importlib.util.module_from_spec(spec)
     with contextlib.redirect_stdout(io.StringIO()):

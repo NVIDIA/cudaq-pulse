@@ -6,6 +6,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "ModuleLoader.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -49,6 +50,7 @@
 #define GET_OP_CLASSES
 #include "cudaq-pulse/Dialect/Classical/ClassicalOps.h.inc"
 
+#include "cudaq-pulse/Analysis/LineTrace.h"
 #include "cudaq-pulse/Analysis/Timing.h"
 #include "cudaq-pulse/Transforms/Passes.h"
 
@@ -264,6 +266,88 @@ public:
           last += (count - 1) * period;
       }
     });
+  }
+  /// Whether `attribute` of `op` is one of the two phases a drive is read
+  /// with beside its tone's frame: `frame_phase_offset`, a constant phase
+  /// shift folded into the drive (pulse-fold-phases writes it), which stays
+  /// in the tone's frame, and `phase_offset`, the drive's own, which no
+  /// pass sets (fusing two drives carries one over) and the export and the
+  /// simulator read. Each is a finite f64 on a pulse.drive; under these
+  /// names anything else, or on any other operation, is another compiler's
+  /// attribute.
+  static bool isDrivePhase(mlir::Operation *op,
+                           mlir::NamedAttribute attribute) {
+    llvm::StringRef name = attribute.getName().getValue();
+    if (name != "frame_phase_offset" && name != "phase_offset")
+      return false;
+    auto phase = mlir::dyn_cast<mlir::FloatAttr>(attribute.getValue());
+    return phase && mlir::isa<pulse::DriveOp>(op) && phase.getType().isF64() &&
+           phase.getValue().isFinite();
+  }
+  /// The operations of `function` that compute from the answer of a
+  /// classical call, through operations without regions: what the verifier
+  /// takes for a value that depends on an answer.
+  static llvm::DenseSet<mlir::Operation *>
+  computedFromAnswers(mlir::func::FuncOp function) {
+    llvm::DenseSet<mlir::Operation *> computed;
+    llvm::SmallVector<mlir::Operation *, 16> open;
+    function.walk([&](classical::WaitOp answer) { open.push_back(answer); });
+    while (!open.empty())
+      for (mlir::Operation *user : open.pop_back_val()->getUsers())
+        if (user->getNumRegions() == 0 && computed.insert(user).second)
+          open.push_back(user);
+    return computed;
+  }
+  /// What telling such a wait takes: the function, its name for a refusal,
+  /// and the operations computed from an answer, found when first needed.
+  struct Marked {
+    mlir::func::FuncOp function;
+    const std::string &entry;
+    std::optional<llvm::DenseSet<mlir::Operation *>> computed;
+  };
+  /// Whether `op`, which carries the mark of a wait whose length is the
+  /// answer of a classical call (`classical.variable`), is such a wait: a
+  /// pulse.wait whose length is computed from an answer. The verifier does
+  /// not hold a marked operation to the length it takes, since the answer
+  /// gives it while the program runs, so the mark is kept only where an
+  /// answer does: on any other operation it is another compiler's
+  /// attribute, and a drive, a readout or a wait of constant length is then
+  /// verified for the length it has. A wait that keeps the mark states its
+  /// lowest length (`pulse.min_cycles`, a 64-bit integer) and reserves
+  /// that, as the scheduler places it.
+  [[gnu::cold, gnu::noinline]] static bool isRunTimeWait(mlir::Operation *op,
+                                                         Marked &marked) {
+    const std::string &entry = marked.entry;
+    std::optional<llvm::DenseSet<mlir::Operation *>> &computed =
+        marked.computed;
+    mlir::func::FuncOp function = marked.function;
+    auto wait = mlir::dyn_cast<pulse::WaitOp>(op);
+    if (!wait)
+      return false;
+    if (!computed)
+      computed = computedFromAnswers(function);
+    mlir::Operation *length = wait.getDuration().getDefiningOp();
+    if (!length || !computed->contains(length))
+      return false;
+    auto lowest = op->getAttrOfType<mlir::IntegerAttr>("pulse.min_cycles");
+    std::optional<int64_t> reserved = pulse::durationCycles(op);
+    if (!lowest || !lowest.getType().isSignlessInteger(64))
+      throw std::invalid_argument(
+          "load: " + entry +
+          " has a wait whose length is the answer of a classical call "
+          "(classical.variable) without a lowest length; such a wait is a "
+          "pulse.variable_wait that states it in pulse.min_cycles, a 64-bit "
+          "integer");
+    if (reserved && *reserved != lowest.getInt())
+      throw std::invalid_argument(
+          "load: " + entry +
+          " has a wait whose length is the answer of a classical call "
+          "(classical.variable) with duration_cycles = " +
+          std::to_string(*reserved) +
+          " and pulse.min_cycles = " + std::to_string(lowest.getInt()) +
+          "; such a wait reserves its lowest length, and what follows it "
+          "starts after that");
+    return true;
   }
   /// The function `caller` calls by `name`, checked to be one a call can be
   /// written in place of: defined, scheduled, one block that ends in a
@@ -673,7 +757,29 @@ public:
     // its own: it is held to the range again.
     if (writeCalls(*source, *module, main, entry))
       refuseUnsupported(main, /*called=*/false, /*written=*/true);
+    // One walk finds the links the function gets and what its lines, tones,
+    // links and qudits go through. An operation of the Pulse dialect makes
+    // one or continues the ones it takes, each result the operand in its
+    // place; a branch or a loop that gives some is checked once the
+    // function is known to be valid; nothing else makes one.
+    llvm::SmallVector<mlir::Operation *> joins;
+    mlir::Dialect *own = &controlSystem.getDialect();
     main.walk([&](mlir::Operation *op) {
+      mlir::Dialect *dialect = op->getDialect();
+      if (dialect == own)
+        return;
+      if (mlir::isa<mlir::scf::IfOp, mlir::scf::ForOp>(op)) {
+        if (op->getNumResults())
+          joins.push_back(op);
+        return;
+      }
+      // Of the rest, only one that gives a line, tone, link or qudit is
+      // looked at further: a classical operation may, and classical.get_link
+      // names the link it gets.
+      if (llvm::none_of(op->getResultTypes(), isHandle))
+        return;
+      if (!dialect || dialect->getNamespace() != "classical")
+        refuseMade(op, entry);
       if (op->getName().getStringRef() != "classical.get_link")
         return;
       if (auto stated = op->getAttrOfType<mlir::IntegerAttr>("device")) {
@@ -696,19 +802,29 @@ public:
     main.setSymName("main");
     main.setPublic();
     // Attributes of other compilers on the operations are not the program's:
-    // only an operation's own attributes, the Pulse dialect's and the two a
-    // classical wait's meaning is in are kept (what the classical check
-    // writes on a call it writes again).
+    // only an operation's own attributes, the Pulse dialect's, the mark of
+    // a wait whose length is an answer, on such a wait, and the two phases
+    // of a drive are kept. What the classical check writes on a call it
+    // writes again, and answers bound to a call (`classical.answers`, which
+    // a simulation writes on its own copy) are not a module's to state: a
+    // loaded program takes every answer while it runs.
+    Marked marked{main, entry, std::nullopt};
     main.walk([&](mlir::Operation *op) {
       if (op == main.getOperation())
         return;
+      // Read once: an operation that keeps some in its properties builds
+      // the list each time. One without attributes has none to drop.
+      llvm::ArrayRef<mlir::NamedAttribute> stated = op->getAttrs();
+      if (stated.empty())
+        return;
       llvm::ArrayRef<mlir::StringAttr> own = op->getName().getAttributeNames();
       mlir::NamedAttrList attributes;
-      for (mlir::NamedAttribute attribute : op->getAttrs())
+      for (mlir::NamedAttribute attribute : stated)
         if (attribute.getName().getValue().starts_with("pulse.") ||
-            attribute.getName().getValue() == "classical.variable" ||
-            attribute.getName().getValue() == "classical.answers" ||
-            llvm::is_contained(own, attribute.getName()))
+            (attribute.getName().getValue() == "classical.variable" &&
+             isRunTimeWait(op, marked)) ||
+            llvm::is_contained(own, attribute.getName()) ||
+            isDrivePhase(op, attribute))
           attributes.append(attribute);
       op->setAttrs(attributes);
     });
@@ -730,10 +846,175 @@ public:
         diagnostics.fail("load: " + entry +
                          " is not valid as a loaded function");
     }
+    if (!joins.empty())
+      refuseSwitched(joins, entry);
     return module;
   }
 
 private:
+  /// Whether a value of `type` stands for a physical line, tone or link, or
+  /// for the qudit a line is acquired from.
+  static bool isHandle(mlir::Type type) {
+    return mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType,
+                     pulse::ToneType, pulse::QuditType, classical::LinkType>(
+        type);
+  }
+  static const char *handleName(mlir::Type type) {
+    if (mlir::isa<pulse::DriveLineType>(type))
+      return "drive line";
+    if (mlir::isa<pulse::ReadoutLineType>(type))
+      return "readout line";
+    if (mlir::isa<pulse::QuditType>(type))
+      return "qudit";
+    return mlir::isa<pulse::ToneType>(type) ? "tone" : "link";
+  }
+  /// Refuses `op`, which gives a line, tone, link or qudit and is not one of
+  /// the operations that make one or pass one on.
+  [[noreturn, gnu::cold, gnu::noinline]] static void
+  refuseMade(mlir::Operation *op, const std::string &entry) {
+    mlir::Type made = *llvm::find_if(op->getResultTypes(), isHandle);
+    throw std::invalid_argument(
+        "load: " + entry + " makes a " + handleName(made) + " with '" +
+        op->getName().getStringRef().str() +
+        "'; a loaded function takes its qudits as arguments, gets a line "
+        "and its tone from a qudit (pulse.get_drive_line, "
+        "pulse.get_readout_line), a tone of its own with pulse.tone and a "
+        "link with classical.get_link, and passes them on through Pulse and "
+        "classical operations, scf.if and scf.for");
+  }
+  /// Where the lines, tones, links and qudits of a function start: each
+  /// value followed back, as what reads the function follows it
+  /// (pulse::linearPredecessor), to the value nothing continues: a result
+  /// of an acquisition, of classical.get_link or of pulse.tone, or a qudit
+  /// the function takes. Each value is followed once.
+  class Roots {
+  public:
+    mlir::Value operator()(mlir::Value value) {
+      llvm::SmallVector<mlir::Value, 16> chain;
+      mlir::Value root;
+      while (true) {
+        auto known = memo.find(value);
+        if (known != memo.end()) {
+          root = known->second;
+          break;
+        }
+        chain.push_back(value);
+        mlir::Value before = pulse::linearPredecessor(value);
+        if (!before) {
+          root = value;
+          break;
+        }
+        value = before;
+      }
+      for (mlir::Value followed : chain)
+        memo[followed] = root;
+      return root;
+    }
+    /// Whether two roots are one physical line, tone, link or qudit: one
+    /// value, acquisitions of one kind on one qudit (a qudit has one drive
+    /// and one readout line), or links of one id.
+    bool same(mlir::Value first, mlir::Value second) {
+      if (first == second)
+        return true;
+      mlir::Operation *one = first.getDefiningOp();
+      mlir::Operation *other = second.getDefiningOp();
+      if (!one || !other || one->getName() != other->getName())
+        return false;
+      if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(one))
+        return (*this)(one->getOperand(0)) == (*this)(other->getOperand(0));
+      if (one->getName().getStringRef() != "classical.get_link")
+        return false;
+      auto id = one->getAttrOfType<mlir::IntegerAttr>("device");
+      auto otherId = other->getAttrOfType<mlir::IntegerAttr>("device");
+      return id && otherId && id.getInt() == otherId.getInt();
+    }
+    /// The root `root`, of a value of `type`, for a refusal.
+    std::string name(mlir::Type type, mlir::Value root) {
+      auto qudit = [](mlir::Value value) {
+        auto argument = mlir::dyn_cast<mlir::BlockArgument>(value);
+        return argument && mlir::isa<pulse::QuditType>(value.getType())
+                   ? "qudit " + std::to_string(argument.getArgNumber())
+                   : std::string();
+      };
+      mlir::Operation *made = root.getDefiningOp();
+      if (!made) {
+        std::string taken = qudit(root);
+        return taken.empty() ? std::string("a ") + handleName(type) +
+                                   " the function does not acquire"
+                             : taken;
+      }
+      if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(made)) {
+        std::string line =
+            mlir::isa<pulse::ToneType>(type) ? "the tone of " : "";
+        line += mlir::isa<pulse::GetDriveLineOp>(made) ? "the drive line"
+                                                       : "the readout line";
+        std::string of = qudit((*this)(made->getOperand(0)));
+        return of.empty() ? line : line + " of " + of;
+      }
+      if (auto id = made->getAttrOfType<mlir::IntegerAttr>("device");
+          id && made->getName().getStringRef() == "classical.get_link")
+        return "link " + std::to_string(id.getInt());
+      return std::string("a ") + handleName(type) + " made by '" +
+             made->getName().getStringRef().str() + "'";
+    }
+
+  private:
+    llvm::DenseMap<mlir::Value, mlir::Value> memo;
+  };
+  /// Refuses a branch or a loop that gives a qudit, a branch whose arms
+  /// give two physical lines, tones or links as one result, and a loop that
+  /// takes one in and yields another in its place. What reads the function
+  /// takes such a value for the one the first arm gives, or the one the loop
+  /// starts with, so it would play on one line what the function plays on
+  /// another. `joins` are the scf.if and scf.for operations of the function
+  /// that have results.
+  static void refuseSwitched(llvm::ArrayRef<mlir::Operation *> joins,
+                             const std::string &entry) {
+    Roots roots;
+    auto refuse = [&](mlir::Type type, mlir::Value first, mlir::Value second,
+                      const char *before, const char *between,
+                      const char *rule) {
+      mlir::Value one = roots(first), other = roots(second);
+      if (roots.same(one, other))
+        return;
+      throw std::invalid_argument("load: " + entry + " has " + before +
+                                  roots.name(type, one) + between +
+                                  roots.name(type, other) + rule);
+    };
+    for (mlir::Operation *op : joins) {
+      // What reads the function finds a line's qudit at its acquisition:
+      // the acquisition takes a qudit the function takes, as it is.
+      if (llvm::any_of(op->getResultTypes(), [](mlir::Type type) {
+            return mlir::isa<pulse::QuditType>(type);
+          }))
+        throw std::invalid_argument(
+            "load: " + entry + " passes a qudit through an " +
+            op->getName().getStringRef().str() +
+            "; a loaded function acquires its lines from the qudits it "
+            "takes, and a branch or a loop gives the lines");
+      if (auto branch = mlir::dyn_cast<mlir::scf::IfOp>(op)) {
+        // A branch with results has both arms.
+        mlir::Operation *taken = branch.thenBlock()->getTerminator();
+        mlir::Operation *otherwise = branch.elseBlock()->getTerminator();
+        for (unsigned index = 0; index < op->getNumResults(); ++index)
+          if (mlir::Type type = op->getResult(index).getType(); isHandle(type))
+            refuse(type, taken->getOperand(index), otherwise->getOperand(index),
+                   "an scf.if whose arms give, as one result, ", " and ",
+                   "; a line, tone or link that leaves a branch is the same "
+                   "one in both arms: write what follows in each arm");
+        continue;
+      }
+      auto loop = mlir::cast<mlir::scf::ForOp>(op);
+      mlir::Operation *yield = loop.getBody()->getTerminator();
+      for (unsigned index = 0; index < op->getNumResults(); ++index)
+        if (mlir::Type type = op->getResult(index).getType(); isHandle(type))
+          refuse(type, loop.getInitArgs()[index], yield->getOperand(index),
+                 "an scf.for that takes in ", " and yields, in its place, ",
+                 "; a line, tone or link a loop carries is the same one in "
+                 "every trip");
+    }
+  }
+
   mlir::MLIRContext *ctx_;
   mlir::OpBuilder builder_;
 };

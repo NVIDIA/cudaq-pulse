@@ -62,7 +62,6 @@ Project status
    user_guide/conventions
    user_guide/compilation
    user_guide/quantum_systems
-   user_guide/transmon_surface17
    user_guide/custom_passes
    user_guide/editors
    user_guide/classical_calls

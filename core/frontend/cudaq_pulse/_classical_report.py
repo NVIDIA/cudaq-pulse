@@ -85,7 +85,8 @@ ClassicalCall.__module__ = "cudaq_pulse.compiler"
 # report() sets these directly, without __init__.
 _CALL_FIELDS = tuple(ClassicalCall.__dataclass_fields__)
 # The report lists every event up to this many, or this many per call;
-# past that it takes the loops' events once each (_LoopExposure).
+# past that it takes the loops' events once each (_LoopExposure). A report
+# in which no call's answer is used takes one readout per qudit read out.
 _LISTED = 10_000
 _EVENTS_PER_CALL = 1000
 
@@ -296,7 +297,10 @@ def report(lowered: "ScheduledKernel") -> list[ClassicalCall]:
         calls = module.classical_calls()
         if not calls:
             return []
-        events = module.event_tree(max(_LISTED, _EVENTS_PER_CALL * len(calls)))
+        # Only a call whose answer is used asks about the events: without
+        # one, they are a readout of each qudit read out, whose depletion
+        # time is all the exposure takes from them.
+        events = module.call_events(_LISTED, _EVENTS_PER_CALL)
         exposed: Any = None
         if type(events) is not list:
             try:

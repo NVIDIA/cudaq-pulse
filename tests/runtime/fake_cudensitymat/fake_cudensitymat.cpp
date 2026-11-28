@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <complex>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <vector>
@@ -77,22 +78,50 @@ Complex toComplex(cuDoubleComplex value) { return {value.x, value.y}; }
 
 thread_local FakeCudmOperator *lastOperator = nullptr;
 
+// Of this thread: the host-to-device copies made, the allocations not freed
+// yet, and the host-to-device copies left before one fails (none if negative).
+thread_local int64_t hostToDeviceCopies = 0;
+thread_local int64_t liveAllocations = 0;
+thread_local int64_t copiesBeforeFailure = -1;
+
 } // namespace
 
 cudaError_t cudaMalloc(void **pointer, size_t size) {
   *pointer = std::calloc(1, size == 0 ? 1 : size);
-  return *pointer ? cudaSuccess : cudaErrorMemoryAllocation;
+  if (!*pointer)
+    return cudaErrorMemoryAllocation;
+  ++liveAllocations;
+  return cudaSuccess;
 }
 
 cudaError_t cudaFree(void *pointer) {
+  if (pointer)
+    --liveAllocations;
   std::free(pointer);
   return cudaSuccess;
 }
 
 cudaError_t cudaMemcpy(void *destination, const void *source, size_t size,
-                       cudaMemcpyKind) {
+                       cudaMemcpyKind kind) {
+  if (kind == cudaMemcpyHostToDevice) {
+    if (copiesBeforeFailure == 0) {
+      copiesBeforeFailure = -1;
+      return cudaErrorUnknown;
+    }
+    if (copiesBeforeFailure > 0)
+      --copiesBeforeFailure;
+    ++hostToDeviceCopies;
+  }
   std::memcpy(destination, source, size);
   return cudaSuccess;
+}
+
+int64_t fakeCudaHostToDeviceCopies() { return hostToDeviceCopies; }
+
+int64_t fakeCudaLiveAllocations() { return liveAllocations; }
+
+void fakeCudaFailHostToDeviceCopy(int64_t after) {
+  copiesBeforeFailure = after;
 }
 
 const char *cudaGetErrorString(cudaError_t) { return "fake CUDA error"; }

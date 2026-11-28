@@ -610,13 +610,18 @@ def _protected(
 ) -> tuple[list[int], list[tuple[int, int, int, int, bool]]]:
     if not code.co_exceptiontable:
         return [], []
-    entries = getattr(dis.Bytecode(code), "exception_entries", ())
     handlers = {ins.offset for ins in raw if ins.opname == "PUSH_EXC_INFO"}
+    if not handlers:
+        # No try or with handler: no range reaches one that catches.
+        return [], []
+    entries = getattr(dis.Bytecode(code), "exception_entries", ())
     starts = sorted({e.start for e in entries if e.target in handlers})
     out = []
     for e in entries:
         reached = e
-        for _ in range(len(entries)):
+        # A chain that repeats no entry ends within a step per entry; the
+        # bound stops a table that loops.
+        for _ in entries:
             if reached.target in handlers:
                 out.append((e.start, e.end, reached.target, reached.depth, reached.lasti))
                 break
