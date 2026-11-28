@@ -656,6 +656,23 @@ def test_the_launcher_lists_the_quantum_systems_for_a_bad_quantum_system_argumen
     assert "available quantum systems:" in run.stderr and "transmon_surface17" in run.stderr
 
 
+def test_the_launcher_prints_its_version(tmp_path: Path):
+    version = _launch_module(tmp_path, "--version")
+    assert version.returncode == 0, version.stderr
+    assert version.stdout.strip() == f"cudaq-pulse {pulse.__version__}"
+    assert version.stderr == ""
+
+    help_run = _launch_module(tmp_path, "--help")
+    assert help_run.returncode == 0, help_run.stderr
+    assert "--version" in help_run.stdout
+
+    passthrough = _launch_module(
+        tmp_path, "--quantum-system", "transmon_lattice:3", "-m", "launcher_probe", "--version"
+    )
+    assert passthrough.returncode == 0, passthrough.stderr
+    assert passthrough.stdout.strip() == "transmon_lattice:3 ['--version']"
+
+
 # ── Floats that shape the program are specialized on ─────────────────────
 
 

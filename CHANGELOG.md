@@ -13,6 +13,9 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 
 ### Added
 
+- **`python -m cudaq_pulse --version`.** Prints `cudaq-pulse <version>`
+  using `cudaq_pulse.__version__` and exits with status 0 without requiring
+  `--quantum-system`, and lists `--version` in `--help`.
 - **Readout crosstalk.** `qs.replace(readout_crosstalk=[ReadoutCrosstalk(
   resonator_of=14, qudit=4, chi_hz=-20e3)])` states that a readout of qudit
   14 shifts qudit 4 by `chi_hz` per photon in qudit 14's resonator (level j
