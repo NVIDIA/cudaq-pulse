@@ -380,6 +380,12 @@ def build_guard(
     ) -> int:
         if not indexed:
             escaped.add(id(value))
+        elif type(value) in (list, tuple) and key not in slots:
+            # ponytail: walk a sequence once per read path; resolve specific
+            # items if guarding large helper tables becomes costly.
+            for item in value:
+                if isinstance(item, types.FunctionType):
+                    walk_indirect(item)
         register = slots.get(key)
         if register is not None:
             return register
@@ -440,20 +446,24 @@ def build_guard(
         if isinstance(inner, types.FunctionType):
             walk(inner, depth + 1)
 
+    def walk_indirect(helper: types.FunctionType) -> None:
+        # Closures sharing a code object can hold different cells.
+        if id(helper) not in visited:
+            visited.add(id(helper))
+            visited.discard(id(helper.__code__))
+            walk(helper, 0)
+
     walk(fn, 0)
     items: dict[int, list[tuple[Any, Any]]] = {}
     if dict_items:
         for record in dict_items.values():
             if isinstance(record, types.FunctionType):
-                # Closures sharing a code object can hold different cells.
-                visited.discard(id(record.__code__))
-                walk(record, 0)
+                walk_indirect(record)
             else:
                 container, index, value = record
                 items.setdefault(id(container), []).append((index, value))
                 if isinstance(value, types.FunctionType):
-                    visited.discard(id(value.__code__))
-                follow(value, 0)
+                    walk_indirect(value)
     plan: list[tuple[Any, ...]] = []
     # The globals of the step that tests unbound names, while it is the last.
     unbound_in: dict[str, Any] | None = None

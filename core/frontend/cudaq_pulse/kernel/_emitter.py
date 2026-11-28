@@ -2042,8 +2042,6 @@ class PulseIREmitter:
                         self._slots[id(value)] = (obj, index, value)
                     elif obj.__class__ is dict and dict_items is not None:
                         dict_items[(id(obj), index)] = (obj, index, value)
-                    elif value.__class__ is types.FunctionType and dict_items is not None:
-                        dict_items.setdefault(value, value)
 
                 elif op is _load_attr:
                     obj = pop()
