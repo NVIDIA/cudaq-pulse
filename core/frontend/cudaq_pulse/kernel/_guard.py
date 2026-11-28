@@ -31,10 +31,13 @@ from . import _bytecode_normalize as bc
 
 if TYPE_CHECKING:
     import threading
-    from collections.abc import Callable, Collection, Mapping
+    from collections.abc import Callable, Collection
     from typing import Any
 
     _Read = tuple[str, str, tuple[str, ...], bool]
+    _TraceReads = dict[
+        tuple[int, Any] | types.FunctionType, tuple[dict[Any, Any], Any, Any] | types.FunctionType
+    ]
     # Bound by _load (below).
     _generated: Callable[[tuple[tuple[Any, ...], ...]], Callable[[], bool]]
     _CODE: dict[str, Callable[..., Callable[[], bool]]]
@@ -346,16 +349,17 @@ def build_guard(
     fn: types.FunctionType,
     *,
     impure: bool = False,
-    dict_items: Mapping[tuple[int, Any], tuple[dict[Any, Any], Any, Any]] | None = None,
+    dict_items: _TraceReads | None = None,
     dict_whole: Collection[int] = (),
 ) -> Guard:
     """The guard for *fn*, from the values its reads have right now.
 
     *impure* marks a trace that evaluated a host call whose result may change
     between calls (``random.random()``); its guard never holds. *dict_items*
-    are the dict items the trace read, ``(id(dict), key) -> (dict, key,
-    value)``, and *dict_whole* the ids of the dicts it iterated or tested
-    with ``in``; without *dict_items* every dict is compared whole.
+    records dict item reads as ``(id(dict), key) -> (dict, key, value)`` and
+    indirect helpers as ``function -> function``. *dict_whole* is the set of
+    ids of dicts the trace iterated or tested with ``in``; without
+    *dict_items* every dict is compared whole.
     """
     if impure:
         return Guard(_always_false, 0, True, (), 0)
@@ -376,6 +380,12 @@ def build_guard(
     ) -> int:
         if not indexed:
             escaped.add(id(value))
+        elif type(value) in (list, tuple) and key not in slots:
+            # ponytail: walk a sequence once per read path; resolve specific
+            # items if guarding large helper tables becomes costly.
+            for item in value:
+                if isinstance(item, types.FunctionType):
+                    walk_indirect(item)
         register = slots.get(key)
         if register is not None:
             return register
@@ -436,11 +446,24 @@ def build_guard(
         if isinstance(inner, types.FunctionType):
             walk(inner, depth + 1)
 
+    def walk_indirect(helper: types.FunctionType) -> None:
+        # Closures sharing a code object can hold different cells.
+        if id(helper) not in visited:
+            visited.add(id(helper))
+            visited.discard(id(helper.__code__))
+            walk(helper, 0)
+
     walk(fn, 0)
     items: dict[int, list[tuple[Any, Any]]] = {}
     if dict_items:
-        for container, index, value in dict_items.values():
-            items.setdefault(id(container), []).append((index, value))
+        for record in dict_items.values():
+            if isinstance(record, types.FunctionType):
+                walk_indirect(record)
+            else:
+                container, index, value = record
+                items.setdefault(id(container), []).append((index, value))
+                if isinstance(value, types.FunctionType):
+                    walk_indirect(value)
     plan: list[tuple[Any, ...]] = []
     # The globals of the step that tests unbound names, while it is the last.
     unbound_in: dict[str, Any] | None = None

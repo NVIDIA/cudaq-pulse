@@ -838,6 +838,10 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 
 ### Fixed
 
+- **Kernel cache invalidation for indirect helpers.** A cached kernel is
+  recompiled when a global read by a helper changes, including helpers called
+  through bound methods, class methods, `functools.partial`, callable objects,
+  or dict, list and tuple lookups.
 - The schedule passes no longer take the square of the number of drives on
   waveforms computed from one another (`w = wf_scale(w, 0.5)` before each
   drive, or sums and products of earlier waveforms): they keep the length
