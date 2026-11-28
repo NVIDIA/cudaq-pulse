@@ -42,7 +42,7 @@ import threading
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from ._errors import InvalidValueError, NotFoundError, PulseError
+from ._errors import InvalidTypeError, InvalidValueError, NotFoundError, PulseError
 
 if TYPE_CHECKING:
     from importlib.metadata import EntryPoint
@@ -125,15 +125,21 @@ def register(name: str, factory: Callable[[], Backend]) -> None:
     *factory* is called with no arguments when the backend is first used,
     and must return a ``Backend`` (a class is called to make one).
     Registering again replaces the earlier factory. Raises
-    ``InvalidValueError`` when *name* is not an identifier.
+    ``InvalidTypeError`` when *name* is not a ``str`` or *factory* is
+    not callable, and ``InvalidValueError`` when *name* is not an
+    identifier.
 
     Example::
 
         backends.register("text", TextBackend)
         backend = backends.get("text")
     """
+    if not isinstance(name, str):
+        raise InvalidTypeError(f"a backend name is a str, got {name!r}")
     if not name or not name.isidentifier():
         raise InvalidValueError(f"a backend name is an identifier, got {name!r}")
+    if not callable(factory):
+        raise InvalidTypeError(f"a backend factory must be callable, got {factory!r}")
     with _lock:
         _registered[name] = factory
         _loaded.pop((name, "registered"), None)
@@ -185,11 +191,12 @@ def get(name: str) -> Backend:
     """The backend *name*, loaded on first use and kept.
 
     A registered backend takes precedence over an installed one of the
-    same name. Raises ``BackendNotFoundError`` when no backend of that
-    name is installed or registered, and ``IncompatibleBackendError``
-    when an installed backend fails to load, or when the backend is not
-    a ``Backend`` or reads none of the formats this cudaq-pulse exports.
-    An error a registered factory raises is passed on as it is.
+    same name. Raises ``InvalidTypeError`` when *name* is not a ``str``,
+    ``BackendNotFoundError`` when no backend of that name is installed or
+    registered, and ``IncompatibleBackendError`` when an installed backend
+    fails to load, or when the backend is not a ``Backend`` or reads none
+    of the formats this cudaq-pulse exports. An error a registered factory
+    raises is passed on as it is.
 
     Example::
 
@@ -197,6 +204,8 @@ def get(name: str) -> Backend:
         backend = backends.get("text")
         backends.get("text") is backend    # True
     """
+    if not isinstance(name, str):
+        raise InvalidTypeError(f"a backend name is a str, got {name!r}")
     with _lock:
         factory = _registered.get(name)
         key = (name, "registered")
