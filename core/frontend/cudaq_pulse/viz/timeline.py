@@ -66,8 +66,13 @@ def plot_schedule(
         spans.append(
             (ev.kind, (ev.kind in _CLASSICAL_KINDS, ev.line), ev.start_cycles, ev.duration_cycles)
         )
-    import matplotlib.patches as mpatches
-    import matplotlib.pyplot as plt
+    try:
+        import matplotlib.patches as mpatches
+        import matplotlib.pyplot as plt
+    except ImportError as error:
+        raise ImportError(
+            'plotting a schedule needs matplotlib; install it with pip install "cudaq-pulse[viz]"'
+        ) from error
 
     line_ids: list[tuple[bool, int]] = []
     for _, line, _, _ in spans:

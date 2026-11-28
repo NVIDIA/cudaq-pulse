@@ -718,6 +718,10 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   `**kwargs` on to it. Calls that worked still work; a type checker now
   accepts a `Path` and rejects another keyword, such as `dpi=300`, which
   type-checked and then raised `TypeError` inside `plot_schedule`.
+- **Plotting without matplotlib names the extra.** `viz.plot_schedule`,
+  `viz.save_schedule` and `timeline()` raise an `ImportError` that says to
+  install `cudaq-pulse[viz]`, chained from the original, instead of a bare
+  `ModuleNotFoundError`.
 - **The exports list a segment without `dataclasses.asdict`.**
   `export_to_emulator` and the controller exports, which carry the
   program's segments, made each segment's entry with `dataclasses.asdict`,
