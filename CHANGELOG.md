@@ -842,6 +842,12 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 
 ### Fixed
 
+- **`backends.register` and `backends.get` validate their argument types.**
+  `backends.register(name, factory)` raises `InvalidTypeError` when
+  `factory` is not callable or `name` is not a `str`, registering nothing
+  in either case, and `backends.get(name)` raises `InvalidTypeError` when
+  `name` is not a `str` instead of `BackendNotFoundError`. A string name
+  that is not installed still raises `BackendNotFoundError`.
 - The schedule passes no longer take the square of the number of drives on
   waveforms computed from one another (`w = wf_scale(w, 0.5)` before each
   drive, or sums and products of earlier waveforms): they keep the length

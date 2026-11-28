@@ -122,6 +122,27 @@ def test_a_registered_backend_takes_precedence_and_can_be_removed(installed):
         backends.register("not a name", Other)
 
 
+def test_register_and_get_validate_name_and_factory(installed):
+    registered_before = dict(backends._registered)
+    available_before = backends.available()
+
+    with pytest.raises(pulse.InvalidTypeError, match="callable"):
+        backends.register("text", 3)  # type: ignore[arg-type]
+    assert "text" not in backends._registered
+    assert "text" not in backends.available()
+
+    with pytest.raises(pulse.InvalidTypeError, match="str"):
+        backends.register(3, lambda: None)  # type: ignore[arg-type]
+    assert backends._registered == registered_before
+    assert backends.available() == available_before
+
+    with pytest.raises(pulse.InvalidTypeError, match="str"):
+        backends.get(3)  # type: ignore[arg-type]
+
+    with pytest.raises(backends.BackendNotFoundError, match=r"no controller backend 'missing'"):
+        backends.get("missing")
+
+
 @pytest.mark.parametrize(
     ("target", "message"),
     [
