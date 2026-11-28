@@ -1219,6 +1219,169 @@ def test_every_submission_is_seen_by_the_check(system):
         _check_submissions([("decide", 100, 100, [], False), ("decide", 99, 100, [], False)])
 
 
+# What a module may not state for the program: answers, and a length that is
+# not an answer's.
+
+_LENGTH = (
+    '  classical.callable @length__1 {args = ["bits:1"], device = 0 : i64, dispatch_key = '
+    "3867861094 : i64, latency_max_ns = 5.0e+01 : f64, latency_min_ns = 0.0 : f64, "
+    'latency_nominal_ns = 5.0e+01 : f64, mode = "bounded", results = ["f64"], submit = "eager"}'
+)
+_PLAYED = "!pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone"
+
+
+def _after_an_answer(body, marks=""):
+    """A function of one qudit that reads it out at cycles 0 to 100, sends
+    the result to a classical function at 100 and takes its answer, an f64
+    %ans, at 500 (the wait for it carrying *marks*); *body* follows, on the
+    drive line %d and its tone %t, with a 16-cycle waveform %w."""
+    return f"""
+module attributes {{classical.links = {{"0" = {{name = "host"}}}}}} {{
+{_LENGTH}
+  func.func @main(%q: !pulse.qudit) {TIMED} {{
+    %d, %t = pulse.get_drive_line %q : (!pulse.qudit) -> ({T})
+    %r, %rt = pulse.get_readout_line %q : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
+    %n = arith.constant 16 : i64
+    %long = arith.constant 100 : i64
+    %amp = arith.constant 0.5 : f64
+    %zero = arith.constant 0.0 : f64
+    %w = pulse.square %n, %amp, %zero : i64, f64, f64 -> !pulse.waveform
+    %rw = pulse.square %long, %amp, %zero : i64, f64, f64 -> !pulse.waveform
+    %r1, %rt1, %m = pulse.readout %r, %rw, %rt, iq {_at(0, 100)}
+        : !pulse.readout_line, !pulse.waveform, !pulse.tone
+          -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %l0 = classical.get_link {{device = 0 : i64}} : !classical.link
+    %l1, %f = classical.submit %l0, @length__1(%m) {_at(100, 100)}
+        : (!pulse.measurement) -> (!classical.link, !classical.future)
+    %ans = classical.wait %f, @length__1 {_at(500, 0)}{marks} : f64
+{body}
+    return
+  }}
+}}
+"""
+
+
+@pytest.mark.level0
+def test_answers_a_module_states_for_a_call_are_not_the_programs(system):
+    body = f"""
+    %wa = pulse.square %n, %ans, %zero : i64, f64, f64 -> !pulse.waveform
+    %d1, %t1 = pulse.drive %d, %wa, %t {_at(500, 16)} : {_PLAYED}"""
+    machine, qudits = _links(), system.qudits[:1]
+    plain = pulse.load(_after_an_answer(body), entry="main", qudits=qudits, control_system=machine)
+    drive = plain.export_to_controller()["events"][-1]
+    # The amplitude is the answer's: the controller computes it as it runs.
+    assert drive["kind"] == "drive" and drive["amplitude"] is None
+    stated = _after_an_answer(body, " {classical.answers = array<f64: 9.0e-01>}")
+    program = pulse.load(stated, entry="main", qudits=qudits, control_system=machine)
+    assert "classical.answers" not in program.mlir()
+    for version in (1, 2):
+        assert program.export_to_controller(version=version) == plain.export_to_controller(
+            version=version
+        )
+
+
+def _run_time_wait(length="%cycles", reserved=16, marks=None, then=None):
+    """A wait of *length* cycles on the drive line, which states *reserved*
+    cycles and carries *marks*, and a drive after it."""
+    if marks is None:
+        marks = (
+            "classical.variable, pulse.max_cycles = 4000 : i64, pulse.min_cycles = 16 : i64, "
+            "pulse.variable_wait"
+        )
+    return _after_an_answer(f"""
+    %half = arith.constant 0.5 : f64
+    %sum = arith.addf %ans, %half : f64
+    %cycles = arith.fptosi %sum : f64 to i64
+    %len = pulse.duration_from_int {length} : (i64) -> !pulse.duration
+    %d0 = pulse.wait %d, %len {_at(500, reserved)} {{{marks}}}
+        : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
+    %d1, %t1 = pulse.drive %d0, %w, %t {_at(500 + reserved if then is None else then, 16)}
+        : {_PLAYED}""")
+
+
+@pulse.classical(max_latency_ns=50, link="host")
+def _cycles(bits: pulse.Bits) -> float:
+    return 100.0 + 50.0 * bits[0]
+
+
+@pulse.kernel
+def _waits_for_an_answer(a, c):
+    ro = get_readout_line(a)  # noqa: F821
+    dc = get_drive_line(c)  # noqa: F821
+    m = readout(ro, square(100, 0.05))  # noqa: F821
+    wait(dc, _cycles.submit([m]).result(), bounds=(16, None))  # noqa: F821
+    drive(dc, square(16, 0.5))  # noqa: F821
+
+
+def test_a_compiled_wait_whose_length_is_an_answer_loads_with_its_mark(system):
+    machine = _links()
+    lowered, text = _as_written(system, machine, _waits_for_an_answer)
+    assert "classical.variable" in text and "pulse.max_cycles" not in text
+    program = pulse.load(
+        text, entry="main", qudits=[system.qudits[0], system.qudits[2]], control_system=machine
+    )
+    assert "classical.variable" in program.mlir()
+    for version in (1, 2):
+        assert (
+            program.export_to_controller(version=version)["events"]
+            == lowered.export_to_controller(version=version)["events"]
+        )
+
+
+def test_a_wait_whose_length_is_an_answer_reserves_its_lowest_length(system):
+    machine, qudits = _links(), system.qudits[:1]
+
+    def load(text):
+        return pulse.load(text, entry="main", qudits=qudits, control_system=machine)
+
+    program = load(_run_time_wait())
+    assert "classical.variable" in program.mlir()
+    assert events(program)[-2:] == [("wait", 0, 500, 16), ("drive", 0, 516, 16)]
+    # Less than its lowest length would start the drive inside the wait;
+    # more is not how the scheduler places it.
+    for reserved in (1, 400):
+        with pytest.raises(pulse.CompilationError, match="reserves its lowest length") as refused:
+            load(_run_time_wait(reserved=reserved))
+        assert f"duration_cycles = {reserved} and pulse.min_cycles = 16" in str(refused.value)
+        assert refused.value.code == "wrong_argument"
+    # The mark alone states no lowest length to reserve.
+    with pytest.raises(pulse.CompilationError, match="without a lowest length"):
+        load(_run_time_wait(marks="classical.variable"))
+    # Nor does a lowest length that is not a 64-bit integer.
+    wide = "classical.variable, pulse.min_cycles = 16 : i32, pulse.variable_wait"
+    with pytest.raises(pulse.CompilationError, match="without a lowest length"):
+        load(_run_time_wait(marks=wide))
+
+
+@pytest.mark.level0
+def test_the_mark_of_a_run_time_wait_is_kept_on_such_a_wait_only(system):
+    machine, qudits = _links(), system.qudits[:1]
+
+    def load(text):
+        return pulse.load(text, entry="main", qudits=qudits, control_system=machine)
+
+    def drives(first, mark):
+        return _after_an_answer(f"""
+    %d1, %t1 = pulse.drive %d, %w, %t {_at(500, first)}{mark} : {_PLAYED}
+    %d2, %t2 = pulse.drive %d1, %w, %t1 {_at(500 + first, 16)} : {_PLAYED}""")
+
+    assert "classical.variable" in load(_run_time_wait()).mlir()
+    # On a drive the mark is another compiler's attribute: the drive is held
+    # to the 16 cycles its waveform takes.
+    program = load(drives(16, " {classical.variable}"))
+    assert "classical.variable" not in program.mlir()
+    assert events(program)[-2:] == [("drive", 0, 500, 16), ("drive", 0, 516, 16)]
+    for mark in ("", " {classical.variable}"):
+        with pytest.raises(pulse.CompilationError, match="duration_cycles is 1, but the operation"):
+            load(drives(1, mark))
+    # So it is on a wait whose length no answer gives: a wait of 100 cycles.
+    program = load(_run_time_wait(length="%long", reserved=100))
+    assert "classical.variable" not in program.mlir()
+    assert events(program)[-2:] == [("wait", 0, 500, 100), ("drive", 0, 600, 16)]
+    with pytest.raises(pulse.CompilationError, match="duration_cycles is 16, but the operation"):
+        load(_run_time_wait(length="%long"))
+
+
 def test_a_given_bool_function_keeps_its_own_types(system):
     machine = _links()
     _, text = _as_written(system, machine)
@@ -2722,3 +2885,281 @@ def test_a_loaded_module_for_frames_that_persist_gives_the_frame_each_tone_ends_
     [state] = program.export_to_controller()["frame_state"]
     assert state["frequency_hz"] == 5.002e9
     assert _exports(program) == _exports(lowered)
+
+
+# ── Lines, tones and links through branches and loops ────────────────────────
+
+_DRIVE_TYPES = f"!pulse.drive_line, !pulse.waveform, !pulse.tone -> {T}"
+_SUBMIT = "(!pulse.measurement) -> (!classical.link, !classical.future)"
+_DECIDE = (
+    '  classical.callable @decide__1 {args = ["bits:1"], device = 0 : i64, dispatch_key = '
+    "1522877098 : i64, latency_max_ns = 4.0e+02 : f64, latency_min_ns = 0.0 : f64, "
+    'latency_nominal_ns = 4.0e+02 : f64, mode = "bounded", results = ["bits:1"], submit = '
+    '"eager"}\n'
+)
+
+
+def _two_lines(body, declarations="", attributes=""):
+    """A function of two qudits: their drive lines and tones (%da, %ta and
+    %db, %tb), a readout of the first at cycles 0 to 100 (%m, and %bit set
+    by it), a 16-cycle waveform %w, and *body* after them."""
+    return f"""
+module{attributes} {{
+{declarations}  func.func @main(%a: !pulse.qudit, %b: !pulse.qudit) {TIMED} {{
+    %da, %ta = pulse.get_drive_line %a : (!pulse.qudit) -> ({T})
+    %db, %tb = pulse.get_drive_line %b : (!pulse.qudit) -> ({T})
+    %ra, %rta = pulse.get_readout_line %a : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
+    %n = arith.constant 16 : i64
+    %long = arith.constant 100 : i64
+    %amp = arith.constant 0.5 : f64
+    %zero = arith.constant 0.0 : f64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c3 = arith.constant 3 : index
+    %w = pulse.square %n, %amp, %zero : i64, f64, f64 -> !pulse.waveform
+    %rw = pulse.square %long, %amp, %zero : i64, f64, f64 -> !pulse.waveform
+    %ra1, %rta1, %m = pulse.readout %ra, %rw, %rta, iq {_at(0, 100)}
+        : !pulse.readout_line, !pulse.waveform, !pulse.tone
+          -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %bit = pulse.is_set %m : !pulse.measurement -> i1
+{body}
+    return
+  }}
+}}
+"""
+
+
+def _branch(yielded):
+    """One arm drives the first qudit's line; the other yields *yielded*;
+    a drive follows on what the branch gives."""
+    return _two_lines(f"""
+    %x, %tx = scf.if %bit -> ({T}) {{
+      %d1, %t1 = pulse.drive %da, %w, %ta {_at(100, 16)} : {_DRIVE_TYPES}
+      scf.yield %d1, %t1 : {T}
+    }} else {{
+      scf.yield {yielded} : {T}
+    }}
+    %x1, %tx1 = pulse.drive %x, %w, %tx {_at(116, 16)} : {_DRIVE_TYPES}""")
+
+
+@pytest.mark.level0
+def test_a_line_that_leaves_a_branch_is_the_same_one_in_both_arms(system):
+    qudits = system.qudits[:2]
+    program = pulse.load(_branch("%da, %ta"), entry="main", qudits=qudits)
+    assert events(program) == [("readout", 0, 0, 100), ("drive", 0, 100, 16), ("drive", 0, 116, 16)]
+    # The export gives the drive after the branch one line: the arms name it.
+    for yielded, named in (
+        ("%db, %tb", "the drive line of qudit 0 and the drive line of qudit 1"),
+        (
+            "%da, %tb",
+            "the tone of the drive line of qudit 0 and the tone of the drive line of qudit 1",
+        ),
+    ):
+        with pytest.raises(pulse.CompilationError, match="scf.if whose arms give") as refused:
+            pulse.load(_branch(yielded), entry="main", qudits=qudits)
+        assert named in str(refused.value)
+        assert refused.value.code == "wrong_argument"
+
+
+def _made_tones(other):
+    """A branch that gives a tone made with pulse.tone from one arm and
+    *other* from the other, and a drive that takes it."""
+    return _two_lines(f"""
+    %f5 = arith.constant 5.0e9 : f64
+    %f6 = arith.constant 6.0e9 : f64
+    %u = pulse.tone %f5, %zero : f64, f64 -> !pulse.tone
+    %v = pulse.tone %f6, %zero : f64, f64 -> !pulse.tone
+    %tx = scf.if %bit -> (!pulse.tone) {{
+      scf.yield %u : !pulse.tone
+    }} else {{
+      scf.yield {other} : !pulse.tone
+    }}
+    %x1, %tx1 = pulse.drive %da, %w, %tx {_at(100, 16)} : {_DRIVE_TYPES}""")
+
+
+def test_a_tone_a_function_makes_is_one_tone_through_a_branch(system):
+    qudits = system.qudits[:2]
+    program = pulse.load(_made_tones("%u"), entry="main", qudits=qudits)
+    [drive] = [e for e in program.export_to_controller()["events"] if e["kind"] == "drive"]
+    assert drive["frequency_hz"] == 5.0e9
+    # Another tone from the other arm would be a frequency the measured bit picks.
+    for other, named in (
+        ("%v", "a tone made by 'pulse.tone' and a tone made by 'pulse.tone'"),
+        ("%ta", "a tone made by 'pulse.tone' and the tone of the drive line of qudit 0"),
+    ):
+        with pytest.raises(pulse.CompilationError, match="scf.if whose arms give") as refused:
+            pulse.load(_made_tones(other), entry="main", qudits=qudits)
+        assert named in str(refused.value)
+
+
+def test_a_line_is_acquired_from_a_qudit_the_function_takes(system):
+    qudits = system.qudits[:2]
+    acquired = f"""
+    %dq, %tq = pulse.get_drive_line %q : (!pulse.qudit) -> ({T})
+    %x1, %tx1 = pulse.drive %dq, %w, %tq {_at(100, 16)} : {_DRIVE_TYPES}"""
+    picked = "    %q = arith.select %bit, %a, %b : !pulse.qudit" + acquired
+    with pytest.raises(pulse.CompilationError, match="main makes a qudit with 'arith.select'"):
+        pulse.load(_two_lines(picked), entry="main", qudits=qudits)
+    # Through a branch or a loop, even as the same qudit, the export would
+    # not find the qudit of the line acquired after it.
+    branch = """
+    %q = scf.if %bit -> (!pulse.qudit) {
+      scf.yield %b : !pulse.qudit
+    } else {
+      scf.yield OTHER : !pulse.qudit
+    }"""
+    for other in ("%a", "%b"):
+        with pytest.raises(pulse.CompilationError, match="passes a qudit through an scf.if"):
+            pulse.load(
+                _two_lines(branch.replace("OTHER", other) + acquired), entry="main", qudits=qudits
+            )
+    loop = """
+    %q = scf.for %i = %c0 to %c3 step %c1 iter_args(%k = %b) -> (!pulse.qudit) {
+      scf.yield %k : !pulse.qudit
+    }"""
+    with pytest.raises(pulse.CompilationError, match="passes a qudit through an scf.for"):
+        pulse.load(_two_lines(loop + acquired), entry="main", qudits=qudits)
+    # Acquired from the qudit as the function takes it, the line is its own.
+    head = f"    %db, %tb = pulse.get_drive_line %b : (!pulse.qudit) -> ({T})\n"
+    direct = _two_lines(acquired.replace("%q ", "%b "))
+    assert head in direct
+    program = pulse.load(direct.replace(head, ""), entry="main", qudits=qudits)
+    assert events(program)[-1] == ("drive", 1, 100, 16)
+
+
+def _carried(yielded):
+    """A loop of three trips that drives the line it carries first."""
+    return _two_lines(f"""
+    %l:4 = scf.for %i = %c0 to %c3 step %c1 iter_args(%x = %da, %tx = %ta, %y = %db, %ty = %tb)
+        -> ({T}, {T}) {{
+      %x1, %tx1 = pulse.drive %x, %w, %tx {_at(100, 16, "period_cycles = array<i64: 16>")}
+          : {_DRIVE_TYPES}
+      scf.yield {yielded} : {T}, {T}
+    }}""")
+
+
+@pytest.mark.level0
+def test_a_line_a_loop_carries_is_the_same_one_in_every_trip(system):
+    qudits = system.qudits[:2]
+    program = pulse.load(_carried("%x1, %tx1, %y, %ty"), entry="main", qudits=qudits)
+    assert events(program)[1:] == [("drive", 0, 100 + 16 * k, 16) for k in range(3)]
+    # The second trip would drive the other qudit's line.
+    with pytest.raises(pulse.CompilationError, match="scf.for that takes in") as refused:
+        pulse.load(_carried("%y, %ty, %x1, %tx1"), entry="main", qudits=qudits)
+    assert "the drive line of qudit 0 and yields, in its place, the drive line of qudit 1" in str(
+        refused.value
+    )
+    # A tone alone is held to it too.
+    tones = (
+        "takes in the tone of the drive line of qudit 0 and yields, in its place, "
+        "the tone of the drive line of qudit 1"
+    )
+    with pytest.raises(pulse.CompilationError, match=tones):
+        pulse.load(_carried("%x1, %ty, %y, %tx1"), entry="main", qudits=qudits)
+    # And a loop inside the loop, which swaps what the outer one carries.
+    inner = _two_lines(f"""
+    %l:4 = scf.for %i = %c0 to %c3 step %c1 iter_args(%x = %da, %tx = %ta, %y = %db, %ty = %tb)
+        -> ({T}, {T}) {{
+      %k:4 = scf.for %j = %c0 to %c3 step %c1 iter_args(%p = %x, %tp = %tx, %q = %y, %tq = %ty)
+          -> ({T}, {T}) {{
+        scf.yield %q, %tq, %p, %tp : {T}, {T}
+      }}
+      scf.yield %k#0, %k#1, %k#2, %k#3 : {T}, {T}
+    }}""")
+    with pytest.raises(pulse.CompilationError, match="scf.for that takes in the drive line of"):
+        pulse.load(inner, entry="main", qudits=qudits)
+
+
+@pytest.mark.parametrize(
+    ("made", "what"),
+    [
+        (
+            "%x = arith.select %bit, %da, %db : !pulse.drive_line",
+            "a drive line with 'arith.select'",
+        ),
+        ("%tx = arith.select %bit, %ta, %tb : !pulse.tone", "a tone with 'arith.select'"),
+        ("%tx = ub.poison : !pulse.tone", "a tone with 'ub.poison'"),
+        ("%rx = ub.poison : !pulse.readout_line", "a readout line with 'ub.poison'"),
+        ("%lx = ub.poison : !classical.link", "a link with 'ub.poison'"),
+    ],
+)
+def test_a_line_comes_from_its_qudit_through_pulse_operations(system, made, what):
+    with pytest.raises(pulse.CompilationError, match=f"main makes {what}") as refused:
+        pulse.load(_two_lines("    " + made), entry="main", qudits=system.qudits[:2])
+    assert refused.value.code == "wrong_argument"
+
+
+def _two_links(other):
+    """A submission on the link a branch gives: link 0 from one arm and
+    *other* from the other."""
+    # A second function, on the second link.
+    second = _DECIDE.replace("@decide__1", "@amp__1").replace("device = 0", "device = 1")
+    second = second.replace("1522877098", "2616160850")
+    assert second.count("amp__1") == 1 and "device = 1" in second and "2616160850" in second
+    return _two_lines(
+        f"""
+    %l0 = classical.get_link {{device = 0 : i64}} : !classical.link
+    %l1 = classical.get_link {{device = 1 : i64}} : !classical.link
+    %l = scf.if %bit -> (!classical.link) {{
+      scf.yield %l0 : !classical.link
+    }} else {{
+      scf.yield {other} : !classical.link
+    }}
+    %l2, %f = classical.submit %l, @decide__1(%m) {_at(100, 100)} : {_SUBMIT}
+    %ans = classical.wait %f, @decide__1 {_at(1200, 0)} : i1""",
+        _DECIDE + second,
+        ' attributes {classical.links = {"0" = {name = "host"}, "1" = {name = "side"}}}',
+    )
+
+
+def test_a_link_that_leaves_a_branch_is_the_same_one_in_both_arms(system):
+    from cudaq_pulse.classical import Link
+
+    machine = pulse.ControlSystem(
+        links={name: Link(fixed_ns=50, feedback_ns=100) for name in ("host", "side")}
+    )
+    qudits = system.qudits[:2]
+    program = pulse.load(_two_links("%l0"), entry="main", qudits=qudits, control_system=machine)
+    assert [e[0] for e in events(program)] == ["readout", "submit", "answer"]
+    with pytest.raises(pulse.CompilationError, match="as one result, link 0 and link 1"):
+        pulse.load(_two_links("%l1"), entry="main", qudits=qudits, control_system=machine)
+
+
+def test_a_line_is_followed_through_the_calls_written_in_place(system):
+    drives = CALLS[CALLS.index("  func.func private @x") : CALLS.index("  func.func private @pair")]
+
+    def text(other):
+        return f"""
+module {{
+{drives}  func.func @shot(%qa: !pulse.qudit, %qb: !pulse.qudit) {TIMED} {{
+    %a, %at = pulse.get_drive_line %qa : (!pulse.qudit) -> ({T})
+    %b, %bt = pulse.get_drive_line %qb : (!pulse.qudit) -> ({T})
+    %r, %rt = pulse.get_readout_line %qa : (!pulse.qudit) -> (!pulse.readout_line, !pulse.tone)
+    %n = arith.constant 8 : i64
+    %amp = arith.constant 0.05 : f64
+    %zero = arith.constant 0.0 : f64
+    %w = pulse.square %n, %amp, %zero : i64, f64, f64 -> !pulse.waveform
+    %r1, %rt1, %m = pulse.readout %r, %w, %rt, iq {_at(0, 8)}
+        : !pulse.readout_line, !pulse.waveform, !pulse.tone
+          -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %bit = pulse.is_set %m : !pulse.measurement -> i1
+    %x, %tx = scf.if %bit -> ({T}) {{
+      %a1, %at1 = pulse.call @x(%a, %at) {_at(8, 8)} : ({T}) -> ({T})
+      scf.yield %a1, %at1 : {T}
+    }} else {{
+      {other}
+    }}
+    return
+  }}
+}}
+"""
+
+    qudits = system.qudits[:2]
+    program = pulse.load(text(f"scf.yield %a, %at : {T}"), entry="shot", qudits=qudits)
+    assert events(program) == [("readout", 0, 0, 8), ("drive", 0, 8, 8)]
+    called = f"%b1, %bt1 = pulse.call @x(%b, %bt) {_at(8, 8)} : ({T}) -> ({T})"
+    with pytest.raises(
+        pulse.CompilationError, match="shot has an scf.if whose arms give"
+    ) as refused:
+        pulse.load(text(f"{called}\n      scf.yield %b1, %bt1 : {T}"), entry="shot", qudits=qudits)
+    assert "the drive line of qudit 0 and the drive line of qudit 1" in str(refused.value)

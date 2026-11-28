@@ -315,6 +315,72 @@ def test_each_controllers_longest_program_bounds_the_lines_it_plays():
     )
 
 
+def _three_lines(first, second, third):
+    @pulse.kernel
+    def three(a, b, c):
+        wait(get_drive_line(a), first)
+        wait(get_drive_line(b), second)
+        wait(get_drive_line(c), third)
+
+    return three
+
+
+@pytest.mark.parametrize(
+    ("waits", "refused"),
+    [
+        ((200, 300, 400), None),
+        ((201, 301, 401), (0, 201, 100)),
+        ((200, 301, 401), (1, 301, 150)),
+        ((200, 300, 401), (2, 401, 200)),
+        ((100, 301, 100), (1, 301, 150)),
+    ],
+)
+def test_several_controllers_limits_each_bound_their_own_lines(waits, refused):
+    # Three controllers, a line each, longest programs of 100, 150 and 200 ns
+    # (200, 300 and 400 cycles): each counts the operations on its own line
+    # only, and the first one in the control system's order that the program
+    # passes is the one named, with its own length.
+    controllers = [
+        Controller(drive_lines=[k], readout_lines=[k], max_program_duration=limit)
+        for k, limit in enumerate((100, 150, 200))
+    ]
+    machine = ControlSystem(controllers=controllers)
+    kernel = _three_lines(*waits)
+    if refused is None:
+        assert (
+            pulse.compile(kernel, control_system=machine, schedule="asap").lower(Q[0], Q[1], Q[2])
+            is not None
+        )
+        return
+    index, length, limit = refused
+    with pytest.raises(CompilationError) as caught:
+        pulse.compile(kernel, control_system=machine, schedule="asap").lower(Q[0], Q[1], Q[2])
+    assert str(caught.value) == (
+        f"kernel 'three' lasts {length} cycles, more than controllers[{index}]'s "
+        f"max_program_duration of {limit} ns ({2 * limit} cycles); let its operations overlap, "
+        "shorten them or raise max_program_duration"
+    )
+
+
+def test_a_controller_with_a_limit_and_no_operation_counts_nothing():
+    # Three controllers with limits, a kernel on the lines of the first two
+    # only: the third, with the lowest limit, has nothing to count, and the
+    # second is the one named.
+    controllers = [
+        Controller(drive_lines=[k], readout_lines=[k], max_program_duration=limit)
+        for k, limit in enumerate((200, 150, 10))
+    ]
+    machine = ControlSystem(controllers=controllers)
+
+    @pulse.kernel
+    def two(a, b):
+        wait(get_drive_line(a), 100)
+        wait(get_drive_line(b), 301)
+
+    with pytest.raises(CompilationError, match=r"lasts 301 cycles, more than controllers\[1\]'s"):
+        pulse.compile(two, control_system=machine, schedule="asap").lower(Q[0], Q[1])
+
+
 def _together(lines, cycles):
     @pulse.kernel
     def together(a, b, c):

@@ -517,6 +517,14 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 - **Faster compiles of branches beside long lists of lines.** Tracing a
   measurement-conditioned `if` in a kernel that keeps many lines or tones
   in a list costs less; the programs compiled are unchanged.
+- **A kernel of many comprehensions and no `try` or `with` block is
+  decoded in linear time.** Reading a kernel's bytecode looked, for the
+  exception-table entry of each inlined comprehension, through every entry
+  of the kernel, so a kernel with a thousand comprehensions ran 16 million
+  bytecodes there the first time it was compiled, most of that compile's
+  Python work. A kernel without a `try` or `with` block no longer looks:
+  it has no handler to find. One with such a block is read as before. The
+  programs compiled are unchanged.
 - **A list of lines held under several names costs a branch once.** A
   measurement-conditioned `if` kept a record of a list of lines or tones for
   every local name that held it (a further variable, or a called kernel
@@ -710,6 +718,11 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   `**kwargs` on to it. Calls that worked still work; a type checker now
   accepts a `Path` and rejects another keyword, such as `dpi=300`, which
   type-checked and then raised `TypeError` inside `plot_schedule`.
+- **The exports list a segment without `dataclasses.asdict`.**
+  `export_to_emulator` and the controller exports, which carry the
+  program's segments, made each segment's entry with `dataclasses.asdict`,
+  which took about 30 calls a segment; an entry is now written directly,
+  in one call. The exports are unchanged.
 - **The emulator export of one controller builds the schedule once.** On a
   control system of several controllers, `export_to_emulator` built the
   program's schedule twice, once to check it against the controller's part
@@ -793,6 +806,11 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   in a mode the exports do not take yet is still refused at `load` in a
   program of up to 10,000 events, where the list refused it, and a longer
   program loads as it did.
+- **A readout in a program with classical calls or a readout model weighs
+  each outcome once.** `pulse.simulate` took the weight of each state a readout projects
+  on, then took it again for the probability of each outcome and for the
+  outcome a sampled shot follows. It keeps the first. Results are
+  unchanged.
 - **RK4 on the GPU uploads its step factors once per interval.** With
   `backend="gpu"` and the default `integrator="rk4"`, each step adds states
   into one another eleven times, each time scaled by a factor that the
@@ -824,6 +842,72 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   recompiled when a global read by a helper changes, including helpers called
   through bound methods, class methods, `functools.partial`, callable objects,
   or dict, list and tuple lookups.
+- The schedule passes no longer take the square of the number of drives on
+  waveforms computed from one another (`w = wf_scale(w, 0.5)` before each
+  drive, or sums and products of earlier waveforms): they keep the length
+  each such waveform has instead of following it back to its first operand
+  every time they ask. The schedules are the same. Building such a kernel
+  and `pulse-verify` still follow each waveform back.
+- Scheduling a program on a control system of which several controllers
+  declare `max_program_duration` walks the program once for all of them,
+  where it walked it once per controller with a limit. The lengths compared
+  and the errors are the same, and the first controller in the control
+  system's order whose limit the program exceeds is still the one named.
+- **`pulse.load` no longer takes answers, or a length that is not an
+  answer's, from a module's attributes.** `load` kept two attributes the
+  compiler uses for its own programs wherever a module wrote them.
+  `classical.answers` on a `classical.wait` is what a simulation binds to
+  a call on its own copy of a program: stated in a module, it made every
+  value computed from that answer a constant, so the export played an
+  amplitude the module chose where the program computes it from the answer
+  as it runs. `classical.variable` marks a wait whose length is an answer,
+  which the verifier therefore does not hold to the length it takes: on a
+  drive it let a 16-cycle waveform state one cycle and the next drive start
+  inside it. `load` now drops `classical.answers`, and keeps
+  `classical.variable` only on a `pulse.wait` whose length is computed from
+  an answer; anywhere else it is dropped like any attribute of another
+  compiler, and a drive, a readout or a wait of constant length is then
+  verified for the length it has. A wait that keeps the mark states its
+  lowest length (`pulse.min_cycles`) and reserves exactly that in
+  `duration_cycles`, as `compile` schedules it; another reservation raises
+  `CompilationError`. A module `compile` wrote loads as before.
+- **`pulse.load` refuses a function whose branches or loops switch a line.**
+  A module could give the lines of two qudits as one result of an `scf.if`,
+  carry one line into an `scf.for` and yield another in its place, or pick
+  a line, or the qudit a line is acquired from, with `arith.select`. What
+  reads a loaded program follows such a value to the line of the first arm,
+  or to the one the loop starts with, so the export gave every drive after
+  it to that one qudit while the function plays on the other in the other
+  arm or in the later trips. `load` now compares, at every `scf.if` and
+  `scf.for` that gives a line, a tone or a link, where the value starts on
+  each path (a line acquired from a qudit the function takes, a
+  `pulse.tone`, a `classical.get_link`), and raises `CompilationError` for
+  a branch whose arms give two as one result, for a loop that yields
+  another than it takes in, for a line, tone or link made by anything but
+  a Pulse or classical operation, `scf.if` or `scf.for`, and for a qudit
+  picked by another operation or passed through a branch or a loop. A
+  branch or a loop that passes one line on through both arms and every
+  trip loads as before, and so does every module `compile` writes: a
+  kernel cannot leave a name on two lines after an `if` on a measurement.
+- **A frame update in a measured branch of a rolled loop waits for its
+  readout.** A phase or frequency change in an arm of an `if` on a
+  measurement is made once the measurement is in. In a rolled loop that
+  carries the tone through the branch (the loop's iterations do not drive
+  the tone, or drive it only after the branch), the change was placed at
+  the start of the iteration instead: for
+  `for _ in range(3): if readout(r, square(200, 0.05)): shift_phase(d.tone, 0.25)`
+  the exported frame updates were at cycles 0, 200 and 400, each on the
+  condition of a readout that completes 200 cycles later, where the same
+  loop written out gives 200, 400 and 600. Such a change, one that no
+  drive or readout plays with on a tone whose free time is not one pattern
+  over the iterations, is now placed when the readouts its branches test
+  complete, and where two of them move differently from one iteration to
+  the next, once both have. Only the start of such a change moves: drives,
+  readouts and waits are scheduled as before, and unrolled programs and
+  programs without a frame change in a measured branch of a rolled loop
+  compile to the IR, schedule and exports they had. A change in a loop
+  that drives its tone before the branch, and a branch in a loop on a
+  measurement from before the loop, are placed as before.
 - **Compiling loops of classical calls inside loops no longer slows with
   the trips of any of them.** Of the loops around a call, the classical
   check took one from a single copy of its body and walked the others

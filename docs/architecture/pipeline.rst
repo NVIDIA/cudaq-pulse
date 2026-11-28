@@ -5,7 +5,7 @@
 Compilation Pipeline
 ====================
 
-CUDA-Q Pulse compiles ``@kernel`` functions through a multi-stage pipeline
+CUDA-Q Pulse compiles ``@pulse.kernel`` functions through a multi-stage pipeline
 that goes from Python source to GPU-executable code.
 
 .. themed-figure:: figures/pipeline.svg
@@ -21,7 +21,7 @@ that goes from Python source to GPU-executable code.
 Stage 1: Bytecode Tracing
 --------------------------
 
-The ``@kernel`` decorator captures the decorated function's CPython
+The ``@pulse.kernel`` decorator captures the decorated function's CPython
 bytecode. When a kernel compiles, a ``PackedIRBuilder`` traces
 the bytecode and writes each operation into a flat ``numpy.ndarray``
 of ``int64`` values. This packed buffer encodes operation types,
@@ -68,6 +68,29 @@ For GPU execution, three dialect conversion passes lower the IR:
 3. **CuDensityMat -> LLVM**: Final lowering to LLVM IR with runtime
    library calls
 
+``mlir(level)`` on a scheduled kernel gives the program's text at the Pulse
+level or at any of the three levels below it. This block lowers the Hello World
+kernel of :doc:`../getting_started` and prints each level:
+
+.. code-block:: python
+
+   import cudaq_pulse as pulse
+
+   @pulse.kernel
+   def rabi_oscillation(qubit, amplitude: float, duration, sigma):
+       drive_line = get_drive_line(qubit)
+       readout_line = get_readout_line(qubit)
+       drive(drive_line, gaussian(duration, amplitude, sigma))
+       sync(drive_line, readout_line)
+       return readout(readout_line, readout_line.get_calibration(pulse.gates.READOUT))
+
+   qs = pulse.quantum_system("transmon_surface17")
+   scheduled = rabi_oscillation.lower(qs.qudits[0], 0.5, 32 * pulse.ns, 8 * pulse.ns)
+   print(scheduled.mlir("pulse"))  # the scheduled Pulse dialect
+   print(scheduled.mlir("qop"))    # quantum operators: the Hamiltonian and dissipators
+   print(scheduled.mlir("cudm"))   # cuDensityMat operators and evolution
+   print(scheduled.mlir("llvm"))   # the LLVM dialect, ready to compile
+
 The execution lowering supports transmon models with any number of levels in
 a rotating frame. A program that measures is lowered one interval at a time
 along a measurement-outcome path, and the intervals are joined by projecting
@@ -75,3 +98,8 @@ the state. Systems without a simulation model (a quantum system whose ``model`` 
 ``None`` or has no simulator) and unspecialized waveforms are rejected
 instead of silently approximated. See
 :doc:`../user_guide/gpu_execution` for the complete model and limitations.
+
+:example:`09_compilation_pipeline.py` walks through ``pulse.compile()`` and
+``lower()``, and :example:`transmon/transmon_surface17_full_pipeline.py`
+prints each stage of the lowering: the Pulse MLIR, the QOp form and the LLVM
+IR.

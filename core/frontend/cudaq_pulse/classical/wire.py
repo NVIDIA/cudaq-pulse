@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import struct
 from collections.abc import Callable, Sequence
-from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
 from .._errors import ExecutionError, InvalidTypeError, InvalidValueError
@@ -458,7 +457,7 @@ def _export(
             if part is None or fn.name in part[2]
         },
         "segments": [
-            {**asdict(e), "after": a} if k and a != k - 1 else asdict(e)
+            {**_segment_data(e), "after": a} if k and a != k - 1 else _segment_data(e)
             for k, (e, a) in enumerate(zip(segments, after, strict=False))
         ],
         "events": events,
@@ -492,6 +491,19 @@ def _program(lowered: Any) -> tuple[Any, Sequence[Any]]:
 
 def _calls(lowered: Any) -> Sequence[Any]:
     return _report(lowered) if lowered.classical else ()
+
+
+def _segment_data(segment: Any) -> dict[str, Any]:
+    """A ``Segment`` as export data: its fields, in order (the ``asdict`` of
+    one, made directly)."""
+    return {
+        "index": segment.index,
+        "opened_by": segment.opened_by,
+        "line": segment.line,
+        "start_cycles": segment.start_cycles,
+        "min_shift_cycles": segment.min_shift_cycles,
+        "max_shift_cycles": segment.max_shift_cycles,
+    }
 
 
 def _call_data(call: Any) -> dict[str, Any]:

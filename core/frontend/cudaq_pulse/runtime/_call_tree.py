@@ -444,7 +444,8 @@ def simulate_tree(
         seen[key] = (number, tuple(kernel_iteration), qudit, start, end)
         m = modes[qudit]
         projected = [engine.project(state, dims, m, k) for k in range(dims[m])]
-        weights = np.array([engine.weight(s) for s in projected]) * weight
+        norms = [engine.weight(s) for s in projected]
+        weights = np.array(norms) * weight
         branches: list[tuple[int, int, Any, float]] = []
         floor = _NEGLIGIBLE * (weights.sum() if sampled else norm)
         for k, (branch, w) in enumerate(zip(projected, weights, strict=False)):
@@ -456,7 +457,7 @@ def simulate_tree(
                 for r, p in readout.reports(m, k):
                     branches.append((r, k, branch, p))
         # Exact propagation leaves an empty level at a trace of +-1e-17.
-        probabilities = np.maximum([engine.weight(b) * p * weight for _, _, b, p in branches], 0.0)
+        probabilities = np.maximum([norms[k] * p * weight for _, k, _, p in branches], 0.0)
         total = probabilities.sum()
         counts = (
             rng.multinomial(count, probabilities / total)
@@ -470,7 +471,7 @@ def simulate_tree(
                     continue
                 # A path of many measurements is improbable as a whole;
                 # each followed outcome is kept at unit weight instead.
-                branch = branch / engine.weight(branch)
+                branch = branch / norms[k]
             followed.append(([*path, (key, r)], {**truth, key: k}, branch, int(n), weight * p))
         t = max(end, t)
         if not engine.batches:

@@ -10,6 +10,8 @@ import numpy as np
 import pytest
 from cudaq_pulse import CompilationError
 
+from tests._handles import Q
+
 DURATION, AMPLITUDE, SIGMA = 64, 0.05, 16.0
 
 
@@ -178,3 +180,51 @@ def test_an_unusable_duration_is_rejected(qudit, duration, message):
 
     with pytest.raises(CompilationError, match=message):
         bad.lower(qudit)
+
+
+@pytest.mark.parametrize("schedule", ["asap", "alap", "rcp", "alap_rcp"])
+@pytest.mark.parametrize("threshold", [0, 10**6])
+def test_waveforms_scaled_from_each_other_keep_their_length_in_loops_and_blocks(
+    schedule, threshold
+):
+    # Each drive plays a waveform computed from another and lasts what that
+    # one lasts (40 then 24 cycles in each trip, 56 in the called kernel, 64
+    # for the readout): in a loop kept rolled or written out, after a readout
+    # on a waveform scaled twice, and (under asap and alap, which place one)
+    # in a kernel with its own schedule.
+    with_block = schedule in ("asap", "alap")
+
+    @pulse.kernel(schedule="asap")
+    def burst(q):
+        d = get_drive_line(q)
+        w = wf_scale(square(56, 0.2), 0.9)
+        drive(d, w)
+        w = wf_scale(w, 0.9)
+        drive(d, w)
+        w = wf_mul(w, wf_scale(w, 0.9))
+        drive(d, w)
+
+    @pulse.kernel(unroll_threshold=threshold)
+    def scaled(q):
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        readout(r, wf_scale(wf_scale(square(64, 0.05), 0.5), 0.5))
+        for _ in range(6):
+            w = wf_scale(square(40, 0.2), 0.9)
+            drive(d, w)
+            sync(d, r)
+            v = wf_scale(wf_neg(wf_scale(square(24, 0.2), 0.5)), 0.5)
+            drive(d, wf_add(v, v))
+        if with_block:
+            burst(q)
+
+    lowered = pulse.compile(scaled, schedule=schedule).lower(Q[0])
+    drives = sorted(
+        (e.start_cycles, e.duration_cycles) for e in lowered.schedule if e.kind == "drive"
+    )
+    assert [duration for _, duration in drives] == [40, 24] * 6 + [56] * (3 if with_block else 0)
+    assert [e.duration_cycles for e in lowered.schedule if e.kind == "readout"] == [64]
+    assert all(
+        later >= start + duration
+        for (start, duration), (later, _) in zip(drives, drives[1:], strict=False)
+    )

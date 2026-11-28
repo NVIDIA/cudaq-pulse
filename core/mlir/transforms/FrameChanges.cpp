@@ -19,7 +19,8 @@
 // first pulse of an iteration on a tone the previous iteration played), the
 // change is placed at the start of the next drive or readout that plays
 // with it. In a loop whose iterations do not play its tone, a change is at
-// the start of each iteration. A change takes no time: no drive, readout,
+// the start of each iteration, or, where it depends on readouts, once they
+// are in. A change takes no time: no drive, readout,
 // loop or program starts, ends or lasts otherwise for it.
 //
 // A change that a drive or readout plays with, later in the shot or in a
@@ -285,10 +286,19 @@ public:
           source = by;
         }
       }
-    } else if ((time = nextPulse(change->getResult(0), depth)))
+    } else if ((time = nextPulse(change->getResult(0), depth))) {
       source = change;
-    else
-      time = Time{};
+    } else {
+      // When its tone is free is no one pattern (a loop carries the tone
+      // through a branch) and no pulse plays with the change: it is made
+      // once the measurements it depends on are in, else at the start of
+      // each iteration.
+      mlir::Operation *readout = nullptr;
+      if ((time = measured(change, depth, readout)))
+        source = readout;
+      else
+        time = Time{};
+    }
     time->periods.resize(depth, 0);
     if (depth) {
       llvm::SmallVector<mlir::scf::ForOp> loops = pulse::enclosingLoops(change);
@@ -351,6 +361,11 @@ private:
         if (later(end, latest)) {
           latest = std::move(end);
           readout = def;
+        } else if (!notBefore(*latest, end)) {
+          // Neither is the later in every iteration: once both are in.
+          latest->base = std::max(latest->base, end.base);
+          for (size_t l = 0; l < depth; ++l)
+            latest->periods[l] = std::max(latest->periods[l], end.periods[l]);
         }
       } else if (def->getNumRegions() == 0 &&
                  !mlir::isa<classical::ClassicalDialect>(def->getDialect())) {

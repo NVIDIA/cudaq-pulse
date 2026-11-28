@@ -133,15 +133,99 @@ static BlockShape shapeOf(pulse::ScheduleBlockOp block) {
   return shape;
 }
 
+/// The lengths found for waveform arithmetic while the schedule passes ask
+/// for them within a `Scope` (a round of a region's scheduling, the
+/// measuring of a schedule block's shape): each drive on a waveform
+/// computed from the one before it would otherwise follow the whole chain
+/// again, every time a pass asks how long it lasts. Kept only while no op
+/// is made or erased: the scope's `drop` before a loop is peeled or
+/// unrolled, and its end, forget them. Nothing is set up until an arithmetic
+/// waveform is asked for.
+class ArithmeticCycles {
+  using Lengths = llvm::DenseMap<mlir::Operation *, std::optional<int64_t>>;
+  struct State {
+    Lengths *kept = nullptr;
+    unsigned scopes = 0;
+
+    void drop() {
+      if (kept) {
+        delete kept;
+        kept = nullptr;
+      }
+    }
+  };
+  static thread_local State current;
+
+public:
+  struct Scope {
+    Scope() : state(&current) { ++state->scopes; }
+    ~Scope() {
+      state->drop();
+      --state->scopes;
+    }
+    Scope(const Scope &) = delete;
+    Scope &operator=(const Scope &) = delete;
+
+    /// Forget what is kept: ops are about to be made or erased.
+    void drop() { state->drop(); }
+
+  private:
+    // This thread's state, found once.
+    State *state;
+  };
+
+  /// The length of the waveform the arithmetic op `definition` gives: that
+  /// of the first operand, through every arithmetic op before it.
+  LLVM_ATTRIBUTE_NOINLINE static std::optional<int64_t>
+  of(mlir::Operation *definition) {
+    State &state = current;
+    if (state.scopes && !state.kept)
+      state.kept = new Lengths;
+    Lengths *lengths = state.scopes ? state.kept : nullptr;
+    llvm::SmallVector<mlir::Operation *, 8> chain;
+    std::optional<int64_t> cycles;
+    for (mlir::Operation *op = definition;;) {
+      if (lengths) {
+        auto found = lengths->find(op);
+        if (found != lengths->end()) {
+          cycles = found->second;
+          break;
+        }
+      }
+      chain.push_back(op);
+      mlir::Value waveform = op->getOperand(0);
+      op = waveform.getDefiningOp();
+      if (!op ||
+          !mlir::isa<pulse::PulseAddOp, pulse::PulseSubOp, pulse::PulseMulOp,
+                     pulse::PulseScaleOp, pulse::PulseNegOp>(op)) {
+        cycles = pulse::waveformCycles(waveform);
+        break;
+      }
+    }
+    if (lengths)
+      for (mlir::Operation *op : chain)
+        (*lengths)[op] = cycles;
+    return cycles;
+  }
+};
+
+thread_local ArithmeticCycles::State ArithmeticCycles::current;
+
+/// The length of a waveform in cycles (pulse::waveformCycles), keeping
+/// what waveform arithmetic gave within a scope of ArithmeticCycles.
+static std::optional<int64_t> keptCycles(mlir::Value waveform) {
+  return pulse::waveformCyclesWith<ArithmeticCycles>(waveform);
+}
+
 /// The cycles `op` takes. The forward pass checks (placedDuration) that
 /// every pulse and wait it places has a known length.
 static int64_t durationOf(mlir::Operation *op) {
   if (auto block = mlir::dyn_cast<pulse::ScheduleBlockOp>(op))
     return shapeOf(block).length;
   if (auto drive = mlir::dyn_cast<pulse::DriveOp>(op))
-    return pulse::waveformCycles(drive.getPulse()).value_or(0);
+    return keptCycles(drive.getPulse()).value_or(0);
   if (auto readout = mlir::dyn_cast<pulse::ReadoutOp>(op))
-    return pulse::waveformCycles(readout.getPulse()).value_or(0);
+    return keptCycles(readout.getPulse()).value_or(0);
   if (mlir::isa<classical::SubmitOp>(op))
     return classical::intAttr(op, "classical.submit_cycles", 1);
   if (mlir::isa<classical::WaitOp>(op))
@@ -175,7 +259,7 @@ static int64_t holdOf(mlir::Operation *op) {
 /// assumes some length.
 static mlir::FailureOr<int64_t> placedDuration(mlir::Operation *op) {
   auto checkPulse = [&](mlir::Value waveform) -> mlir::FailureOr<int64_t> {
-    std::optional<int64_t> cycles = pulse::waveformCycles(waveform);
+    std::optional<int64_t> cycles = keptCycles(waveform);
     if (!cycles)
       return op->emitError("cannot determine the duration of this pulse; "
                            "specialize the waveform to a constant duration "
@@ -6515,7 +6599,10 @@ static void writeShape(pulse::ScheduleBlockOp block, bool classical,
     in.push_back(first == kNever ? -1 : first);
   }
   Availability availability(block, in, classical, readiness);
-  availability.run();
+  {
+    ArithmeticCycles::Scope arithmeticCycles;
+    availability.run();
+  }
   llvm::SmallVector<int64_t> out, source;
   int64_t length = availability.length;
   for (mlir::Value value :
@@ -6801,6 +6888,14 @@ static mlir::LogicalResult checkProgramBudget(mlir::func::FuncOp function,
 inline constexpr llvm::StringLiteral kProgramLimitsAttr =
     "pulse.program_limits";
 
+/// checkProgramLimits for a module that lists several `limits` (defined
+/// after the passes, apart from the schedule of a module that lists none
+/// or one).
+static mlir::LogicalResult
+checkListedLimits(mlir::func::FuncOp function, mlir::ModuleOp module,
+                  mlir::ArrayAttr limits, const pulse::ClockAttributes &clocks,
+                  int64_t latency);
+
 /// Fail if the scheduled `function` lasts longer than a controller's
 /// longest program: to the end of its last op on the lines that controller
 /// plays (every line, with one), line delays included. `latency`: the
@@ -6815,6 +6910,9 @@ checkProgramLimits(mlir::func::FuncOp function,
                     : nullptr;
   if (!limits)
     return mlir::success();
+  // Several limits: one walk of the function for all of them.
+  if (limits.size() > 1)
+    return checkListedLimits(function, module, limits, clocks, latency);
   // A wait whose length a call sets counts at its length as scheduled: each
   // call's values are scheduled, and checked, again.
   for (mlir::Attribute entry : limits) {
@@ -6868,6 +6966,8 @@ scheduleRounds(mlir::Region &region, mlir::Operation *root, Resources resources,
   // Schedule the next round without the alap last end (see below).
   bool uncapped = false;
   while (true) {
+    // Dropped before the round peels or unrolls a loop, which erases ops.
+    ArithmeticCycles::Scope arithmeticCycles;
     Scheduler<Gridded> scheduler(region, resources, classical, grid,
                                  controllers, &timelines);
     scheduler.mayRegroup = regroups < kRegroupRounds;
@@ -6875,6 +6975,8 @@ scheduleRounds(mlir::Region &region, mlir::Operation *root, Resources resources,
     scheduler.regroupedBy = regroupedBy;
     scheduler.uncapped = std::exchange(uncapped, false);
     auto regrouped = [&] {
+      if (scheduler.headPeel || scheduler.regroup)
+        arithmeticCycles.drop();
       if (scheduler.headPeel) {
         ++headPeels;
         for (int64_t i = 0; i < scheduler.headPeel->iterations; ++i)
@@ -6969,6 +7071,7 @@ scheduleRounds(mlir::Region &region, mlir::Operation *root, Resources resources,
       return problem.peelFront + problem.peelBack > 1;
     });
     bool narrow = wide && ++widePeels > kWidePeelRounds;
+    arithmeticCycles.drop();
     for (NotAffine &problem : problems) {
       if (narrow && problem.peelFront + problem.peelBack > 1)
         problem.peelFront = problem.peelBack = 0;
@@ -7336,6 +7439,119 @@ struct PulseUnrollClassicalLoopsPass
     }
   }
 };
+
+// ── Each controller's longest program ────────────────────────────────────
+
+/// How long the program of each controller of `clocks` lasts, from one walk
+/// of the scheduled `function`: `shared`, the end of the last op on a line
+/// of no known controller or on no line, and `own[c]`, that of the last op
+/// on controller c's lines. The program of controller c lasts to the later
+/// of `shared` and `own[c]`, which is what programLength gives for it; of
+/// no one controller (-1), to the latest of them all.
+struct ControllerLengths {
+  int64_t shared = 0;
+  llvm::SmallVector<int64_t, 0> own;
+
+  int64_t of(int64_t controller) const {
+    if (controller < 0) {
+      int64_t length = shared;
+      for (int64_t end : own)
+        length = std::max(length, end);
+      return length;
+    }
+    if (controller >= static_cast<int64_t>(own.size()))
+      return shared;
+    return std::max(shared, own[controller]);
+  }
+};
+
+static ControllerLengths
+controllerLengths(mlir::func::FuncOp function,
+                  const pulse::ClockAttributes &clocks) {
+  std::optional<pulse::LineDelays> lines;
+  if (clocks.delayed())
+    lines.emplace(clocks);
+  pulse::AllocationTracer trace;
+  ControllerLengths lengths;
+  function.walk([&](mlir::Operation *op) {
+    if (!isTimedOp(op))
+      return;
+    std::optional<int64_t> start = pulse::startCycles(op);
+    if (!start)
+      return;
+    auto loops = pulse::enclosingLoops(op, function);
+    llvm::SmallVector<int64_t, 2> last;
+    for (mlir::scf::ForOp loop : loops) {
+      int64_t trips = pulse::constantTripCount(loop).value_or(0);
+      if (trips == 0)
+        return;
+      last.push_back(trips - 1);
+    }
+    int64_t end = *start;
+    for (auto [k, period] : llvm::zip(last, pulse::periodCycles(op)))
+      end += std::max<int64_t>(0, k * period);
+    end += pulse::scheduledDuration(op).value_or(0);
+    if (lines)
+      end += lines->of(op);
+    // The controller of the line's allocation, where the op plays on a line
+    // and the control system gives the line one (as playsElsewhere).
+    int64_t owner = -1;
+    if (mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(op))
+      if (mlir::Operation *allocation = trace(op->getOperand(0))) {
+        int64_t qudit = pulse::quditOf(allocation);
+        const llvm::SmallVector<int64_t> &owners =
+            mlir::isa<pulse::GetDriveLineOp>(allocation) ? clocks.driveOwner
+                                                         : clocks.readoutOwner;
+        if (qudit >= 0 && qudit < static_cast<int64_t>(owners.size()))
+          owner = owners[qudit];
+      }
+    if (owner < 0) {
+      lengths.shared = std::max(lengths.shared, end);
+      return;
+    }
+    if (owner >= static_cast<int64_t>(lengths.own.size()))
+      lengths.own.resize(owner + 1, 0);
+    lengths.own[owner] = std::max(lengths.own[owner], end);
+  });
+  return lengths;
+}
+
+LLVM_ATTRIBUTE_NOINLINE static mlir::LogicalResult
+checkListedLimits(mlir::func::FuncOp function, mlir::ModuleOp module,
+                  mlir::ArrayAttr limits, const pulse::ClockAttributes &clocks,
+                  int64_t latency) {
+  // A wait whose length a call sets counts at its length as scheduled: each
+  // call's values are scheduled, and checked, again. The function is walked
+  // once for every controller's length, at the first limit that asks.
+  std::optional<ControllerLengths> lengths;
+  for (mlir::Attribute entry : limits) {
+    auto fields = mlir::dyn_cast<mlir::DictionaryAttr>(entry);
+    auto controller =
+        fields ? fields.getAs<mlir::IntegerAttr>("controller") : nullptr;
+    auto cycles = fields ? fields.getAs<mlir::IntegerAttr>("cycles") : nullptr;
+    auto name = fields ? fields.getAs<mlir::StringAttr>("name") : nullptr;
+    auto duration =
+        fields ? fields.getAs<mlir::StringAttr>("duration") : nullptr;
+    if (!controller || !cycles || !name || !duration)
+      continue;
+    if (!lengths)
+      lengths = controllerLengths(function, clocks);
+    int64_t length = lengths->of(controller.getInt());
+    if (length <= cycles.getInt())
+      continue;
+    auto diagnostic = function->emitError()
+                      << "kernel '" << module.getSymName().value_or("main")
+                      << "' lasts " << length << " cycles, more than "
+                      << name.getValue() << "'s max_program_duration of "
+                      << duration.getValue() << " (" << cycles.getInt()
+                      << " cycles)";
+    nameLatency(diagnostic, latency);
+    diagnostic << "; let its operations overlap, shorten them or raise "
+                  "max_program_duration";
+    return mlir::failure();
+  }
+  return mlir::success();
+}
 
 } // namespace
 

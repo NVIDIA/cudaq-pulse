@@ -541,12 +541,32 @@ get that system's frequencies.
 check it: on its qudits and control system the function is verified as every
 scheduled program is, and checked against what the controllers can play. A
 module that states its clock must state the quantum system's. Attributes
-another compiler put on the function or its operations are dropped. A phase
+another compiler put on the function or its operations are dropped. Two that
+``compile`` uses for its own programs are a module's to state only where
+they mean what they say: ``classical.variable``, the mark of a wait whose
+length is the answer of a classical call, is kept on a ``pulse.wait`` whose
+length is computed from an answer, which then reserves its lowest length
+(its ``duration_cycles`` is its ``pulse.min_cycles``), and dropped anywhere
+else, where a drive, a readout or a wait of constant length is verified for
+the length it has; and answers bound to a call (``classical.answers``, which
+a simulation writes on its own copy of a program) are dropped, so that a
+loaded program takes every answer while it runs. A phase
 or frequency change keeps the start the module gives it; which changes no
 later drive or readout takes, and so are frame updates in the export
 (:doc:`controller_backends`), ``load`` finds from the function's operations
 as ``compile`` does, and a module does not say. The
-function plays on the qudits it takes and allocates none. A control system
+function plays on the qudits it takes and allocates none. Each line, tone
+and link is one from where it starts (a line and its tone at
+``pulse.get_drive_line`` or ``pulse.get_readout_line`` of a qudit the
+function takes, a tone of its own at ``pulse.tone``, a link at
+``classical.get_link``) to its last use: Pulse and classical operations,
+``scf.if`` and ``scf.for`` pass it on, and nothing else makes one (a line
+picked by ``arith.select`` is refused). A branch whose arms give the
+lines or tones of two qudits, two tones made apart or two links as one
+result is refused, and so is a loop that yields another than it takes in:
+what follows would play on a line that depends on the path. A qudit picked
+by an operation such as ``arith.select``, or passed through a branch or a
+loop, is refused too. A control system
 with line delays, or a controller with ``max_instructions`` or
 ``max_program_duration``, is refused: ``load`` does not apply or check those
 yet.
