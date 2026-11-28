@@ -343,6 +343,41 @@ def test_waveforms_made_from_a_choice_are_chosen_too():
     assert [e[3] for e in _events(k) if e[0] == "drive"] == [40, 60]
 
 
+def test_times_chosen_in_the_arms_are_cycles_of_the_program_clock():
+    # On the 2 GHz program clock, 20 ns and 30 ns are 40 and 60 cycles.
+    @pulse.kernel
+    def in_ns(q):
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        m = readout(r, square(100, 0.05))
+        if m:
+            t, s = 20 * pulse.ns, 5 * pulse.ns
+        else:
+            t, s = 30 * pulse.ns, 10 * pulse.ns
+        wait(d, t)
+        drive(d, wf_add(gaussian(t, 0.1, s), square(t, 0.2)))
+
+    @pulse.kernel
+    def in_cycles(q):
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        m = readout(r, square(100, 0.05))
+        if m:
+            t, s = 40, 10.0
+        else:
+            t, s = 60, 20.0
+        wait(d, t)
+        drive(d, wf_add(gaussian(t, 0.1, s), square(t, 0.2)))
+
+    def sigmas(kernel):
+        events = _lower(kernel).export_to_controller()["events"]
+        return [e["waveform"]["of"][0]["params"]["sigma"] for e in events if e["kind"] == "drive"]
+
+    assert _events(in_ns) == _events(in_cycles)
+    assert [e[3] for e in _events(in_ns) if e[0] == "wait"] == [40, 60]
+    assert sigmas(in_ns) == sigmas(in_cycles)
+
+
 def test_a_choice_in_a_helper():
     def pulse_with(d, amp):
         drive(d, square(40, amp))

@@ -995,6 +995,13 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   whose drives overlap, touch or make up to three stretches is stepped as
   before, and so is a register of detuned coupled qudits whose idle time
   is propagated in the frame of its couplings.
+- **A time chosen in the arms of an if on a measurement is converted to
+  cycles.** When the arms set a name to different times (`t = 50 * pulse.ns`
+  in one, `150 * pulse.ns` in the other), an op after the if that read it,
+  such as a wait, a waveform's duration or its sigma, took each time's
+  nanoseconds as clock cycles: on a 2 GHz clock it lasted half as long as
+  written, with no error. Each time is now converted on the program clock,
+  as it is when the op is written in both arms.
 - **Finding a program's segments no longer walks a loop that opens none.**
   `segments()` went through every iteration of every loop kept as a loop
   once the program declared a classical function, so a loop of n
