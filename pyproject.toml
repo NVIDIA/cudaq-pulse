@@ -270,6 +270,10 @@ test-command = [
     "python -m pytest -m \"not gpu\"",
 ]
 
+[tool.codespell]
+ignore-words-list = "anc,ans,atleast,collet,incase,ket,nd,notin,olt,precess,retuned,startin,statics,stretchin"
+skip = "*.svg,*.json,uv.lock,LICENSES/*,THIRD_PARTY_NOTICES"
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"

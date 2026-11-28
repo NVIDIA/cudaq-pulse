@@ -40,7 +40,7 @@ def test_every_problem_of_a_config_is_reported_in_its_key_order():
             "layout": [0, 99, 0],
             "measurement_run": "x",
             "name": TRANSMON_SURFACE17,
-            "laout": [],
+            "laout": [],  # codespell:ignore laout
             "zones": [],
         }
     )
@@ -48,7 +48,7 @@ def test_every_problem_of_a_config_is_reported_in_its_key_order():
         ("layout[1]", 99),
         ("layout[2]", 0),
         ("measurement_run", "x"),
-        ("laout", "laout"),
+        ("laout", "laout"),  # codespell:ignore laout
         ("zones", pulse.Problem.UNSET),
     ]
     assert str(error).startswith("5 problems in the quantum system data:\n  layout[1]: carrier 99")

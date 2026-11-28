@@ -331,8 +331,8 @@ pre-commit run --all-files
 MYPYPATH=build/dev/python mypy -p cudaq_pulse
 ```
 
-The hooks run the ruff linter and formatter, clang-format, whitespace and
-YAML/TOML checks, and a license-header check
+The hooks run codespell, the ruff linter and formatter, clang-format,
+whitespace and YAML/TOML checks, and a license-header check
 (`tools/check-license-headers.py`). New source files start with these two
 lines, in the file's comment syntax (after a shebang line, if any):
 
