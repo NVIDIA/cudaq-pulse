@@ -1603,6 +1603,18 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   the decoder looked for the instruction after it from the function's first
   instruction. It now reads that instruction directly. What is decoded is
   the same.
+- **A rolled `range()` loop no longer plays its first iteration's value on
+  every iteration when its body changes Python state through a call.** A
+  loop kept as an `scf.for` is traced once, and only the names, lists and
+  dicts it reaches were checked for changes. A body that advanced an
+  iterator made before the loop (`next(it)`), called a method that changes
+  its object, drew from `random` or changed a NumPy array in place played
+  its first value every time, with no error, and one that then failed to
+  roll for another reason was unrolled from the second value on. Such a
+  body is now unrolled from the state before the loop. A call in the body
+  to anything but a builtin, `math`, `cmath`, NumPy outside `numpy.random`
+  or cudaq-pulse itself, such as a helper that runs as plain Python, now
+  unrolls the loop too, since it may change state the next iteration reads.
 - **A call of a method whose object reaches many others no longer takes
   time that grows with the square of their number to trace.** To tell
   whether a method is a pulse helper, the tracer goes through the objects

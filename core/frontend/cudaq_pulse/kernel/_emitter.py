@@ -2124,11 +2124,11 @@ class PulseIREmitter:
                             )
                         push(value)
                         continue
-                    exit_idx, var_is_read = arg
+                    exit_idx, unrolled = arg
                     if loop.rolled is None:
                         loop.rolled = (
                             self._can_roll
-                            and not var_is_read
+                            and not unrolled
                             and not self._unrolls(loop, prog, pc - 1, exit_idx)
                             and self._roll(loop, prog, pc - 1, exit_idx)
                         )
@@ -3068,7 +3068,12 @@ class PulseIREmitter:
                 lazy.begin(lines, mutated, around)
         try:
             outcome = self._loop(view, start, branch, end, header)
-        except _NotRollableError:
+        except _NotRollableError as e:
+            if e.__class__ is not _NotRollableError:
+                # A rolled body's trace stopped before a change of state
+                # (_host_state.ChangesStateError): the loop around the if
+                # is unrolled instead.
+                raise
             from ._conditions import rejoin_error
 
             raise rejoin_error(view, branch) from None
@@ -3163,6 +3168,10 @@ class PulseIREmitter:
     # (non-IR locals and the lists and dicts they hold, and any container
     # a called kernel or helper reaches) unchanged, so all iterations would
     # trace identically. Otherwise the emitted ops are rolled back.
+    # A call or assignment that may change any other state (an iterator
+    # made before the loop, an object, a NumPy array) stops the trace
+    # before it runs, so the loop is unrolled from the state before it
+    # (``_host_state``).
     # The names in *unbound* are left unbound while the body is traced.
     def _roll(
         self,
@@ -3445,6 +3454,8 @@ class PulseIREmitter:
         return count * max(calls, 1) <= threshold
 
     # Remember what *obj* held before a rolled body or branch arm changed it.
+    # A rolled body's trace stops instead before it changes another object in
+    # place, which cannot be put back.
     def _note_mutation(self, obj: Any) -> None:
         mutated = self._mutated
         if mutated is not None and id(obj) not in mutated:
@@ -3458,6 +3469,10 @@ class PulseIREmitter:
                 mutated[id(obj)] = (obj, obj.copy())
             elif isinstance(obj, _MUTABLE):
                 mutated[id(obj)] = (obj, _contents(obj))
+            else:
+                from ._host_state import check_in_place
+
+                check_in_place(obj)
 
     # Mark a container built by the body or arm being traced as free to change.
     def _note_fresh(self, obj: Any) -> None:
@@ -3743,6 +3758,11 @@ class PulseIREmitter:
                     pass
             owner = getattr(callable_val, "__self__", None)
             if self._mutated is not None:
+                # In a rolled body, a call that may change state a later
+                # iteration reads stops the trace before it runs.
+                from ._host_state import checked_call
+
+                callable_val = checked_call(self, callable_val, owner, fname, call_args, kwargs)
                 if owner.__class__ in _CONTAINERS:
                     if fname not in _READ_METHODS:
                         self._note_mutation(owner)

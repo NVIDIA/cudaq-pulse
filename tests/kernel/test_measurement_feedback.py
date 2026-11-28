@@ -474,6 +474,24 @@ def test_a_loop_that_stops_rolling_inside_an_arm_traces_as_unrolled():
         assert compiled.schedule == unrolled.schedule, kernel
 
 
+def test_a_call_in_an_arm_that_advances_an_iterator_unrolls_the_loop_around_it():
+    @pulse.kernel
+    def sweep(q):
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        amps = iter([0.25, 0.5, 0.75])
+        for _ in range(3):
+            m = readout(r, square(40, 0.05))
+            sync(d, r)
+            if m:
+                drive(d, square(16, next(amps)))
+
+    compiled = _compile(sweep, schedule="asap", unroll_threshold=0)
+    assert "scf.for" not in compiled.mlir()
+    unrolled = _compile(sweep, schedule="asap", unroll_threshold=10**9)
+    assert compiled.schedule == unrolled.schedule
+
+
 def test_a_line_handed_out_again_and_driven_in_an_arm_is_carried_out_of_the_if():
     # get_drive_line(q0) in the arm returns the line d0 holds, which is shared
     # from then on: its drive there still makes the line a result of the if.

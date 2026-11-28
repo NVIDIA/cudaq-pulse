@@ -6,6 +6,9 @@ Covers all pulse operations, control flow, linear-type rebinding,
 constant folding, qudit allocation patterns, and error cases.
 """
 
+import math
+
+import numpy as np
 import pytest
 from cudaq_pulse.kernel.bytecode_bridge import compile_kernel_bytecode
 from cudaq_pulse.kernel.decorator import kernel
@@ -39,6 +42,54 @@ def _helper_waveform():
 
 def _helper_drive(line, waveform):
     drive(line, waveform)
+
+
+class _Sweep:
+    def __init__(self):
+        self.amp = 0.0
+
+    def step(self):
+        self.amp += 0.25
+        return self.amp
+
+
+def _advances_an_iterator(q0):
+    d0 = get_drive_line(q0)
+    amps = iter([0.25, 0.5, 0.75])
+    for _ in range(3):
+        drive(d0, square(10, next(amps)))
+
+
+def _advances_an_object(q0):
+    d0 = get_drive_line(q0)
+    sweep = _Sweep()
+    for _ in range(3):
+        drive(d0, square(10, sweep.step()))
+
+
+def _changes_an_array(q0):
+    d0 = get_drive_line(q0)
+    amp = np.zeros(1)
+    for _ in range(3):
+        amp += 0.25
+        drive(d0, square(10, float(amp[0])))
+
+
+def _changes_an_array_the_body_names(q0):
+    d0 = get_drive_line(q0)
+    arrays = [np.zeros(1)]
+    for _ in range(3):
+        amp = arrays[0]
+        amp += 0.25
+        drive(d0, square(10, float(amp[0])))
+
+
+def _fills_an_array(q0):
+    d0 = get_drive_line(q0)
+    amp = np.zeros(1)
+    for _ in range(3):
+        amp.fill(amp[0] + 0.25)
+        drive(d0, square(10, float(amp[0])))
 
 
 # ── Basic compilation ────────────────────────────────────────────────
@@ -403,6 +454,93 @@ class TestForLoop:
         amps = [op.attrs["amplitude"] for op in ir.ops if op.kind == "pulse.square"]
         assert amps == [0.1, 0.2, 0.4]
         assert not any(op.kind.startswith("scf.") for op in ir.ops)
+
+    @pytest.mark.parametrize(
+        "loop_test",
+        [
+            _advances_an_iterator,
+            _advances_an_object,
+            _changes_an_array,
+            _changes_an_array_the_body_names,
+            _fills_an_array,
+        ],
+    )
+    def test_python_state_changed_by_a_call_unrolls(self, loop_test):
+        ir = _rolled(loop_test)(Q[0])
+        amps = [op.attrs["amplitude"] for op in ir.ops if op.kind == "pulse.square"]
+        assert amps == [0.25, 0.5, 0.75]
+        assert not any(op.kind.startswith("scf.") for op in ir.ops)
+
+    def test_a_container_method_that_consumes_an_iterator_unrolls(self):
+
+        def loop_test(q0):
+            d0 = get_drive_line(q0)
+            amps = iter([0.25, 0.5, 0.75])
+            for _ in range(3):
+                taken = []
+                taken.extend(amps)
+                drive(d0, square(10, 0.25 * len(taken) + 0.25))
+
+        ir = _rolled(loop_test)(Q[0])
+        amps = [op.attrs["amplitude"] for op in ir.ops if op.kind == "pulse.square"]
+        assert amps == [1.0, 0.25, 0.25]
+        assert not any(op.kind.startswith("scf.") for op in ir.ops)
+
+    def test_numpy_methods_that_only_read_stay_rolled(self):
+
+        def loop_test(q0):
+            d0 = get_drive_line(q0)
+            amp = np.float64(0.25)
+            amps = np.array([0.125, 0.125])
+            for _ in range(3):
+                drive(d0, square(10, amp.item() + float(amps.sum())))
+
+        ir = _rolled(loop_test)(Q[0])
+        kinds = [op.kind for op in ir.ops]
+        assert kinds.count("scf.for") == 1
+        assert [op.attrs["amplitude"] for op in ir.ops if op.kind == "pulse.square"] == [0.5]
+
+    def test_an_augmented_assignment_the_trace_skips_stays_rolled(self):
+        counting = False
+
+        def loop_test(q0):
+            d0 = get_drive_line(q0)
+            count = 0
+            for _ in range(3):
+                if counting:
+                    count += 1
+                drive(d0, square(10, 0.25))
+
+        ir = _rolled(loop_test)(Q[0])
+        assert [op.kind for op in ir.ops].count("scf.for") == 1
+
+    def test_a_body_that_does_not_roll_starts_from_the_state_before_the_loop(self):
+
+        def loop_test(q0):
+            d0 = get_drive_line(q0)
+            amps = iter([0.25, 0.5, 0.75])
+            played = []
+            for _ in range(3):
+                played.append(next(amps))
+            drive(d0, square(10, played[0]))
+
+        ir = _rolled(loop_test)(Q[0])
+        amps = [op.attrs["amplitude"] for op in ir.ops if op.kind == "pulse.square"]
+        assert amps == [0.25]
+
+    def test_calls_that_change_nothing_stay_rolled(self):
+
+        def loop_test(q0):
+            d0 = get_drive_line(q0)
+            amps = [0.25, 0.5]
+            for _ in range(3):
+                pair = dict(zip(("a", "b"), iter(amps), strict=True))
+                drive(d0, square(10, max(pair.values()) * float(np.sqrt(math.cos(0.0)))))
+
+        ir = _rolled(loop_test)(Q[0])
+        kinds = [op.kind for op in ir.ops]
+        assert kinds.count("scf.for") == 1
+        assert [op.attrs["amplitude"] for op in ir.ops if op.kind == "pulse.square"] == [0.5]
 
     def test_list_mutation_in_loop_unrolls(self):
 

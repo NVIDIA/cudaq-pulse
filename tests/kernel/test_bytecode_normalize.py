@@ -74,9 +74,9 @@ def test_jump_targets_are_instruction_indices():
     instrs = decode(f.__code__).instrs
     for i, (op, arg) in enumerate(instrs):
         if op == bc.FOR_ITER:
-            exit_idx, var_is_read = arg
+            exit_idx, unrolled = arg
             assert i < exit_idx < len(instrs)
-            assert var_is_read is False
+            assert unrolled is False
         elif op in (bc.JUMP, bc.JUMP_IF_FALSE, bc.JUMP_IF_TRUE):
             assert 0 <= arg < len(instrs)
             if arg <= i:
@@ -91,6 +91,56 @@ def test_loop_var_read_is_detected():
 
     (loop,) = [arg for op, arg in decode(f.__code__).instrs if op == bc.FOR_ITER]
     assert loop[1] is True
+
+
+def test_an_augmented_assignment_to_a_name_a_loop_carries_in_keeps_it_unrolled():
+
+    def carried(n, t):
+        for _ in range(n):
+            t += 1
+            g(t)  # pyright: ignore[reportUndefinedVariable]  # noqa: F821
+
+    def bound_in_the_body(n, t):
+        for _ in range(n):
+            x = t
+            x += 1
+            g(x)  # pyright: ignore[reportUndefinedVariable]  # noqa: F821
+
+    def skipped(n, t, on):
+        for _ in range(n):
+            if on:
+                t += 1
+            g(t)  # pyright: ignore[reportUndefinedVariable]  # noqa: F821
+
+    def continued(n, t, on):
+        for _ in range(n):
+            if on:
+                continue
+            t += 1
+            g(t)  # pyright: ignore[reportUndefinedVariable]  # noqa: F821
+
+    def nested(n, t):
+        for _ in range(n):
+            for _ in range(n):
+                t += 1
+            g(t)  # pyright: ignore[reportUndefinedVariable]  # noqa: F821
+
+    def outside_a_loop(t):
+        t += 1
+        return t
+
+    def loop(fn):
+        instrs = decode(fn.__code__).instrs
+        unrolled = [arg[1] for op, arg in instrs if op == bc.FOR_ITER]
+        return unrolled, any(op == bc.NOTE_INPLACE for op, _ in instrs)
+
+    # Unrolled without a trace; a rolled trace checks the others' left operand.
+    assert loop(carried) == ([True], False)
+    assert loop(bound_in_the_body) == ([False], True)
+    assert loop(skipped) == ([False], True)
+    assert loop(continued) == ([False], True)
+    assert loop(nested) == ([True, True], False)
+    assert loop(outside_a_loop) == ([], False)
 
 
 def test_while_loop_decodes_to_unsupported():
