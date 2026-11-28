@@ -397,6 +397,53 @@ def test_an_argument_a_kernel_calls_a_method_of_or_passes_on_is_compared_whole(k
     assert kernel.cache_info().compiled == 3
 
 
+class _SlottedSweep:
+    __slots__ = ("amp", "__scale")
+
+    def __init__(self):
+        self.amp = 0.2
+        self.__scale = 1
+
+    def scaled(self):
+        return self.__scale * self.amp
+
+    def rescale(self, scale):
+        self.__scale = scale
+
+
+@pulse.kernel
+def plays_its_slotted_amplitude(q, s):
+    drive(get_drive_line(q), square(16, s.amp))
+
+
+@pulse.kernel
+def plays_its_scaled_amplitude(q, s):
+    drive(get_drive_line(q), square(16, s.scaled()))
+
+
+def test_an_argument_with_slots_is_compared_at_the_attributes_the_kernel_reads():
+    q = _device().qudits[0]
+    s = _SlottedSweep()
+    first = plays_its_slotted_amplitude.lower(q, s)
+    for i in range(3):  # the last once the guard runs as generated code
+        s.rescale(i + 2)
+        assert plays_its_slotted_amplitude.lower(q, s) is first
+    s.amp = 0.4
+    assert "4.000000e-01" in plays_its_slotted_amplitude.lower(q, s).mlir()
+    assert plays_its_slotted_amplitude.cache_info().compiled == 2
+
+
+def test_an_argument_with_slots_a_kernel_calls_a_method_of_is_compared_whole():
+    q = _device().qudits[0]
+    s = _SlottedSweep()
+    first = plays_its_scaled_amplitude.lower(q, s)
+    for _ in range(3):  # the last once the guard runs as generated code
+        assert plays_its_scaled_amplitude.lower(q, s) is first
+    s.rescale(2)  # the slot __scale, kept as _SlottedSweep__scale
+    assert "4.000000e-01" in plays_its_scaled_amplitude.lower(q, s).mlir()
+    assert plays_its_scaled_amplitude.cache_info().compiled == 2
+
+
 _HOLDS_NAN = np.array([0.1, np.nan])
 
 

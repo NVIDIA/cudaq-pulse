@@ -351,17 +351,33 @@ class Guard:
 def _attributes(value: Any) -> list[str]:
     """The attributes to compare of an object a kernel was passed and is
     cached for by identity: a dataclass's fields, else what its ``__dict__``
-    holds; none for a class, module or function, or cudaq_pulse's own."""
+    holds and its ``__slots__`` declare; none for a class, module or
+    function, or cudaq_pulse's own."""
     cls = type(value)
     code = (type, types.ModuleType, types.FunctionType, types.MethodType, types.BuiltinFunctionType)
     if isinstance(value, code) or cls.__module__.partition(".")[0] == "cudaq_pulse":
         return []
     fields = getattr(cls, "__dataclass_fields__", None)
     if fields is None:
-        fields = getattr(value, "__dict__", None)
-        if not isinstance(fields, dict):
-            return []
+        held = getattr(value, "__dict__", None)
+        fields = [*(held if isinstance(held, dict) else ()), *_slots(cls)]
     return [name for name in fields if name.isidentifier() and not keyword.iskeyword(name)]
+
+
+def _slots(cls: type) -> list[str]:
+    """The attributes the ``__slots__`` of *cls* and its bases declare, each
+    by the name it is stored under (``__x`` of a class ``C`` as ``_C__x``)."""
+    names: dict[str, None] = {}
+    for base in cls.__mro__:
+        slots = base.__dict__.get("__slots__", ())
+        owner = base.__name__.lstrip("_")
+        for name in [slots] if isinstance(slots, str) else slots:
+            if name in ("__dict__", "__weakref__"):
+                continue
+            if owner and name.startswith("__") and not name.endswith("__"):
+                name = f"_{owner}{name}"
+            names[name] = None
+    return list(names)
 
 
 def _argument_reads(code: types.CodeType, name: str) -> list[tuple[str, ...]] | None:
