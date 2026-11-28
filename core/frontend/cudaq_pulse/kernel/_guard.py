@@ -42,7 +42,8 @@ if TYPE_CHECKING:
     _CODE_LOCK: threading.Lock
 
 _IMMUTABLE = (int, float, complex, str, bytes, bool, types.NoneType, range)
-_SNAPSHOT = (list, dict, set, bytearray, tuple, frozenset)
+_SNAPSHOT = (list, dict, set, bytearray)
+_SNAPSHOT_OR_TUPLE = (*_SNAPSHOT, tuple)
 _MAX_HELPER_DEPTH = 8
 
 
@@ -59,20 +60,42 @@ def _immutable(value: Any) -> bool:
 
 
 # A copy to compare a mutable container's contents against, or None.
-# A tuple here holds a mutable value, such as a list; its copy is kept
-# only if it compares equal, which one of objects without ``__eq__`` does not.
 def _snapshot(value: Any) -> Any | None:
-    if isinstance(value, _SNAPSHOT):
+    if isinstance(value, _SNAPSHOT_OR_TUPLE):
+        if isinstance(value, tuple):
+            return _tuple_snapshot(value)
         try:
-            snap = copy.deepcopy(value)
+            return copy.deepcopy(value)
         except Exception:
             return None
-        if isinstance(value, (tuple, frozenset)) and not _same_contents(value, snap):
-            return None
-        return snap
     if type(value).__module__ == "numpy" and type(value).__name__ == "ndarray":
         return value.copy()
     return None
+
+
+# A copy of the tuple *value* to compare its contents against, or None. It is
+# copied only when it holds a mutable container, and its copy kept only if it
+# compares equal, which one of objects without ``__eq__`` does not.
+def _tuple_snapshot(value: tuple[Any, ...]) -> Any | None:
+    if not _holds_snapshot(value):
+        return None
+    try:
+        snap = copy.deepcopy(value)
+    except Exception:
+        return None
+    return snap if _same_contents(value, snap) else None
+
+
+# Whether the tuple *value* holds, at any depth, one of _SNAPSHOT or an array.
+def _holds_snapshot(value: tuple[Any, ...]) -> bool:
+    for item in value:
+        if isinstance(item, _SNAPSHOT) or (
+            type(item).__module__ == "numpy" and type(item).__name__ == "ndarray"
+        ):
+            return True
+        if isinstance(item, tuple) and _holds_snapshot(item):
+            return True
+    return False
 
 
 # A copy of a dict item to compare its contents against, or None when

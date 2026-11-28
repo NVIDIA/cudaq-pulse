@@ -17,6 +17,7 @@ from typing import NamedTuple
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
+from cudaq_pulse.kernel import _guard
 from cudaq_pulse.kernel.ir_builder import CompilationError
 from cudaq_pulse.quantum_systems import MicrowaveDrive, PhysicalQudit, TransmonModel
 from cudaq_pulse.quantum_systems._registry import ENV_VAR
@@ -305,6 +306,21 @@ def test_a_change_inside_a_global_tuple_is_seen_on_the_next_call(kernel, amplitu
     finally:
         amplitudes[0] = 0.1
         widths[key] = 40
+
+
+QUDITS = (Q[0], Q[1])
+
+
+@pulse.kernel
+def reads_a_tuple_of_qudits(q):
+    drive(get_drive_line(q), square(20 * len(QUDITS), 0.1))
+
+
+def test_a_global_tuple_of_qudits_is_compared_by_identity_alone():
+    assert reads_a_tuple_of_qudits.lower(Q[0]).schedule[0].duration_cycles == 40
+    guard = _guard.build_guard(reads_a_tuple_of_qudits.__pulse_kernel_fn__)
+    (step,) = [step for step in guard.plan if step[5] is QUDITS]
+    assert step[4:] == (_guard._SAME_OBJECT, QUDITS, None)
 
 
 def test_a_global_list_of_arrays_is_cached_until_an_array_changes():

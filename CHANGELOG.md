@@ -704,7 +704,7 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
   list of arrays no longer compiles it on every call.** The cache compared a
   global tuple or NamedTuple by identity alone, so changing a list, dict or
   array it holds in place (`PAIR[0][0] = 0.2`) left the old program in use,
-  with no error. It now compares a copy of the tuple's contents, as it does
+  with no error. It now compares a copy of such a tuple's contents, as it does
   for a list. A list or dict that holds NumPy arrays was compared with `==`,
   which raises for arrays, so it never compared equal and the kernel
   compiled again on every call; such containers are now compared item by
