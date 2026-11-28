@@ -16,6 +16,7 @@ import os
 import runpy
 import sys
 
+from . import __version__
 from .quantum_systems._registry import ENV_VAR, available_quantum_systems, make_quantum_system
 
 
@@ -23,6 +24,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m cudaq_pulse",
         description="Run a Python script with a cudaq-pulse process quantum system.",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"cudaq-pulse {__version__}",
     )
     parser.add_argument(
         "--quantum-system",
