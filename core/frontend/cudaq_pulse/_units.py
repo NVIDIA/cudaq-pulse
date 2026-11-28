@@ -238,6 +238,14 @@ class Time(float):
     def __rmod__(self, other: Any) -> Any:
         raise UnitError(f"{other!r} % {self}: the remainder of a time is by a time")
 
+    def __divmod__(self, other: Any) -> tuple[Any, Any]:
+        # float's divmod drops the unit and loses the exact value; keep the
+        # results // and % give, with the types they give.
+        return self.__floordiv__(other), self.__mod__(other)
+
+    def __rdivmod__(self, other: Any) -> tuple[Any, Any]:
+        return self.__rfloordiv__(other), self.__rmod__(other)
+
     def __pow__(self, other: Any, modulo: Any = None) -> Any:
         raise UnitError(f"{self} ** {other!r} is not a time")
 

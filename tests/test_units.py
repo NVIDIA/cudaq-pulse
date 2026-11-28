@@ -62,6 +62,21 @@ def test_arithmetic_keeps_the_unit_where_it_means_a_time():
     assert float(t) == 20.0 and float(2 * us) == 2000.0
 
 
+def test_divmod_of_two_times_agrees_with_floor_division_and_modulo():
+    for a, b in ((7 * ns, 2 * ns), (7.5 * ns, 2 * ns), (2 * ns, 7.5 * ns)):
+        quotient, remainder = divmod(a, b)
+        assert (quotient, remainder) == (a // b, a % b)
+        assert quotient.__class__ is (a // b).__class__
+        assert remainder.__class__ is (a % b).__class__
+
+
+def test_divmod_raises_where_floor_division_and_modulo_do():
+    with pytest.raises(TypeError, match="divide a time by a time"):
+        divmod(7 * ns, 2)
+    with pytest.raises(TypeError, match="number over a time"):
+        divmod(2.0, 7 * ns)
+
+
 @pytest.mark.parametrize(
     ("expression", "message"),
     [
