@@ -227,8 +227,12 @@ def float_duration(
 ) -> CompilationError:
     """The error for the plain float *value* in a duration; *cycles_only*
     for one whose name gives its unit, which takes no time."""
+    if not math.isfinite(value):
+        return CompilationError(
+            f"{fname}(): {what} must be finite, got {value!r}", code="invalid_duration"
+        )
     shown = f"{value:g}"
-    whole = str(round(value)) if value == value and abs(value) != float("inf") else shown
+    whole = str(round(value))
     in_cycles_call = call.format(whole)
     plural = "" if whole == "1" else "s"
     if cycles_only:

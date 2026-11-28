@@ -842,6 +842,8 @@ release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 
 ### Fixed
 
+- Non-finite durations and wait bounds report that the value must be finite,
+  without suggesting conversions of NaN or infinity to cycles or nanoseconds.
 - The schedule passes no longer take the square of the number of drives on
   waveforms computed from one another (`w = wf_scale(w, 0.5)` before each
   drive, or sums and products of earlier waveforms): they keep the length
